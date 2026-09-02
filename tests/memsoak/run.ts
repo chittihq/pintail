@@ -42,6 +42,14 @@ const ROWS_PER_TABLE = Number(process.env.MEMSOAK_ROWS ?? '50')
 /// large transient allocations a quiet source never produces.
 const WRITE_ROWS = Number(process.env.MEMSOAK_WRITE_ROWS ?? '1')
 const WRITE_MS = Number(process.env.MEMSOAK_WRITE_MS ?? '500')
+/// Wire query clients running analytical shapes over the seeded tables for
+/// the length of the soak, each on a fresh connection, with this pause
+/// between queries. A query's working set is the largest transient
+/// allocation this server makes, and it lands on whichever blocking thread
+/// picks the query up - which is exactly the pattern a per-thread allocator
+/// retains. Zero runs no queries.
+const QUERY_CLIENTS = Number(process.env.MEMSOAK_QUERY_CLIENTS ?? '0')
+const QUERY_MS = Number(process.env.MEMSOAK_QUERY_MS ?? '2000')
 /// Supervisor cadence inside the container. Production runs 5000ms; a fast
 /// cadence compresses an hour of production churn into minutes.
 const SUPERVISOR_MS = Number(process.env.MEMSOAK_SUPERVISOR_MS ?? '300')
@@ -241,7 +249,7 @@ function publish(image: string, samples: Sample[], verdict: string[]) {
     '',
     `Measured ${new Date().toISOString()} on \`${image}\` (Linux container, ${MEMORY_LIMIT} limit${EXTRA_ENV.length ? `, env ${EXTRA_ENV.join(" ")}` : ""}).`,
     '',
-    `${TABLES} tables × ${ROWS_PER_TABLE} rows, writes of ${WRITE_ROWS} rows every ${WRITE_MS}ms, supervisor every ${SUPERVISOR_MS}ms, ` +
+    `${TABLES} tables × ${ROWS_PER_TABLE} rows, writes of ${WRITE_ROWS} rows every ${WRITE_MS}ms, ${QUERY_CLIENTS} query clients every ${QUERY_MS}ms, supervisor every ${SUPERVISOR_MS}ms, ` +
       `${(DURATION_MS / 60_000).toFixed(0)} min sampled every ${SAMPLE_MS / 1000}s, ` +
       `first ${(WARMUP_MS / 60_000).toFixed(0)} min are warm-up.`,
     '',
@@ -317,7 +325,7 @@ async function main() {
   log(`starting ${image} with a ${MEMORY_LIMIT} limit`)
   await docker(
     'run', '--detach', '--name', pintailName, '--network', network,
-    '--memory', MEMORY_LIMIT, '--publish', '0:8080',
+    '--memory', MEMORY_LIMIT, '--publish', '0:8080', '--publish', '0:3306',
     '--env', `PINTAIL_SUPERVISOR_INTERVAL_MS=${SUPERVISOR_MS}`,
     '--env', 'PINTAIL_LOG=info',
     ...EXTRA_ENV.flatMap((pair) => ['--env', pair]),
@@ -375,6 +383,55 @@ async function main() {
     }
   })()
 
+  let queriesOk = 0
+  let queriesFailed = 0
+  const queryClients: Promise<void>[] = []
+  if (QUERY_CLIENTS > 0) {
+    const key = await api<{ secret: string }>(`/api/databases/${database.id}/api-keys`, {
+      method: 'POST',
+      body: { name: 'memsoak', scopes: ['query', 'read'] },
+    })
+    const wirePort = await publishedPort(pintailName, 3306)
+    const shapes = (index: number) => {
+      const a = tableName(index % TABLES)
+      const b = tableName((index + 1) % TABLES)
+      return [
+        `SELECT v % 97 AS k, COUNT(DISTINCT id) AS d, SUM(v) AS s FROM ${a} GROUP BY k ORDER BY k`,
+        `SELECT a.v % 50 AS k, COUNT(DISTINCT b.id) AS d FROM ${a} a JOIN ${b} b ON a.id = b.id GROUP BY k ORDER BY k`,
+        `SELECT * FROM ${a} ORDER BY note DESC, id LIMIT 100`,
+      ]
+    }
+    for (let seat = 0; seat < QUERY_CLIENTS; seat += 1) {
+      queryClients.push(
+        (async () => {
+          let turn = seat
+          while (writing) {
+            let connection: mysql.Connection | undefined
+            try {
+              connection = await mysql.createConnection({
+                host,
+                port: wirePort,
+                user: DATABASE,
+                password: key.secret,
+                database: DATABASE,
+              })
+              const statements = shapes(turn)
+              await connection.query({ sql: statements[turn % statements.length]!, rowsAsArray: true })
+              queriesOk += 1
+            } catch {
+              queriesFailed += 1
+            } finally {
+              await connection?.end().catch(() => {})
+            }
+            turn += 1
+            await Bun.sleep(QUERY_MS)
+          }
+        })(),
+      )
+    }
+    log(`${QUERY_CLIENTS} query clients running`)
+  }
+
   const samples: Sample[] = []
   const soakStarted = performance.now()
   while (performance.now() - soakStarted < DURATION_MS) {
@@ -386,6 +443,8 @@ async function main() {
   }
   writing = false
   await writer
+  await Promise.all(queryClients)
+  if (QUERY_CLIENTS > 0) log(`queries: ${queriesOk} ok, ${queriesFailed} failed`)
 
   const verdict: string[] = []
   const state = (await docker('inspect', pintailName, '--format', '{{.State.Running}} {{.State.OOMKilled}}')).stdout
