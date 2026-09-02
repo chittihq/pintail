@@ -2315,11 +2315,14 @@ async function phaseReconcileMemory() {
 
     // Cascading deletes: a tenth of the parents take a tenth of the children
     // with them, and none of those child deletions reach the binlog.
-    await sql(`DELETE FROM ${schema}.parent WHERE id % 10 = 0`)
+    // Every tenth parent by default, a tenth of the children; a scale run
+    // can delete fewer to measure the repair a production cascade causes.
+    const DELETE_EVERY = Number(process.env.E2E_RECONCILE_DELETE_EVERY ?? 10)
+    await sql(`DELETE FROM ${schema}.parent WHERE id % ${DELETE_EVERY} = 0`)
     const remaining = Number(
       ((await mysqlConnection!.query(`SELECT COUNT(*) FROM ${schema}.child`))[0] as Array<Record<string, unknown>>)[0]!['COUNT(*)'],
     )
-    record(phase, 'reconcile-memory:the cascade removed a tenth of the children', remaining === CHILDREN - CHILDREN / 10 ? 'PASS' : 'FAIL', `${remaining} remain`)
+    record(phase, 'reconcile-memory:the cascade removed the deleted parents\' children', remaining === CHILDREN - CHILDREN / DELETE_EVERY ? 'PASS' : 'FAIL', `${remaining} remain`)
 
     // Sampling starts at the deletes: the supervisor reconciles a flagged
     // table on its own schedule and holds the database's job slot for the

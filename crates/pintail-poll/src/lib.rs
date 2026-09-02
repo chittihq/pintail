@@ -473,10 +473,11 @@ fn cascade_order(names: &[String], targets: &[PollTarget]) -> Vec<String> {
     ordered
 }
 
-/// Keys a membership query verifies at once: a thousand keys keep the
-/// placeholder count far below the prepared-statement limit for any
-/// composite key while amortizing the round trip.
-const MEMBERSHIP_BATCH: usize = 1_000;
+/// Keys a membership query verifies at once: five thousand keys keep the
+/// placeholder count under the prepared-statement limit for keys of up to
+/// a dozen columns while amortizing the round trip, which dominated a pass
+/// over two million candidates at a thousand keys a query.
+const MEMBERSHIP_BATCH: usize = 5_000;
 
 /// The `WHERE` clause and parameters selecting exactly `keys` from a source
 /// table, as a single-column `IN` list or a row-constructor `IN` list.
