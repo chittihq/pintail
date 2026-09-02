@@ -81,6 +81,21 @@ anything beyond localhost. The repository's
 of the file above, with a memory limit, a health check and every
 environment variable documented.
 
+### One-line install on a Linux server
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/chittihq/pintail/dev/scripts/install.sh | sh
+```
+
+The script installs Docker and the Compose plugin if they are missing,
+writes the compose file above to `/opt/pintail`, starts the latest release,
+waits for it to report healthy, and prints the dashboard address and the
+first-boot secrets. Re-running it upgrades an existing installation and
+leaves its configuration alone. `PINTAIL_VERSION`, `PINTAIL_DIR`,
+`PINTAIL_HTTP_PORT` and `PINTAIL_WIRE_PORT` in the environment override the
+defaults, and [scripts/install.sh](scripts/install.sh) is short enough to
+read first.
+
 MySQL 5.7, 8.x and MariaDB are supported as sources.
 
 ## Querying
