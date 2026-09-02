@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Creating a database honours the `poll_interval_seconds` and
+  `reconcile_interval_seconds` it was given; both were accepted and then
+  replaced with the defaults, so only an update could set them.
+- A scan under a memory budget reads a segment the budget cannot hold
+  whole in block-aligned row slices instead of refusing it; a compacted
+  twenty-million-row table had stopped the cascade repair every interval.
+- Reconciliation repairs go through the plain ingest, tombstones carry
+  placeholder values, and candidates are verified five thousand a query.
+  At twenty million rows the operator's full compare converges in about
+  three minutes where it had not converged in half an hour.
+
 ## [0.1.1-rc2] - 2026-09-02
 
 A second candidate for the memory fix. rc1 stopped the allocator from

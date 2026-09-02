@@ -40,6 +40,12 @@ pub(crate) struct CreateDatabaseRequest {
     exclude_tables: Vec<String>,
     #[serde(default = "default_keyless_policy")]
     keyless_policy: String,
+    /// Seconds between polling cycles; the default when omitted.
+    #[serde(default = "default_poll_interval")]
+    poll_interval_seconds: u64,
+    /// Seconds between reconciliations; the default when omitted.
+    #[serde(default = "default_reconcile_interval")]
+    reconcile_interval_seconds: u64,
 }
 
 fn default_keyless_policy() -> String {
@@ -176,8 +182,8 @@ pub(crate) async fn create(
                 mode: &request.mode,
                 include_tables: Some(&includes),
                 exclude_tables: Some(&excludes),
-                poll_interval_seconds: default_poll_interval(),
-                reconcile_interval_seconds: default_reconcile_interval(),
+                poll_interval_seconds: request.poll_interval_seconds,
+                reconcile_interval_seconds: request.reconcile_interval_seconds,
                 keyless_policy: &request.keyless_policy,
                 now: &now,
             },
