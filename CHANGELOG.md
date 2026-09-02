@@ -42,6 +42,14 @@ end-to-end gate and a constrained profile in the load harness.
   move bytes, waited on them: in the constrained load profile wire queries
   the server finished in 341ms took clients a p99 of 65 seconds.
 
+Measured on the constrained profile at 128 clients reconnecting per query
+with a CDC writer, dashboards and HTTP queries alongside, before and
+after: wire p50 5.1s → 2.0s, wire p99 147s → 2.5s, peak RSS 2,354 MB '
+727 MB, dashboard p99 10.5s → 27ms, and the admission window's refusals
+now arrive in the client as the designed 1040 instead of as latency. The
+e2e memory-pressure phase reads wire p99 826ms, health p99 18ms and peak
+RSS 392 MB on a 256 MB budget.
+
 ### Added
 
 - `tests/load` grew a `constrained` profile (`LOAD_PROFILE=constrained`):

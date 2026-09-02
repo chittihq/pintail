@@ -1,13 +1,13 @@
 # Pintail concurrency load results
 
-Measured 2026-09-02T04:24:16.954Z.
+Measured 2026-09-02T04:43:50.653Z.
 
-Per-query memory ceiling: 64 MB. Seed rows: 200000.
-Queries per client per level: 10.
+Per-query memory ceiling: 64 MB. Process budget: server default. Admission: server default.
+Seed rows: 200000. Queries per client per level: 10. Connections: one per client. Side-loads: none. RSS ceiling: unchecked.
 
-| Concurrency | Completed | Failed | p50 ms | p95 ms | p99 ms | max ms | peak RSS MB | Errors |
-|---:|---:|---:|---:|---:|---:|---:|---:|---|
-| 1 | 10 | 0 | 30 | 119 | 119 | 119 | 147 | — |
-| 16 | 160 | 0 | 5 | 573 | 652 | 669 | 708 | — |
-| 64 | 640 | 0 | 227 | 1852 | 2295 | 2731 | 1431 | — |
-| 128 | 1259 | 21 | 761 | 2182 | 2976 | 3659 | 1349 | admission-refused×21 |
+| Concurrency | Completed | Failed | p50 ms | p95 ms | p99 ms | max ms | peak RSS MB | Errors | HTTP queries | Dashboard | CDC |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|
+| 1 | 10 | 0 | 72 | 243 | 243 | 243 | 141 | — | — | — | — |
+| 16 | 160 | 0 | 3 | 646 | 764 | 771 | 663 | — | — | — | — |
+| 64 | 640 | 0 | 301 | 2457 | 2877 | 3357 | 1471 | — | — | — | — |
+| 128 | 1267 | 13 | 722 | 2194 | 2897 | 3134 | 1331 | admission-refused×13 | — | — | — |

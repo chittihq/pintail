@@ -1,0 +1,100 @@
+{
+  "profile": "constrained",
+  "memoryMb": 64,
+  "totalMemoryMb": 512,
+  "maxConcurrent": 16,
+  "seedRows": 200000,
+  "iterations": 10,
+  "connectionStorm": true,
+  "sideloads": [
+    "cdc",
+    "dashboard",
+    "http"
+  ],
+  "rssCeilingMb": 1024,
+  "results": [
+    {
+      "concurrency": 16,
+      "completed": 160,
+      "failed": 0,
+      "p50Ms": 35.3282500000023,
+      "p95Ms": 626.9405000000006,
+      "p99Ms": 705.6867500000008,
+      "maxMs": 740.1757919999982,
+      "peakRssMb": 729.625,
+      "errors": {},
+      "http": {
+        "completed": 53,
+        "failed": 0,
+        "p99Ms": 723.9791250000017,
+        "errors": {}
+      },
+      "dashboard": {
+        "completed": 72,
+        "failed": 0,
+        "p99Ms": 30.855750000002445,
+        "errors": {}
+      },
+      "cdcRows": 800,
+      "cdcConvergeMs": 1523.8642089999994
+    },
+    {
+      "concurrency": 64,
+      "completed": 622,
+      "failed": 18,
+      "p50Ms": 1387.1989170000015,
+      "p95Ms": 2017.9179999999978,
+      "p99Ms": 2200.6597080000065,
+      "maxMs": 2377.0554159999992,
+      "peakRssMb": 759.546875,
+      "errors": {
+        "admission-refused": 18
+      },
+      "http": {
+        "completed": 180,
+        "failed": 8,
+        "p99Ms": 2353.457125000001,
+        "errors": {
+          "admission-refused": 8
+        }
+      },
+      "dashboard": {
+        "completed": 572,
+        "failed": 0,
+        "p99Ms": 25.9252919999999,
+        "errors": {}
+      },
+      "cdcRows": 6400,
+      "cdcConvergeMs": 6.993792000001122
+    },
+    {
+      "concurrency": 128,
+      "completed": 971,
+      "failed": 309,
+      "p50Ms": 1985.2019159999982,
+      "p95Ms": 2399.353083000002,
+      "p99Ms": 2523.2831250000017,
+      "maxMs": 2606.1620420000036,
+      "peakRssMb": 726.734375,
+      "errors": {
+        "admission-refused": 309
+      },
+      "http": {
+        "completed": 310,
+        "failed": 81,
+        "p99Ms": 2499.6670410000006,
+        "errors": {
+          "admission-refused": 81
+        }
+      },
+      "dashboard": {
+        "completed": 809,
+        "failed": 0,
+        "p99Ms": 26.97400000000198,
+        "errors": {}
+      },
+      "cdcRows": 8200,
+      "cdcConvergeMs": 3616.5314170000056
+    }
+  ]
+}
