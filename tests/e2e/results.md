@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-02T05:25:12.225Z.
+Measured 2026-09-02T14:42:02.225Z.
 
 Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-container.
 
-**4459 passed, 0 failed, 53 documented-gap warnings, 37 skipped.**
+**4641 passed, 0 failed, 54 documented-gap warnings, 37 skipped.**
 
-164 unique corpus queries produced 4100 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+164 unique corpus queries produced 4264 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -2539,12 +2539,12 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150047 sync_runs rows for db_5715d6f11aabd88d7a51c4d88f93c45a |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150031 sync_runs rows for db_5d81c458a326003c4d15bbc28a233e2a |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 1ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 1ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 31ms p99 43ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 20ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 3ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 39ms p99 52ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 45ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -2722,10 +2722,10 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4836 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4836 requests: p50 2ms p99 22ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 24ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 790 vs source 790 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4772 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4772 requests: p50 2ms p99 31ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 8ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 835 vs source 835 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -3647,7 +3647,7 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_5715d6f11aabd88d7a51c4d88f93c45a","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-02T05:15:09.518312+00:00","updated_at":"2026-09-02T05:24:16.338639+00:00"},"tables":18,"rows":1297} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | PASS |  |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -4009,13 +4009,13 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | restart-during-snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | restart-during-snapshot | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-snapshot | query:json: distinct case variants survive a derived table | PASS |  |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 62 ok, dashboards 139 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 56 ok, dashboards 185 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 62 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 410ms p99 891ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 23ms over 10 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 385MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 56 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 569ms p99 910ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 7ms over 13 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 310MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201200 vs source 201200 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -4195,6 +4195,189 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 | memory-pressure | query:order_items: product rollup without the orders table | PASS |  |
 | memory-pressure | query:shipments: carrier value through the items bridge | PASS |  |
 | memory-pressure | query:json: distinct case variants survive a derived table | PASS |  |
+| reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
+| reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
+| reconcile-memory | reconcile-memory:the cascade removed a tenth of the children | PASS | 1800000 remain |
+| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 342.5s |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 29MB before, peak 183MB during (margin 768MB) |
+| reconcile-memory | converge:Dim | PASS |  |
+| reconcile-memory | converge:Event | PASS |  |
+| reconcile-memory | converge:Fact | PASS |  |
+| reconcile-memory | converge:Person | PASS |  |
+| reconcile-memory | converge:audit_log | PASS |  |
+| reconcile-memory | converge:badges | PASS |  |
+| reconcile-memory | converge:counters | PASS |  |
+| reconcile-memory | converge:customers | PASS |  |
+| reconcile-memory | converge:keyless_log | PASS |  |
+| reconcile-memory | converge:order_items | PASS |  |
+| reconcile-memory | converge:orders | PASS |  |
+| reconcile-memory | converge:shipments | PASS |  |
+| reconcile-memory | converge:staff | PASS |  |
+| reconcile-memory | converge:information_schema.columns | PASS |  |
+| reconcile-memory | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| reconcile-memory | query:conformance: mixed-collation double grouping | PASS |  |
+| reconcile-memory | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| reconcile-memory | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| reconcile-memory | query:conformance: case-variant code grouping | PASS |  |
+| reconcile-memory | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| reconcile-memory | query:conformance: nullable join key NULL-extends | PASS |  |
+| reconcile-memory | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| reconcile-memory | query:conformance: date bucketing over the fact table | PASS |  |
+| reconcile-memory | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| reconcile-memory | query:point lookup by key | PASS |  |
+| reconcile-memory | query:range scan with compound predicate | PASS |  |
+| reconcile-memory | query:inner join with aggregation | PASS |  |
+| reconcile-memory | query:join with a residual comparison between both inputs | PASS |  |
+| reconcile-memory | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| reconcile-memory | query:residual comparison through coalesce on a nullable column | PASS |  |
+| reconcile-memory | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| reconcile-memory | query:alias pair with the join order reversed | PASS |  |
+| reconcile-memory | query:four aliases of one table joined in a chain | PASS |  |
+| reconcile-memory | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| reconcile-memory | query:self-join manager chain preserves the roots | PASS |  |
+| reconcile-memory | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| reconcile-memory | query:aliases stay distinct when the empty side joins first | PASS |  |
+| reconcile-memory | query:left join preserves unmatched rows | PASS |  |
+| reconcile-memory | query:right join preserves unmatched rows | PASS |  |
+| reconcile-memory | query:three-way join through items | PASS |  |
+| reconcile-memory | query:union all across sources | PASS |  |
+| reconcile-memory | query:intersect customer identifiers | PASS |  |
+| reconcile-memory | query:except customer identifiers | PASS |  |
+| reconcile-memory | query:order by an expression over an aggregate | PASS |  |
+| reconcile-memory | query:order by a tree over several aggregates | PASS |  |
+| reconcile-memory | query:order by an aggregate absent from the select list | PASS |  |
+| reconcile-memory | query:group by with having | PASS |  |
+| reconcile-memory | query:conditional decimal sum keeps the fraction | PASS |  |
+| reconcile-memory | query:distinct count and min max | PASS |  |
+| reconcile-memory | query:uncorrelated in-subquery | PASS |  |
+| reconcile-memory | query:correlated exists with inner predicate | PASS |  |
+| reconcile-memory | query:correlated scalar aggregate | PASS |  |
+| reconcile-memory | query:correlated scalar unique lookup | PASS |  |
+| reconcile-memory | query:scalar subquery threshold | PASS |  |
+| reconcile-memory | query:non-recursive cte | PASS |  |
+| reconcile-memory | query:bounded recursive cte | PASS |  |
+| reconcile-memory | query:date bucketing | PASS |  |
+| reconcile-memory | query:string functions and like | PASS |  |
+| reconcile-memory | query:looker symmetric key helpers | PASS |  |
+| reconcile-memory | query:json constructor preserves json versus text | PASS |  |
+| reconcile-memory | query:json aggregate embeds documents | PASS |  |
+| reconcile-memory | query:regular expression read transforms | PASS |  |
+| reconcile-memory | query:case expression buckets | PASS |  |
+| reconcile-memory | query:null handling | PASS |  |
+| reconcile-memory | query:coalesce and ifnull | PASS |  |
+| reconcile-memory | query:enum and set filters | PASS |  |
+| reconcile-memory | query:unsigned boundary readback | PASS |  |
+| reconcile-memory | query:derived table | PASS |  |
+| reconcile-memory | query:group_concat single expression | PASS |  |
+| reconcile-memory | query:window ranking per group | PASS |  |
+| reconcile-memory | query:window share of total over grouped output | PASS |  |
+| reconcile-memory | query:window running total | PASS |  |
+| reconcile-memory | query:decimal column average beyond simple sum | PASS |  |
+| reconcile-memory | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| reconcile-memory | query:json extract filter on customer meta | PASS |  |
+| reconcile-memory | query:fan-out join group concat line products | PASS |  |
+| reconcile-memory | query:outer join customers without recent orders | PASS |  |
+| reconcile-memory | query:set op union distinct tiers and statuses | PASS |  |
+| reconcile-memory | query:temporal convert and date_format grain | PASS |  |
+| reconcile-memory | query:correlated not exists open orders | PASS |  |
+| reconcile-memory | query:window lag payment-shaped totals | PASS |  |
+| reconcile-memory | query:multi-key join items to orders | PASS |  |
+| reconcile-memory | query:between and null-safe coalesce on balance | PASS |  |
+| reconcile-memory | query:intersect all-style customer buyers | PASS |  |
+| reconcile-memory | query:derived table status revenue share | PASS |  |
+| reconcile-memory | query:general_ci: equality folds ASCII case | PASS |  |
+| reconcile-memory | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| reconcile-memory | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| reconcile-memory | query:general_ci: every supplementary character compares equal | PASS |  |
+| reconcile-memory | query:general_ci: grouping partitions by collated equality | PASS |  |
+| reconcile-memory | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| reconcile-memory | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| reconcile-memory | query:general_ci: joining on a collated column | PASS |  |
+| reconcile-memory | query:general_ci: representative spelling of a collated group | PASS |  |
+| reconcile-memory | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| reconcile-memory | query:enum: order by ascends by declared ordinal | PASS |  |
+| reconcile-memory | query:enum: order by descends by declared ordinal | PASS |  |
+| reconcile-memory | query:enum: min and max compare as strings | PASS |  |
+| reconcile-memory | query:enum: a greater-than range compares as strings | PASS |  |
+| reconcile-memory | query:enum: a less-than range compares as strings | PASS |  |
+| reconcile-memory | query:enum: between compares as strings | PASS |  |
+| reconcile-memory | query:enum: distinct orders by ordinal | PASS |  |
+| reconcile-memory | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| reconcile-memory | query:enum: a window order walks the ordinal | PASS |  |
+| reconcile-memory | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| reconcile-memory | query:collation: distinct counts fold per column collation | PASS |  |
+| reconcile-memory | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| reconcile-memory | query:set: order by walks the member bitmask | PASS |  |
+| reconcile-memory | query:set: grouping orders groups by bitmask | PASS |  |
+| reconcile-memory | query:enum: the empty member groups by its ordinal | PASS |  |
+| reconcile-memory | query:enum: the empty member sorts by its ordinal | PASS |  |
+| reconcile-memory | query:enum: the empty member is selectable by text | PASS |  |
+| reconcile-memory | query:geometry: hex round-trips the internal format | PASS |  |
+| reconcile-memory | query:geometry: byte length includes the srid prefix | PASS |  |
+| reconcile-memory | query:geometry: null routes filter and count | PASS |  |
+| reconcile-memory | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| reconcile-memory | query:set: find_in_set filters by membership | PASS |  |
+| reconcile-memory | query:set: equality is literal, not member-normalized | PASS |  |
+| reconcile-memory | query:set: distinct values walk the bitmask including empty | PASS |  |
+| reconcile-memory | query:set: grouped counts order by bitmask not text | PASS |  |
+| reconcile-memory | query:set: a range predicate compares the bitmask | PASS |  |
+| reconcile-memory | query:star: fact with dimension and two audit persons | PASS |  |
+| reconcile-memory | query:star: five-alias chain fans out through events | PASS |  |
+| reconcile-memory | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| reconcile-memory | query:star: five tables bridge the shop and the star | PASS |  |
+| reconcile-memory | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| reconcile-memory | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| reconcile-memory | query:json: length and keys survive null documents | PASS |  |
+| reconcile-memory | query:json: contains_path filters the documented rows | PASS |  |
+| reconcile-memory | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| reconcile-memory | query:json: object construction embeds an extracted scalar | PASS |  |
+| reconcile-memory | query:json: search locates a literal value | PASS |  |
+| reconcile-memory | query:json: grouping by an extracted scalar | PASS |  |
+| reconcile-memory | query:json: merge_patch overlays and reads back | PASS |  |
+| reconcile-memory | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| reconcile-memory | query:temporal: month-end bucketing via last_day | PASS |  |
+| reconcile-memory | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| reconcile-memory | query:temporal: datetime range keeps the year window | PASS |  |
+| reconcile-memory | query:temporal: date_sub bound in the predicate | PASS |  |
+| reconcile-memory | query:temporal: year-month split grouping | PASS |  |
+| reconcile-memory | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| reconcile-memory | query:regex: substr extracts the mail domain | PASS |  |
+| reconcile-memory | query:regex: the REGEXP operator anchors a class | PASS |  |
+| reconcile-memory | query:regex: replace folds suffix classes before grouping | PASS |  |
+| reconcile-memory | query:bi metabase: month grain through convert_tz | PASS |  |
+| reconcile-memory | query:bi metabase: iso week bucketing | PASS |  |
+| reconcile-memory | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| reconcile-memory | query:bi metabase: previous-period revenue window | PASS |  |
+| reconcile-memory | query:bi superset: week-start grain with a rolling average | PASS |  |
+| reconcile-memory | query:bi superset: running total over grouped revenue | PASS |  |
+| reconcile-memory | query:bi superset: lag and lead against a named window | PASS |  |
+| reconcile-memory | query:bi superset: quartile counts from ntile | PASS |  |
+| reconcile-memory | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| reconcile-memory | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| reconcile-memory | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| reconcile-memory | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| reconcile-memory | query:bi tableau: explicit cast ladder | PASS |  |
+| reconcile-memory | query:bi tableau: the stddev and variance family | PASS |  |
+| reconcile-memory | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| reconcile-memory | query:bi shared: substring_index dimension cleanup | PASS |  |
+| reconcile-memory | query:bi shared: json validity and typed path filter | PASS |  |
+| reconcile-memory | query:bi shared: contains_path over several paths at once | PASS |  |
+| reconcile-memory | query:bi shared: maketime from extracted parts | PASS |  |
+| reconcile-memory | query:bi shared: extract year_month grouping | PASS |  |
+| reconcile-memory | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| reconcile-memory | query:staff: three-level management chain with an inactive tail | PASS |  |
+| reconcile-memory | query:staff: active split with id extremes | PASS |  |
+| reconcile-memory | query:counters: full unsigned ladder readback | PASS |  |
+| reconcile-memory | query:counters: greatest and least across widths | PASS |  |
+| reconcile-memory | query:dim: enum status split | PASS |  |
+| reconcile-memory | query:dim: pattern filter across collated columns | PASS |  |
+| reconcile-memory | query:person: anti-join finds owners without facts | PASS |  |
+| reconcile-memory | query:person: created-fact counts through a scalar subquery | PASS |  |
+| reconcile-memory | query:event: lag over per-dimension timelines | PASS |  |
+| reconcile-memory | query:event: daily grain per dimension code | PASS |  |
+| reconcile-memory | query:order_items: product rollup without the orders table | PASS |  |
+| reconcile-memory | query:shipments: carrier value through the items bridge | PASS |  |
+| reconcile-memory | query:json: distinct case variants survive a derived table | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -4564,29 +4747,30 @@ Source: `mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, reused keep-
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 2.0 | 4.5 |
-| orm-compat | 10.5 | 1.0 | 0.8 |
-| crud | 0.9 | 2.8 | 3.1 |
-| type-edges | 0.2 | 1.2 | 2.7 |
-| ddl | 1.1 | 46.9 | 1.4 |
-| schema-drift-minimal | 0.4 | 4.4 | 1.7 |
-| schema-drift-unseen | 0.9 | 7.8 | 0.7 |
-| churn | 19.3 | 1.6 | 0.7 |
-| contention | 14.4 | 0.9 | 0.7 |
-| execution-budget | 0.0 | 0.3 | 1.0 |
-| spill | 2.9 | 0.5 | 0.8 |
-| pooling | 0.2 | 0.9 | 0.9 |
-| local-database | 0.0 | 0.3 | 1.2 |
-| restart | 0.6 | 3.9 | 3.2 |
-| activity-history | 1.2 | 1.9 | 1.9 |
-| poll-storm | 32.2 | 0.7 | 0.9 |
-| control-plane | 73.9 | 1.6 | 0.9 |
-| snapshot-ddl-window | 8.6 | 1.3 | 0.7 |
-| drop-table-cdc | 18.3 | 1.2 | 0.9 |
-| drop-table-recreate | 138.7 | 1.3 | 0.6 |
-| drop-table-polling | 121.3 | 1.0 | 0.9 |
-| restart-during-snapshot | 7.2 | 1.8 | 1.0 |
-| memory-pressure | 10.5 | 1.8 | 0.9 |
-| drop-database | 13.2 | 1.0 | 0.6 |
-| ddl-documented-gaps | 0.2 | 0.9 | 0.9 |
-| total | 476.5 | 88.8 | 33.6 |
+| snapshot | 0.0 | 2.5 | 2.5 |
+| orm-compat | 12.8 | 0.9 | 0.9 |
+| crud | 0.3 | 58.9 | 0.9 |
+| type-edges | 0.0 | 1.5 | 0.9 |
+| ddl | 0.5 | 23.0 | 0.9 |
+| schema-drift-minimal | 0.4 | 5.5 | 1.0 |
+| schema-drift-unseen | 1.2 | 6.4 | 0.6 |
+| churn | 12.4 | 0.7 | 1.1 |
+| contention | 13.0 | 0.3 | 1.1 |
+| execution-budget | 0.0 | 0.4 | 0.6 |
+| spill | 3.0 | 0.4 | 0.7 |
+| pooling | 0.1 | 1.5 | 0.9 |
+| local-database | 0.0 | 0.4 | 1.0 |
+| restart | 0.6 | 2.4 | 0.7 |
+| activity-history | 2.7 | 0.8 | 0.9 |
+| poll-storm | 27.8 | 0.4 | 0.8 |
+| control-plane | 81.0 | 1.3 | 1.0 |
+| snapshot-ddl-window | 7.5 | 1.1 | 0.7 |
+| drop-table-cdc | 21.3 | 1.9 | 0.9 |
+| drop-table-recreate | 131.7 | 1.9 | 0.9 |
+| drop-table-polling | 33.9 | 1.0 | 0.7 |
+| restart-during-snapshot | 8.5 | 1.2 | 0.9 |
+| memory-pressure | 10.2 | 1.3 | 1.0 |
+| reconcile-memory | 384.9 | 1.5 | 0.9 |
+| drop-database | 28.5 | 1.4 | 0.8 |
+| ddl-documented-gaps | 0.0 | 1.4 | 0.7 |
+| total | 782.5 | 119.8 | 24.0 |
