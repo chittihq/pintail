@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { and, asc, count, eq, gte, isNotNull, lte, sum } from 'drizzle-orm'
@@ -82,14 +82,6 @@ async function parity<T>(
   })
 }
 
-function connectionUrl(endpoint: MysqlEndpoint): string {
-  const user = encodeURIComponent(endpoint.user)
-  const password = encodeURIComponent(endpoint.password)
-  const database = encodeURIComponent(endpoint.database)
-  const host = endpoint.host.includes(':') ? `[${endpoint.host}]` : endpoint.host
-  return `mysql://${user}:${password}@${host}:${endpoint.port}/${database}`
-}
-
 function artifacts(directory: string, root = directory): Record<string, string> {
   const result: Record<string, string> = {}
   for (const entry of readdirSync(directory).sort()) {
@@ -124,17 +116,28 @@ async function introspect(endpoint: MysqlEndpoint): Promise<Captured<Record<stri
   const output = join(temporary, 'schema')
   const executable = resolve(import.meta.dir, '..', 'node_modules', '.bin', 'drizzle-kit')
   try {
-    const child = Bun.spawn(
-      [
-        executable,
-        'pull',
-        '--dialect=mysql',
-        `--url=${connectionUrl(endpoint)}`,
-        `--out=${output}`,
-        '--introspect-casing=preserve',
-      ],
-      { stdout: 'pipe', stderr: 'pipe' },
+    // Credentials go through a config object rather than a URL: drizzle-kit
+    // hands a URL to mysql2, which cannot take an IPv6 literal from one.
+    const config = join(temporary, 'drizzle.config.mjs')
+    writeFileSync(
+      config,
+      `export default ${JSON.stringify({
+        dialect: 'mysql',
+        out: output,
+        dbCredentials: {
+          host: endpoint.host,
+          port: endpoint.port,
+          user: endpoint.user,
+          password: endpoint.password,
+          database: endpoint.database,
+        },
+        introspect: { casing: 'preserve' },
+      })}\n`,
     )
+    const child = Bun.spawn([executable, 'pull', `--config=${config}`], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
