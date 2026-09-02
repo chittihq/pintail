@@ -1828,7 +1828,14 @@ async function phaseRestartDuringSnapshot() {
     created = (
       await api<{ id: string }>('/api/databases', {
         method: 'POST',
-        body: { name: schema, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`, mode: 'cdc' },
+        body: {
+          name: schema,
+          dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`,
+          mode: 'cdc',
+          // A scale run can leave the repair to the supervisor's own pass
+          // by shortening the interval instead of requesting one.
+          ...(VIA_SUPERVISOR ? { reconcile_interval_seconds: 5 } : {}),
+        },
       })
     ).id
     await reprobe(created)
@@ -2249,6 +2256,7 @@ async function phaseReconcileMemory() {
   const PARENTS = Number(process.env.E2E_RECONCILE_PARENTS ?? 1_000)
   const CHILDREN = Number(process.env.E2E_RECONCILE_CHILDREN ?? 2_000_000)
   const MEMORY_MARGIN_MB = Number(process.env.E2E_RECONCILE_MARGIN_MB ?? 768)
+  const VIA_SUPERVISOR = process.env.E2E_RECONCILE_VIA === 'supervisor'
 
   await sql(`CREATE DATABASE ${schema}`)
   await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
@@ -2328,6 +2336,7 @@ async function phaseReconcileMemory() {
     })()
     const started = performance.now()
     const request = (async () => {
+      if (VIA_SUPERVISOR) return
       // 409 while a cycle or a reconciliation holds the slot; the dashboard
       // retries that window itself, so does this, for as long as a pass
       // over two million rows can take.

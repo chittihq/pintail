@@ -657,6 +657,7 @@ impl TableSnapshot {
             parts,
             memtable_cursor: None,
             direct_range: None,
+            direct_slice_rows: None,
             merge: None,
         }))
     }

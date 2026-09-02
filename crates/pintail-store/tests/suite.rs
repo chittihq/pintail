@@ -19,6 +19,7 @@ mod suite {
     mod reader;
     mod recovery;
     mod schema_evolution;
+    mod sliced_scan;
     mod transactional;
     mod value_pruning;
 }

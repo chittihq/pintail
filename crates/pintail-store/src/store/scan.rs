@@ -220,6 +220,8 @@ pub struct ProjectedScanStream {
     pub(super) parts: std::collections::VecDeque<ScanPart>,
     pub(super) memtable_cursor: Option<(std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>)>,
     pub(super) direct_range: Option<(segment::SegmentMeta, u64, u64)>,
+    /// Rows per slice that last fit the budget for the pending direct range.
+    pub(super) direct_slice_rows: Option<u64>,
     pub(super) merge: Option<MergedProjectedStream>,
 }
 
@@ -929,11 +931,24 @@ impl ProjectedScanStream {
                 self.memtable_cursor = None;
             } else if let Some((segment, start_row, end_row)) = self.direct_range.take() {
                 return self
-                    .decode_column_chunk_rows(&segment, start_row, end_row, memory_limit)
+                    .decode_direct_range_within(segment, start_row, end_row, memory_limit)
                     .map(Some);
             } else if let Some(segment) = self.segments.get(self.next_segment).cloned() {
                 self.next_segment += 1;
-                return self.decode_column_chunk(segment, memory_limit).map(Some);
+                return match self.decode_column_chunk(segment.clone(), memory_limit) {
+                    // A segment the budget cannot hold whole is read in row
+                    // slices instead of refused: a compacted table can hold
+                    // tens of millions of rows in one segment.
+                    Err(StoreError::MemoryLimitExceeded { .. }) if segment.row_count > 1 => self
+                        .decode_direct_range_within(
+                            segment.clone(),
+                            0,
+                            segment.row_count,
+                            memory_limit,
+                        )
+                        .map(Some),
+                    other => other.map(Some),
+                };
             }
             if !self.advance_part()? {
                 return Ok(None);
@@ -949,6 +964,7 @@ impl ProjectedScanStream {
         self.merge = None;
         self.memtable_cursor = None;
         self.direct_range = None;
+        self.direct_slice_rows = None;
         match part {
             ScanPart::Direct { segments } => {
                 self.segments = segments;
@@ -1180,12 +1196,19 @@ impl ProjectedScanStream {
             .to_vec();
         self.next_segment = self.next_segment.saturating_add(chunk_count);
         if chunk_count == 1 {
-            return segments
-                .into_iter()
-                .map(|segment| {
-                    self.decode_column_chunk_maybe_filtered(segment, memory_limit, prewhere)
-                })
-                .collect();
+            let segment = segments.into_iter().next().expect("one segment");
+            return match self.decode_column_chunk_maybe_filtered(
+                segment.clone(),
+                memory_limit,
+                prewhere,
+            ) {
+                // Too large for the budget whole: row slices, unfiltered,
+                // and the caller's predicate still runs over every row.
+                Err(StoreError::MemoryLimitExceeded { .. }) if segment.row_count > 1 => self
+                    .decode_direct_range_within(segment.clone(), 0, segment.row_count, memory_limit)
+                    .map(|chunk| vec![chunk]),
+                other => other.map(|chunk| vec![chunk]),
+            };
         }
         let per_chunk_limit = memory_limit / chunk_count;
         let decoded = projected_scan_pool()?.install(|| {
@@ -1504,6 +1527,39 @@ impl ProjectedScanStream {
             },
             retained_bytes,
         }))
+    }
+
+    /// Decodes `[start_row, end_row)` of `segment` within `memory_limit`, in
+    /// as many slices as the budget needs: a slice that does not fit is
+    /// halved and retried, the size that fits is kept for the rest of the
+    /// segment, and the remainder stays queued as the next direct range.
+    /// A slice is never finer than a block, which is what the reader
+    /// decodes at once, so the budget must hold one block of the projection.
+    fn decode_direct_range_within(
+        &mut self,
+        segment: segment::SegmentMeta,
+        start_row: u64,
+        end_row: u64,
+        memory_limit: usize,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        let span = end_row.saturating_sub(start_row).max(1);
+        let mut rows = self.direct_slice_rows.unwrap_or(span).min(span).max(1);
+        loop {
+            let slice_end = start_row.saturating_add(rows).min(end_row);
+            match self.decode_column_chunk_rows(&segment, start_row, slice_end, memory_limit) {
+                Ok(chunk) => {
+                    if slice_end < end_row {
+                        self.direct_range = Some((segment, slice_end, end_row));
+                        self.direct_slice_rows = Some(rows);
+                    } else {
+                        self.direct_slice_rows = None;
+                    }
+                    return Ok(chunk);
+                }
+                Err(StoreError::MemoryLimitExceeded { .. }) if rows > 1 => rows /= 2,
+                Err(error) => return Err(error),
+            }
+        }
     }
 
     /// Decodes one contiguous row range of a segment (a granule-classified
