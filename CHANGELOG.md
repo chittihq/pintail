@@ -12,6 +12,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   names them: `floor(5.5)`, `round(5.64,1)`, a bare string literal by its
   value. They were named from the parser's rendering (`FLOOR(5.5)`,
   `round(5.64, 1)`), which MySQL's own regression suite flagged 315 times.
+- MySQL literal forms bind: double-quoted and `N'...'` strings, `X'..'`,
+  `0x..` and `b'..'` binary literals, `DATE '..'` / `TIME '..'` / `TIMESTAMP '..'`
+  typed strings, charset introducers, integer literals past BIGINT UNSIGNED
+  (read as DECIMAL, as MySQL does) and `FROM DUAL`.
 - Local databases accept tables without a primary key, keeping every row
   under a generated id as the replica does for keyless source tables, and
   the column declarations fixtures carry: COMMENT, UNIQUE, ON UPDATE,
