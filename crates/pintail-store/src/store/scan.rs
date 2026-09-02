@@ -1645,6 +1645,7 @@ impl ProjectedScanStream {
             manifest: Arc::new(manifest),
             directory: self.snapshot.directory.clone(),
             schema: self.snapshot.schema.clone(),
+            estimated_bytes: 0,
         };
         let projected = chunk.scan_projected_range_bounded(
             &self.start,

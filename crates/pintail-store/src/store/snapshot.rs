@@ -33,6 +33,9 @@ pub struct TableSnapshot {
     pub(super) manifest: Arc<Manifest>,
     pub(super) directory: PathBuf,
     pub(super) schema: TableSchema,
+    /// Bytes the replayed memtable holds, so whoever keeps this snapshot
+    /// resident can charge it to a budget.
+    pub(super) estimated_bytes: usize,
 }
 
 /// Immutable files pinned by a reader snapshot for native backup.
@@ -85,6 +88,14 @@ impl BackupSegment {
 }
 
 impl TableSnapshot {
+    /// Bytes of unflushed rows this snapshot keeps resident: the WAL tail
+    /// replayed into memory at open, or the writer's live memtable. Segment
+    /// data is read from files and not counted.
+    #[must_use]
+    pub const fn estimated_memtable_bytes(&self) -> usize {
+        self.estimated_bytes
+    }
+
     /// The snapshot's data identity when every visible row is
     /// segment-resident: `(table directory, manifest generation)` with an
     /// empty memtable. Two snapshots with the same identity see byte-for-
@@ -206,11 +217,13 @@ impl TableSnapshot {
                 }
                 return Err(error);
             }
+            let estimated_bytes = memtable.estimated_bytes();
             return Ok(Self {
                 memtable: memtable.snapshot(),
                 manifest,
                 directory,
                 schema,
+                estimated_bytes,
             });
         }
         Err(StoreError::FormatLimit(

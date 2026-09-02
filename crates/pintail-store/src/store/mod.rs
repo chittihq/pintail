@@ -1444,6 +1444,7 @@ impl TableStore {
             manifest: Arc::clone(&self.manifest),
             directory: self.directory.clone(),
             schema: self.schema.clone(),
+            estimated_bytes: self.memtable.estimated_bytes(),
         }
     }
 

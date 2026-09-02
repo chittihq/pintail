@@ -3,6 +3,7 @@
 mod admission;
 mod engine;
 mod observe;
+mod replica_cache;
 mod server;
 
 pub use admission::{
@@ -19,3 +20,6 @@ pub use server::{
     DEFAULT_WIRE_IDLE_TIMEOUT, WireTls, load_wire_tls, serve, serve_until,
     serve_until_with_memory_limit, serve_until_with_options,
 };
+
+pub use engine::replica_cache_stats;
+pub use replica_cache::ReplicaCacheStats;

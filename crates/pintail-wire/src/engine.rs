@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -14,6 +15,9 @@ use pintail_exec::{
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 
 use crate::admission::{QueryAdmission, shared_admission};
+use crate::replica_cache::{
+    self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp,
+};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
     Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, DEFAULT_TEXT_COLLATION,
@@ -159,11 +163,12 @@ pub struct ReplicaEngine {
     /// query and converts overload into unbounded latency rather than
     /// backpressure (see `tests/load/results.md`).
     admission: std::sync::Arc<QueryAdmission>,
-    /// Loaded replicas keyed by database, revalidated per request against
+    /// The process-wide replica cache, revalidated per request against
     /// on-disk file stamps: reopening every table snapshot (manifest read
     /// plus WAL merge) and the metadata store cost ~200ms on EVERY query,
-    /// the fixed floor under the whole benchmark board.
-    cache: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, CachedReplica>>>,
+    /// the fixed floor under the whole benchmark board - and one copy per
+    /// connection was the floor under the process's memory.
+    cache: Arc<ReplicaCache<LoadedReplica>>,
 }
 
 impl std::fmt::Debug for ReplicaEngine {
@@ -177,11 +182,6 @@ impl std::fmt::Debug for ReplicaEngine {
     }
 }
 
-struct CachedReplica {
-    stamp: Vec<(PathBuf, u64, Option<std::time::SystemTime>)>,
-    replica: std::sync::Arc<LoadedReplica>,
-}
-
 struct LoadedReplica {
     database: DatabaseRecord,
     tables: Vec<TableRecord>,
@@ -190,7 +190,29 @@ struct LoadedReplica {
 
 struct ReaderTarget {
     source: SourceTable,
+    /// Schema generation the snapshot was opened under; a newer one means
+    /// the table must be reopened even if its files did not move.
+    version: u32,
     snapshot: TableSnapshot,
+}
+
+static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
+
+/// The replica cache every engine in the process shares: one loaded copy
+/// of a database however many connections and requests read it.
+fn shared_replica_cache() -> Arc<ReplicaCache<LoadedReplica>> {
+    Arc::clone(SHARED_REPLICA_CACHE.get_or_init(|| {
+        Arc::new(ReplicaCache::new(
+            replica_cache::default_capacity(),
+            pintail_exec::shared_memory_budget(),
+        ))
+    }))
+}
+
+/// What the shared replica cache has done since startup.
+#[must_use]
+pub fn replica_cache_stats() -> ReplicaCacheStats {
+    shared_replica_cache().stats()
 }
 
 impl ReplicaEngine {
@@ -201,100 +223,129 @@ impl ReplicaEngine {
             metadata_path: metadata_path.into(),
             memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
             admission: shared_admission(),
-            cache: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            cache: shared_replica_cache(),
         }
     }
 
     /// Every file whose content can change what a query sees: the metadata
     /// store plus each table directory's entries (manifests, WALs and the
     /// immutable segment set). Any CDC apply, flush, compaction or schema
-    /// change alters at least one (path, len, mtime) triple.
-    fn replica_stamp(
-        &self,
-        database_id: &str,
-    ) -> Vec<(PathBuf, u64, Option<std::time::SystemTime>)> {
-        let mut stamp = Vec::new();
-        let mut record = |path: &Path| {
+    /// change alters at least one (path, len, mtime) triple - and the stamp
+    /// keeps them per table, so the reload that follows touches only the
+    /// table that changed.
+    fn replica_stamp(&self, database_id: &str) -> ReplicaStamp {
+        fn record(files: &mut Vec<FileStamp>, path: &Path) {
             if let Ok(meta) = std::fs::metadata(path) {
-                stamp.push((path.to_path_buf(), meta.len(), meta.modified().ok()));
+                files.push((path.to_path_buf(), meta.len(), meta.modified().ok()));
             }
-        };
-        record(&self.metadata_path);
+        }
+        let mut stamp = ReplicaStamp::default();
+        record(&mut stamp.metadata, &self.metadata_path);
         // Metadata writes land in SQLite's WAL, not the main file — without
         // it a replica cached between a table's files appearing and its
         // metadata rows committing stays stale until unrelated data churn.
         let mut wal = self.metadata_path.as_os_str().to_owned();
         wal.push("-wal");
-        record(Path::new(&wal));
-        let tables_root = self
-            .data_dir
-            .join("databases")
-            .join(database_id)
-            .join("tables");
-        let mut directories = vec![tables_root];
-        while let Some(directory) = directories.pop() {
-            let Ok(entries) = std::fs::read_dir(&directory) else {
+        record(&mut stamp.metadata, Path::new(&wal));
+        let Ok(entries) = std::fs::read_dir(self.tables_root(database_id)) else {
+            return stamp;
+        };
+        let mut tables: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .collect();
+        tables.sort();
+        for table in tables {
+            let name = table
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let files = stamp.tables.entry(name).or_default();
+            if !table.is_dir() {
+                record(files, &table);
                 continue;
-            };
-            let mut paths: Vec<PathBuf> = entries
-                .filter_map(Result::ok)
-                .map(|entry| entry.path())
-                .collect();
-            paths.sort();
-            for path in paths {
-                if path.is_dir() {
-                    directories.push(path);
-                } else {
-                    record(&path);
+            }
+            let mut directories = vec![table];
+            while let Some(directory) = directories.pop() {
+                let Ok(entries) = std::fs::read_dir(&directory) else {
+                    continue;
+                };
+                let mut paths: Vec<PathBuf> = entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.path())
+                    .collect();
+                paths.sort();
+                for path in paths {
+                    if path.is_dir() {
+                        directories.push(path);
+                    } else {
+                        record(files, &path);
+                    }
                 }
             }
         }
         stamp
     }
 
-    fn load_replica_cached(
-        &self,
-        database_id: &str,
-    ) -> Result<std::sync::Arc<LoadedReplica>, QueryError> {
-        // Every query pays this before it plans anything, and on a miss it
-        // pays a reload of EVERY table's store - so on a replica under
-        // active CDC, where any commit changes the stamp, a trivial query
-        // can cost more in setup than in execution. That is invisible
-        // without a number, and it is the number to ask an operator for
-        // when a cheap query is inexplicably slow.
+    fn tables_root(&self, database_id: &str) -> PathBuf {
+        self.data_dir
+            .join("databases")
+            .join(database_id)
+            .join("tables")
+    }
+
+    fn cache_key(&self, database_id: &str) -> CacheKey {
+        (self.data_dir.clone(), database_id.to_owned())
+    }
+
+    fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
+        // Every query pays the stamp before it plans anything. A miss used
+        // to pay a reload of EVERY table's store - on a replica under active
+        // CDC, where any commit changes the stamp, a trivial query cost more
+        // in setup than in execution. A changed stamp now reopens only the
+        // tables whose files moved; the log line carries both counts, and it
+        // is the line to ask an operator for when a cheap query is
+        // inexplicably slow.
         let stamp_started = Instant::now();
         let stamp = self.replica_stamp(database_id);
         let stamped = stamp_started.elapsed();
-        if let Some(cached) = self
-            .cache
-            .lock()
-            .expect("replica cache lock")
-            .get(database_id)
-            .filter(|cached| cached.stamp == stamp)
-        {
-            pintail_log::log_debug!(
-                "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
-                stamped.as_secs_f64() * 1_000.0,
-                stamp.len()
-            );
-            return Ok(std::sync::Arc::clone(&cached.replica));
-        }
+        let key = self.cache_key(database_id);
+        let previous = match self.cache.lookup(&key, &stamp) {
+            Lookup::Hit(replica) => {
+                pintail_log::log_debug!(
+                    "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
+                    stamped.as_secs_f64() * 1_000.0,
+                    stamp.files()
+                );
+                return Ok(replica);
+            }
+            Lookup::Stale(replica, previous) => Some((replica, previous)),
+            Lookup::Miss => None,
+        };
         let load_started = Instant::now();
-        let replica = std::sync::Arc::new(self.load_replica(database_id)?);
+        let (replica, opened) = self.load_replica(
+            database_id,
+            previous
+                .as_ref()
+                .map(|(replica, stamp)| (replica.as_ref(), stamp)),
+            &stamp,
+        )?;
+        let replica = Arc::new(replica);
+        let resident = replica
+            .targets
+            .iter()
+            .map(|target| target.snapshot.estimated_memtable_bytes())
+            .sum::<usize>();
         pintail_log::log_debug!(
-            "query setup db={database_id} stamp={:.1}ms files={} replica=reloaded in {:.1}ms tables={}",
+            "query setup db={database_id} stamp={:.1}ms files={} replica=reloaded in {:.1}ms \
+             tables={} opened={opened} resident={resident}B",
             stamped.as_secs_f64() * 1_000.0,
-            stamp.len(),
+            stamp.files(),
             load_started.elapsed().as_secs_f64() * 1_000.0,
             replica.targets.len()
         );
-        self.cache.lock().expect("replica cache lock").insert(
-            database_id.to_owned(),
-            CachedReplica {
-                stamp,
-                replica: std::sync::Arc::clone(&replica),
-            },
-        );
+        self.cache
+            .insert(key, stamp, Arc::clone(&replica), resident, opened);
         Ok(replica)
     }
 
@@ -440,10 +491,7 @@ impl ReplicaEngine {
                 .map_err(|error| write_error(&error))?;
         // The catalog and the stored rows both changed; the next read must
         // not answer from a replica loaded before this statement.
-        self.cache
-            .lock()
-            .expect("replica cache lock")
-            .remove(database_id);
+        self.cache.invalidate(&self.cache_key(database_id));
 
         let affected = match outcome {
             pintail_write::WriteOutcome::TableCreated { .. } => 0,
@@ -609,7 +657,15 @@ impl ReplicaEngine {
         })
     }
 
-    fn load_replica(&self, database_id: &str) -> Result<LoadedReplica, QueryError> {
+    /// Loads `database_id`'s replica, reusing from `previous` every table
+    /// whose source definition, schema version and files are unchanged.
+    /// Returns the replica and how many table snapshots it had to open.
+    fn load_replica(
+        &self,
+        database_id: &str,
+        previous: Option<(&LoadedReplica, &ReplicaStamp)>,
+        current: &ReplicaStamp,
+    ) -> Result<(LoadedReplica, usize), QueryError> {
         let metadata = MetaStore::open(&self.metadata_path)
             .map_err(|error| QueryError::Internal(error.to_string()))?;
         let database = metadata
@@ -630,11 +686,8 @@ impl ReplicaEngine {
             .iter()
             .map(|table| (table.name.to_ascii_lowercase(), table))
             .collect::<BTreeMap<_, _>>();
-        let root = self
-            .data_dir
-            .join("databases")
-            .join(database_id)
-            .join("tables");
+        let root = self.tables_root(database_id);
+        let mut opened = 0;
         let targets = report
             .tables
             .into_iter()
@@ -648,20 +701,51 @@ impl ReplicaEngine {
                     source.columns = serde_json::from_str(&record.columns_json)
                         .map_err(|error| QueryError::Internal(error.to_string()))?;
                 }
-                let schema = source
-                    .table_schema_with_version(version)
-                    .map_err(|error| QueryError::Internal(error.to_string()))?;
                 let directory = table_directory(&root, &source.name);
-                let snapshot = TableSnapshot::open(directory, schema)
-                    .map_err(|error| QueryError::NotReady(error.to_string()))?;
-                Ok(ReaderTarget { source, snapshot })
+                let directory_name = directory
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                // Reuse needs all three unchanged: the probe-derived
+                // definition (a reprobe can change columns without a new
+                // schema version), the schema version, and the table's own
+                // files. Everything else in the replica is rebuilt from the
+                // metadata store, which is cheap.
+                let reusable = previous.and_then(|(replica, stamp)| {
+                    let target = replica
+                        .targets
+                        .iter()
+                        .find(|target| target.source.name.eq_ignore_ascii_case(&source.name))?;
+                    (target.version == version
+                        && target.source == source
+                        && stamp.tables.get(&directory_name) == current.tables.get(&directory_name))
+                    .then(|| target.snapshot.clone())
+                });
+                let snapshot = if let Some(snapshot) = reusable {
+                    snapshot
+                } else {
+                    let schema = source
+                        .table_schema_with_version(version)
+                        .map_err(|error| QueryError::Internal(error.to_string()))?;
+                    opened += 1;
+                    TableSnapshot::open(directory, schema)
+                        .map_err(|error| QueryError::NotReady(error.to_string()))?
+                };
+                Ok(ReaderTarget {
+                    source,
+                    version,
+                    snapshot,
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(LoadedReplica {
-            database,
-            tables,
-            targets,
-        })
+        Ok((
+            LoadedReplica {
+                database,
+                tables,
+                targets,
+            },
+            opened,
+        ))
     }
 }
 

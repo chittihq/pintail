@@ -10,8 +10,7 @@ pub(crate) use aggregate::compare_decimal_text;
 /// Test-only accessor for the SMA fold-hit counter the storage tests assert on.
 #[cfg(test)]
 pub(crate) use aggregate::sma_fold_hits;
-use budget::MemoryBudget;
-pub use budget::MemoryScope;
+pub use budget::{MemoryBudget, MemoryScope};
 pub use error::ExecError;
 pub use join::compare_collated_text;
 
