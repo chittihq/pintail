@@ -44,10 +44,29 @@ including the queries where ClickHouse still wins.
 
 ## Quick start
 
+Pintail ships as a public image, `ghcr.io/chittihq/pintail`, for
+linux/amd64 and linux/arm64. Save this as `docker-compose.yml`:
+
+```yaml
+services:
+  pintail:
+    image: ghcr.io/chittihq/pintail:0.1.0
+    ports:
+      - "8080:8080"   # dashboard and HTTP API
+      - "3306:3306"   # MySQL wire endpoint
+    volumes:
+      - pintail-data:/var/lib/pintail
+    restart: unless-stopped
+
+volumes:
+  pintail-data:
+```
+
+Then:
+
 ```sh
-git clone https://github.com/chittihq/pintail.git
-cd pintail
 docker compose up --detach
+docker compose logs pintail   # the first boot prints the generated secrets once
 ```
 
 Open <http://127.0.0.1:8080>, create the first admin, and choose **Add
@@ -55,10 +74,12 @@ database**. Give Pintail your MySQL connection string, let it check the
 server (it recommends a sync mode), and start the first copy. Once the
 state reads *Streaming* or *Polling*, you can query.
 
-The first boot prints the generated JWT and DSN-encryption secrets once;
-keep the `pintail-data` volume and treat its logs as sensitive. The
-dashboard and API listen on 8080 and the MySQL endpoint on 3306; override
-them with `PINTAIL_HTTP_PORT` and `PINTAIL_WIRE_PORT`.
+Keep the `pintail-data` volume: it holds the replica, the metadata and the
+first-boot secrets. Put a TLS terminator in front of port 8080 for
+anything beyond localhost. The repository's
+[docker-compose.yml](docker-compose.yml) is the production-ready version
+of the file above, with a memory limit, a health check and every
+environment variable documented.
 
 MySQL 5.7, 8.x and MariaDB are supported as sources.
 
