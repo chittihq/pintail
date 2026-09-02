@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.0.5-rc4] - 2026-09-02
+
+Recovers a database whose snapshot a restart interrupted, and adds the
+first stress phases to the end-to-end gate: a dashboard activity feed over
+150,000 rows of control-plane history, twenty-five dashboards polling for
+twenty seconds while rows are written at the source, and a SIGKILL landed
+with a copy provably in flight that must recover with nobody touching it.
+The stranding phase went red before its fix and green after.
+
 ### Fixed
 
 - A restart during a database's snapshot no longer strands it. Quarantining
