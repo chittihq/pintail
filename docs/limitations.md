@@ -134,6 +134,12 @@ stays readable as a list of things to fix.
   is refused rather than accepted and ignored, so a client cannot believe it
   has asked for the invalid ones back.
 
+- `TIME` values are stored and compared as their canonical text. Ordering
+  and comparison are exact for non-negative times under 100 hours; negative
+  times and hours of three digits order as text, not as durations. A
+  `TIME`-valued function result (`SEC_TO_TIME`, `ADDTIME`, `TIMEDIFF`) is
+  typed as text, so used in arithmetic it coerces as a string would
+  (`SEC_TO_TIME(9001) + 0` is 2), where MySQL yields the `HHMMSS` number.
 - `STR_TO_DATE` supports the calendar/date, clock, month/weekday name, day-of-year, fractional-second, and composite clock directives used by the reporting corpus. Literal formats containing an unimplemented MySQL-only directive (ordinal dates or week/year reconstruction) reject at bind time; dynamic unsupported formats return `NULL`. They are never forwarded to chrono under a different meaning. `DATE_FORMAT` implements MySQL's full directive inventory, including the four `WEEK` numbering modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an unrecognized directive's bare character the way MySQL does.
 
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
@@ -494,14 +500,16 @@ but may be wrong.
 - There are no explicit transactions: `BEGIN`/`COMMIT`/`ROLLBACK` remain
   compatibility no-ops, so every statement is its own autocommit
   transaction (phase 4).
-- A local table must declare a `PRIMARY KEY`. A keyless local table is
-  refused at `CREATE TABLE` rather than accepted as append-only, because
-  without row identity a duplicate cannot be detected.
-- `UNIQUE` beyond the primary key, foreign keys, `CHECK`, secondary
-  indexes, `AUTO_INCREMENT`, and column `DEFAULT`s are refused by name at
-  `CREATE TABLE`.
-- `INSERT` takes literal values only; an expression such as `1 + 1` is
-  refused rather than evaluated.
+- A keyless local table is append-only: rows live under a generated id,
+  the same model the replica uses for a keyless source table, so a
+  duplicate row is simply a second row and nothing can address one later.
+- `UNIQUE` beyond the primary key, foreign keys, `CHECK` and secondary
+  indexes are accepted at `CREATE TABLE` and not enforced: a duplicate the
+  source would refuse is stored. `AUTO_INCREMENT` is accepted but never
+  assigns a value; an `INSERT` that leaves the column out is refused. A
+  column `DEFAULT` other than `NULL` is refused at `CREATE TABLE`.
+- `INSERT` takes literal values only; an expression such as `1 + 1` or
+  `NOW()` is refused rather than evaluated.
 - A local table cannot be joined against a replicated one. A query reaches
   exactly one database, and the two kinds are separate databases
   (deferred, not foreclosed - see `docs/decisions.md`).
