@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The server no longer hoards memory it has freed. A staging node held
+  3.9 GB resident plus 3 GB of swap for 527 MB of data: glibc malloc keeps
+  each thread's freed memory in that thread's arena at the high-water mark
+  of whatever query once ran there, and analytical queries landing on fresh
+  blocking threads filled fifty such arenas. The binary now uses jemalloc,
+  which returns freed pages on a decay timer. In the memory soak the shipped
+  image sat at 2.9 to 3.4 GB with a gigabyte in swap; this build oscillates
+  between 0.2 and 1.5 GB and never swaps.
+
+### Added
+
+- `tests/memsoak`: a memory soak of the actual Linux image on the docker
+  host - hundreds of tables, a fast supervisor, a source writer and wire
+  query clients - judged on the per-minute memory floor after warm-up and
+  on swap. The first memory measurement that runs where the release runs.
+- `tests/mtr`: MySQL's own regression suite replayed against Pintail. The
+  query-shaped files of `mysql-test/t` are fetched at run time, their
+  fixtures built into per-file local databases, and every SELECT compared
+  with live MySQL byte-for-byte.
+
 ## [0.1.0] - 2026-09-02
 
 Makes the server fit a small container under a lot of concurrent load, and
