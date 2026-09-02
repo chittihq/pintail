@@ -384,3 +384,40 @@ fn greatest_and_least_stay_exact_across_the_signed_boundary() {
     assert_eq!(output.rows[0][1], text("9223372036854775807"));
     assert_eq!(output.rows[0][2], text("2.5"));
 }
+
+#[test]
+fn temporal_columns_store_canonical_text_at_their_precision() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE tt (id INT PRIMARY KEY, a TIME(6), b TIME, c DATETIME(3), d DATE)",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO tt (id, a, b, c, d) VALUES \
+         (1, '01:02:03.4', '1 12:30:31.32', '2024-1-5 7:03:00.4567', '2024-01-05'), \
+         (2, '01:02:03.4567891', '-10 1:22:33.45', '2024-01-05', '2024-1-5')",
+    )
+    .expect("insert");
+    let output = run(&fixture, "SELECT a, b, c, d FROM tt ORDER BY id").expect("select");
+    let text = |value: &str| pintail_types::Value::Utf8(value.to_owned());
+    assert_eq!(
+        output.rows[0],
+        [
+            text("01:02:03.400000"),
+            text("36:30:31"),
+            text("2024-01-05 07:03:00.457"),
+            text("2024-01-05"),
+        ]
+    );
+    assert_eq!(
+        output.rows[1],
+        [
+            text("01:02:03.456789"),
+            text("-241:22:33"),
+            text("2024-01-05 00:00:00.000"),
+            text("2024-01-05"),
+        ]
+    );
+}

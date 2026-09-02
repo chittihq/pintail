@@ -400,3 +400,202 @@ mod tests {
         assert_eq!(format_decimal_scaled(-7, 0), "-7");
     }
 }
+
+/// Rounds microseconds to `fsp` fraction digits, half away from zero, the
+/// way `MySQL` rounds a temporal value written into a column of that
+/// precision.
+#[must_use]
+pub fn round_micros_to_fsp(micros: i64, fsp: u8) -> i64 {
+    let unit = 10_i64.pow(6 - u32::from(fsp.min(6)));
+    if unit == 1 {
+        return micros;
+    }
+    let half = unit / 2;
+    if micros >= 0 {
+        (micros + half) / unit * unit
+    } else {
+        -((-micros + half) / unit * unit)
+    }
+}
+
+/// Parses the forms `MySQL` accepts for a TIME value into signed
+/// microseconds: `[-][D ]H+:MM:SS[.f]`, `[-]H+:MM`, a bare second count or
+/// a compact `HHMMSS`, and a datetime, whose time of day is taken. `None`
+/// for anything else.
+#[must_use]
+pub fn parse_time_micros(text: &str) -> Option<i64> {
+    let text = text.trim();
+    if let Some(micros) = parse_datetime_lenient_micros(text) {
+        return Some(micros.rem_euclid(86_400 * 1_000_000));
+    }
+    let (negative, unsigned) = text
+        .strip_prefix('-')
+        .map_or((false, text), |unsigned| (true, unsigned));
+    let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
+    let (clock, fraction) = unsigned
+        .split_once('.')
+        .map_or((unsigned, ""), |(clock, fraction)| (clock, fraction));
+    if !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+    let (days, clock) = match clock.trim().split_once(' ') {
+        Some((days, clock)) => (days.parse::<i64>().ok()?, clock.trim()),
+        None => (0, clock.trim()),
+    };
+    let parts = clock.split(':').collect::<Vec<_>>();
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [hours, minutes, seconds] => (
+            hours.parse::<i64>().ok()?,
+            minutes.parse::<i64>().ok()?,
+            seconds.parse::<i64>().ok()?,
+        ),
+        [hours, minutes] => (hours.parse::<i64>().ok()?, minutes.parse::<i64>().ok()?, 0),
+        [compact] if !compact.is_empty() && compact.bytes().all(|digit| digit.is_ascii_digit()) => {
+            let value = compact.parse::<i64>().ok()?;
+            (value / 10_000, value / 100 % 100, value % 100)
+        }
+        _ => return None,
+    };
+    if !(0..=59).contains(&minutes) || !(0..=59).contains(&seconds) {
+        return None;
+    }
+    let micro_fraction = fraction_micros(fraction)?;
+    let seconds_total = days
+        .checked_mul(86_400)?
+        .checked_add(hours.checked_mul(3_600)?)?
+        .checked_add(minutes * 60 + seconds)?;
+    let total = seconds_total
+        .checked_mul(1_000_000)?
+        .checked_add(micro_fraction)?;
+    Some(if negative { -total } else { total })
+}
+
+/// Formats signed microseconds as `MySQL` TIME text with exactly `fsp`
+/// fraction digits, clamped to the type's +/-838:59:59.999999 as `MySQL`
+/// clamps a value written into a TIME column.
+#[must_use]
+pub fn format_time_micros(micros: i64, fsp: u8) -> String {
+    const MAX_SECONDS: i64 = 838 * 3_600 + 59 * 60 + 59;
+    let negative = micros < 0;
+    let magnitude = micros.unsigned_abs();
+    let (seconds, sub_micros) = if magnitude / 1_000_000 > MAX_SECONDS.unsigned_abs() {
+        (MAX_SECONDS.unsigned_abs(), 999_999)
+    } else {
+        (magnitude / 1_000_000, magnitude % 1_000_000)
+    };
+    let text = format!(
+        "{}{:02}:{:02}:{:02}",
+        if negative { "-" } else { "" },
+        seconds / 3_600,
+        seconds / 60 % 60,
+        seconds % 60
+    );
+    let fsp = fsp.min(6);
+    if fsp == 0 {
+        return text;
+    }
+    let fraction = sub_micros / 10_u64.pow(6 - u32::from(fsp));
+    format!("{text}.{fraction:0width$}", width = usize::from(fsp))
+}
+
+/// Parses the date and datetime forms `MySQL` accepts on input -
+/// `YYYY-MM-DD`, `YYYY-MM-DD HH:MM[:SS[.f]]` with a space or `T`, and
+/// unpadded fields such as `2024-1-5 7:03:00` - into microseconds since
+/// the epoch. `None` for anything else, including a date that does not
+/// exist.
+#[must_use]
+pub fn parse_datetime_lenient_micros(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let (date, time) = text
+        .split_once([' ', 'T'])
+        .map_or((text, ""), |(date, time)| (date, time.trim()));
+    let mut fields = date.split('-');
+    let year = fields.next()?.parse::<i64>().ok()?;
+    let month = fields.next()?.parse::<i64>().ok()?;
+    let day = fields.next()?.parse::<i64>().ok()?;
+    if fields.next().is_some() {
+        return None;
+    }
+    let days = parse_date_days(&format!("{year:04}-{month:02}-{day:02}"))?;
+    let mut micros = days.checked_mul(86_400 * 1_000_000)?;
+    if time.is_empty() {
+        return Some(micros);
+    }
+    let (clock, fraction) = time
+        .split_once('.')
+        .map_or((time, ""), |(clock, fraction)| (clock, fraction));
+    let mut parts = clock.split(':');
+    let hour = parts.next()?.parse::<i64>().ok()?;
+    let minute = parts.next()?.parse::<i64>().ok()?;
+    let second = parts
+        .next()
+        .map_or(Some(0), |part| part.parse::<i64>().ok())?;
+    if parts.next().is_some()
+        || !(0..=23).contains(&hour)
+        || !(0..=59).contains(&minute)
+        || !(0..=59).contains(&second)
+    {
+        return None;
+    }
+    micros = micros.checked_add((hour * 3_600 + minute * 60 + second) * 1_000_000)?;
+    micros.checked_add(fraction_micros(fraction)?)
+}
+
+/// The microseconds a fraction-digit string denotes: `.4` is 400000, `.4567891`
+/// is truncated to `456789` before any rounding the caller applies.
+fn fraction_micros(fraction: &str) -> Option<i64> {
+    if fraction.is_empty() {
+        return Some(0);
+    }
+    if !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+    let mut micros = 0_i64;
+    for digit in fraction.bytes().take(6) {
+        micros = micros * 10 + i64::from(digit - b'0');
+    }
+    let missing = 6_u32.saturating_sub(u32::try_from(fraction.len()).unwrap_or(6));
+    Some(micros * 10_i64.pow(missing))
+}
+
+#[cfg(test)]
+mod temporal_input_tests {
+    use super::*;
+
+    #[test]
+    fn time_input_forms_canonicalize_at_the_column_precision() {
+        let canonical = |text: &str, fsp: u8| {
+            format_time_micros(
+                round_micros_to_fsp(parse_time_micros(text).unwrap(), fsp),
+                fsp,
+            )
+        };
+        assert_eq!(canonical("1", 0), "00:00:01");
+        assert_eq!(canonical("1 12:30:31.32", 0), "36:30:31");
+        assert_eq!(canonical("-10 1:22:33.45", 0), "-241:22:33");
+        assert_eq!(canonical("01:02:03.4", 6), "01:02:03.400000");
+        assert_eq!(canonical("01:02:03.4567891", 6), "01:02:03.456789");
+        assert_eq!(canonical("01:02:03.456", 2), "01:02:03.46");
+        assert_eq!(canonical("2024-02-29 13:14:15.5", 1), "13:14:15.5");
+        assert_eq!(canonical("9000:00:00", 0), "838:59:59");
+        assert!(parse_time_micros("1:60:00").is_none());
+    }
+
+    #[test]
+    fn datetime_input_forms_canonicalize_at_the_column_precision() {
+        let canonical = |text: &str, fsp: u8| {
+            format_datetime_micros(
+                round_micros_to_fsp(parse_datetime_lenient_micros(text).unwrap(), fsp),
+                fsp,
+            )
+            .unwrap()
+        };
+        assert_eq!(canonical("2024-1-5 7:03:00", 0), "2024-01-05 07:03:00");
+        assert_eq!(canonical("2024-01-05", 3), "2024-01-05 00:00:00.000");
+        assert_eq!(
+            canonical("2024-01-05T07:03:00.4567", 3),
+            "2024-01-05 07:03:00.457"
+        );
+        assert!(parse_datetime_lenient_micros("1997-13-31").is_none());
+    }
+}

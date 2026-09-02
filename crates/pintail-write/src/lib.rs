@@ -479,6 +479,36 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             column.name
         ))
     };
+    // Temporal columns store MySQL's canonical text at the column's
+    // precision, as a replicated row would carry: rounded to the declared
+    // fraction digits, padded, days folded into hours for TIME.
+    match column.pintail_type {
+        DataType::Date32 => {
+            let micros = pintail_types::parse_datetime_lenient_micros(text)
+                .ok_or_else(|| wrong("expected a date"))?;
+            let days = micros.div_euclid(86_400 * 1_000_000);
+            return pintail_types::format_date_days(days)
+                .map(Value::Utf8)
+                .ok_or_else(|| wrong("date out of range"));
+        }
+        DataType::DateTime64 { fsp } => {
+            let micros = pintail_types::parse_datetime_lenient_micros(text)
+                .ok_or_else(|| wrong("expected a datetime"))?;
+            let rounded = pintail_types::round_micros_to_fsp(micros, fsp);
+            return pintail_types::format_datetime_micros(rounded, fsp)
+                .map(Value::Utf8)
+                .ok_or_else(|| wrong("datetime out of range"));
+        }
+        DataType::Time64 { fsp } => {
+            let micros =
+                pintail_types::parse_time_micros(text).ok_or_else(|| wrong("expected a time"))?;
+            return Ok(Value::Utf8(pintail_types::format_time_micros(
+                pintail_types::round_micros_to_fsp(micros, fsp),
+                fsp,
+            )));
+        }
+        _ => {}
+    }
     let value = match column.pintail_type.storage_type() {
         DataType::Boolean => match text {
             "0" => Value::Boolean(false),
@@ -549,6 +579,14 @@ fn declare(
     nullable: bool,
 ) -> Result<SourceColumn, WriteError> {
     let (bare, full, precision, scale) = mysql_terms(data_type)?;
+    // TIME(3), DATETIME(6), TIMESTAMP(1): the fraction digits the column
+    // keeps, which decide how a written value is rounded and rendered.
+    let datetime_precision = match data_type {
+        SqlDataType::Time(Some(fsp), _)
+        | SqlDataType::Datetime(Some(fsp))
+        | SqlDataType::Timestamp(Some(fsp), _) => Some(u8::try_from(*fsp).unwrap_or(6).min(6)),
+        _ => None,
+    };
     declared_column(&DeclaredColumn {
         ordinal,
         name,
@@ -556,7 +594,7 @@ fn declare(
         column_type: &full,
         numeric_precision: precision,
         numeric_scale: scale,
-        datetime_precision: None,
+        datetime_precision,
         nullable,
         collation: text_collation(&bare),
     })
