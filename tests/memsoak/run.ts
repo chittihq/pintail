@@ -36,6 +36,12 @@ const DATABASE = 'soak_db'
 /// so this is the knob that makes a small leak visible in ten minutes.
 const TABLES = Number(process.env.MEMSOAK_TABLES ?? '300')
 const ROWS_PER_TABLE = Number(process.env.MEMSOAK_ROWS ?? '50')
+/// Source write rate during the soak: rows per batch and the pause between
+/// batches. The default is a trickle; a heavy rate (thousands of rows a
+/// second over large tables) drives memtable flushes and compactions, the
+/// large transient allocations a quiet source never produces.
+const WRITE_ROWS = Number(process.env.MEMSOAK_WRITE_ROWS ?? '1')
+const WRITE_MS = Number(process.env.MEMSOAK_WRITE_MS ?? '500')
 /// Supervisor cadence inside the container. Production runs 5000ms; a fast
 /// cadence compresses an hour of production churn into minutes.
 const SUPERVISOR_MS = Number(process.env.MEMSOAK_SUPERVISOR_MS ?? '300')
@@ -235,7 +241,7 @@ function publish(image: string, samples: Sample[], verdict: string[]) {
     '',
     `Measured ${new Date().toISOString()} on \`${image}\` (Linux container, ${MEMORY_LIMIT} limit${EXTRA_ENV.length ? `, env ${EXTRA_ENV.join(" ")}` : ""}).`,
     '',
-    `${TABLES} tables × ${ROWS_PER_TABLE} rows, supervisor every ${SUPERVISOR_MS}ms, ` +
+    `${TABLES} tables × ${ROWS_PER_TABLE} rows, writes of ${WRITE_ROWS} rows every ${WRITE_MS}ms, supervisor every ${SUPERVISOR_MS}ms, ` +
       `${(DURATION_MS / 60_000).toFixed(0)} min sampled every ${SAMPLE_MS / 1000}s, ` +
       `first ${(WARMUP_MS / 60_000).toFixed(0)} min are warm-up.`,
     '',
@@ -356,12 +362,16 @@ async function main() {
   // WALs grow and flush, the way a quiet production source behaves.
   let writing = true
   let written = 0
+  let batches = 0
   const writer = (async () => {
     while (writing) {
-      const table = tableName(written % TABLES)
-      await sql(`INSERT INTO ${table} VALUES (${ROWS_PER_TABLE + Math.floor(written / TABLES)}, ${written}, 'w')`).catch(() => {})
-      written += 1
-      await Bun.sleep(500)
+      const table = tableName(batches % TABLES)
+      const base = ROWS_PER_TABLE + Math.floor(batches / TABLES) * WRITE_ROWS
+      const rows = Array.from({ length: WRITE_ROWS }, (_, row) => `(${base + row}, ${written + row}, 'w')`)
+      await sql(`INSERT INTO ${table} VALUES ${rows.join(',')}`).catch(() => {})
+      written += WRITE_ROWS
+      batches += 1
+      await Bun.sleep(WRITE_MS)
     }
   })()
 
