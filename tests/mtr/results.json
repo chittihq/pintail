@@ -1,0 +1,2810 @@
+{
+  "ref": "8.4",
+  "mysqlVersion": "8.4.11",
+  "measuredAt": "2026-09-02T08:17:12.069Z",
+  "totals": {
+    "exact": 344,
+    "compared": 762,
+    "queries": 5182
+  },
+  "results": [
+    {
+      "file": "case",
+      "statements": 140,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 2,
+        "pintail-error": 18,
+        "mysql-error": 0,
+        "tainted": 27,
+        "setup": 20,
+        "setup-rejected": 17,
+        "unsupported-setup": 28,
+        "session": 5,
+        "skipped": 22
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 17,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 15,
+        "Error: unsupported expression: COLLATE latin1_general_ci is unsupported; supported: utf8mb": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET ucs2 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "derived",
+      "statements": 40,
+      "counts": {
+        "exact": 3,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 11,
+        "setup": 3,
+        "setup-rejected": 5,
+        "unsupported-setup": 5,
+        "session": 0,
+        "skipped": 10
+      },
+      "errorClasses": {
+        "Error: unknown table mtr_derived.DUAL": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 4,
+        "Error: HAVING requires GROUP BY or an aggregate": 2,
+        "DDL: Error: table constraint INDEX (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "derived_ci",
+      "statements": 10,
+      "counts": {
+        "exact": 2,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 5,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "derived_condition_pushdown",
+      "statements": 256,
+      "counts": {
+        "exact": 3,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 2,
+        "mysql-error": 0,
+        "tainted": 25,
+        "setup": 30,
+        "setup-rejected": 32,
+        "unsupported-setup": 56,
+        "session": 31,
+        "skipped": 77
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 25,
+        "DDL: Error: table constraint KEY (f1) is not supported on a local table": 3,
+        "Error: unknown column @b": 1,
+        "Error: unknown database information_schema": 1,
+        "DDL: Error: column option CHARACTER SET utf16 is not supported on a local table": 2,
+        "DDL: Error: column option COLLATE utf8mb4_bin is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "derived_correlated",
+      "statements": 6,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 1,
+        "unsupported-setup": 2,
+        "session": 2,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "derived_correlated_hypergraph",
+      "statements": 8,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 3,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "derived_cs",
+      "statements": 10,
+      "counts": {
+        "exact": 2,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 5
+      },
+      "errorClasses": {
+        "Error: duplicate relation QN": 3
+      }
+    },
+    {
+      "file": "derived_limit",
+      "statements": 4,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "distinct",
+      "statements": 69,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 24,
+        "setup": 4,
+        "setup-rejected": 5,
+        "unsupported-setup": 28,
+        "session": 0,
+        "skipped": 8
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (A) is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "distinct_innodb",
+      "statements": 16,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 2,
+        "setup": 2,
+        "setup-rejected": 3,
+        "unsupported-setup": 4,
+        "session": 0,
+        "skipped": 5
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY col_int_key (col_int_key) is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2
+      }
+    },
+    {
+      "file": "func_at_time_zone",
+      "statements": 22,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 2,
+        "setup-rejected": 2,
+        "unsupported-setup": 3,
+        "session": 3,
+        "skipped": 6
+      },
+      "errorClasses": {
+        "Error: unsupported expression: TIMESTAMP _ AT TIME ZONE _": 3,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2
+      }
+    },
+    {
+      "file": "func_bitwise_ops",
+      "statements": 387,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 5,
+        "mysql-error": 0,
+        "tainted": 272,
+        "setup": 8,
+        "setup-rejected": 8,
+        "unsupported-setup": 29,
+        "session": 0,
+        "skipped": 65
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 6,
+        "Error: unsupported literal: X_": 2,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: unsupported expression: _binary X_": 2,
+        "Error: unsupported literal: _": 1
+      }
+    },
+    {
+      "file": "func_comparison",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1
+      }
+    },
+    {
+      "file": "func_concat",
+      "statements": 48,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 5,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 10,
+        "setup": 6,
+        "setup-rejected": 6,
+        "unsupported-setup": 8,
+        "session": 0,
+        "skipped": 10
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 4,
+        "Error: query engine failed: bound expression has an invalid physical type": 2,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
+        "Error: unknown column @query": 1
+      }
+    },
+    {
+      "file": "func_date_add",
+      "statements": 62,
+      "counts": {
+        "exact": 3,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 20,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 2,
+        "setup-rejected": 2,
+        "unsupported-setup": 7,
+        "session": 2,
+        "skipped": 23
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "Error: unsupported expression: INTERVAL _ WEEK": 1,
+        "Error: unsupported expression: ADDDATE(_, REPEAT(_, _))": 1,
+        "Error: unsupported expression: DATE _": 3,
+        "Error: unsupported expression: TIMESTAMP _": 3,
+        "Error: unsupported expression: TIME _": 5,
+        "Error: unsupported expression: INTERVAL _ DAY": 3,
+        "Error: unsupported expression: INTERVAL _ HOUR": 3,
+        "Error: unsupported expression: ADDTIME(_, _)": 1
+      }
+    },
+    {
+      "file": "func_default",
+      "statements": 13,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 2,
+        "setup": 3,
+        "setup-rejected": 2,
+        "unsupported-setup": 2,
+        "session": 0,
+        "skipped": 4
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "func_equal",
+      "statements": 29,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 3,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 7,
+        "setup": 4,
+        "setup-rejected": 4,
+        "unsupported-setup": 5,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 3,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 3,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "func_gconcat",
+      "statements": 261,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 2,
+        "mysql-error": 0,
+        "tainted": 108,
+        "setup": 42,
+        "setup-rejected": 37,
+        "unsupported-setup": 47,
+        "session": 10,
+        "skipped": 14
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 28,
+        "DDL: Error: column option CHARACTER SET cp1250 is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET cp850 is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 3,
+        "Error: unknown table mtr_func_gconcat.DUAL": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: UNION ALL column _ has types Some(Utf8) and Some(Int64)": 1,
+        "DDL: Error: sql parser error: Expected: (, found: a at Line: _, Column: _": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "func_group",
+      "statements": 725,
+      "counts": {
+        "exact": 13,
+        "mismatch": 1,
+        "name-mismatch": 0,
+        "pintail-error": 8,
+        "mysql-error": 0,
+        "tainted": 234,
+        "setup": 91,
+        "setup-rejected": 83,
+        "unsupported-setup": 150,
+        "session": 12,
+        "skipped": 133
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 52,
+        "DDL: Error: table constraint KEY k1 (a1) is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY k1 (a2, a3) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY k1 (a3, a2) is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin2 is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 5,
+        "DDL: Error: table constraint INDEX i_b_id (a, b, id) is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX i_id (a, id) is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX (b) is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX (b(_)) is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 3,
+        "DDL: Error: table constraint KEY (a, b) is not supported on a local table": 4,
+        "DDL: Error: table constraint KEY k1 (a, b) is not supported on a local table": 1,
+        "Error: column t1__47.i is neither grouped nor aggregated": 1,
+        "Error: unsupported expression: RAND(_)": 2,
+        "Error: unsupported expression: GET_LOCK(_, _)": 4,
+        "Error: unsupported expression: RELEASE_LOCK(_)": 1,
+        "DDL: Error: table constraint KEY (col_int_key) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 4,
+        "DDL: Error: column option UNIQUE is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (x) is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "func_if",
+      "statements": 99,
+      "counts": {
+        "exact": 3,
+        "mismatch": 1,
+        "name-mismatch": 6,
+        "pintail-error": 7,
+        "mysql-error": 0,
+        "tainted": 22,
+        "setup": 16,
+        "setup-rejected": 16,
+        "unsupported-setup": 14,
+        "session": 0,
+        "skipped": 14
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 3,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 13,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1,
+        "Error: invalid use of group function: min(_)": 4,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "func_in_all",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "func_in_none",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "func_isnull",
+      "statements": 35,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 1,
+        "mysql-error": 0,
+        "tainted": 7,
+        "setup": 9,
+        "setup-rejected": 7,
+        "unsupported-setup": 8,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 2,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 4,
+        "Error: unsupported expression: RELEASE_LOCK(_)": 1,
+        "DDL: Error: table constraint KEY col_int_key (col_int_key) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "func_like",
+      "statements": 175,
+      "counts": {
+        "exact": 31,
+        "mismatch": 0,
+        "name-mismatch": 1,
+        "pintail-error": 17,
+        "mysql-error": 0,
+        "tainted": 36,
+        "setup": 17,
+        "setup-rejected": 15,
+        "unsupported-setup": 22,
+        "session": 12,
+        "skipped": 24
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 2,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 10,
+        "DDL: Error: column option CHARACTER SET koi8r is not supported on a local table": 1,
+        "Error: unsupported expression: _cp866 _": 1,
+        "Error: unsupported expression: _cp1251 _": 1,
+        "DDL: Error: table constraint UNIQUE KEY (a) is not supported on a local table": 1,
+        "Error: unsupported literal: X_": 9,
+        "Error: invalid scalar function CONVERT USING unsupported character set big5": 1,
+        "Error: invalid scalar function CONVERT USING unsupported character set gb18030": 1,
+        "Error: invalid scalar function CONVERT USING unsupported character set latin1": 1,
+        "Error: unsupported expression: COLLATE gb2312_bin is unsupported; supported: utf8mb4_0900_": 1,
+        "DDL: Error: column option GENERATED ALWAYS AS (x LIKE _ ESCAPE _) is not supported on a local t": 1,
+        "Error: sql parser error: Expected: a concrete value, found: _latin1 at Line: _, Column: _": 1,
+        "Error: unsupported expression: _latin1 _": 1
+      }
+    },
+    {
+      "file": "func_math",
+      "statements": 568,
+      "counts": {
+        "exact": 57,
+        "mismatch": 15,
+        "name-mismatch": 34,
+        "pintail-error": 42,
+        "mysql-error": 1,
+        "tainted": 94,
+        "setup": 47,
+        "setup-rejected": 34,
+        "unsupported-setup": 80,
+        "session": 20,
+        "skipped": 144
+      },
+      "errorClasses": {
+        "Error: unsupported expression: rand(_)": 1,
+        "Error: unsupported expression: pi()": 4,
+        "Error: unsupported expression: atan(-_, _)": 1,
+        "Error: unsupported expression: atan2(-_, _)": 1,
+        "Error: unsupported expression: ACOS(_._)": 1,
+        "Error: unsupported expression: ASIN(_._)": 1,
+        "Error: unsupported expression: ACOS(_._ * _._)": 2,
+        "Error: unsupported expression: ASIN(_._ + _._)": 1,
+        "Error: unsupported expression: ASIN(_._ - _._)": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 32,
+        "DDL: Error: table constraint INDEX (a) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: numeric expression overflow": 9,
+        "Error: unsupported expression: RAND(a)": 1,
+        "Error: sql parser error: Expected: end of statement, found: - at Line: _, Column: _": 3,
+        "Error: unsupported expression: COT(_ / _)": 1,
+        "Error: unknown column @a": 1,
+        "Error: numeric literal is out of range: _": 5,
+        "Error: unsupported expression: PI()": 1,
+        "Error: unsupported expression: BIT_LENGTH(_)": 1,
+        "Error: unsupported expression: INSERT(_, _, _, _)": 1,
+        "Error: unsupported expression: LTRIM(_)": 1,
+        "Error: unsupported expression: RTRIM(_)": 1,
+        "Error: unsupported expression: ST_GeomFromText(_)": 1,
+        "Error: unknown column @val": 1,
+        "Error: unsupported literal: X_": 1,
+        "Error: query engine failed: bound expression has an invalid physical type": 1
+      }
+    },
+    {
+      "file": "func_op",
+      "statements": 18,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 9,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 2,
+        "setup-rejected": 2,
+        "unsupported-setup": 2,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "Error: operator | does not accept Some(Int64) and Some(Int64)": 6,
+        "Error: operator << does not accept Some(Int64) and Some(Int64)": 1,
+        "Error: operator >> does not accept Some(Int64) and Some(Int64)": 2,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2
+      }
+    },
+    {
+      "file": "func_regexp",
+      "statements": 90,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 4,
+        "pintail-error": 26,
+        "mysql-error": 0,
+        "tainted": 4,
+        "setup": 8,
+        "setup-rejected": 4,
+        "unsupported-setup": 8,
+        "session": 1,
+        "skipped": 34
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 4,
+        "Error: unsupported expression: _latin1 X_": 3,
+        "Error: unsupported expression: _koi8r X_": 3,
+        "Error: unsupported expression: _latin1 _": 2,
+        "Error: sql parser error: Expected: an expression, found: EOF": 1,
+        "Error: invalid scalar function regular expressions do not accept binary-string operands": 1,
+        "Error: unsupported table expression: (VALUES ROW(_), ROW(NULL), ROW(_)) AS v (e)": 4,
+        "Error: unsupported expression: r_instr(_)": 2,
+        "Error: unsupported expression: r_instr(NULL)": 1,
+        "Error: unsupported expression: r_like(_)": 2,
+        "Error: unsupported expression: r_like(NULL)": 1,
+        "Error: unsupported expression: r_replace(_)": 2,
+        "Error: unsupported expression: r_replace(NULL)": 1,
+        "Error: unsupported expression: r_substr(_)": 2,
+        "Error: unsupported expression: r_substr(NULL)": 1
+      }
+    },
+    {
+      "file": "func_sapdb",
+      "statements": 88,
+      "counts": {
+        "exact": 0,
+        "mismatch": 3,
+        "name-mismatch": 12,
+        "pintail-error": 62,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 2,
+        "setup-rejected": 1,
+        "unsupported-setup": 4,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "Error: unsupported expression: EXTRACT(DAY_MICROSECOND FROM _)": 1,
+        "Error: unsupported expression: EXTRACT(HOUR_MICROSECOND FROM _)": 1,
+        "Error: unsupported expression: EXTRACT(MINUTE_MICROSECOND FROM _)": 1,
+        "Error: unsupported expression: EXTRACT(SECOND_MICROSECOND FROM _)": 1,
+        "Error: unsupported expression: EXTRACT(MICROSECOND FROM _)": 1,
+        "Error: unsupported literal: _": 35,
+        "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 9,
+        "Error: unsupported expression: date_add(_, INTERVAL _ MICROSECOND)": 1,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ MICROSECOND)": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1,
+        "Error: unsupported expression: microsecond(_._)": 1,
+        "Error: unsupported expression: timediff(_, _)": 3,
+        "Error: unsupported expression: time(_)": 1,
+        "Error: sql parser error: Expected: an identifier after AS, found: _ at Line: _, Column: _": 1,
+        "Error: unsupported expression: TIME(_)": 2,
+        "Error: unsupported expression: time(sec_to_time(-_))": 2,
+        "Error: unsupported expression: TIME(maketime(-_, _, _))": 1
+      }
+    },
+    {
+      "file": "func_set",
+      "statements": 77,
+      "counts": {
+        "exact": 0,
+        "mismatch": 3,
+        "name-mismatch": 2,
+        "pintail-error": 20,
+        "mysql-error": 0,
+        "tainted": 19,
+        "setup": 11,
+        "setup-rejected": 8,
+        "unsupported-setup": 7,
+        "session": 0,
+        "skipped": 7
+      },
+      "errorClasses": {
+        "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
+        "Error: sql parser error: INTERVAL requires a unit after the literal value": 9,
+        "Error: unsupported literal: _": 8,
+        "Error: unsupported expression: make_set(_, _, _, _)": 1,
+        "Error: unsupported expression: make_set(NULL, _, _, _)": 1,
+        "DDL: Error: column option UNIQUE is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 6
+      }
+    },
+    {
+      "file": "func_str",
+      "statements": 834,
+      "counts": {
+        "exact": 60,
+        "mismatch": 12,
+        "name-mismatch": 107,
+        "pintail-error": 319,
+        "mysql-error": 0,
+        "tainted": 59,
+        "setup": 65,
+        "setup-rejected": 40,
+        "unsupported-setup": 64,
+        "session": 11,
+        "skipped": 97
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 30,
+        "Error: unsupported expression: bit_length(_)": 1,
+        "Error: unsupported expression: _latin1 _": 14,
+        "Error: sql parser error: Expected: ), found: _ at Line: _, Column: _": 4,
+        "Error: unsupported expression: _utf8mb4 _": 4,
+        "Error: unsupported literal: X_": 4,
+        "Error: unsupported expression: POSITION(_ IN _utf8mb4 _)": 1,
+        "Error: unsupported expression: POSITION(X_ IN _utf8mb4 _)": 2,
+        "Error: unsupported expression: mid(_, _, _)": 1,
+        "Error: unsupported expression: ltrim(_)": 3,
+        "Error: unsupported expression: insert(_, _, _, _)": 13,
+        "Error: unsupported expression: soundex(_)": 1,
+        "Error: sql parser error: Expected: end of statement, found: like at Line: _, Column: _": 5,
+        "Error: unsupported expression: aes_encrypt(_, _)": 2,
+        "Error: operator | does not accept Some(Int64) and Some(Int64)": 1,
+        "Error: unsupported expression: quote(__)": 1,
+        "Error: unsupported expression: quote(concat(__, _))": 1,
+        "Error: unsupported expression: quote(_ / _)": 1,
+        "Error: unsupported expression: quote(concat(char(_), char(_), char(_), char(_), char(_), c": 1,
+        "Error: unsupported expression: quote(NULL)": 1,
+        "Error: unsupported expression: POSITION(_ IN _ IN (_))": 1,
+        "Error: unsupported expression: POSITION((_ IN (_, _, _)) IN _)": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 30,
+        "Error: unsupported expression: ltrim(concat(_, _))": 1,
+        "Error: unsupported expression: quote(TRIM(concat(_, _)))": 1,
+        "Error: unsupported expression: _latin2 _": 29,
+        "Error: unsupported expression: row(_, _, _)": 3,
+        "Error: unsupported expression: COLLATE latin1_bin is unsupported; supported: utf8mb4_0900_": 7,
+        "Error: unsupported expression: POSITION(_latin1 _ IN _latin1 _)": 1,
+        "Error: unsupported expression: POSITION(_latin1 _ IN _latin1 _ COLLATE latin1_bin)": 1,
+        "Error: unsupported expression: POSITION(_latin1 _ COLLATE latin1_bin IN _latin1 _)": 1,
+        "Error: unsupported expression: POSITION(_latin1 _ COLLATE latin1_general_ci IN _latin1 _ C": 1,
+        "Error: unsupported expression: POSITION(_latin1 _ IN _latin2 _)": 1,
+        "Error: unsupported expression: COLLATE latin1_general_ci is unsupported; supported: utf8mb": 1,
+        "Error: unsupported expression: collation(bin(_))": 1,
+        "Error: unsupported expression: collation(oct(_))": 1,
+        "Error: unsupported expression: collation(conv(_, _, _))": 1,
+        "Error: unsupported expression: collation(hex(_))": 1,
+        "Error: unsupported expression: collation(char(_))": 1,
+        "Error: unsupported expression: collation(format(_, _))": 1,
+        "DDL: Error: column option CHARACTER SET latin2 is not supported on a local table": 1,
+        "Error: unsupported expression: charset(NULL)": 1,
+        "Error: unknown table mtr_func_str.DUAL": 20,
+        "DDL: Error: column option UNIQUE is not supported on a local table": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 3,
+        "Error: numeric literal is out of range: _": 56,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 2,
+        "Error: unsupported expression: rtrim(_)": 1,
+        "Error: unsupported expression: pi()": 6,
+        "Error: unsupported expression: benchmark(NULL, NULL)": 1,
+        "Error: unsupported expression: benchmark(_, NULL)": 2,
+        "Error: unsupported expression: benchmark(NULL, _ + _)": 1,
+        "Error: unsupported expression: benchmark(-_, _)": 1,
+        "Error: unknown table mtr_func_str.dual": 1,
+        "Error: unknown column @bench_count": 1,
+        "Error: numeric expression overflow": 34,
+        "Error: unsupported expression: insert(_, -_, _, _)": 5,
+        "Error: unsupported expression: insert(_, _, -_, _)": 5,
+        "Error: unsupported expression: insert(_, -_, -_, _)": 5,
+        "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
+        "Error: sql parser error: Expected: ), found: int at Line: _, Column: _": 2,
+        "Error: unsupported expression: INSERT(_, _, _, _)": 4,
+        "Error: unsupported expression: ISNULL(LOCATE(a, p))": 1,
+        "Error: unsupported expression: insert(substring_index(_, _, _), _, _, _)": 1,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1,
+        "Error: unsupported expression: format(_._, _, NULL)": 1,
+        "Error: unsupported expression: format(_._, _, _)": 9,
+        "Error: unsupported expression: format(_, _, _)": 1,
+        "Error: unsupported expression: FORMAT(_._, _, _)": 1,
+        "Error: unsupported expression: FORMAT(12333e-_, _, _)": 1,
+        "Error: unsupported expression: (rpad(_._, _, _)) IS NOT FALSE": 1,
+        "Error: unknown column 0b111111111111111111111111111111111111111111111111111": 1,
+        "Error: operator ^ does not accept Some(Utf8) and Some(Decimal { precision: _, scale: _ })": 1,
+        "Error: operator ^ does not accept Some(Float64) and Some(Utf8)": 1,
+        "Error: unknown column @tmp_max": 1,
+        "Error: unknown column @@global.max_allowed_packet": 1,
+        "Error: sql parser error: Expected: ), found: CHARSET at Line: _, Column: _": 3,
+        "DDL: Error: table constraint KEY (c2) is not supported on a local table": 1,
+        "Error: unsupported expression: QUOTE(NULL)": 1
+      }
+    },
+    {
+      "file": "func_test",
+      "statements": 221,
+      "counts": {
+        "exact": 29,
+        "mismatch": 8,
+        "name-mismatch": 6,
+        "pintail-error": 70,
+        "mysql-error": 0,
+        "tainted": 18,
+        "setup": 21,
+        "setup-rejected": 14,
+        "unsupported-setup": 19,
+        "session": 8,
+        "skipped": 28
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 10,
+        "Error: sql parser error: Expected: an expression, found: ! at Line: _, Column: _": 1,
+        "Error: operator ^ does not accept Some(Int64) and Some(Int64)": 1,
+        "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 8,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 11,
+        "Error: unsupported expression: _koi8r _": 9,
+        "Error: unsupported expression: COLLATE koi8r_general_ci is unsupported; supported: utf8mb4": 3,
+        "Error: unsupported expression: COLLATE koi8r_bin is unsupported; supported: utf8mb4_0900_a": 3,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 2,
+        "Error: sql parser error: Expected: ), found: mod at Line: _, Column: _": 2,
+        "Error: sql parser error: Expected: end of statement, found: null at Line: _, Column: _": 3,
+        "Error: unknown table mtr_func_test.DUAL": 4,
+        "Error: unsupported expression: DATE _": 14,
+        "Error: unsupported expression: TIME _": 8,
+        "DDL: Error: table constraint UNIQUE KEY ix (c1, c3 DESC, c4 DESC) is not supported on a local t": 1,
+        "Error: UNION ALL column _ has types Some(Utf8) and Some(Int64)": 4
+      }
+    },
+    {
+      "file": "func_time",
+      "statements": 599,
+      "counts": {
+        "exact": 24,
+        "mismatch": 7,
+        "name-mismatch": 45,
+        "pintail-error": 172,
+        "mysql-error": 62,
+        "tainted": 86,
+        "setup": 41,
+        "setup-rejected": 19,
+        "unsupported-setup": 64,
+        "session": 33,
+        "skipped": 46
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 48,
+        "Error: operator - does not accept Some(DateTime64 { fsp: _ }) and Some(DateTime64 { fsp: _": 1,
+        "Error: operator * does not accept Some(Date32) and Some(Int64)": 1,
+        "Error: unsupported expression: current_timestamp()": 1,
+        "Error: unsupported expression: localtime()": 1,
+        "Error: unsupported expression: localtimestamp()": 1,
+        "Error: query engine failed: invalid MySQL date/time value": 24,
+        "Error: unsupported expression: yearweek(_, _)": 3,
+        "Error: unsupported expression: time_format(_, _)": 5,
+        "Error: unsupported expression: date_add(_, INTERVAL _ SECOND)": 5,
+        "Error: unsupported expression: date_add(_, INTERVAL _ MINUTE)": 1,
+        "Error: unsupported expression: date_add(_, INTERVAL _ HOUR)": 2,
+        "Error: unsupported expression: date_add(_, INTERVAL _ DAY)": 2,
+        "Error: unsupported expression: date_add(_, INTERVAL _ MONTH)": 2,
+        "Error: unsupported expression: date_add(_, INTERVAL _ YEAR)": 1,
+        "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 26,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ SECOND)": 2,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ MINUTE)": 1,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ HOUR)": 1,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ DAY)": 2,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ MONTH)": 1,
+        "Error: unsupported expression: date_sub(_, INTERVAL _ YEAR)": 1,
+        "Error: unsupported expression: date_add(_, INTERVAL -_ MINUTE)": 1,
+        "Error: unsupported expression: date_add(_, INTERVAL -_ DAY)": 1,
+        "Error: unsupported expression: date_add(_, INTERVAL -_ YEAR)": 1,
+        "Error: unsupported expression: date_add(_, INTERVAL NULL SECOND)": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 15,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1,
+        "Error: unknown column @a": 2,
+        "Error: unsupported expression: CHARSET(DAYNAME(_))": 1,
+        "Error: unsupported expression: CHARSET(MONTHNAME(_))": 1,
+        "Error: unsupported expression: COERCIBILITY(MONTHNAME(_))": 1,
+        "Error: unsupported expression: timestampdiff(QUARTER, _, _)": 1,
+        "Error: unsupported expression: timestampdiff(SQL_TSI_WEEK, _, _)": 1,
+        "Error: unsupported expression: timestampdiff(SQL_TSI_HOUR, _, _)": 1,
+        "Error: unsupported expression: timestampdiff(SQL_TSI_DAY, _, _)": 2,
+        "Error: unsupported expression: timestampdiff(SQL_TSI_MINUTE, _, _)": 1,
+        "Error: unsupported expression: timestampdiff(SQL_TSI_SECOND, _, _)": 1,
+        "Error: unsupported expression: TIMESTAMPDIFF(week, _, _)": 6,
+        "Error: unsupported expression: date_add(last_day(_), INTERVAL _ DAY)": 1,
+        "Error: unsupported expression: date_sub(localtimestamp(), INTERVAL _ HOUR)": 3,
+        "Error: unsupported expression: utc_timestamp()": 2,
+        "Error: unsupported expression: utc_date()": 1,
+        "Error: unsupported expression: ADDTIME(_, _)": 2,
+        "Error: unsupported expression: SUBTIME(_, _)": 2,
+        "Error: numeric expression overflow": 2,
+        "DDL: Error: column option CHARACTER SET BINARY is not supported on a local table": 1,
+        "Error: unsupported expression: timediff(now(), DATE_SUB(now(), INTERVAL _ DAY))": 2,
+        "Error: unsupported expression: timediff(now(), DATE_SUB(now(), INTERVAL _ HOUR))": 2,
+        "Error: operator + does not accept Some(DateTime64 { fsp: _ }) and Some(Int64)": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET ascii is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "func_timestamp",
+      "statements": 7,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 2,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint INDEX (Tag) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "func_unixtime",
+      "statements": 31,
+      "counts": {
+        "exact": 0,
+        "mismatch": 18,
+        "name-mismatch": 0,
+        "pintail-error": 6,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 7,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 2,
+        "Error: query engine failed: invalid MySQL date/time value": 1,
+        "Error: numeric expression overflow": 2,
+        "Error: numeric literal is out of range: _": 1
+      }
+    },
+    {
+      "file": "func_weight_string",
+      "statements": 84,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 14,
+        "mysql-error": 0,
+        "tainted": 10,
+        "setup": 7,
+        "setup-rejected": 4,
+        "unsupported-setup": 17,
+        "session": 5,
+        "skipped": 26
+      },
+      "errorClasses": {
+        "Error: unsupported literal: X_": 1,
+        "Error: sql parser error: Expected: ), found: as at Line: _, Column: _": 4,
+        "Error: unsupported expression: weight_string(_)": 2,
+        "Error: unsupported expression: weight_string(CAST(_ AS BINARY(_)))": 1,
+        "Error: unsupported expression: weight_string(NULL)": 1,
+        "Error: unsupported expression: COLLATE latin1_swedish_ci is unsupported; supported: utf8mb": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "Error: sql parser error: Expected: ), found: AS at Line: _, Column: _": 2,
+        "DDL: Error: column option CHARACTER SET latin2 is not supported on a local table": 1,
+        "Error: unsupported expression: _latin1 _": 1,
+        "Error: unsupported expression: WEIGHT_STRING(JSON_UNQUOTE(JSON_SET(_, _, _)))": 1,
+        "DDL: Error: column option COLLATE latin2_czech_cs is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "group_by",
+      "statements": 1235,
+      "counts": {
+        "exact": 5,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 6,
+        "mysql-error": 1,
+        "tainted": 317,
+        "setup": 185,
+        "setup-rejected": 146,
+        "unsupported-setup": 254,
+        "session": 25,
+        "skipped": 296
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 85,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 20,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 1,
+        "DDL: Error: table constraint KEY (spid) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 8,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 3,
+        "DDL: Error: table constraint KEY (score) is not supported on a local table": 1,
+        "DDL: Error: PRIMARY KEY over the expression _ is not supported": 2,
+        "Error: unsupported query clause: SELECT SQL_BUFFER_RESULT max(f1) IS NULL FROM t1__32": 1,
+        "Error: unsupported query clause: SELECT SQL_BUFFER_RESULT max(f1) + _ FROM t1__32": 1,
+        "DDL: Error: table constraint KEY b (b) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (b) is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY i2 (a, b) is not supported on a local table": 1,
+        "DDL: Error: table constraint UNIQUE KEY (c, b) is not supported on a local table": 1,
+        "DDL: Error: table constraint UNIQUE KEY (a, b) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (a, b) is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX vc_idx (vc) is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX idx (col1) is not supported on a local table": 1,
+        "Error: unsupported expression: (_, _)": 1,
+        "DDL: Error: table constraint KEY col_int_key (col_int_key) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (b, a) is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY c_key (c) is not supported on a local table": 1,
+        "DDL: Error: column option GENERATED ALWAYS AS (_) VIRTUAL is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (f3) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (i, j) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY k1 (f1) is not supported on a local table": 1,
+        "Error: unsupported expression: f1(_)": 2,
+        "DDL: Error: table constraint KEY (b__1) is not supported on a local table": 1,
+        "Error: column t1__109.x is neither grouped nor aggregated": 1,
+        "DDL: Error: table constraint KEY (data_from_ymd) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "group_by_fd_no_prot",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "group_by_fd_ps_prot",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "group_by_hypergraph",
+      "statements": 76,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 9,
+        "setup": 5,
+        "setup-rejected": 5,
+        "unsupported-setup": 6,
+        "session": 0,
+        "skipped": 51
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: table constraint KEY ix1 (c, d) is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY (col1, col2) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "having",
+      "statements": 324,
+      "counts": {
+        "exact": 6,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 1,
+        "mysql-error": 2,
+        "tainted": 93,
+        "setup": 54,
+        "setup-rejected": 50,
+        "unsupported-setup": 76,
+        "session": 7,
+        "skipped": 35
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 36,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 2,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1,
+        "DDL: Error: column option UNIQUE is not supported on a local table": 2,
+        "DDL: Error: table constraint INDEX id1 (id2) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (f2, f1) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (t) is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "Error: unsupported expression: utc_date()": 1
+      }
+    },
+    {
+      "file": "having_myisam",
+      "statements": 19,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 5,
+        "setup-rejected": 4,
+        "unsupported-setup": 5,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: table constraint KEY col_int_key (col_int_key) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "limit",
+      "statements": 177,
+      "counts": {
+        "exact": 3,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 64,
+        "setup": 18,
+        "setup-rejected": 13,
+        "unsupported-setup": 44,
+        "session": 2,
+        "skipped": 33
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 9,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 2,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "limit_myisam",
+      "statements": 4,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "negation_elimination",
+      "statements": 70,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 35,
+        "setup": 2,
+        "setup-rejected": 1,
+        "unsupported-setup": 2,
+        "session": 0,
+        "skipped": 30
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "null",
+      "statements": 133,
+      "counts": {
+        "exact": 4,
+        "mismatch": 1,
+        "name-mismatch": 3,
+        "pintail-error": 8,
+        "mysql-error": 0,
+        "tainted": 12,
+        "setup": 15,
+        "setup-rejected": 11,
+        "unsupported-setup": 39,
+        "session": 6,
+        "skipped": 34
+      },
+      "errorClasses": {
+        "Error: unsupported expression: isnull(NULL)": 1,
+        "Error: operator | does not accept Some(Int64) and None": 1,
+        "Error: operator | does not accept Some(Int64) and Some(Int64)": 1,
+        "Error: unsupported literal: _": 4,
+        "Error: unsupported expression: inet6_ntoa(NULL)": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 2,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "DDL: Error: table constraint INDEX idx (a) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (i) is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1
+      }
+    },
+    {
+      "file": "null_key_all_innodb",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "null_key_all_myisam",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "null_key_icp_innodb",
+      "statements": 1,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "null_key_icp_myisam",
+      "statements": 1,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "null_key_none_innodb",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "null_key_none_myisam",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "order_by_all",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "order_by_icp_mrr",
+      "statements": 1,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "order_by_limit",
+      "statements": 3,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "order_by_none",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "order_by_sortkey",
+      "statements": 36,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 2,
+        "setup": 3,
+        "setup-rejected": 4,
+        "unsupported-setup": 20,
+        "session": 1,
+        "skipped": 6
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb4 is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "round",
+      "statements": 133,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 1,
+        "mysql-error": 0,
+        "tainted": 9,
+        "setup": 10,
+        "setup-rejected": 9,
+        "unsupported-setup": 102,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 8,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: numeric literal is out of range: _": 1
+      }
+    },
+    {
+      "file": "select_all",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_all_bka",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_all_bka_nobnl",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_count",
+      "statements": 74,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 10,
+        "setup": 6,
+        "setup-rejected": 6,
+        "unsupported-setup": 9,
+        "session": 2,
+        "skipped": 41
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY c3_idx (c3) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 3,
+        "DDL: Error: table constraint KEY c2_idx (c2) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "select_distinct_debug",
+      "statements": 15,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 7,
+        "session": 2,
+        "skipped": 3
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "select_for_update",
+      "statements": 6,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 2,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "select_found",
+      "statements": 32,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 12,
+        "mysql-error": 0,
+        "tainted": 8,
+        "setup": 5,
+        "setup-rejected": 3,
+        "unsupported-setup": 2,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 3,
+        "Error: unsupported expression: found_rows()": 8,
+        "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS a FROM t1__2 WHERE a IN (_, _,": 2,
+        "Error: unsupported expression: FOUND_ROWS()": 2
+      }
+    },
+    {
+      "file": "select_icp_mrr",
+      "statements": 1,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_icp_mrr_bka",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_icp_mrr_bka_nobnl",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_none",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_none_bka",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_none_bka_nobnl",
+      "statements": 2,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "select_safe",
+      "statements": 150,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 1,
+        "mysql-error": 0,
+        "tainted": 30,
+        "setup": 8,
+        "setup-rejected": 5,
+        "unsupported-setup": 24,
+        "session": 39,
+        "skipped": 42
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 2,
+        "Error: unknown column @@MAX_JOIN_SIZE": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1,
+        "DDL: Error: table constraint UNIQUE KEY idx1 (c1) is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "subselect",
+      "statements": 5,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "subselect_debug",
+      "statements": 35,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 4,
+        "setup": 5,
+        "setup-rejected": 5,
+        "unsupported-setup": 7,
+        "session": 10,
+        "skipped": 4
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 5
+      }
+    },
+    {
+      "file": "subselect_gis",
+      "statements": 5,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 2,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "subselect_innodb",
+      "statements": 181,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 18,
+        "setup": 29,
+        "setup-rejected": 28,
+        "unsupported-setup": 88,
+        "session": 2,
+        "skipped": 15
+      },
+      "errorClasses": {
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 5,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 9,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 2,
+        "DDL: Error: table constraint INDEX (processor_id) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
+        "DDL: Error: table constraint UNIQUE KEY _ (_, _) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 2,
+        "DDL: Error: table constraint UNIQUE (b) is not supported on a local table": 1,
+        "DDL: Error: PRIMARY KEY over the expression _ is not supported": 1,
+        "DDL: Error: table constraint UNIQUE KEY (b) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_binary",
+      "statements": 109,
+      "counts": {
+        "exact": 0,
+        "mismatch": 1,
+        "name-mismatch": 0,
+        "pintail-error": 18,
+        "mysql-error": 1,
+        "tainted": 28,
+        "setup": 16,
+        "setup-rejected": 14,
+        "unsupported-setup": 22,
+        "session": 0,
+        "skipped": 9
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 9,
+        "INSERT: Error: value _ is not supported in INSERT": 3,
+        "Error: unsupported literal: X_": 13,
+        "Error: numeric literal is out of range: _": 3,
+        "Error: numeric expression overflow": 1,
+        "Error: operator | does not accept Some(Utf8) and Some(Int64)": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY index_bars_on_parent_id (parent_id) is not supported on a loca": 1
+      }
+    },
+    {
+      "file": "type_bit_innodb",
+      "statements": 100,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 12,
+        "mysql-error": 0,
+        "tainted": 28,
+        "setup": 14,
+        "setup-rejected": 14,
+        "unsupported-setup": 17,
+        "session": 0,
+        "skipped": 15
+      },
+      "errorClasses": {
+        "Error: unsupported literal: B_": 12,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 11,
+        "DDL: Error: table constraint KEY (a, b) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (a, b, c) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_bit_myisam",
+      "statements": 263,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 13,
+        "mysql-error": 0,
+        "tainted": 72,
+        "setup": 42,
+        "setup-rejected": 44,
+        "unsupported-setup": 71,
+        "session": 0,
+        "skipped": 21
+      },
+      "errorClasses": {
+        "Error: unsupported literal: B_": 12,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 34,
+        "DDL: Error: table constraint KEY (a, b) is not supported on a local table": 2,
+        "DDL: Error: table constraint KEY (a, b, c) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 2,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
+        "DDL: Error: table constraint KEY a (bit_field) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT B_ is not supported on a local table": 1,
+        "Error: unknown column 0b11111111": 1
+      }
+    },
+    {
+      "file": "type_blob",
+      "statements": 410,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 15,
+        "mysql-error": 0,
+        "tainted": 106,
+        "setup": 38,
+        "setup-rejected": 39,
+        "unsupported-setup": 70,
+        "session": 6,
+        "skipped": 136
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 19,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: byte at Line: _,": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 8,
+        "Error: unsupported expression: last_insert_id()": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 6,
+        "DDL: Error: table constraint KEY (a(_)) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (foobar(_), boggle) is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
+        "Error: unknown column @g1": 12,
+        "Error: unsupported expression: ST_GEOMFROMTEXT(_)": 2
+      }
+    },
+    {
+      "file": "type_blob_myisam",
+      "statements": 4,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 2,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 1
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "type_date",
+      "statements": 88,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 6,
+        "mysql-error": 0,
+        "tainted": 18,
+        "setup": 14,
+        "setup-rejected": 16,
+        "unsupported-setup": 32,
+        "session": 2,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 15,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1,
+        "Error: unknown column @d": 6
+      }
+    },
+    {
+      "file": "type_datetime",
+      "statements": 76,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 5,
+        "mysql-error": 0,
+        "tainted": 14,
+        "setup": 9,
+        "setup-rejected": 8,
+        "unsupported-setup": 27,
+        "session": 4,
+        "skipped": 9
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 6,
+        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
+        "Error: operator + does not accept Some(DateTime64 { fsp: _ }) and Some(Int64)": 1,
+        "Error: numeric expression overflow": 3,
+        "Error: unsupported expression: INTERVAL _ MICROSECOND": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_datetime_myisam",
+      "statements": 13,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 2,
+        "setup-rejected": 2,
+        "unsupported-setup": 4,
+        "session": 1,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "type_decimal",
+      "statements": 370,
+      "counts": {
+        "exact": 1,
+        "mismatch": 1,
+        "name-mismatch": 0,
+        "pintail-error": 4,
+        "mysql-error": 0,
+        "tainted": 53,
+        "setup": 35,
+        "setup-rejected": 43,
+        "unsupported-setup": 213,
+        "session": 5,
+        "skipped": 15
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 30,
+        "DDL: Error: column _: invalid MySQL metadata: decimal column a is missing precision": 3,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 5,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 2,
+        "Error: numeric expression overflow": 2,
+        "Error: sql parser error: Expected: ), found: ROW at Line: _, Column: _": 2
+      }
+    },
+    {
+      "file": "type_enum",
+      "statements": 151,
+      "counts": {
+        "exact": 1,
+        "mismatch": 1,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 23,
+        "setup": 44,
+        "setup-rejected": 25,
+        "unsupported-setup": 24,
+        "session": 10,
+        "skipped": 23
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 8,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 9,
+        "DDL: Error: sql parser error: Expected: literal string, found: X_ at Line: _, Column: _": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 1,
+        "DDL: Error: column option COLLATE latin1_german2_ci is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 2,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table constraint INDEX (f1) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_float",
+      "statements": 262,
+      "counts": {
+        "exact": 3,
+        "mismatch": 5,
+        "name-mismatch": 0,
+        "pintail-error": 3,
+        "mysql-error": 0,
+        "tainted": 40,
+        "setup": 46,
+        "setup-rejected": 45,
+        "unsupported-setup": 86,
+        "session": 2,
+        "skipped": 32
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 38,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 2,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
+        "Error: query engine failed: bound expression has an invalid physical type": 1,
+        "Error: unsupported expression: format(truncate(_, -_), _, _)": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: SIGNED at Line: ": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ( at Line: _, Co": 2,
+        "DDL: Error: column _: invalid MySQL metadata: decimal column a is missing precision": 1
+      }
+    },
+    {
+      "file": "type_float_myisam",
+      "statements": 8,
+      "counts": {
+        "exact": 4,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 4,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "type_nchar",
+      "statements": 22,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 8,
+        "setup-rejected": 7,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 7
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: char at Line: _,": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: varchar at Line:": 2,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: character at Lin": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: varying at Line:": 1
+      }
+    },
+    {
+      "file": "type_newdecimal",
+      "statements": 349,
+      "counts": {
+        "exact": 31,
+        "mismatch": 3,
+        "name-mismatch": 72,
+        "pintail-error": 21,
+        "mysql-error": 0,
+        "tainted": 70,
+        "setup": 31,
+        "setup-rejected": 26,
+        "unsupported-setup": 61,
+        "session": 8,
+        "skipped": 26
+      },
+      "errorClasses": {
+        "Error: unsupported literal: _": 5,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 21,
+        "DDL: Error: column _: invalid MySQL metadata: decimal column a is missing precision": 1,
+        "Error: numeric literal is out of range: _": 9,
+        "Error: query engine failed: bound expression has an invalid physical type": 2,
+        "Error: numeric expression overflow": 3,
+        "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 1,
+        "DDL: Error: column _: invalid MySQL metadata: decimal column d1 is missing precision": 1,
+        "DDL: Error: column option DEFAULT -_ is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _._ is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
+        "Error: unknown column @non_existing_user_var": 1
+      }
+    },
+    {
+      "file": "type_newdecimal-big",
+      "statements": 4,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 1,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "type_newdecimal_myisam",
+      "statements": 5,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 1,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "type_ranges",
+      "statements": 76,
+      "counts": {
+        "exact": 2,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 15,
+        "setup": 13,
+        "setup-rejected": 5,
+        "unsupported-setup": 25,
+        "session": 3,
+        "skipped": 13
+      },
+      "errorClasses": {
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: table constraint UNIQUE INDEX (myfield) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_set",
+      "statements": 44,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 7,
+        "setup": 9,
+        "setup-rejected": 9,
+        "unsupported-setup": 11,
+        "session": 3,
+        "skipped": 5
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 5,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1,
+        "DDL: Error: column option COLLATE latin1_german2_ci is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_set_myisam",
+      "statements": 5,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 2,
+        "setup-rejected": 2,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "type_string",
+      "statements": 1,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "type_temporal_fractional",
+      "statements": 1195,
+      "counts": {
+        "exact": 3,
+        "mismatch": 16,
+        "name-mismatch": 0,
+        "pintail-error": 66,
+        "mysql-error": 0,
+        "tainted": 178,
+        "setup": 120,
+        "setup-rejected": 86,
+        "unsupported-setup": 622,
+        "session": 11,
+        "skipped": 93
+      },
+      "errorClasses": {
+        "Error: unsupported expression: CURRENT_TIME(_)": 4,
+        "Error: unsupported expression: CURRENT_TIMESTAMP(_)": 9,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 81,
+        "Error: query engine failed: invalid MySQL date/time value": 3,
+        "DDL: Error: table constraint UNIQUE (a) is not supported on a local table": 1,
+        "Error: unsupported expression: TIME _": 41,
+        "Error: unsupported expression: TIME(CAST(_ AS TIME) + INTERVAL _ DAY)": 2,
+        "Error: unsupported expression: TIME(CAST(_ AS TIME) + INTERVAL _ MONTH)": 1,
+        "Error: unsupported expression: TIME(CAST(_ AS TIME) + INTERVAL _ YEAR)": 1,
+        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP(_) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: end of statement, found: PARTITION at Line: _, Column: ": 2,
+        "Error: operator + does not accept Some(Time64 { fsp: _ }) and Some(Int64)": 2,
+        "Error: unsupported expression: MICROSECOND(CAST(_._ AS TIME(_)))": 1,
+        "Error: unsupported expression: EXTRACT(MICROSECOND FROM CAST(_._ AS TIME(_)))": 1,
+        "Error: unknown column @a": 1
+      }
+    },
+    {
+      "file": "type_time",
+      "statements": 134,
+      "counts": {
+        "exact": 11,
+        "mismatch": 4,
+        "name-mismatch": 4,
+        "pintail-error": 16,
+        "mysql-error": 0,
+        "tainted": 26,
+        "setup": 18,
+        "setup-rejected": 19,
+        "unsupported-setup": 30,
+        "session": 4,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 16,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: unsupported expression: TIME(_)": 10,
+        "Error: unsupported expression: TIME _": 3,
+        "Error: unsupported expression: TIME(NULL)": 1,
+        "Error: unsupported expression: TIME(_._ + 0e0)": 1,
+        "Error: unsupported expression: NAME_CONST(_, _)": 1,
+        "DDL: Error: table constraint KEY (col_time_key) is not supported on a local table": 1,
+        "DDL: Error: table constraint KEY (col_datetime_key) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_timestamp",
+      "statements": 6,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 1,
+        "setup-rejected": 2,
+        "unsupported-setup": 0,
+        "session": 3,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "type_timestamp_explicit",
+      "statements": 71,
+      "counts": {
+        "exact": 0,
+        "mismatch": 1,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 9,
+        "setup-rejected": 8,
+        "unsupported-setup": 24,
+        "session": 6,
+        "skipped": 20
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 6,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
+      }
+    },
+    {
+      "file": "type_timestamp_myisam",
+      "statements": 5,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 0,
+        "session": 1,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_uint",
+      "statements": 8,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 1,
+        "setup": 2,
+        "setup-rejected": 1,
+        "unsupported-setup": 3,
+        "session": 1,
+        "skipped": 0
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "type_varchar",
+      "statements": 39,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 4,
+        "setup": 4,
+        "setup-rejected": 4,
+        "unsupported-setup": 24,
+        "session": 0,
+        "skipped": 3
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 3,
+        "DDL: Error: table constraint INDEX (v) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "type_year",
+      "statements": 151,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 5,
+        "mysql-error": 0,
+        "tainted": 52,
+        "setup": 20,
+        "setup-rejected": 20,
+        "unsupported-setup": 28,
+        "session": 2,
+        "skipped": 24
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 16,
+        "Error: unknown column DTD_IDENTIFIER": 2,
+        "Error: unknown table PARAMETERS": 3,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: UNSIGNED at Line": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1,
+        "DDL: Error: column option AS (CAST(_ AS YEAR)) is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "union",
+      "statements": 931,
+      "counts": {
+        "exact": 9,
+        "mismatch": 2,
+        "name-mismatch": 0,
+        "pintail-error": 38,
+        "mysql-error": 0,
+        "tainted": 164,
+        "setup": 158,
+        "setup-rejected": 93,
+        "unsupported-setup": 243,
+        "session": 14,
+        "skipped": 210
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 67,
+        "Error: unsupported expression: found_rows()": 16,
+        "Error: unknown column a": 1,
+        "Error: unknown column @a": 1,
+        "Error: invalid ORDER BY expression (SELECT _)": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 6,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 11,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: t1__4 at Line: _": 1,
+        "Error: unsupported expression: version()": 1,
+        "DDL: Error: table constraint INDEX (a) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 3,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1,
+        "DDL: Error: sql parser error: Expected: (, found: sdate at Line: _, Column: _": 1,
+        "Error: unknown column @val": 1,
+        "Error: unsupported expression: _latin1 _": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1,
+        "Error: unknown column @tmp_max": 1,
+        "Error: unsupported expression: _utf8mb3 _": 1,
+        "Error: unknown column @var": 1,
+        "DDL: Error: table constraint FULLTEXT KEY a (a) is not supported on a local table": 1,
+        "Error: unknown table mtr_union.dual": 3,
+        "Error: unsupported expression: FOUND_ROWS()": 9,
+        "Error: unsupported expression: POINT(_, _)": 1
+      }
+    },
+    {
+      "file": "union_myisam",
+      "statements": 30,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 10,
+        "setup": 3,
+        "setup-rejected": 5,
+        "unsupported-setup": 10,
+        "session": 0,
+        "skipped": 2
+      },
+      "errorClasses": {
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "varbinary",
+      "statements": 159,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 1,
+        "pintail-error": 49,
+        "mysql-error": 0,
+        "tainted": 43,
+        "setup": 10,
+        "setup-rejected": 6,
+        "unsupported-setup": 13,
+        "session": 1,
+        "skipped": 36
+      },
+      "errorClasses": {
+        "Error: unsupported literal: X_": 11,
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 5,
+        "Error: unknown column 0b01000001": 1,
+        "Error: unsupported literal: B_": 2,
+        "Error: unsupported literal: N_": 2,
+        "Error: operator | does not accept Some(Utf8) and Some(Utf8)": 1,
+        "Error: unsupported expression: _binary _": 10,
+        "Error: operator | does not accept Some(Binary) and Some(Utf8)": 1,
+        "Error: operator | does not accept Some(Binary) and Some(Binary)": 1,
+        "Error: operator | does not accept Some(Binary) and Some(Int64)": 2,
+        "Error: operator | does not accept Some(Utf8) and Some(Int64)": 1,
+        "Error: operator << does not accept Some(Binary) and Some(Int64)": 2,
+        "Error: unsupported expression: _binary X_": 5,
+        "Error: unsupported literal: _": 2,
+        "Error: operator | does not accept Some(Int64) and Some(Int64)": 4,
+        "Error: query engine failed: invalid MySQL date/time value": 2,
+        "Error: unsupported expression: SUBTIME(_, _)": 2
+      }
+    },
+    {
+      "file": "window_functions",
+      "statements": 1665,
+      "counts": {
+        "exact": 24,
+        "mismatch": 0,
+        "name-mismatch": 8,
+        "pintail-error": 18,
+        "mysql-error": 0,
+        "tainted": 532,
+        "setup": 137,
+        "setup-rejected": 143,
+        "unsupported-setup": 436,
+        "session": 32,
+        "skipped": 335
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 109,
+        "Error: unsupported expression: TIME _": 1,
+        "Error: unsupported expression: NTH_VALUE(TIME _, _) OVER (ORDER BY NULL)": 1,
+        "Error: unsupported expression: CUME_DIST() OVER (ORDER BY NULL)": 1,
+        "Error: unsupported expression: PERCENT_RANK() OVER (ORDER BY NULL)": 1,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 10,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 13,
+        "Error: aggregate Sum does not accept Some(Json)": 2,
+        "Error: aggregate Average does not accept Some(Json)": 2,
+        "DDL: Error: table constraint KEY (j) is not supported on a local table": 1,
+        "Error: unsupported expression: CUME_DIST() OVER (ORDER BY a)": 1,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN CUME_DIST() OVER (ORDER BY alias1.a)": 2,
+        "Error: unsupported query clause: window w2 is a forward or cyclic reference": 1,
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 3,
+        "DDL: Error: table constraint KEY idx1 (b__2) is not supported on a local table": 1,
+        "Error: operator & does not accept Some(Int64) and Some(Int64)": 2,
+        "DDL: Error: PRIMARY KEY over the expression _ is not supported": 1,
+        "Error: unsupported query clause: window frame on LAG(_, _) OVER (ROWS UNBOUNDED PRECEDING)": 1,
+        "Error: unsupported expression: LEAD(_, _) RESPECT NULLS OVER ()": 1,
+        "Error: operator DIV does not accept Some(Decimal { precision: _, scale: _ }) and Some(Date": 1,
+        "Error: unsupported expression: NTH_VALUE(FROM_DAYS(_), _) OVER ()": 1
+      }
+    },
+    {
+      "file": "window_functions_big",
+      "statements": 35,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 2,
+        "setup-rejected": 5,
+        "unsupported-setup": 12,
+        "session": 12,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 2,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 3
+      }
+    },
+    {
+      "file": "window_functions_bugs",
+      "statements": 217,
+      "counts": {
+        "exact": 1,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 2,
+        "mysql-error": 0,
+        "tainted": 53,
+        "setup": 36,
+        "setup-rejected": 38,
+        "unsupported-setup": 43,
+        "session": 8,
+        "skipped": 36
+      },
+      "errorClasses": {
+        "DDL: Error: column option CHARACTER SET utf8mb3 is not supported on a local table": 1,
+        "DDL: Error: column option CHARACTER SET latin1 is not supported on a local table": 1,
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 33,
+        "DDL: Error: table constraint KEY (a) is not supported on a local table": 1,
+        "DDL: Error: column option GENERATED ALWAYS AS (_utf8mb4 _) VIRTUAL is not supported on a local ": 1,
+        "Error: unsupported expression: cos(-_)": 2,
+        "DDL: Error: column option CHARACTER SET CP1251 is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "window_functions_explain",
+      "statements": 502,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 3,
+        "setup": 24,
+        "setup-rejected": 34,
+        "unsupported-setup": 101,
+        "session": 11,
+        "skipped": 329
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 28,
+        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "DDL: Error: column option DEFAULT NULL is not supported on a local table": 1,
+        "DDL: Error: column option AUTO_INCREMENT is not supported on a local table": 1
+      }
+    },
+    {
+      "file": "window_functions_in2exists",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "window_functions_in2exists_hypergraph",
+      "statements": 0,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 0,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
+        "session": 0,
+        "skipped": 0
+      },
+      "errorClasses": {}
+    },
+    {
+      "file": "window_functions_interesting_orders",
+      "statements": 31,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 0,
+        "setup": 4,
+        "setup-rejected": 1,
+        "unsupported-setup": 7,
+        "session": 0,
+        "skipped": 19
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    },
+    {
+      "file": "window_functions_myisam",
+      "statements": 15,
+      "counts": {
+        "exact": 0,
+        "mismatch": 0,
+        "name-mismatch": 0,
+        "pintail-error": 0,
+        "mysql-error": 0,
+        "tainted": 9,
+        "setup": 1,
+        "setup-rejected": 1,
+        "unsupported-setup": 3,
+        "session": 0,
+        "skipped": 1
+      },
+      "errorClasses": {
+        "DDL: Error: table _ needs a PRIMARY KEY; a local table without one has no row identity": 1
+      }
+    }
+  ]
+}
