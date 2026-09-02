@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1-rc1] - 2026-09-02
+
+A release candidate for the memory fix: the server no longer hoards freed
+memory, which on a staging node had grown to seven gigabytes for half a
+gigabyte of data. It also carries the first batch of MySQL-fidelity work
+measured against MySQL's own regression suite, and the stress evidence
+for both. Gate: unit, oracle, end-to-end on MySQL 8.4 and 8.0, browser.
+
 ### Fixed
 
 - Unaliased output columns are named by their source text the way MySQL
