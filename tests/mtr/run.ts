@@ -128,7 +128,8 @@ async function dockerHost(): Promise<string> {
     endpoint = (await docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')).stdout
   }
   if (!endpoint.startsWith('ssh://')) return '127.0.0.1'
-  const target = endpoint.slice('ssh://'.length).split('@').at(-1)!.split(':')[0]
+  // URL parsing keeps an IPv6 literal (ssh://user@[fd7a::1]) intact.
+  const target = new URL(endpoint).hostname.replace(/^\[|\]$/g, '')
   const ssh = await command(['ssh', '-G', target], { quiet: true })
   const hostname = ssh.stdout.split('\n').find((line) => line.startsWith('hostname '))?.slice('hostname '.length)
   if (!hostname) throw new Error(`could not resolve Docker SSH target ${target}`)
