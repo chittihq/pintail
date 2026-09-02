@@ -17,6 +17,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   typed strings, charset introducers, integer literals past BIGINT UNSIGNED
   (read as DECIMAL, as MySQL does) and `FROM DUAL`.
 - `INSERT(str, pos, len, newstr)` and `TIME(expr)`.
+- `ADDTIME`, `SUBTIME`, `TIMEDIFF`, `PI()`, `RAND(seed)` with MySQL's generator,
+  and `HAVING` without `GROUP BY` filtering by the select list.
+- `ROUND`, `TRUNCATE` and `FORMAT` read their digit count as a saturating
+  64-bit integer instead of overflowing; `FORMAT` rounds the decimal text
+  half away from zero (`FORMAT(4.55, 1)` is `4.6`); `UNIX_TIMESTAMP` and
+  `FROM_UNIXTIME` honour MySQL 8.0.28's 3001-01-18 ceiling; an unparseable
+  date in a scalar function is NULL, as MySQL answers, not an error;
+  `GREATEST`/`LEAST` over mixed signed and unsigned integers stay exact;
+  `COLLATE` accepts the legacy `*_bin`, `*_general_ci` and `*_swedish_ci` names.
+- Temporal columns of a local table store MySQL's canonical text at the
+  column's precision, and local DDL keeps `TIME(n)`/`DATETIME(n)` precision.
 - Bit operators `|`, `&`, `^`, `<<`, `>>`, evaluated over BIGINT UNSIGNED as
   MySQL does.
 - Local databases accept tables without a primary key, keeping every row
