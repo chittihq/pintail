@@ -2302,6 +2302,10 @@ async function phaseReconcileMemory() {
     )
     record(phase, 'reconcile-memory:the cascade removed a tenth of the children', remaining === CHILDREN - CHILDREN / 10 ? 'PASS' : 'FAIL', `${remaining} remain`)
 
+    // Sampling starts at the deletes: the supervisor reconciles a flagged
+    // table on its own schedule and holds the database's job slot for the
+    // whole pass, so whichever reconciliation converges the replica - its
+    // own or the one requested below - is the one measured.
     const baseline = await serverRssMb()
     let peak = baseline
     let sampling = true
@@ -2312,8 +2316,23 @@ async function phaseReconcileMemory() {
       }
     })()
     const started = performance.now()
-    await api(`/api/databases/${created}/tables/child/reconcile`, { method: 'POST' })
-    const converged = await waitUntil(async () => (await childCount()) === remaining, 600_000)
+    const request = (async () => {
+      // 409 while a cycle or a reconciliation holds the slot; the dashboard
+      // retries that window itself, so does this, for as long as a pass
+      // over two million rows can take.
+      for (;;) {
+        if ((await childCount()) === remaining) return
+        try {
+          await api(`/api/databases/${created}/tables/child/reconcile`, { method: 'POST' })
+          return
+        } catch (error) {
+          if (!String(error).includes('returned 409')) throw error
+        }
+        await Bun.sleep(1_000)
+      }
+    })()
+    const converged = await waitUntil(async () => (await childCount()) === remaining, 900_000, 2_000)
+    await request
     sampling = false
     await sampler
     const seconds = ((performance.now() - started) / 1000).toFixed(1)
