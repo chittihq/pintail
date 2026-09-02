@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1-rc2] - 2026-09-02
+
+A second candidate for the memory fix. rc1 stopped the allocator from
+hoarding freed memory; this one removes the thing that was allocating it,
+the scheduled cascade reconciliation, which re-read whole child tables
+from the source and held them in memory. The e2e gate now measures that
+repair over a two-million-row child and fails on the old behaviour.
+
 ### Fixed
 
 - Cascade reconciliation no longer reads the child table from the source.
@@ -24,6 +32,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A grouped aggregation whose group map had filled the query ceiling could
   fail on a small reservation the partial-group build made; the build now
   spills before that point and retries once on a full budget.
+- A polling database can resnapshot one table without a binlog fence:
+  the fence guards a CDC stream against replaying rows the snapshot just
+  copied, and a polling source may write no binlog at all.
+- The all-zero `DATE` and `DATETIME` cross the wire's binary protocol as a
+  zero-length temporal, as MySQL sends them; a prepared-statement read of
+  such a row had failed with "input is out of range".
+
+### Changed
+
+- The e2e gate gains a `reconcile-memory` phase: a cascade delete over a
+  two-million-row child, the repair sampled for memory from the deletes,
+  and a bound on its peak over the baseline.
 
 ## [0.1.1-rc1] - 2026-09-02
 
