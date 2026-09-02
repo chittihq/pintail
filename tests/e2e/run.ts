@@ -1896,6 +1896,316 @@ async function phaseRestartDuringSnapshot() {
   }
 }
 
+/// Peak RSS of the server process, in MB.
+async function serverRssMb(): Promise<number> {
+  if (!pintailProcess?.pid) return 0
+  const child = Bun.spawn(['ps', '-o', 'rss=', '-p', String(pintailProcess.pid)], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  const text = await new Response(child.stdout).text()
+  await child.exited
+  return Number(text.trim() || '0') / 1024
+}
+
+/// Memory pressure: the small-container scenario, all at once.
+///
+/// A 256 MB process budget, a 32 MB per-query ceiling and an admission
+/// window of eight, against forty-eight wire clients reconnecting for every
+/// query, eight HTTP query clients, six open dashboards and a CDC writer
+/// committing into the table everyone is sorting. Nothing is allowed to
+/// fail except the two designed answers - admission refusal and the memory
+/// ceiling - and afterwards the server has to be the same server: inside
+/// its ceiling, caught up, and answering plain queries, which is what
+/// proves no permit or budget byte leaked under the storm.
+async function phaseMemoryPressure() {
+  const phase = 'memory-pressure'
+  const host = await dockerHost()
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  const schema = `pressure_${nonce}`
+  const ROWS = 200_000
+  const WIRE_CLIENTS = 48
+  const QUERIES_PER_CLIENT = 5
+  const HTTP_CLIENTS = 8
+  const DASHBOARDS = 6
+  const BUDGET_MB = 256
+  const RSS_CEILING_MB = 1024
+
+  await sql(`CREATE DATABASE ${schema}`)
+  await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
+  await sql(
+    `INSERT INTO ${schema}.seed VALUES ${Array.from({ length: 100 }, (_, n) => `(${n})`).join(',')}`,
+  )
+  await sql(
+    `CREATE TABLE ${schema}.big (id INT PRIMARY KEY, bucket INT NOT NULL, payload VARCHAR(64) NOT NULL)`,
+  )
+  await sql(
+    `INSERT INTO ${schema}.big SELECT a.n * 10000 + b.n * 100 + c.n, c.n, CONCAT(REPEAT('x', 40), b.n) ` +
+      `FROM ${schema}.seed a, ${schema}.seed b, ${schema}.seed c WHERE a.n < 20`,
+  )
+
+  const stopPintail = async () => {
+    try {
+      await pintailWire?.end()
+    } catch {}
+    pintailWire = undefined
+    if (pintailProcess) {
+      if (pintailProcess.exitCode === null) pintailProcess.kill()
+      await pintailProcess.exited
+      pintailProcess = undefined
+    }
+  }
+  // Load shedding and the memory ceiling are the designed answers to
+  // overload; anything else the storm surfaces is a defect.
+  const kind = (message: string) => {
+    if (/concurrent queries/i.test(message)) return 'admission-refused'
+    if (/memory limit exceeded|memory budget/i.test(message)) return 'query-memory-limit'
+    if (/ECONNRESET|socket hang up|closed/i.test(message)) return 'connection-dropped'
+    if (/ETIMEDOUT|timeout/i.test(message)) return 'timeout'
+    return 'other'
+  }
+
+  let created = ''
+  let secret = ''
+  let restarted = false
+  try {
+    created = (
+      await api<{ id: string }>('/api/databases', {
+        method: 'POST',
+        body: { name: schema, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${schema}`, mode: 'cdc' },
+      })
+    ).id
+    await reprobe(created)
+    secret = (
+      await api<{ secret: string }>(`/api/databases/${created}/api-keys`, {
+        method: 'POST',
+        body: { name: 'pressure', scopes: ['query', 'read'] },
+      })
+    ).secret
+    await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+    const ready = await waitUntil(async () => {
+      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`)
+      return status.state === 'streaming' || status.state === 'polling'
+    }, 240_000)
+    if (!ready) {
+      record(phase, 'memory-pressure:the source replicates before the storm', 'FAIL', await replicationDiagnostics(created))
+      return
+    }
+
+    await stopPintail()
+    restarted = true
+    await startPintail(32 * 1024 * 1024, {
+      PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: String(BUDGET_MB * 1024 * 1024),
+      PINTAIL_MAX_CONCURRENT_QUERIES: '8',
+    })
+
+    const wire = () =>
+      mysql.createConnection({
+        host: '127.0.0.1',
+        port: pintailWirePort,
+        user: schema,
+        password: secret,
+        database: schema,
+        supportBigNumbers: true,
+        bigNumberStrings: true,
+        dateStrings: true,
+      })
+    const count = async (): Promise<number> => {
+      let connection: mysql.Connection | undefined
+      try {
+        connection = await wire()
+        const [rows] = await connection.query<mysql.RowDataPacket[]>({
+          sql: 'SELECT COUNT(*) FROM big',
+          rowsAsArray: true,
+        })
+        return Number((rows[0] as unknown[])[0])
+      } catch {
+        return -1
+      } finally {
+        await connection?.end().catch(() => undefined)
+      }
+    }
+    // A sort that cannot fit 32 MB, an aggregate over every row, and a
+    // scan-only count: three different paths to the ceiling.
+    const statements = [
+      'SELECT * FROM big ORDER BY payload DESC, id DESC LIMIT 500',
+      'SELECT bucket, COUNT(*) c, MAX(payload) m FROM big GROUP BY bucket ORDER BY c DESC, bucket',
+      'SELECT COUNT(*), MIN(id), MAX(id) FROM big',
+    ]
+    const endpoints = [
+      `/api/activity?db=${created}&limit=200`,
+      `/api/dlq?db=${created}`,
+      `/api/databases/${created}/status`,
+      '/status',
+    ]
+    const errors: Record<string, number> = {}
+    const fail = (error: unknown) => {
+      const bucket = kind(String(error))
+      errors[bucket] = (errors[bucket] ?? 0) + 1
+    }
+    const health: number[] = []
+    let wireOk = 0
+    let httpOk = 0
+    let dashboardOk = 0
+    let dashboardFailed = 0
+    let peakRss = 0
+    let written = 0
+    let nextId = ROWS * 10
+    let running = true
+
+    const wireClient = async (seat: number) => {
+      for (let turn = 0; turn < QUERIES_PER_CLIENT; turn += 1) {
+        let connection: mysql.Connection | undefined
+        try {
+          connection = await wire()
+          await connection.query({
+            sql: statements[(seat + turn) % statements.length]!,
+            rowsAsArray: true,
+          })
+          wireOk += 1
+        } catch (error) {
+          fail(error)
+        } finally {
+          await connection?.end().catch(() => undefined)
+        }
+      }
+    }
+    const httpClient = async (seat: number) => {
+      let turn = seat
+      while (running) {
+        try {
+          await api('/api/query', {
+            method: 'POST',
+            body: { db: created, sql: statements[turn % statements.length] },
+          })
+          httpOk += 1
+        } catch (error) {
+          fail(error)
+        }
+        turn += 1
+      }
+    }
+    const dashboard = async (seat: number) => {
+      let turn = seat
+      while (running) {
+        const sample = await timedApi(endpoints[turn % endpoints.length]!)
+        if (sample < 0) dashboardFailed += 1
+        else dashboardOk += 1
+        turn += 1
+        await Bun.sleep(100)
+      }
+    }
+    const heartbeat = async () => {
+      while (running) {
+        health.push(await timedApi('/health'))
+        await Bun.sleep(250)
+      }
+    }
+    const sampler = async () => {
+      while (running) {
+        peakRss = Math.max(peakRss, await serverRssMb())
+        await Bun.sleep(200)
+      }
+    }
+    const writer = async () => {
+      while (running) {
+        const values = Array.from({ length: 100 }, () => {
+          const id = nextId
+          nextId += 1
+          return `(${id}, ${id % 100}, 'w${id}')`
+        })
+        await sql(`INSERT INTO ${schema}.big VALUES ${values.join(',')}`)
+        written += values.length
+        await Bun.sleep(250)
+      }
+    }
+    const storm = Promise.all(
+      Array.from({ length: WIRE_CLIENTS }, (_, seat) => wireClient(seat)),
+    ).then(() => {
+      running = false
+    })
+    await Promise.all([
+      storm,
+      ...Array.from({ length: HTTP_CLIENTS }, (_, seat) => httpClient(seat)),
+      ...Array.from({ length: DASHBOARDS }, (_, seat) => dashboard(seat)),
+      heartbeat(),
+      sampler(),
+      writer(),
+    ])
+
+    const summary =
+      `wire ${wireOk} ok, http ${httpOk} ok, dashboards ${dashboardOk} ok; ` +
+      (Object.entries(errors)
+        .map(([bucket, total]) => `${bucket}×${total}`)
+        .join(', ') || 'no errors')
+    const alive =
+      pintailProcess?.exitCode === null &&
+      (await fetch(`${pintailUrl}/health`)
+        .then((response) => response.ok)
+        .catch(() => false))
+    record(phase, 'memory-pressure:the process survives the storm', alive ? 'PASS' : 'FAIL', summary)
+    const undesigned = Object.entries(errors).filter(
+      ([bucket]) => bucket !== 'admission-refused' && bucket !== 'query-memory-limit',
+    )
+    record(
+      phase,
+      'memory-pressure:every failure is a designed refusal',
+      undesigned.length === 0 && dashboardFailed === 0 ? 'PASS' : 'FAIL',
+      `${undesigned.map(([bucket, total]) => `${bucket}×${total}`).join(', ') || 'only refusals'}; ${dashboardFailed} dashboard requests failed`,
+    )
+    record(
+      phase,
+      'memory-pressure:work still gets done',
+      wireOk > 0 && httpOk > 0 ? 'PASS' : 'FAIL',
+      `wire ${wireOk} of ${WIRE_CLIENTS * QUERIES_PER_CLIENT}, http ${httpOk}`,
+    )
+    record(
+      phase,
+      'memory-pressure:health never stalls',
+      health.every((sample) => sample >= 0) && percentile(health, 0.99) < 2_000 ? 'PASS' : 'FAIL',
+      `health p99 ${percentile(health, 0.99).toFixed(0)}ms over ${health.length} samples`,
+    )
+    record(
+      phase,
+      'memory-pressure:the process stays inside its ceiling',
+      peakRss > 0 && peakRss < RSS_CEILING_MB ? 'PASS' : 'FAIL',
+      `peak RSS ${peakRss.toFixed(0)}MB with a ${BUDGET_MB}MB budget`,
+    )
+    const caughtUp = await waitUntil(async () => (await count()) >= ROWS + written, 120_000)
+    record(
+      phase,
+      'memory-pressure:the replica catches up after the storm',
+      caughtUp ? 'PASS' : 'FAIL',
+      `big ${await count()} vs source ${ROWS + written}`,
+    )
+    let recovered = 0
+    for (const statement of statements) {
+      let connection: mysql.Connection | undefined
+      try {
+        connection = await wire()
+        await connection.query({ sql: statement, rowsAsArray: true })
+        recovered += 1
+      } catch {
+      } finally {
+        await connection?.end().catch(() => undefined)
+      }
+    }
+    record(
+      phase,
+      'memory-pressure:queries recover once the storm passes',
+      recovered === statements.length ? 'PASS' : 'FAIL',
+      `${recovered} of ${statements.length} sequential queries succeeded`,
+    )
+  } finally {
+    if (restarted) {
+      await stopPintail()
+      await startPintail()
+    }
+    if (created) await api(`/api/databases/${created}`, { method: 'DELETE' }).catch(() => undefined)
+    await sql(`DROP DATABASE IF EXISTS ${schema}`)
+  }
+}
+
 async function phaseExecutionBudget() {
   const phase = 'execution-budget'
   const record = (check: string, ok: boolean, detail?: string) => {
@@ -3353,7 +3663,7 @@ async function buildPintail(): Promise<string> {
   return join(JSON.parse(metadata.stdout).target_directory, 'release', 'pintail')
 }
 
-async function startPintail(queryMemoryLimit?: number) {
+async function startPintail(queryMemoryLimit?: number, extraEnv: Record<string, string> = {}) {
   pintailWire = undefined
   pintailProcess = Bun.spawn(
     [
@@ -3377,6 +3687,7 @@ async function startPintail(queryMemoryLimit?: number) {
         ...(queryMemoryLimit === undefined
           ? {}
           : { PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(queryMemoryLimit) }),
+        ...extraEnv,
       },
     },
   )
@@ -3543,6 +3854,7 @@ async function main() {
     ['drop-table-recreate', phaseDropTableRecreate],
     ['drop-table-polling', phaseDropTablePolling],
     ['restart-during-snapshot', phaseRestartDuringSnapshot],
+    ['memory-pressure', phaseMemoryPressure],
     ['drop-database', phaseDropDatabase],
     // Last: the rename gap leaves the replica holding a table under a name
     // MySQL no longer uses, and the lifecycle phases re-probe, which would
