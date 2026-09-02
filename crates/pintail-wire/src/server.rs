@@ -692,19 +692,6 @@ impl Backend {
             })
     }
 
-    fn authenticate_wire_key(
-        &self,
-        username: &[u8],
-        salt: &[u8],
-        response: &[u8],
-    ) -> io::Result<bool> {
-        let Some(authenticated) = self.verify_wire_key(username, salt, response, None)? else {
-            return Ok(false);
-        };
-        *self.authentication.lock().map_err(io_other)? = Some(authenticated);
-        Ok(true)
-    }
-
     /// Full-authentication admission: the cleartext password recovered by
     /// the exchange, validated against the stored verifiers.
     fn authenticate_wire_cleartext(&self, username: &[u8], password: &[u8]) -> io::Result<bool> {
@@ -728,9 +715,11 @@ impl Backend {
         let Some(key) = key else {
             return Ok(false);
         };
-        metadata
-            .touch_api_key(&key.id, &Utc::now().to_rfc3339())
-            .map_err(io_other)?;
+        if connection_worth_recording(&key.id) {
+            metadata
+                .touch_api_key(&key.id, &Utc::now().to_rfc3339())
+                .map_err(io_other)?;
+        }
         *self.authentication.lock().map_err(io_other)? = Some(Authenticated {
             database_id: database.id,
             database_name: database.name,
@@ -746,69 +735,14 @@ impl Backend {
         response: &[u8],
         requested_database: Option<&[u8]>,
     ) -> io::Result<Option<Authenticated>> {
-        let Ok(username) = std::str::from_utf8(username) else {
-            return Ok(None);
-        };
-        let metadata = MetaStore::open(&self.metadata_path).map_err(io_other)?;
-        let Some(database) = metadata
-            .databases()
-            .map_err(io_other)?
-            .into_iter()
-            .find(|database| database.name.eq_ignore_ascii_case(username))
-        else {
-            return Ok(None);
-        };
-        if requested_database.is_some_and(|requested| {
-            !requested.is_empty()
-                && !database.name.as_bytes().eq_ignore_ascii_case(requested)
-                && !requested.eq_ignore_ascii_case(b"information_schema")
-        }) {
-            return Ok(None);
-        }
-        let key = metadata
-            .api_keys(&database.id)
-            .map_err(io_other)?
-            .into_iter()
-            .find(|key| wire_key_is_valid(key, salt, response));
-        let Some(key) = key else {
-            return Ok(None);
-        };
-        metadata
-            .touch_api_key(&key.id, &Utc::now().to_rfc3339())
-            .map_err(io_other)?;
-        // The connection is recorded before it can run anything. Per
-        // connection, not per query: a BI tool issues thousands of queries an
-        // hour, and a row each would grow this table without bound, contend
-        // with the control plane on the query path, and bury the invite and
-        // key events this trail exists for. Query detail goes to the log
-        // stream, which is built for that volume.
-        let now = Utc::now().to_rfc3339();
-        let detail = serde_json::json!({
-            "database": database.name,
-            "key": key.name,
-        })
-        .to_string();
-        if let Err(error) = metadata.record_audit_event(&pintail_meta::NewAuditEvent {
-            id: &format!("aud_wire_{}_{}", key.id, now),
-            workspace_id: database.workspace_id.as_deref().unwrap_or_default(),
-            actor_type: "api_key",
-            actor_id: &key.id,
-            actor_label: &key.name,
-            action: "wire.connect",
-            target_type: Some("database"),
-            target_id: Some(&database.id),
-            detail_json: Some(&detail),
-            created_at: &now,
-            client_ip: self.client_ip.as_deref(),
-        }) {
-            // A failure to record must not refuse a valid connection.
-            pintail_log::log_error!("wire audit: could not record connection: {error}");
-        }
-        Ok(Some(Authenticated {
-            database_id: database.id,
-            database_name: database.name,
-            key_name: key.name,
-        }))
+        verify_wire_key_at(
+            &self.metadata_path,
+            self.client_ip.as_deref(),
+            username,
+            salt,
+            response,
+            requested_database,
+        )
     }
 
     fn reset_session_state(&mut self) -> io::Result<()> {
@@ -1112,8 +1046,35 @@ impl Handler for Backend {
                 session.charset_byte = u16::from(response.character_set);
             }
         }
-        self.authenticate_wire_key(&response.username, scramble, &response.auth_response)
-            .unwrap_or(false)
+        // Off the runtime thread: the lookup opens the metadata store and may
+        // write to it, and a wait there must not stall every other
+        // connection the same worker is serving.
+        let metadata_path = self.metadata_path.clone();
+        let client_ip = self.client_ip.clone();
+        let username = response.username.clone();
+        let auth_response = response.auth_response.clone();
+        let salt = scramble.to_vec();
+        let verified = tokio::task::spawn_blocking(move || {
+            verify_wire_key_at(
+                &metadata_path,
+                client_ip.as_deref(),
+                &username,
+                &salt,
+                &auth_response,
+                None,
+            )
+        })
+        .await;
+        let Ok(Ok(Some(authenticated))) = verified else {
+            return false;
+        };
+        match self.authentication.lock() {
+            Ok(mut current) => {
+                *current = Some(authenticated);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     fn full_auth_public_key(&self) -> Option<Vec<u8>> {
@@ -2258,6 +2219,121 @@ fn io_invalid(error: impl std::fmt::Display) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, error.to_string())
 }
 
+/// How often one key's connections are written down. Inside the window a
+/// connection is authenticated from the same reads and writes nothing.
+const CONNECTION_RECORD_INTERVAL: Duration = Duration::from_secs(60);
+
+static CONNECTIONS_RECORDED: std::sync::LazyLock<
+    Mutex<std::collections::HashMap<String, Instant>>,
+> = std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// Whether this connection is the one that writes the key's bookkeeping -
+/// `last_used_at` and the `wire.connect` audit row - for the current window.
+///
+/// Both are `SQLite` writes, and `SQLite` has one writer: under a
+/// connection storm every connection queued behind the replication
+/// applier's own metadata writes, on the runtime thread that was
+/// accepting it, and the dashboard and HTTP queries stalled with it. One
+/// row a minute says the same thing the trail needs - this key was in use,
+/// from this peer - without putting a write on every connection.
+fn connection_worth_recording(key_id: &str) -> bool {
+    let mut recorded = CONNECTIONS_RECORDED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let now = Instant::now();
+    match recorded.get(key_id) {
+        Some(last) if now.duration_since(*last) < CONNECTION_RECORD_INTERVAL => false,
+        _ => {
+            recorded.insert(key_id.to_owned(), now);
+            true
+        }
+    }
+}
+
+/// Resolves a scrambled wire login against the keys of the database named
+/// by `username`. Free of the connection so the handshake can run it on a
+/// blocking thread: it reads the metadata store, and on the first
+/// connection of a key's window writes to it.
+fn verify_wire_key_at(
+    metadata_path: &Path,
+    client_ip: Option<&str>,
+    username: &[u8],
+    salt: &[u8],
+    response: &[u8],
+    requested_database: Option<&[u8]>,
+) -> io::Result<Option<Authenticated>> {
+    let Ok(username) = std::str::from_utf8(username) else {
+        return Ok(None);
+    };
+    let metadata = MetaStore::open(metadata_path).map_err(io_other)?;
+    let Some(database) = metadata
+        .databases()
+        .map_err(io_other)?
+        .into_iter()
+        .find(|database| database.name.eq_ignore_ascii_case(username))
+    else {
+        return Ok(None);
+    };
+    if requested_database.is_some_and(|requested| {
+        !requested.is_empty()
+            && !database.name.as_bytes().eq_ignore_ascii_case(requested)
+            && !requested.eq_ignore_ascii_case(b"information_schema")
+    }) {
+        return Ok(None);
+    }
+    let key = metadata
+        .api_keys(&database.id)
+        .map_err(io_other)?
+        .into_iter()
+        .find(|key| wire_key_is_valid(key, salt, response));
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    if !connection_worth_recording(&key.id) {
+        return Ok(Some(Authenticated {
+            database_id: database.id,
+            database_name: database.name,
+            key_name: key.name,
+        }));
+    }
+    metadata
+        .touch_api_key(&key.id, &Utc::now().to_rfc3339())
+        .map_err(io_other)?;
+    // The connection is recorded before it can run anything, once per key
+    // per minute rather than per connection: a BI tool issues thousands
+    // of queries an hour and a pooled application tier reconnects for
+    // every one of them, and a row each would grow this table without
+    // bound, contend with the control plane on the query path, and bury
+    // the invite and key events this trail exists for. Query detail goes
+    // to the log stream, which is built for that volume.
+    let now = Utc::now().to_rfc3339();
+    let detail = serde_json::json!({
+        "database": database.name,
+        "key": key.name,
+    })
+    .to_string();
+    if let Err(error) = metadata.record_audit_event(&pintail_meta::NewAuditEvent {
+        id: &format!("aud_wire_{}_{}", key.id, now),
+        workspace_id: database.workspace_id.as_deref().unwrap_or_default(),
+        actor_type: "api_key",
+        actor_id: &key.id,
+        actor_label: &key.name,
+        action: "wire.connect",
+        target_type: Some("database"),
+        target_id: Some(&database.id),
+        detail_json: Some(&detail),
+        created_at: &now,
+        client_ip,
+    }) {
+        // A failure to record must not refuse a valid connection.
+        pintail_log::log_error!("wire audit: could not record connection: {error}");
+    }
+    Ok(Some(Authenticated {
+        database_id: database.id,
+        database_name: database.name,
+        key_name: key.name,
+    }))
+}
 #[cfg(test)]
 mod tests {
     use super::{QueryError, SqlRejection, error_kind};

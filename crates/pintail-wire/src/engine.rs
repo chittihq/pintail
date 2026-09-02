@@ -310,10 +310,23 @@ impl ReplicaEngine {
         let stamp = self.replica_stamp(database_id);
         let stamped = stamp_started.elapsed();
         let key = self.cache_key(database_id);
+        if let Lookup::Hit(replica) = self.cache.lookup(&key, &stamp) {
+            pintail_log::log_debug!(
+                "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
+                stamped.as_secs_f64() * 1_000.0,
+                stamp.files()
+            );
+            return Ok(replica);
+        }
+        // Something moved. Only one query reloads a database at a time; the
+        // rest wait here and, more often than not, find the reload they were
+        // about to repeat already in the cache.
+        let reload = self.cache.reload_guard(&key);
+        let _reloading = reload.lock().expect("replica reload lock");
         let previous = match self.cache.lookup(&key, &stamp) {
             Lookup::Hit(replica) => {
                 pintail_log::log_debug!(
-                    "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
+                    "query setup db={database_id} stamp={:.1}ms files={} replica=coalesced",
                     stamped.as_secs_f64() * 1_000.0,
                     stamp.files()
                 );

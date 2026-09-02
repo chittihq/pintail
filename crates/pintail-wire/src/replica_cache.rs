@@ -91,6 +91,10 @@ pub struct ReplicaCacheStats {
 /// Loaded replicas keyed by database, bounded in count and in bytes.
 pub(crate) struct ReplicaCache<R> {
     entries: Mutex<HashMap<CacheKey, Entry<R>>>,
+    /// One lock per database, held by whichever query is reloading it, so a
+    /// stamp that moved under twenty concurrent queries is replayed once and
+    /// answered twenty times rather than replayed twenty times at once.
+    reloads: Mutex<HashMap<CacheKey, Arc<Mutex<()>>>>,
     capacity: usize,
     budget: &'static MemoryBudget,
     hits: AtomicU64,
@@ -106,6 +110,7 @@ impl<R> ReplicaCache<R> {
     pub(crate) fn new(capacity: usize, budget: &'static MemoryBudget) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            reloads: Mutex::new(HashMap::new()),
             capacity: capacity.max(1),
             budget,
             hits: AtomicU64::new(0),
@@ -179,6 +184,19 @@ impl<R> ReplicaCache<R> {
             },
         );
         true
+    }
+
+    /// The reload lock for `key`. Hold it across a reload, and look the key
+    /// up again once it is held: the query that held it first may have
+    /// loaded exactly the replica this one needs.
+    pub(crate) fn reload_guard(&self, key: &CacheKey) -> Arc<Mutex<()>> {
+        Arc::clone(
+            self.reloads
+                .lock()
+                .expect("replica reload registry lock")
+                .entry(key.clone())
+                .or_default(),
+        )
     }
 
     /// Drops the replica for `key`; the next read loads afresh.
@@ -354,6 +372,27 @@ mod tests {
         assert!(matches!(
             cache.lookup(&key("a"), &stamp("t", 1)),
             Lookup::Hit(_)
+        ));
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+
+    #[test]
+    fn one_reload_lock_per_database() {
+        let cache: ReplicaCache<()> =
+            ReplicaCache::new(4, Box::leak(Box::new(MemoryBudget::new(0))));
+        let here = (PathBuf::from("/data"), "db".to_owned());
+        let there = (PathBuf::from("/data"), "other".to_owned());
+        assert!(Arc::ptr_eq(
+            &cache.reload_guard(&here),
+            &cache.reload_guard(&here)
+        ));
+        assert!(!Arc::ptr_eq(
+            &cache.reload_guard(&here),
+            &cache.reload_guard(&there)
         ));
     }
 }
