@@ -5,7 +5,7 @@ mod cursor;
 mod decoder;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     path::Path,
 };
 
@@ -881,10 +881,89 @@ fn keys_order_like_mysql(table: &SourceTable) -> bool {
     })
 }
 
-/// Full-row compare by merge: each source page against the replica keys
-/// from just after the previous page's last key through this page's last,
-/// then the replica's tail past the last source key. Returns (refreshed or
-/// inserted, tombstoned, source rows).
+/// A replica row with its key already built.
+type KeyedRow = (PrimaryKey, Vec<Value>);
+
+/// The replica streamed once in key order, handed out in step with the
+/// source's pages: rows through a key on request, the rest at the end.
+/// One chunk is decoded at a time and nothing is decoded twice.
+struct ReplicaCursor<'a> {
+    source: &'a SourceTable,
+    chunks: Option<ProjectedChunks>,
+    buffered: VecDeque<KeyedRow>,
+}
+
+impl<'a> ReplicaCursor<'a> {
+    fn open(
+        snapshot: &pintail_store::TableSnapshot,
+        source: &'a SourceTable,
+    ) -> Result<Self, PollError> {
+        let column_ids = snapshot
+            .schema()
+            .columns()
+            .iter()
+            .map(pintail_types::Column::id)
+            .collect::<Vec<_>>();
+        let chunks = match snapshot.key_bounds() {
+            Some((first, last)) => {
+                Some(ProjectedChunks::open(snapshot, &first, &last, &column_ids)?)
+            }
+            None => None,
+        };
+        Ok(Self {
+            source,
+            chunks,
+            buffered: VecDeque::new(),
+        })
+    }
+
+    /// Buffers the next chunk; `false` once the replica is exhausted.
+    fn fill(&mut self) -> Result<bool, PollError> {
+        let Some(chunks) = self.chunks.as_mut() else {
+            return Ok(false);
+        };
+        let Some(rows) = chunks.next()? else {
+            self.chunks = None;
+            return Ok(false);
+        };
+        for values in rows {
+            let key = physical_key(self.source, &values)?;
+            self.buffered.push_back((key, values));
+        }
+        Ok(true)
+    }
+
+    /// Every buffered or not-yet-decoded row whose key is at most `through`.
+    fn take_through(&mut self, through: &PrimaryKey) -> Result<Vec<KeyedRow>, PollError> {
+        let mut taken = Vec::new();
+        loop {
+            while let Some((key, _)) = self.buffered.front() {
+                if key > through {
+                    return Ok(taken);
+                }
+                taken.extend(self.buffered.pop_front());
+            }
+            if !self.fill()? {
+                return Ok(taken);
+            }
+        }
+    }
+
+    /// Whatever the replica still holds past everything taken so far.
+    fn next_rest(&mut self) -> Result<Option<Vec<KeyedRow>>, PollError> {
+        if self.buffered.is_empty() && !self.fill()? {
+            return Ok(None);
+        }
+        Ok(Some(self.buffered.drain(..).collect()))
+    }
+}
+
+/// Full-row compare by merge: the replica streamed once in key order, in
+/// step with the source's pages. Replica rows up to a page's last key that
+/// the page lacks are gone from the source; rows the page has with other
+/// content are stale; what remains in the page is new; and the replica's
+/// tail past the last source key is gone. Returns (refreshed or inserted,
+/// tombstoned, source rows).
 async fn reconcile_by_merge(
     connection: &mut Conn,
     source_database: &str,
@@ -894,13 +973,8 @@ async fn reconcile_by_merge(
     chunk_rows: usize,
 ) -> Result<(usize, usize, u64), PollError> {
     let order = poll_order(&target.source, None);
-    let bounds = snapshot.key_bounds();
-    let column_ids = snapshot
-        .schema()
-        .columns()
-        .iter()
-        .map(pintail_types::Column::id)
-        .collect::<Vec<_>>();
+    let source = target.source.clone();
+    let mut replica = ReplicaCursor::open(snapshot, &source)?;
     let mut ingested = 0;
     let mut tombstones = 0;
     let mut source_count = 0_u64;
@@ -931,30 +1005,15 @@ async fn reconcile_by_merge(
             break;
         };
         let mut repairs = Vec::new();
-        // Replica rows up to the page's last key that the page lacks are
-        // gone from the source; rows the page has with other content are
-        // stale; what remains in the page is new.
-        if let Some((first, _)) = &bounds {
-            let start = last_key.as_ref().unwrap_or(first);
-            if start <= &page_last {
-                let mut chunks = ProjectedChunks::open(snapshot, start, &page_last, &column_ids)?;
-                while let Some(rows) = chunks.next()? {
-                    for values in rows {
-                        let key = physical_key(&target.source, &values)?;
-                        if last_key.as_ref() == Some(&key) {
-                            continue;
-                        }
-                        if let Some(decoded) = page.remove(&key) {
-                            if decoded.values() != values.as_slice() {
-                                ingested += 1;
-                                repairs.push(decoded);
-                            }
-                        } else {
-                            tombstones += 1;
-                            repairs.push(StoredRow::new(key, values, version, true));
-                        }
-                    }
+        for (key, values) in replica.take_through(&page_last)? {
+            if let Some(decoded) = page.remove(&key) {
+                if decoded.values() != values.as_slice() {
+                    ingested += 1;
+                    repairs.push(decoded);
                 }
+            } else {
+                tombstones += 1;
+                repairs.push(StoredRow::new(key, values, version, true));
             }
         }
         ingested += page.len();
@@ -967,48 +1026,15 @@ async fn reconcile_by_merge(
             break;
         }
     }
-    tombstones += tombstone_tail(target, snapshot, last_key.as_ref(), version)?;
+    while let Some(rest) = replica.next_rest()? {
+        let repairs = rest
+            .into_iter()
+            .map(|(key, values)| StoredRow::new(key, values, version, true))
+            .collect::<Vec<_>>();
+        tombstones += repairs.len();
+        target.store.ingest_scan(repairs)?;
+    }
     Ok((ingested, tombstones, source_count))
-}
-
-/// Tombstones every replica row past `last_key`, the last key the source
-/// holds, or every row when the source is empty. Returns the count.
-fn tombstone_tail(
-    target: &mut PollTarget,
-    snapshot: &pintail_store::TableSnapshot,
-    last_key: Option<&PrimaryKey>,
-    version: u64,
-) -> Result<usize, PollError> {
-    let Some((first, last)) = snapshot.key_bounds() else {
-        return Ok(0);
-    };
-    let start = last_key.unwrap_or(&first);
-    if start > &last {
-        return Ok(0);
-    }
-    let column_ids = snapshot
-        .schema()
-        .columns()
-        .iter()
-        .map(pintail_types::Column::id)
-        .collect::<Vec<_>>();
-    let mut chunks = ProjectedChunks::open(snapshot, start, &last, &column_ids)?;
-    let mut count = 0;
-    while let Some(rows) = chunks.next()? {
-        let mut repairs = Vec::new();
-        for values in rows {
-            let key = physical_key(&target.source, &values)?;
-            if last_key == Some(&key) {
-                continue;
-            }
-            repairs.push(StoredRow::new(key, values, version, true));
-        }
-        count += repairs.len();
-        if !repairs.is_empty() {
-            target.store.ingest_scan(repairs)?;
-        }
-    }
-    Ok(count)
 }
 
 /// Full-row compare for keys the two sides order differently: a point

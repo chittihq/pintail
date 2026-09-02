@@ -2244,9 +2244,11 @@ async function phaseReconcileMemory() {
   const host = await dockerHost()
   const mysqlPort = await publishedPort(mysqlName, 3306)
   const schema = `cascade_${nonce}`
-  const PARENTS = 1_000
-  const CHILDREN = 2_000_000
-  const MEMORY_MARGIN_MB = 768
+  // The gate's size; a scale run raises the child count through the
+  // environment and reads the timings the phase logs.
+  const PARENTS = Number(process.env.E2E_RECONCILE_PARENTS ?? 1_000)
+  const CHILDREN = Number(process.env.E2E_RECONCILE_CHILDREN ?? 2_000_000)
+  const MEMORY_MARGIN_MB = Number(process.env.E2E_RECONCILE_MARGIN_MB ?? 768)
 
   await sql(`CREATE DATABASE ${schema}`)
   await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
@@ -2259,13 +2261,19 @@ async function phaseReconcileMemory() {
     `CREATE TABLE ${schema}.child (id INT PRIMARY KEY, parent_id INT NOT NULL, payload VARCHAR(64) NOT NULL, ` +
       `FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE)`,
   )
-  // 2,000,000 rows: a.n in 0..200 by two hundred-row seeds; parent_id spreads
-  // every child over all thousand parents.
-  await sql(
-    `INSERT INTO ${schema}.child SELECT a.n * 10000 + b.n * 100 + c.n, (a.n * 10000 + b.n * 100 + c.n) % ${PARENTS}, ` +
-      `CONCAT(REPEAT('x', 32), a.n, '-', b.n, '-', c.n) ` +
-      `FROM (SELECT n FROM ${schema}.seed UNION ALL SELECT n + 100 FROM ${schema}.seed) a, ${schema}.seed b, ${schema}.seed c`,
-  )
+  // Ten thousand rows per block of a.n, a million rows per statement so no
+  // transaction grows with the table; parent_id spreads every child over
+  // all the parents.
+  const blocks = Math.ceil(CHILDREN / 10_000)
+  for (let from = 0; from < blocks; from += 100) {
+    const to = Math.min(from + 100, blocks)
+    await sql(
+      `INSERT INTO ${schema}.child SELECT a.n * 10000 + b.n * 100 + c.n, (a.n * 10000 + b.n * 100 + c.n) % ${PARENTS}, ` +
+        `CONCAT(REPEAT('x', 32), a.n, '-', b.n, '-', c.n) ` +
+        `FROM (SELECT x.n * 100 + y.n AS n FROM ${schema}.seed x, ${schema}.seed y WHERE x.n * 100 + y.n >= ${from} AND x.n * 100 + y.n < ${to}) a, ` +
+        `${schema}.seed b, ${schema}.seed c`,
+    )
+  }
   const childrenSeeded = Number(
     ((await mysqlConnection!.query(`SELECT COUNT(*) FROM ${schema}.child`))[0] as Array<Record<string, unknown>>)[0]!['COUNT(*)'],
   )
@@ -2281,17 +2289,20 @@ async function phaseReconcileMemory() {
     ).id
     await reprobe(created)
     await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+    // Every wait scales with the table: the gate's two million rows set
+    // the unit, and a scale run gets proportionally longer.
+    const scale = Math.max(1, CHILDREN / 2_000_000)
     const ready = await waitUntil(async () => {
       const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`)
       return status.state === 'streaming' || status.state === 'polling'
-    }, 600_000)
+    }, 600_000 * scale)
     if (!ready) {
       record(phase, 'reconcile-memory:the source replicates before the deletes', 'FAIL', await replicationDiagnostics(created))
       return
     }
     const childCount = async () =>
       (await api<{ count: number }>(`/api/tables/child/count?db=${created}`).catch(() => ({ count: -1 }))).count
-    const replicated = await waitUntil(async () => (await childCount()) === CHILDREN, 300_000)
+    const replicated = await waitUntil(async () => (await childCount()) === CHILDREN, 300_000 * scale)
     record(phase, 'reconcile-memory:every child row arrives', replicated ? 'PASS' : 'FAIL', `${await childCount()} of ${CHILDREN}`)
 
     // Cascading deletes: a tenth of the parents take a tenth of the children
@@ -2331,7 +2342,7 @@ async function phaseReconcileMemory() {
         await Bun.sleep(1_000)
       }
     })()
-    const converged = await waitUntil(async () => (await childCount()) === remaining, 900_000, 2_000)
+    const converged = await waitUntil(async () => (await childCount()) === remaining, 900_000 * scale, 2_000)
     await request
     sampling = false
     await sampler
@@ -3886,7 +3897,7 @@ async function main() {
     '--publish',
     '0:3306',
     '--tmpfs',
-    '/var/lib/mysql:rw,size=2g',
+    `/var/lib/mysql:rw,size=${process.env.PINTAIL_E2E_MYSQL_TMPFS_GB ?? '2'}g`,
     '--env',
     'MYSQL_ROOT_PASSWORD=pintail-root',
     '--env',
