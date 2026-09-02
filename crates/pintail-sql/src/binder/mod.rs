@@ -3236,6 +3236,25 @@ fn bind_binary(
             let result = arithmetic_type(op, left.data_type, right.data_type);
             (op, result)
         }
+        BinaryOperator::BitwiseAnd
+        | BinaryOperator::BitwiseOr
+        | BinaryOperator::BitwiseXor
+        | BinaryOperator::PGBitwiseShiftLeft
+        | BinaryOperator::PGBitwiseShiftRight
+            if is_numeric(left.data_type) && is_numeric(right.data_type) =>
+        {
+            let op = match operator {
+                BinaryOperator::BitwiseAnd => BinaryOp::BitAnd,
+                BinaryOperator::BitwiseOr => BinaryOp::BitOr,
+                BinaryOperator::BitwiseXor => BinaryOp::BitXor,
+                BinaryOperator::PGBitwiseShiftLeft => BinaryOp::ShiftLeft,
+                BinaryOperator::PGBitwiseShiftRight => BinaryOp::ShiftRight,
+                _ => unreachable!("matched bit operators"),
+            };
+            // MySQL evaluates bit operators over BIGINT UNSIGNED, whatever
+            // the operands were.
+            (op, Some(DataType::UInt64))
+        }
         BinaryOperator::Eq
         | BinaryOperator::NotEq
         | BinaryOperator::Lt
@@ -5341,6 +5360,14 @@ mod tests {
         );
         assert_eq!(literals[6], Value::Utf8("ascii".to_owned()));
         assert!(query.tables.is_empty(), "FROM DUAL is no table");
+    }
+
+    #[test]
+    fn bit_operators_bind_as_unsigned_integers() {
+        let query = bind("SELECT 1 | 2, 6 & 3, 5 ^ 1, 1 << 3, 16 >> 2").expect("binds");
+        for item in &query.projection {
+            assert_eq!(item.expr.data_type, Some(DataType::UInt64), "{}", item.name);
+        }
     }
 
     #[test]

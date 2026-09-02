@@ -678,6 +678,11 @@ fn apply_comparison(op: BinaryOp, value: KeyPart, lower: &mut KeyPart, upper: &m
         | BinaryOp::Divide
         | BinaryOp::IntegerDivide
         | BinaryOp::Modulo
+        | BinaryOp::BitAnd
+        | BinaryOp::BitOr
+        | BinaryOp::BitXor
+        | BinaryOp::ShiftLeft
+        | BinaryOp::ShiftRight
         | BinaryOp::And
         | BinaryOp::Or
         | BinaryOp::Xor => {}

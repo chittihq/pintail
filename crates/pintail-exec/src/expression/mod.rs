@@ -5015,7 +5015,46 @@ pub(crate) fn evaluate_binary(
         | BinaryOp::Divide
         | BinaryOp::IntegerDivide
         | BinaryOp::Modulo => evaluate_arithmetic(op, left, right, data_type),
+        BinaryOp::BitAnd
+        | BinaryOp::BitOr
+        | BinaryOp::BitXor
+        | BinaryOp::ShiftLeft
+        | BinaryOp::ShiftRight => evaluate_bitwise(op, left, right),
     }
+}
+
+/// `MySQL` evaluates bit operators over `BIGINT UNSIGNED`: each operand is
+/// its 64-bit pattern (a negative integer wraps), the result is unsigned,
+/// and a shift by 64 or more bits is zero.
+fn evaluate_bitwise(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, ExecError> {
+    let (Some(left), Some(right)) = (bit_pattern(left)?, bit_pattern(right)?) else {
+        return Ok(Value::Null);
+    };
+    let result = match op {
+        BinaryOp::BitAnd => left & right,
+        BinaryOp::BitOr => left | right,
+        BinaryOp::BitXor => left ^ right,
+        BinaryOp::ShiftLeft => u32::try_from(right)
+            .ok()
+            .and_then(|bits| left.checked_shl(bits))
+            .unwrap_or(0),
+        BinaryOp::ShiftRight => u32::try_from(right)
+            .ok()
+            .and_then(|bits| left.checked_shr(bits))
+            .unwrap_or(0),
+        _ => return Err(ExecError::InvalidExpressionType),
+    };
+    Ok(Value::UInt64(result))
+}
+
+fn bit_pattern(value: &Value) -> Result<Option<u64>, ExecError> {
+    Ok(match value {
+        Value::Null => None,
+        Value::Boolean(flag) => Some(u64::from(*flag)),
+        Value::Int64(signed) => Some(u64::from_ne_bytes(signed.to_ne_bytes())),
+        Value::UInt64(unsigned) => Some(*unsigned),
+        _ => return Err(ExecError::InvalidExpressionType),
+    })
 }
 
 fn evaluate_logic(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, ExecError> {

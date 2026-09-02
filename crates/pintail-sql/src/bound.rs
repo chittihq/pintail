@@ -981,6 +981,12 @@ pub enum BinaryOp {
     IntegerDivide,
     /// Remainder.
     Modulo,
+    /// Bit operators: `MySQL` evaluates them over `BIGINT UNSIGNED`.
+    BitAnd,
+    BitOr,
+    BitXor,
+    ShiftLeft,
+    ShiftRight,
     /// Equality comparison.
     Equal,
     /// Inequality comparison.

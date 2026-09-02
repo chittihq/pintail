@@ -217,3 +217,24 @@ fn a_keyless_local_table_keeps_every_row() {
     let all = run(&fixture, "SELECT * FROM log").expect("select star");
     assert_eq!(all.fields.len(), 2, "{:?}", all.fields);
 }
+
+#[test]
+fn bit_operators_evaluate_over_unsigned_64_bit_patterns() {
+    let fixture = local_fixture();
+    let output = run(
+        &fixture,
+        "SELECT 6 & 3, 6 | 3, 6 ^ 3, 1 << 62, -1 | 0, 1 >> 64, NULL & 1",
+    )
+    .expect("select");
+    let expected = [
+        pintail_types::Value::UInt64(2),
+        pintail_types::Value::UInt64(7),
+        pintail_types::Value::UInt64(5),
+        pintail_types::Value::UInt64(1 << 62),
+        // -1 as a 64-bit pattern, the way MySQL reads it.
+        pintail_types::Value::UInt64(u64::MAX),
+        pintail_types::Value::UInt64(0),
+        pintail_types::Value::Null,
+    ];
+    assert_eq!(output.rows[0], expected);
+}
