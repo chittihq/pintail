@@ -16,6 +16,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `0x..` and `b'..'` binary literals, `DATE '..'` / `TIME '..'` / `TIMESTAMP '..'`
   typed strings, charset introducers, integer literals past BIGINT UNSIGNED
   (read as DECIMAL, as MySQL does) and `FROM DUAL`.
+- `INSERT(str, pos, len, newstr)` and `TIME(expr)`.
 - Bit operators `|`, `&`, `^`, `<<`, `>>`, evaluated over BIGINT UNSIGNED as
   MySQL does.
 - Local databases accept tables without a primary key, keeping every row
