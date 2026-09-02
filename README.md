@@ -1,61 +1,71 @@
-# Pintail - Anything in milli seconds
+<h1 align="center">Pintail</h1>
 
+<p align="center">A live analytical replica of your MySQL database, in one binary.</p>
 
-Pintail makes slow MySQL reports fast. It keeps a live copy of your
-MySQL database, organized for analytics, and answers the questions MySQL
-struggles with: the report that takes half an hour comes back in well
-under a second. Everything ships in one binary — storage, sync, SQL, a
-MySQL-compatible endpoint, and a web dashboard.
+<p align="center">
+  <a href="https://github.com/chittihq/pintail/actions/workflows/ci.yml"><img src="https://github.com/chittihq/pintail/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/chittihq/pintail/actions/workflows/e2e.yml"><img src="https://github.com/chittihq/pintail/actions/workflows/e2e.yml/badge.svg" alt="E2E"></a>
+  <a href="https://github.com/chittihq/pintail/releases"><img src="https://img.shields.io/github/v/release/chittihq/pintail?include_prereleases" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+</p>
 
-You point it at a MySQL or MariaDB server and it copies the data and
-stays in sync on its own. Your existing tools and clients connect to
-Pintail exactly the way they connect to MySQL.
+Pintail makes slow MySQL reports fast. Point it at a MySQL or MariaDB
+server and it copies the data into a columnar store, keeps the copy in
+sync from the binlog, and answers the queries MySQL struggles with: the
+report that takes half an hour comes back in well under a second. Your
+existing clients, BI tools and ORMs connect to Pintail the way they
+connect to MySQL.
 
-The engine is written from scratch in Rust — there is no DuckDB or
-ClickHouse hiding inside. Every design decision is benchmarked instead of
-assumed, and the results are public, including the queries where
-ClickHouse still wins (see
-[benchmark/results.md](benchmark/results.md)).
+Everything ships in a single binary: storage, replication, the SQL engine,
+a MySQL-compatible endpoint, and a web dashboard. The engine is written
+from scratch in Rust, with no DuckDB or ClickHouse inside. Every design
+decision is benchmarked rather than assumed, and the results are public,
+including the queries where ClickHouse still wins.
 
-## Status
+## Features
 
-Pre-1.0. Single node only, with S3-compatible backup and restore, and the
-copy is read-only by design. What exists is tested hard: the test suites
-crash Pintail on purpose in the middle of writes and verify nothing is
-lost, and an end-to-end test boots a real MySQL, throws writes, schema
-changes, and a `kill -9` at it, then checks every table still matches
-exactly. What Pintail supports of MySQL is tabulated in
-[parity.md](parity.md); known limits are written down in
-[docs/limitations.md](docs/limitations.md). Pintail mirrors your MySQL
-data, so losing a Pintail node loses nothing — but don't make it your
-only copy of anything either.
+- **Continuous sync.** Consistent initial snapshot, then row-level changes
+  from the binlog (GTID or file position), or polling where the binlog is
+  unavailable. Schema changes are followed. Works with the settings most
+  servers already have, including managed MySQL.
+- **MySQL wire protocol.** Any MySQL client, driver or BI tool connects
+  with a database API key. Joins, subqueries, aggregates, window functions
+  and CTEs: the parts of the dialect reports are made of, checked
+  byte-for-byte against a real MySQL.
+- **Columnar storage built for scans.** Compressed segments, merge-on-read
+  over a write-ahead log, and results that are exact while changes are
+  still streaming in.
+- **Bounded by design.** Per-query and process-wide memory ceilings,
+  spill to disk, and admission control that sheds overload as a MySQL
+  error instead of unbounded latency.
+- **Operations included.** A dashboard for databases, tables, replication
+  state and dead letters; workspaces, members and API keys; S3-compatible
+  backup and restore; an HTTP API for all of it.
 
 ## Quick start
 
 ```sh
-docker compose up --build --detach
-docker compose logs pintail
+git clone https://github.com/chittihq/pintail.git
+cd pintail
+docker compose up --detach
 ```
 
-Open <http://127.0.0.1:8080>, create the first admin, then choose **Add
-database**. Give it your MySQL connection string, let Pintail check the
-server (it recommends the best sync mode), and start the first copy. Once
-the state reads Streaming or Polling, you can query.
+Open <http://127.0.0.1:8080>, create the first admin, and choose **Add
+database**. Give Pintail your MySQL connection string, let it check the
+server (it recommends a sync mode), and start the first copy. Once the
+state reads *Streaming* or *Polling*, you can query.
 
-Syncing works with the settings most servers already have, including
-managed MySQL where you can't change them. MySQL 5.7, 8.x, and MariaDB
-all work.
+The first boot prints the generated JWT and DSN-encryption secrets once;
+keep the `pintail-data` volume and treat its logs as sensitive. The
+dashboard and API listen on 8080 and the MySQL endpoint on 3306; override
+them with `PINTAIL_HTTP_PORT` and `PINTAIL_WIRE_PORT`.
 
-The first boot prints the generated JWT and DSN-encryption secrets once.
-Keep the `pintail-data` volume, and treat its logs as sensitive. The
-dashboard and API listen on 8080, the MySQL endpoint on 3306; override with
-`PINTAIL_HTTP_PORT` and `PINTAIL_WIRE_PORT`.
+MySQL 5.7, 8.x and MariaDB are supported as sources.
 
 ## Querying
 
-Any MySQL client works. In the dashboard, create a database API key with
-the `query` scope. The database name is the username, the key is the
-password:
+Create a database API key with the `query` scope in the dashboard. The
+database name is the username and the key is the password:
 
 ```sh
 MYSQL_PWD='pk_your_key' mysql \
@@ -66,23 +76,22 @@ MYSQL_PWD='pk_your_key' mysql \
   --database=analytics
 ```
 
-Use a MySQL 8.4 or MariaDB CLI. Oracle's 9.x CLI dropped the
-`mysql_native_password` client plugin that Pintail's challenge auth uses;
-mysql2, PyMySQL, DBeaver, and Metabase all work.
+The wire endpoint speaks `caching_sha2_password` and
+`mysql_native_password`, so the `mysql` CLI, mysql2, PyMySQL, DBeaver,
+Metabase, Prisma, Drizzle and Sequelize all work unchanged. What Pintail
+implements of MySQL is tabulated in [parity.md](parity.md); the
+differential oracle behind it holds 1,081 cases that pass byte-exactly
+against MySQL 8.4 and 8.0. Known gaps are written down in
+[docs/limitations.md](docs/limitations.md).
 
-You can use joins, subqueries, aggregates, and window functions — the
-parts of MySQL's dialect that reports are made of. Correctness is checked
-against a real MySQL by comparing the results of 600 test queries.
-
-## How it works, briefly
+## How it works
 
 Pintail keeps its own copy of your data, organized for scanning millions
-of rows at a time, and applies changes from MySQL continuously.
-Every query answers from the up-to-date, merged view — there is no
-"eventually correct" mode, and results stay fast even while data is
-streaming in. If you want the internals, they are written up in
-[docs/architecture.md](docs/architecture.md) and
-[docs/format.md](docs/format.md).
+of rows at a time, and applies changes from MySQL continuously. Every
+query answers from the up-to-date, merged view: there is no "eventually
+correct" mode, and results stay fast while data is streaming in. The
+internals are written up in [docs/architecture.md](docs/architecture.md)
+and [docs/format.md](docs/format.md).
 
 ## Benchmarks
 
@@ -146,78 +155,92 @@ rather than a tuned competitor.
 
 <!-- benchmark:end -->
 
-There is also a 30-minute stress test that streams 5,500 changes per
-second while continuously checking the copy stays identical, recorded in
-[tests/loadgen/results.md](tests/loadgen/results.md).
+A 30-minute CDC soak that streams 5,500 changes per second while
+continuously checking the copy stays identical is recorded in
+[tests/loadgen/results.md](tests/loadgen/results.md), and a concurrency
+sweep of simultaneous clients, including a memory-constrained profile, in
+[tests/load/results.md](tests/load/results.md).
 
-## Building from source
+## Configuration
+
+Configuration precedence is CLI flags, then `PINTAIL_*` environment
+variables, then `pintail.toml`. Every option is described in
+[pintail.example.toml](pintail.example.toml) and `pintail --help`.
+`PINTAIL_LOG` selects verbosity (`error`, `info`, `debug`); no log line
+carries a DSN, API key secret, invite token, session JWT or row value.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | How replication, storage and the query engine fit together |
+| [docs/format.md](docs/format.md) | The on-disk segment and WAL format |
+| [parity.md](parity.md) | MySQL features Pintail implements |
+| [docs/limitations.md](docs/limitations.md) | Known gaps and unsupported cases |
+| [docs/decisions.md](docs/decisions.md) | Design decisions, including the ideas that were measured and rejected |
+| [docs/verification.md](docs/verification.md) | The oracle, end-to-end, browser and benchmark gates |
+| [docs/development.md](docs/development.md) | Working on the codebase |
+| [CHANGELOG.md](CHANGELOG.md) | Release notes |
+
+## Status
+
+Pintail is pre-1.0 and single-node. The replica is read-only by design.
+It is tested hard: the suites crash the process mid-write and verify
+nothing is lost, boot a real MySQL and throw writes, schema changes and
+`kill -9` at the pair, then check every table still matches exactly.
+Pintail mirrors your MySQL data, so losing a Pintail node loses nothing.
+Do not make it your only copy of anything.
+
+## Development
 
 ```sh
-cd packages/dashboard
-bun install --frozen-lockfile
-bun run generate
-cd ../..
+# Dashboard assets, embedded into the binary at build time
+(cd packages/dashboard && bun install --frozen-lockfile && bun run generate)
+
+# Build and run
 cargo run --release -- --data-dir ./data
+
+# Lint and unit tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 ```
 
-Rust 1.85+, Bun for the dashboard. `cargo build` regenerates the dashboard
-assets when they change and embeds them in the binary. Configuration
-precedence is CLI flags, then `PINTAIL_*` environment variables, then
-`pintail.toml`; see `pintail.example.toml`.
-
-### Diagnostics
-
-`PINTAIL_LOG` selects how much the server reports on stderr:
-
-| Level | What it adds |
-|---|---|
-| `error` | failures only |
-| `info` (default) | every API request with its duration, replication and backup lifecycle, the resumed CDC position |
-| `debug` | per-table probe timings, per-chunk snapshot progress, idle poll cycles, storage flush and compaction decisions |
-
-Durations are the point. A capability probe walks every table in the source
-schema, so a large schema legitimately takes tens of seconds — a line reading
-`probe done db=… tables=82 11803ms` distinguishes a server that finished the
-work from one that hung, which client-side symptoms cannot.
-
-No log line carries a DSN, API key secret, invite token, OAuth exchange code,
-session JWT, or row value.
+Rust 1.88 or newer and Bun. The full release gate, which needs Docker and
+real MySQL containers, is documented in
+[docs/verification.md](docs/verification.md).
 
 ## Contributing
 
-Bug reports with a failing query are gold; so are MySQL compatibility gaps,
-since the oracle can only generate what we thought to generate. If you want
-to work on the engine itself, two things will save you a review round-trip:
+Bug reports with a failing query are gold, and so are MySQL compatibility
+gaps: the oracle can only generate what we thought to generate. Two things
+save a review round-trip when working on the engine:
 
-- The codebase forbids `unsafe` outright, and performance claims need
-  evidence: contested designs get a checksum-verified experiment in
-  `experiments/` before they get adopted. [docs/decisions.md](docs/decisions.md)
-  records what was tried and why some fast-looking ideas were rejected.
-- `cargo fmt`, a clippy-clean build (`pedantic` is on and warnings are
-  errors in CI), and `cargo test --workspace` are the baseline. The full
-  release gate, which needs Docker and real MySQL containers, is documented
-  in [docs/verification.md](docs/verification.md).
+- The codebase forbids `unsafe`, and performance claims need evidence.
+  Contested designs get a checksum-verified experiment in `experiments/`
+  before they are adopted; [docs/decisions.md](docs/decisions.md) records
+  what was tried and why.
+- `cargo fmt`, a clippy-clean build with `pedantic` on and warnings as
+  errors, and a green `cargo test --workspace` are the baseline.
 
 ## Acknowledgements
 
-Building from scratch doesn't mean inventing from scratch. Ideas we
-borrowed, with sources:
+Building from scratch does not mean inventing from scratch.
 
 - The merge-on-read range classification started from reading ClickHouse's
-  `PartsSplitter`, and ClickHouse itself is the benchmark target that keeps
-  us honest. Reading the ScyllaDB and DuckDB sources shaped several storage
-  and executor decisions; the ones we adopted (and the ones that lost in
-  our measurements) are logged in `experiments/RESULTS.md`.
+  `PartsSplitter`, and ClickHouse is the benchmark target that keeps us
+  honest. The ScyllaDB and DuckDB sources shaped several storage and
+  executor decisions; what was adopted and what lost in our measurements
+  is logged in `experiments/RESULTS.md`.
 - String columns use the 16-byte German-string views from the
   [Umbra paper](https://www.cidrdb.org/cidr2020/papers/p29-neumann-cidr20.pdf)
   by Neumann and Freitag.
 - Date arithmetic is Howard Hinnant's
   [civil-date algorithms](https://howardhinnant.github.io/date_algorithms.html).
 - The MySQL frontend stands on
-  [sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs) for SQL
-  and a from-scratch `pintail-protocol` crate for the wire protocol itself;
-  the engine leans on rayon, zstd, lz4_flex, and xxHash daily.
+  [sqlparser-rs](https://github.com/apache/datafusion-sqlparser-rs); the
+  wire protocol is a from-scratch crate; the engine leans on rayon, zstd,
+  lz4_flex and xxHash daily.
 
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE).
