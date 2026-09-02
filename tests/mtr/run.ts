@@ -516,6 +516,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   const { statements, note } = parse(text)
   const schema = `mtr_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`.slice(0, 48)
   const diffLines: string[] = []
+  const errorLines: string[] = []
 
   await root.query(`DROP DATABASE IF EXISTS ${schema}`)
   await root.query(`CREATE DATABASE ${schema}`)
@@ -579,6 +580,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
           counts['pintail-error'] += 1
           const cls = errorClass(String(error))
           errorClasses[cls] = (errorClasses[cls] ?? 0) + 1
+          errorLines.push(`## line ${statement.line}: ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
           continue
         }
         const ordered = hasOuterOrderBy(sql) && !statement.sorted
@@ -679,6 +681,10 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   if (diffLines.length) {
     mkdirSync(diffsDir, { recursive: true })
     writeFileSync(join(diffsDir, `${name}.md`), `# ${name}.test\n\n${diffLines.join('\n')}`)
+  }
+  if (errorLines.length) {
+    mkdirSync(diffsDir, { recursive: true })
+    writeFileSync(join(diffsDir, `${name}-errors.md`), `# ${name}.test: statements Pintail could not run\n\n${errorLines.join('\n')}`)
   }
   return { file: name, statements: statements.length, counts, parserNote: note, errorClasses }
 }
