@@ -59,7 +59,8 @@ function connectionUrl(endpoint: MysqlEndpoint): string {
   const user = encodeURIComponent(endpoint.user)
   const password = encodeURIComponent(endpoint.password)
   const database = encodeURIComponent(endpoint.database)
-  return `mysql://${user}:${password}@${endpoint.host}:${endpoint.port}/${database}`
+  const host = endpoint.host.includes(':') ? `[${endpoint.host}]` : endpoint.host
+  return `mysql://${user}:${password}@${host}:${endpoint.port}/${database}`
 }
 
 function normalizeSchema(schema: string): string {
