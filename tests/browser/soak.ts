@@ -92,7 +92,7 @@ async function docker(...args: string[]) {
 
 /// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
 function dsnHost(host: string): string {
-  return host.includes(':') ? `[]` : host
+  return host.includes(':') ? `[${host}]` : host
 }
 
 async function dockerHost(): Promise<string> {

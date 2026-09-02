@@ -171,7 +171,7 @@ async function docker(...args: string[]) {
 /// Docker daemon here is remote over SSH, so "localhost" is wrong.
 /// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
 function dsnHost(host: string): string {
-  return host.includes(':') ? `[]` : host
+  return host.includes(':') ? `[${host}]` : host
 }
 
 async function dockerHost(): Promise<string> {
