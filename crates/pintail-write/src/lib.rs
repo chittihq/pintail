@@ -141,6 +141,9 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
             )));
         }
         let mut nullable = true;
+        let mut character_set = None;
+        let mut collation = None;
+        let mut auto_increment = false;
         for option in &column.options {
             match &option.option {
                 ColumnOption::NotNull => nullable = false,
@@ -149,6 +152,28 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
                     primary_key.push(column_name.clone());
                     nullable = false;
                 }
+                // Declarations a fixture carries that change nothing about how
+                // rows are stored here: a comment, a uniqueness the source
+                // would enforce, an ON UPDATE clause a read-only table never
+                // fires, and DEFAULT NULL, which is what an omitted nullable
+                // column gets anyway.
+                ColumnOption::Comment(_) | ColumnOption::Unique(_) | ColumnOption::OnUpdate(_) => {}
+                ColumnOption::Default(Expr::Value(value))
+                    if matches!(value.value, SqlValue::Null) => {}
+                ColumnOption::CharacterSet(name) => character_set = Some(name.to_string()),
+                ColumnOption::Collation(name) => collation = Some(name.to_string()),
+                // AUTO_INCREMENT is accepted in the declaration and recorded the
+                // way the probe records it; an INSERT that leaves the column
+                // out is refused rather than silently given a value MySQL would
+                // not have chosen.
+                ColumnOption::DialectSpecific(tokens)
+                    if tokens.iter().any(|token| {
+                        matches!(token, sqlparser::tokenizer::Token::Word(word)
+                            if word.value.eq_ignore_ascii_case("AUTO_INCREMENT"))
+                    }) =>
+                {
+                    auto_increment = true;
+                }
                 other => {
                     return Err(WriteError::Unsupported(format!(
                         "column option {other} is not supported on a local table"
@@ -156,38 +181,52 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
                 }
             }
         }
-        columns.push(declare(ordinal, &column_name, &column.data_type, nullable)?);
+        let mut declared = declare(ordinal, &column_name, &column.data_type, nullable)?;
+        if character_set.is_some() {
+            declared.character_set = character_set;
+        }
+        if collation.is_some() {
+            declared.collation = collation;
+        }
+        if auto_increment {
+            declared.extra = "auto_increment".to_owned();
+        }
+        columns.push(declared);
     }
 
+    // Only the primary key shapes storage. Secondary indexes, uniqueness,
+    // foreign keys and checks are the source's to enforce; a replica stores
+    // the rows it is given.
     for constraint in &create.constraints {
-        match constraint {
-            TableConstraint::PrimaryKey(key) => {
-                if !primary_key.is_empty() {
-                    return Err(WriteError::Invalid(
-                        "Multiple primary key defined".to_owned(),
-                    ));
-                }
-                for column in &key.columns {
-                    primary_key.push(index_column_name(column)?);
-                }
+        if let TableConstraint::PrimaryKey(key) = constraint {
+            if !primary_key.is_empty() {
+                return Err(WriteError::Invalid(
+                    "Multiple primary key defined".to_owned(),
+                ));
             }
-            other => {
-                return Err(WriteError::Unsupported(format!(
-                    "table constraint {other} is not supported on a local table"
-                )));
+            for column in &key.columns {
+                primary_key.push(index_column_name(column)?);
             }
         }
     }
 
-    if primary_key.is_empty() {
-        // A keyless local table has no merge identity, so UPDATE and DELETE
-        // could never address a row and INSERT could not detect a duplicate.
-        // Refusing here is better than accepting a table that can only ever
-        // be appended to.
-        return Err(WriteError::Invalid(format!(
-            "table '{name}' needs a PRIMARY KEY; a local table without one has no row identity"
-        )));
-    }
+    // A table without a primary key gets what the replica gives a keyless
+    // source table: a generated, monotonically increasing row id, and every
+    // row kept. INSERT is the only write a local table takes, so the missing
+    // merge identity costs nothing here.
+    let key = if primary_key.is_empty() {
+        SourceKey {
+            mode: KeyMode::AppendRowId,
+            index_name: None,
+            columns: Vec::new(),
+        }
+    } else {
+        SourceKey {
+            mode: KeyMode::Primary,
+            index_name: Some("PRIMARY".to_owned()),
+            columns: primary_key.clone(),
+        }
+    };
     for key_column in &primary_key {
         let Some(column) = columns
             .iter_mut()
@@ -209,11 +248,7 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
             estimated_rows: Some(0),
             rows_are_exact: true,
             columns,
-            key: SourceKey {
-                mode: KeyMode::Primary,
-                index_name: Some("PRIMARY".to_owned()),
-                columns: primary_key,
-            },
+            key,
             unique_keys: Vec::new(),
             requires_reconciliation: false,
             foreign_keys: Vec::new(),
@@ -236,6 +271,21 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
 /// violation, a value that cannot be typed, or a primary key repeated
 /// inside the same statement.
 pub fn bind_insert(statement: &Statement, table: &SourceTable) -> Result<InsertPlan, WriteError> {
+    bind_insert_from(statement, table, 1)
+}
+
+/// [`bind_insert`] for a keyless table: rows take generated ids counting up
+/// from `first_row_id`, which the caller derives from the store so the ids
+/// keep increasing across statements.
+///
+/// # Errors
+///
+/// As [`bind_insert`].
+pub fn bind_insert_from(
+    statement: &Statement,
+    table: &SourceTable,
+    first_row_id: u64,
+) -> Result<InsertPlan, WriteError> {
     let Statement::Insert(insert) = statement else {
         return Err(WriteError::Unsupported(
             "only INSERT is supported here".to_owned(),
@@ -283,9 +333,23 @@ pub fn bind_insert(statement: &Statement, table: &SourceTable) -> Result<InsertP
     };
 
     let key_columns = table.key.columns.clone();
+    // An AUTO_INCREMENT column the statement leaves out would get a value
+    // MySQL chose; nothing here can choose the same one.
+    if let Some(column) = table.columns.iter().find(|column| {
+        column.extra.eq_ignore_ascii_case("auto_increment")
+            && !named
+                .iter()
+                .any(|chosen| chosen.name.eq_ignore_ascii_case(&column.name))
+    }) {
+        return Err(WriteError::Unsupported(format!(
+            "column '{}' is AUTO_INCREMENT; a local table needs its value supplied",
+            column.name
+        )));
+    }
+    let keyless = table.key.mode == KeyMode::AppendRowId;
     let mut rows = Vec::with_capacity(values.rows.len());
     let mut seen_keys = Vec::with_capacity(values.rows.len());
-    for row in &values.rows {
+    for (ordinal, row) in values.rows.iter().enumerate() {
         let row = &row.content;
         if row.len() != named.len() {
             return Err(WriteError::Invalid(format!(
@@ -312,12 +376,19 @@ pub fn bind_insert(statement: &Statement, table: &SourceTable) -> Result<InsertP
             }
         }
 
-        let key = primary_key(table, &key_columns, &values_by_id)?;
-        let rendered = render_key(&key);
-        if seen_keys.contains(&rendered) {
-            return Err(WriteError::DuplicateKey(rendered));
-        }
-        seen_keys.push(rendered);
+        let key = if keyless {
+            let id = first_row_id.saturating_add(u64::try_from(ordinal).unwrap_or(u64::MAX));
+            PrimaryKey::new(vec![KeyPart::UInt64(id)])
+                .map_err(|error| WriteError::Invalid(error.to_string()))?
+        } else {
+            let key = primary_key(table, &key_columns, &values_by_id)?;
+            let rendered = render_key(&key);
+            if seen_keys.contains(&rendered) {
+                return Err(WriteError::DuplicateKey(rendered));
+            }
+            seen_keys.push(rendered);
+            key
+        };
         rows.push(StoredRow::new(key, values_by_id, 0, false));
     }
 

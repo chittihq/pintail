@@ -179,3 +179,41 @@ fn a_write_against_a_missing_database_is_not_treated_as_writable() {
     assert!(error.to_string().contains("read-only"), "{error}");
     let _ = &fixture.metadata_path;
 }
+
+#[test]
+fn a_keyless_local_table_keeps_every_row() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE log (line VARCHAR(16) NOT NULL, n INT)",
+    )
+    .expect("create keyless table");
+    run(
+        &fixture,
+        "INSERT INTO log (line, n) VALUES ('a', 1), ('b', 2)",
+    )
+    .expect("first insert");
+    // The same row again is a second row, as it is in MySQL: nothing
+    // about a keyless table can call it a duplicate.
+    run(&fixture, "INSERT INTO log (line, n) VALUES ('a', 1)").expect("second insert");
+
+    assert_eq!(
+        run(&fixture, "SELECT COUNT(*) FROM log").unwrap().rows[0][0],
+        pintail_types::Value::UInt64(3)
+    );
+    let lines = run(&fixture, "SELECT line FROM log ORDER BY line, n").expect("select");
+    assert_eq!(
+        lines
+            .rows
+            .iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        ["a", "a", "b"]
+            .into_iter()
+            .map(|text| pintail_types::Value::Utf8(text.to_owned()))
+            .collect::<Vec<_>>()
+    );
+    // The generated row id is storage's business, never a column.
+    let all = run(&fixture, "SELECT * FROM log").expect("select star");
+    assert_eq!(all.fields.len(), 2, "{:?}", all.fields);
+}

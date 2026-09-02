@@ -3,8 +3,8 @@
 //! numbers are part of the contract rather than an implementation detail.
 
 use pintail_sql::parse_statement;
-use pintail_types::{DataType, KeyPart, Value};
-use pintail_write::{WriteError, bind_create_table, bind_insert};
+use pintail_types::{DataType, KeyMode, KeyPart, Value};
+use pintail_write::{WriteError, bind_create_table, bind_insert, bind_insert_from};
 
 fn create(sql: &str) -> Result<pintail_write::CreateTablePlan, WriteError> {
     bind_create_table(&parse_statement(sql).expect("parses"))
@@ -93,20 +93,57 @@ fn a_compound_primary_key_keeps_its_declared_order() {
 }
 
 #[test]
-fn a_table_without_a_primary_key_is_refused() {
-    // A local table with no key has no row identity: nothing could detect a
-    // duplicate, and UPDATE/DELETE could never address a row.
-    let error = create("CREATE TABLE t (id BIGINT, body TEXT)").expect_err("refused");
-    assert_eq!(error.mysql_code(), 1064);
-    assert!(error.to_string().contains("PRIMARY KEY"), "{error}");
+fn a_table_without_a_primary_key_appends_rows_by_generated_id() {
+    // What the replica does for a keyless source table: every row is kept
+    // under a generated, increasing id. INSERT is the only write a local
+    // table takes, so the missing merge identity costs nothing.
+    let plan = create("CREATE TABLE t (id BIGINT, body TEXT)").expect("binds");
+    assert_eq!(plan.table.key.mode, KeyMode::AppendRowId);
+    assert_eq!(plan.table.key.index_name, None);
+    assert!(plan.table.key.columns.is_empty());
+
+    let statement =
+        parse_statement("INSERT INTO t (id, body) VALUES (7, 'a'), (7, 'a')").expect("parses");
+    let rows = bind_insert_from(&statement, &plan.table, 1 << 24)
+        .expect("binds")
+        .rows;
+    assert_eq!(rows[0].key().parts(), [KeyPart::UInt64(1 << 24)]);
+    assert_eq!(rows[1].key().parts(), [KeyPart::UInt64((1 << 24) + 1)]);
+    // Identical rows are two rows, as they are in MySQL.
+    assert_eq!(rows[0].values(), rows[1].values());
+}
+
+#[test]
+fn declarations_the_source_enforces_are_accepted_and_recorded() {
+    let plan = create(
+        "CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, b INT UNIQUE DEFAULT NULL, \
+         c VARCHAR(8) CHARACTER SET latin1 COLLATE latin1_bin COMMENT 'x', \
+         UNIQUE (b), CHECK (b > 0), FOREIGN KEY (b) REFERENCES o(id))",
+    )
+    .expect("binds");
+    assert_eq!(plan.table.key.columns, ["id"]);
+    assert_eq!(plan.table.columns[0].extra, "auto_increment");
+    assert_eq!(
+        plan.table.columns[2].character_set.as_deref(),
+        Some("latin1")
+    );
+    assert_eq!(
+        plan.table.columns[2].collation.as_deref(),
+        Some("latin1_bin")
+    );
+
+    // An INSERT that leaves the AUTO_INCREMENT column out would get a
+    // value MySQL chose; refusing beats guessing.
+    let statement = parse_statement("INSERT INTO t (b, c) VALUES (1, 'a')").expect("parses");
+    let error = bind_insert_from(&statement, &plan.table, 1).expect_err("refused");
+    assert!(error.to_string().contains("AUTO_INCREMENT"), "{error}");
+    let statement = parse_statement("INSERT INTO t (id, b, c) VALUES (1, 1, 'a')").expect("parses");
+    assert!(bind_insert_from(&statement, &plan.table, 1).is_ok());
 }
 
 #[test]
 fn out_of_scope_table_features_are_refused_by_name() {
     for sql in [
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, b INT, UNIQUE (b))",
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, b INT, CHECK (b > 0))",
-        "CREATE TABLE t (id BIGINT PRIMARY KEY, b INT, FOREIGN KEY (b) REFERENCES o(id))",
         "CREATE TEMPORARY TABLE t (id BIGINT PRIMARY KEY)",
         "CREATE TABLE t AS SELECT 1",
     ] {

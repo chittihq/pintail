@@ -17,7 +17,7 @@ use pintail_store::{StoreOptions, TableSnapshot, TableStore, table_directory};
 use pintail_types::StoredRow;
 use sqlparser::ast::Statement;
 
-use crate::{WriteError, bind_create_table, bind_insert};
+use crate::{WriteError, bind_create_table, bind_insert_from};
 
 /// What a completed write did, for the client's result packet.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -197,21 +197,27 @@ impl LocalDatabase {
             .iter()
             .find(|table| table.name.eq_ignore_ascii_case(&target))
             .ok_or(WriteError::UnknownTable(target))?;
-        let plan = bind_insert(statement, table)?;
-        if plan.rows.is_empty() {
-            return Ok(WriteOutcome::RowsInserted {
-                rows: 0,
-                version: 0,
-            });
-        }
-
         let schema = table
             .table_schema_with_version(1)
             .map_err(|error| WriteError::Invalid(error.to_string()))?;
         let directory = table_directory(&self.tables_root, &table.name);
         let mut store =
             TableStore::open(&directory, schema, local_store_options()).map_err(internal)?;
-        reject_existing_keys(&store.snapshot(), &plan.rows)?;
+        // A keyless table's row ids come from the store's next commit
+        // version, so they rise across statements and never repeat; a
+        // statement gets room for sixteen million rows of its own.
+        let keyless = table.key.mode == pintail_types::KeyMode::AppendRowId;
+        let first_row_id = (store.commit_version() + 1) << 24;
+        let plan = bind_insert_from(statement, table, first_row_id)?;
+        if plan.rows.is_empty() {
+            return Ok(WriteOutcome::RowsInserted {
+                rows: 0,
+                version: 0,
+            });
+        }
+        if !keyless {
+            reject_existing_keys(&store.snapshot(), &plan.rows)?;
+        }
 
         let rows = u64::try_from(plan.rows.len()).unwrap_or(u64::MAX);
         let version = store.commit(plan.rows).map_err(internal)?;
@@ -313,10 +319,20 @@ fn local_source_table(
         estimated_rows: None,
         rows_are_exact: false,
         columns,
-        key: pintail_probe::SourceKey {
-            mode: pintail_types::KeyMode::Primary,
-            index_name: Some("PRIMARY".to_owned()),
-            columns: key_columns,
+        // No key columns is the keyless shape: rows live under generated ids,
+        // exactly as the plan declared them.
+        key: if key_columns.is_empty() {
+            pintail_probe::SourceKey {
+                mode: pintail_types::KeyMode::AppendRowId,
+                index_name: None,
+                columns: key_columns,
+            }
+        } else {
+            pintail_probe::SourceKey {
+                mode: pintail_types::KeyMode::Primary,
+                index_name: Some("PRIMARY".to_owned()),
+                columns: key_columns,
+            }
         },
         unique_keys: Vec::new(),
         requires_reconciliation: false,
