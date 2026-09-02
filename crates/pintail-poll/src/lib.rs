@@ -539,44 +539,50 @@ fn key_at(values: &[Value], positions: &[usize]) -> Option<PrimaryKey> {
     PrimaryKey::new(parts).ok()
 }
 
-/// Candidates whose replica values one range scan gathers at a time: the
-/// span of fifty thousand sorted keys is decoded once, in chunks, and only
-/// the candidates' rows are kept.
-const CANDIDATE_SLICE: usize = 50_000;
-
-/// The replica's current values for `keys`, which must be sorted, read by
-/// streaming the key span once rather than a point lookup per key.
-fn replica_rows_for(
-    snapshot: &pintail_store::TableSnapshot,
+/// The values a tombstone carries: the key's own parts in the key columns,
+/// NULL where the column allows it, and the type's zero elsewhere. A
+/// tombstone's values are never read back - the row is gone - but the
+/// store validates arity and nullability, and reading the replica's real
+/// values for every candidate decoded the whole table a second time.
+fn tombstone_values(
+    schema: &pintail_types::TableSchema,
     source: &SourceTable,
-    keys: &[PrimaryKey],
-) -> Result<BTreeMap<PrimaryKey, Vec<Value>>, PollError> {
-    let mut rows = BTreeMap::new();
-    let (Some(first), Some(last)) = (keys.first(), keys.last()) else {
-        return Ok(rows);
-    };
-    let wanted = keys.iter().collect::<BTreeSet<_>>();
-    let column_ids = snapshot
-        .schema()
+    key: &PrimaryKey,
+) -> Vec<Value> {
+    schema
         .columns()
         .iter()
-        .map(pintail_types::Column::id)
-        .collect::<Vec<_>>();
-    let mut chunks = ProjectedChunks::open(snapshot, first, last, &column_ids)?;
-    while let Some(scanned) = chunks.next()? {
-        for values in scanned {
-            let key = physical_key(source, &values)?;
-            if wanted.contains(&key) {
-                rows.insert(key, values);
+        .map(|column| {
+            let key_part = source
+                .key
+                .columns
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(column.name()))
+                .and_then(|position| key.parts().get(position));
+            match key_part {
+                Some(pintail_types::KeyPart::Int64(value)) => Value::Int64(*value),
+                Some(pintail_types::KeyPart::UInt64(value)) => Value::UInt64(*value),
+                Some(pintail_types::KeyPart::Utf8(value)) => Value::Utf8(value.clone()),
+                Some(pintail_types::KeyPart::Binary(value)) => Value::Binary(value.clone()),
+                None if column.is_nullable() => Value::Null,
+                None => match column.data_type().storage_type() {
+                    pintail_types::DataType::Boolean => Value::Boolean(false),
+                    pintail_types::DataType::Int64 => Value::Int64(0),
+                    pintail_types::DataType::UInt64 => Value::UInt64(0),
+                    pintail_types::DataType::Float64 => {
+                        Value::Float64(pintail_types::Float64::new(0.0))
+                    }
+                    pintail_types::DataType::Binary => Value::Binary(Vec::new()),
+                    _ => Value::Utf8(String::new()),
+                },
             }
-        }
-    }
-    Ok(rows)
+        })
+        .collect()
 }
 
-/// Verifies sorted `candidates` against the source: a candidate the source
-/// still holds with different content is refreshed, one it no longer holds
-/// is tombstoned. Returns (refreshed, tombstoned) after ingesting both.
+/// Verifies `candidates` against the source: a candidate the source still
+/// holds is refreshed with the source's row, one it no longer holds is
+/// tombstoned. Returns (refreshed, tombstoned) after ingesting both.
 async fn repair_candidates(
     connection: &mut Conn,
     source_database: &str,
@@ -587,44 +593,41 @@ async fn repair_candidates(
 ) -> Result<(usize, usize), PollError> {
     let mut refreshed = 0;
     let mut tombstoned = 0;
-    for slice in candidates.chunks(CANDIDATE_SLICE) {
-        let mut replica = replica_rows_for(snapshot, &target.source, slice)?;
-        for batch in slice.chunks(MEMBERSHIP_BATCH) {
-            let (condition, parameters) = key_membership_condition(&target.source, batch);
-            let rows = fetch_rows_page(
-                connection,
-                source_database,
-                &target.source,
-                &condition,
-                parameters,
-                "",
-                batch.len(),
-                0,
-            )
-            .await?;
-            let mut present = BTreeMap::new();
-            for row in rows {
-                let decoded = decode_row(&target.source, row, 0, version, false)?;
-                present.insert(decoded.key().clone(), decoded);
+    for batch in candidates.chunks(MEMBERSHIP_BATCH) {
+        let (condition, parameters) = key_membership_condition(&target.source, batch);
+        let rows = fetch_rows_page(
+            connection,
+            source_database,
+            &target.source,
+            &condition,
+            parameters,
+            "",
+            batch.len(),
+            0,
+        )
+        .await?;
+        let mut present = BTreeMap::new();
+        for row in rows {
+            let decoded = decode_row(&target.source, row, 0, version, false)?;
+            present.insert(decoded.key().clone(), decoded);
+        }
+        let mut repairs = Vec::with_capacity(batch.len());
+        for key in batch {
+            if let Some(decoded) = present.remove(key) {
+                refreshed += 1;
+                repairs.push(decoded);
+            } else {
+                tombstoned += 1;
+                repairs.push(StoredRow::new(
+                    key.clone(),
+                    tombstone_values(snapshot.schema(), &target.source, key),
+                    version,
+                    true,
+                ));
             }
-            let mut repairs = Vec::new();
-            for key in batch {
-                let Some(values) = replica.remove(key) else {
-                    continue;
-                };
-                if let Some(decoded) = present.remove(key) {
-                    if decoded.values() != values.as_slice() {
-                        refreshed += 1;
-                        repairs.push(decoded);
-                    }
-                } else {
-                    tombstoned += 1;
-                    repairs.push(StoredRow::new(key.clone(), values, version, true));
-                }
-            }
-            if !repairs.is_empty() {
-                target.store.ingest(repairs)?;
-            }
+        }
+        if !repairs.is_empty() {
+            target.store.ingest(repairs)?;
         }
     }
     Ok((refreshed, tombstoned))
@@ -745,7 +748,6 @@ async fn reconcile_cascade_target(
                     }
                 }
             }
-            // Streamed in key order, so the candidates are already sorted.
             if !candidates.is_empty() {
                 let (fresh, gone) = repair_candidates(
                     connection,
