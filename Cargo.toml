@@ -33,6 +33,7 @@ repository = "https://github.com/pintail-db/pintail"
 rust-version = "1.88"
 
 [workspace.dependencies]
+tikv-jemallocator = "0.6"
 anyhow = "1.0.98"
 argon2 = "0.5.3"
 async-trait = "0.1.91"

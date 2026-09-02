@@ -11,6 +11,16 @@ use pintail_meta::MetaStore;
 use pintail_wire::{load_wire_tls, serve_until_with_options};
 use tokio::net::TcpListener;
 
+// glibc malloc keeps what a thread frees inside that thread's own arena, and
+// a server whose supervisor opens and drops every table store every few
+// seconds across a pool of threads grows one 128 MiB arena per thread and
+// never gives them back: a staging node held 7 GB of heap for 500 MB of
+// data, most of it swapped. jemalloc returns freed pages to the operating
+// system on a decay timer, so resident memory follows what is live.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let started = std::time::Instant::now();

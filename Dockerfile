@@ -60,6 +60,12 @@ RUN apt-get update \
 
 COPY --from=builder /usr/local/bin/pintail-built /usr/local/bin/pintail
 
+# jemalloc (the binary's allocator) returns freed pages after a second
+# instead of its ten-second default, from a background thread so the purge
+# never rides on a query's allocation. The _RJEM_ prefix is the symbol
+# prefix the Rust binding builds jemalloc with.
+ENV _RJEM_MALLOC_CONF=background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0
+
 USER pintail
 VOLUME ["/var/lib/pintail"]
 EXPOSE 8080 3306
