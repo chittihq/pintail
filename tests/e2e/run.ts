@@ -19,6 +19,7 @@
 ///           E2E_PHASES=crud,ddl ...   (subset while iterating)
 
 import { createServer } from 'node:net'
+import { Database } from 'bun:sqlite'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -1583,6 +1584,288 @@ async function phaseRestart() {
   await startPintail()
   await verifyLocalDurability()
   await sql(`INSERT INTO orders (customer_id, status, total, placed_on) VALUES (10, 'shipped', 67.89, '2025-08-02')`)
+}
+
+/// Sorted-sample percentile, for the latency phases below.
+function percentile(samples: number[], fraction: number): number {
+  if (samples.length === 0) return 0
+  const sorted = [...samples].sort((a, b) => a - b)
+  return sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))]!
+}
+
+/// Round-trip of one API call in milliseconds, or -1 when it failed.
+async function timedApi(path: string): Promise<number> {
+  const started = performance.now()
+  try {
+    await api(path)
+    return performance.now() - started
+  } catch {
+    return -1
+  }
+}
+
+/// The activity feed over a deployment's worth of control-plane history.
+///
+/// A replication cycle writes one sync_runs row every cadence and nothing
+/// prunes it, so a long-running deployment carries hundreds of thousands.
+/// The dashboard reads that table newest-first on every load, and a
+/// production instance with 632,000 rows took 136 seconds per call while
+/// polls piled up behind each other until they starved HTTP itself. The
+/// history is seeded directly while pintail is down - the honest shape of
+/// the bug is "the table got big", not "the supervisor ran for a year".
+async function phaseActivityHistory() {
+  const phase = 'activity-history'
+  const HISTORY_ROWS = 150_000
+
+  log(`SIGKILLing pintail to seed ${HISTORY_ROWS} sync_runs rows of history`)
+  pintailProcess!.kill(9)
+  await pintailProcess!.exited
+  const meta = new Database(join(pintailDataDir, 'pintail-meta.db'))
+  try {
+    const insert = meta.prepare(
+      'INSERT INTO sync_runs (id, db_id, table_name, kind, status, rows, bytes, duration_ms, error, started_at) ' +
+        "VALUES (?1, ?2, NULL, 'cdc', 'completed', 0, 0, 3, NULL, ?3)",
+    )
+    const seed = meta.transaction((count: number) => {
+      // Spread across a day so the newest-first order is not insertion order.
+      for (let index = 0; index < count; index += 1) {
+        const second = index % 86_400
+        const stamp = `2026-08-01T${String(Math.floor(second / 3600)).padStart(2, '0')}:${String(
+          Math.floor(second / 60) % 60,
+        ).padStart(2, '0')}:${String(second % 60).padStart(2, '0')}.${String(index % 1000).padStart(3, '0')}Z`
+        insert.run(`hist_${index}`, databaseId, stamp)
+      }
+    })
+    seed(HISTORY_ROWS)
+  } finally {
+    meta.close()
+  }
+  await startPintail()
+
+  // The two shapes the dashboard issues: scoped to one database, and the
+  // workspace-wide feed. Sequential first, so the number is the query's own.
+  const scoped: number[] = []
+  const unscoped: number[] = []
+  for (let round = 0; round < 20; round += 1) {
+    scoped.push(await timedApi(`/api/activity?db=${databaseId}&limit=200`))
+    unscoped.push(await timedApi('/api/activity?limit=200'))
+  }
+  const failed = [...scoped, ...unscoped].some((sample) => sample < 0)
+  record(
+    phase,
+    'activity-history:scoped feed stays fast over a large history',
+    !failed && percentile(scoped, 0.95) < 400 ? 'PASS' : 'FAIL',
+    `p50 ${percentile(scoped, 0.5).toFixed(0)}ms p95 ${percentile(scoped, 0.95).toFixed(0)}ms over ${HISTORY_ROWS} rows`,
+  )
+  record(
+    phase,
+    'activity-history:workspace feed stays fast over a large history',
+    !failed && percentile(unscoped, 0.95) < 400 ? 'PASS' : 'FAIL',
+    `p50 ${percentile(unscoped, 0.5).toFixed(0)}ms p95 ${percentile(unscoped, 0.95).toFixed(0)}ms`,
+  )
+
+  // Then concurrently, the way polls actually arrive - and /health alongside,
+  // because the production failure was the feed starving everything else.
+  const concurrent: number[] = []
+  const health: number[] = []
+  for (let round = 0; round < 3; round += 1) {
+    const batch = await Promise.all([
+      ...Array.from({ length: 25 }, () => timedApi(`/api/activity?db=${databaseId}&limit=200`)),
+      ...Array.from({ length: 5 }, () => timedApi('/health')),
+    ])
+    concurrent.push(...batch.slice(0, 25))
+    health.push(...batch.slice(25))
+  }
+  record(
+    phase,
+    'activity-history:25 concurrent feed reads do not pile up',
+    concurrent.every((sample) => sample >= 0) && percentile(concurrent, 0.99) < 2_000 ? 'PASS' : 'FAIL',
+    `p50 ${percentile(concurrent, 0.5).toFixed(0)}ms p99 ${percentile(concurrent, 0.99).toFixed(0)}ms`,
+  )
+  record(
+    phase,
+    'activity-history:health answers while the feed is hammered',
+    health.every((sample) => sample >= 0) && percentile(health, 0.95) < 500 ? 'PASS' : 'FAIL',
+    `health p95 ${percentile(health, 0.95).toFixed(0)}ms`,
+  )
+}
+
+/// Many dashboards open at once while replication is live.
+///
+/// The production cascade was polls arriving faster than they drained,
+/// saturating every runtime worker so that even static assets took minutes
+/// and CDC lag grew. This holds 25 pollers on the dashboard's endpoints for
+/// twenty seconds while rows are written at the source, and asks three
+/// things: nothing errors, latency stays bounded, and the replica still
+/// converges - the last one is the proof the supervisor was not starved.
+async function phasePollStorm() {
+  const phase = 'poll-storm'
+  const POLLERS = 25
+  const DURATION_MS = 20_000
+  const WRITES = 200
+  const before = Number(await mysqlCount('orders'))
+
+  const latencies: number[] = []
+  const health: number[] = []
+  let errors = 0
+  const endpoints = [
+    `/api/activity?db=${databaseId}&limit=200`,
+    `/api/dlq?db=${databaseId}`,
+    `/api/databases/${databaseId}/status`,
+    '/status',
+  ]
+  const deadline = Date.now() + DURATION_MS
+  const poller = async (seat: number) => {
+    let turn = seat
+    while (Date.now() < deadline) {
+      const sample = await timedApi(endpoints[turn % endpoints.length]!)
+      if (sample < 0) errors += 1
+      else latencies.push(sample)
+      turn += 1
+      await Bun.sleep(100) // an open tab's cadence, not a tight loop
+    }
+  }
+  const heartbeat = async () => {
+    while (Date.now() < deadline) {
+      health.push(await timedApi('/health'))
+      await Bun.sleep(250)
+    }
+  }
+  const writer = async () => {
+    for (let index = 0; index < WRITES; index += 1) {
+      await sql(
+        `INSERT INTO orders (customer_id, status, total, placed_on) VALUES (${1 + (index % 8)}, 'processing', ${index}.25, '2025-08-03')`,
+      )
+      await Bun.sleep(DURATION_MS / WRITES)
+    }
+  }
+  await Promise.all([...Array.from({ length: POLLERS }, (_, seat) => poller(seat)), heartbeat(), writer()])
+
+  record(
+    phase,
+    'poll-storm:no request fails under 25 open dashboards',
+    errors === 0 ? 'PASS' : 'FAIL',
+    `${errors} failed of ${latencies.length + errors}`,
+  )
+  record(
+    phase,
+    'poll-storm:latency stays bounded',
+    percentile(latencies, 0.99) < 3_000 ? 'PASS' : 'FAIL',
+    `${latencies.length} requests: p50 ${percentile(latencies, 0.5).toFixed(0)}ms p99 ${percentile(latencies, 0.99).toFixed(0)}ms`,
+  )
+  record(
+    phase,
+    'poll-storm:health never stalls',
+    health.every((sample) => sample >= 0) && percentile(health, 0.99) < 1_000 ? 'PASS' : 'FAIL',
+    `health p99 ${percentile(health, 0.99).toFixed(0)}ms`,
+  )
+  const converged = await waitUntil(async () => (await replicaCount('orders')) === before + WRITES, 120_000)
+  record(
+    phase,
+    'poll-storm:replication keeps pace under the storm',
+    converged ? 'PASS' : 'FAIL',
+    `orders replica ${await replicaCount('orders')} vs source ${before + WRITES}`,
+  )
+}
+
+/// A restart in the middle of a database's first snapshot.
+///
+/// No job survives a restart. The tables caught mid-copy are quarantined
+/// at boot so partial data never answers as healthy - that part is by
+/// design. What this phase demands is the other half: that the database
+/// itself is not left behind. A production instance sat in 'snapshotting'
+/// for over a day after exactly this, with 108 tables quarantined and 134
+/// never copied, because a database in that state is never scheduled and
+/// so never reaches the repair that would have drained them. Nobody clicks
+/// anything here; recovery has to happen on its own.
+async function phaseRestartDuringSnapshot() {
+  const phase = 'restart-during-snapshot'
+  const host = await dockerHost()
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  const schema = `interrupted_${nonce}`
+  const ROWS = 300_000 // three durable chunks: enough copy to land a kill inside
+
+  await sql(`CREATE DATABASE ${schema}`)
+  await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
+  await sql(
+    `INSERT INTO ${schema}.seed VALUES ${Array.from({ length: 100 }, (_, n) => `(${n})`).join(',')}`,
+  )
+  await sql(`CREATE TABLE ${schema}.big (id INT PRIMARY KEY, payload VARCHAR(64) NOT NULL)`)
+  await sql(
+    `INSERT INTO ${schema}.big SELECT a.n * 10000 + b.n * 100 + c.n, REPEAT('x', 48) ` +
+      `FROM ${schema}.seed a, ${schema}.seed b, ${schema}.seed c WHERE a.n < 30`,
+  )
+  await sql(`CREATE TABLE ${schema}.small (id INT PRIMARY KEY, label VARCHAR(16) NOT NULL)`)
+  await sql(`INSERT INTO ${schema}.small VALUES (1, 'one'), (2, 'two')`)
+
+  let created = ''
+  try {
+    created = (
+      await api<{ id: string }>('/api/databases', {
+        method: 'POST',
+        body: { name: schema, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${schema}`, mode: 'cdc' },
+      })
+    ).id
+    await reprobe(created)
+    await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+
+    // Kill the moment the copy is observably in flight.
+    let caughtMidCopy = false
+    const killBy = Date.now() + 60_000
+    while (Date.now() < killBy) {
+      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`).catch(() => undefined)
+      if (status?.state === 'snapshotting') {
+        caughtMidCopy = true
+        break
+      }
+      if (status?.state === 'streaming' || status?.state === 'polling') break
+      await Bun.sleep(25)
+    }
+    if (!caughtMidCopy) {
+      record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'WARN', 'the copy finished before it could be interrupted')
+      return
+    }
+    log('SIGKILLing pintail mid-snapshot')
+    pintailProcess!.kill(9)
+    await pintailProcess!.exited
+    record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'PASS')
+
+    await startPintail()
+    // No operator action from here on.
+    const resumed = await waitUntil(async () => {
+      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`)
+      return status.state === 'streaming' || status.state === 'polling'
+    }, 240_000)
+    record(
+      phase,
+      'restart-during-snapshot:the database resumes replicating on its own',
+      resumed ? 'PASS' : 'FAIL',
+      resumed ? undefined : await replicationDiagnostics(created),
+    )
+    if (!resumed) return
+
+    const complete = await waitUntil(async () => {
+      const count = await api<{ count: number }>(`/api/tables/big/count?db=${created}`)
+      return count.count === ROWS
+    }, 240_000)
+    record(
+      phase,
+      'restart-during-snapshot:every row arrives after the resume',
+      complete ? 'PASS' : 'FAIL',
+      `big: ${(await api<{ count: number }>(`/api/tables/big/count?db=${created}`).catch(() => ({ count: -1 }))).count} of ${ROWS}`,
+    )
+    const tables = await api<TableSummary[]>(`/api/tables?db=${created}`)
+    const stuck = tables.filter((table) => table.state !== 'streaming' && table.state !== 'polling')
+    record(
+      phase,
+      'restart-during-snapshot:no table is left quarantined',
+      stuck.length === 0 ? 'PASS' : 'FAIL',
+      stuck.map((table) => `${table.name}:${table.state}`).join(', ') || undefined,
+    )
+  } finally {
+    if (created) await api(`/api/databases/${created}`, { method: 'DELETE' }).catch(() => undefined)
+    await sql(`DROP DATABASE IF EXISTS ${schema}`)
+  }
 }
 
 async function phaseExecutionBudget() {
@@ -3224,11 +3507,14 @@ async function main() {
     ['pooling', phasePooling],
     ['local-database', phaseLocalDatabase],
     ['restart', phaseRestart],
+    ['activity-history', phaseActivityHistory],
+    ['poll-storm', phasePollStorm],
     ['control-plane', phaseControlPlane],
     ['snapshot-ddl-window', phaseSnapshotDdlWindow],
     ['drop-table-cdc', phaseDropTableCdc],
     ['drop-table-recreate', phaseDropTableRecreate],
     ['drop-table-polling', phaseDropTablePolling],
+    ['restart-during-snapshot', phaseRestartDuringSnapshot],
     ['drop-database', phaseDropDatabase],
     // Last: the rename gap leaves the replica holding a table under a name
     // MySQL no longer uses, and the lifecycle phases re-probe, which would
