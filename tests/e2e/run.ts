@@ -2314,9 +2314,12 @@ async function phaseSpill() {
       'SELECT o.id, c.id, COUNT(*) FROM orders o CROSS JOIN customers c ' +
         'GROUP BY o.id, c.id',
       // MySQL 8.0's preceding mutation phases leave one input batch 136
-      // bytes above 4 MiB. Give the batch headroom while keeping the limit
-      // far below the grouped state, which still must spill.
-      5 * 1024 * 1024,
+      // bytes above 4 MiB, and the grouped state held beside it moves by a
+      // few dozen bytes between environments (a reused source container
+      // measured 5,242,758 of 5,242,880 before refusing that batch, on the
+      // 0.1.0 binary as well). 64 KiB of headroom keeps the limit far
+      // below the grouped state, which still must spill.
+      5 * 1024 * 1024 + 64 * 1024,
     ],
     [
       'distinct',
