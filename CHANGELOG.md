@@ -6,6 +6,58 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Makes the server fit a small container under a lot of concurrent load, and
+adds the stress evidence that proves it: a memory-pressure phase in the
+end-to-end gate and a constrained profile in the load harness.
+
+### Changed
+
+- One replica cache for the whole process. Every wire connection and every
+  HTTP request used to load and hold its own copy of a database's tables -
+  a manifest read, a WAL replay into a fresh memtable and a segment
+  verification per table per connection, charged to nothing - and any
+  change to any file, including the metadata the supervisor writes every
+  cycle, threw the whole database away and reopened every table. The cache
+  is now shared by every engine in the process, a change reopens only the
+  table whose files or schema moved, resident memtable bytes are reserved
+  from the process memory budget and released on eviction, and the number of
+  resident databases is bounded (`PINTAIL_REPLICA_CACHE_DATABASES`, default
+  32) with least-recently-used eviction. A replica the budget cannot hold is
+  served once and refused a slot rather than counted as free.
+- Wire connections are authenticated off the runtime thread, and a key's
+  connection bookkeeping - `last_used_at` and the `wire.connect` audit row -
+  is written once per key per minute instead of per connection. Every
+  connection used to make two `SQLite` writes on the worker that accepted
+  it, queued behind the replication applier's own writes; under a
+  connection storm every worker was parked there and the dashboard and
+  HTTP queries stalled with them.
+- A replica is reloaded once when its files move, however many queries
+  notice at the same time: the rest wait for the reload and answer from it
+  instead of each replaying the same WAL tail into its own memtable.
+- HTTP queries run on a blocking thread. `POST /api/query`, table preview
+  and table count executed the statement inline on the runtime worker that
+  received the request - admission wait, WAL replay and execution included -
+  so a few dozen HTTP query clients parked every worker inside a query and
+  the wire connections and the dashboard, which need those workers only to
+  move bytes, waited on them: in the constrained load profile wire queries
+  the server finished in 341ms took clients a p99 of 65 seconds.
+
+### Added
+
+- `tests/load` grew a `constrained` profile (`LOAD_PROFILE=constrained`):
+  a 512 MB process budget, sixteen admission slots, a connection per query,
+  and a CDC writer, dashboard pollers and HTTP query clients running
+  alongside every level. It fails the run if peak RSS passes 1 GB, the
+  replica does not catch up with the writer, or any wire failure is
+  something other than the two designed refusals. Every setting is also an
+  environment variable.
+- End-to-end `memory-pressure` phase: a 256 MB budget, a 32 MB per-query
+  ceiling and eight admission slots against forty-eight reconnecting wire
+  clients, eight HTTP query clients, six dashboards and a CDC writer at
+  once. The server has to survive, refuse only by design, keep answering
+  health, stay under 1 GB, catch up afterwards and answer plain queries
+  once the storm passes.
+
 ## [0.0.5-rc4] - 2026-09-02
 
 Recovers a database whose snapshot a restart interrupted, and adds the

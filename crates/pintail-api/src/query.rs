@@ -194,7 +194,7 @@ pub(crate) async fn query(
     principal.require_scope("query")?;
     principal.authorize_database(&request.db)?;
     crate::databases::load_database(&state, &principal, &request.db)?;
-    let response = execute_query(&state, &request.db, &request.sql)?;
+    let response = execute_query(&state, &request.db, &request.sql).await?;
     audit::record(
         &state,
         &principal,
@@ -294,7 +294,7 @@ pub(crate) async fn table_data(
         quote_identifier(&name),
         query.offset
     );
-    execute_query(&state, &query.db, &sql).map(Json)
+    execute_query(&state, &query.db, &sql).await.map(Json)
 }
 
 pub(crate) async fn table_count(
@@ -310,7 +310,7 @@ pub(crate) async fn table_count(
         "SELECT COUNT(*) AS `count` FROM `{}`",
         quote_identifier(&name)
     );
-    let response = execute_query(&state, &query.db, &sql)?;
+    let response = execute_query(&state, &query.db, &sql).await?;
     let count = response
         .rows
         .first()
@@ -320,15 +320,27 @@ pub(crate) async fn table_count(
     Ok(Json(CountResponse { count }))
 }
 
-fn execute_query(
+/// Runs one statement on a blocking thread and shapes its output.
+///
+/// Blocking, because a query is: it waits for an admission slot, may
+/// replay a WAL tail, and then executes for as long as it executes. Run
+/// inline it did all of that on the runtime worker that received the
+/// request, and with a few dozen HTTP query clients every worker was
+/// inside a query - the wire connections and the dashboard's own
+/// requests, which need those workers only to move bytes, waited on them.
+async fn execute_query(
     state: &ApiState,
     database_id: &str,
     sql: &str,
 ) -> Result<QueryResponse, ApiError> {
-    let output = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
-        .with_memory_limit(state.query_memory_limit())
-        .execute(database_id, sql, MAX_RESPONSE_ROWS)
-        .map_err(query_error)?;
+    let engine = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
+        .with_memory_limit(state.query_memory_limit());
+    let (database_id, sql) = (database_id.to_owned(), sql.to_owned());
+    let output =
+        tokio::task::spawn_blocking(move || engine.execute(&database_id, &sql, MAX_RESPONSE_ROWS))
+            .await
+            .map_err(|error| ApiError::internal(format!("query worker failed: {error}")))?
+            .map_err(query_error)?;
     state.record_query(
         output.stats.duration_ms,
         u64::try_from(output.stats.rows).unwrap_or(u64::MAX),

@@ -2044,6 +2044,7 @@ async function phaseMemoryPressure() {
       errors[bucket] = (errors[bucket] ?? 0) + 1
     }
     const health: number[] = []
+    const wireLatencies: number[] = []
     let wireOk = 0
     let httpOk = 0
     let dashboardOk = 0
@@ -2058,10 +2059,12 @@ async function phaseMemoryPressure() {
         let connection: mysql.Connection | undefined
         try {
           connection = await wire()
+          const started = performance.now()
           await connection.query({
             sql: statements[(seat + turn) % statements.length]!,
             rowsAsArray: true,
           })
+          wireLatencies.push(performance.now() - started)
           wireOk += 1
         } catch (error) {
           fail(error)
@@ -2158,6 +2161,17 @@ async function phaseMemoryPressure() {
       'memory-pressure:work still gets done',
       wireOk > 0 && httpOk > 0 ? 'PASS' : 'FAIL',
       `wire ${wireOk} of ${WIRE_CLIENTS * QUERIES_PER_CLIENT}, http ${httpOk}`,
+    )
+    // A wire query waits at most the admission timeout and then runs for
+    // about a second here; anything far beyond that is time spent waiting
+    // for a runtime worker, which is what an HTTP query running inline on
+    // one used to cost every other connection.
+    wireLatencies.sort((left, right) => left - right)
+    record(
+      phase,
+      'memory-pressure:wire queries are not starved by the HTTP surface',
+      wireLatencies.length > 0 && percentile(wireLatencies, 0.99) < 15_000 ? 'PASS' : 'FAIL',
+      `wire p50 ${percentile(wireLatencies, 0.5).toFixed(0)}ms p99 ${percentile(wireLatencies, 0.99).toFixed(0)}ms over ${wireLatencies.length} queries`,
     )
     record(
       phase,
