@@ -464,8 +464,47 @@ function canonicalRows(rows: string[][], ordered: boolean): string[] {
 }
 
 function errorClass(message: string): string {
+  if (/PROTOCOL_SEQUENCE_TIMEOUT/.test(message)) return `timed out after ${QUERY_TIMEOUT_MS / 1000}s`
   const cleaned = message.replace(/`[^`]*`|'[^']*'|"[^"]*"|\b\d+\b/g, '_').replace(/\s+/g, ' ').trim()
   return cleaned.slice(0, 90)
+}
+
+/// One side of the comparison. mysql2 destroys a connection whose query hit
+/// the client timeout, so the next statement would fail with "closed state"
+/// instead of running; a dead connection is reopened before the next use.
+/// Session state set through SET is lost with it, which the counts show as
+/// ordinary mismatches rather than hiding.
+class Side {
+  private connection: mysql.Connection | undefined
+  constructor(private readonly open: () => Promise<mysql.Connection>) {}
+
+  async query<T extends mysql.QueryResult = mysql.RowDataPacket[][]>(
+    options: string | mysql.QueryOptions,
+  ): Promise<[T, mysql.FieldPacket[]]> {
+    const connection = this.connection ?? (this.connection = await this.open())
+    try {
+      return await connection.query<T>(options as mysql.QueryOptions)
+    } catch (error) {
+      if (isDead(error)) {
+        this.connection.destroy()
+        this.connection = undefined
+      }
+      throw error
+    }
+  }
+
+  async end() {
+    await this.connection?.end().catch(() => {})
+    this.connection = undefined
+  }
+}
+
+function isDead(error: unknown): boolean {
+  const code = (error as { code?: string }).code ?? ''
+  return (
+    /PROTOCOL_CONNECTION_LOST|PROTOCOL_SEQUENCE_TIMEOUT|ECONNRESET|EPIPE|PROTOCOL_ENQUEUE_AFTER_FATAL_ERROR/.test(code) ||
+    /closed state/.test(String(error))
+  )
 }
 
 async function runFile(name: string, text: string, root: mysql.Connection, host: string): Promise<FileResult> {
@@ -485,11 +524,15 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
     method: 'POST',
     body: { name: 'mtr', scopes: ['query', 'read'] },
   })
-  const my = await textConnection({ host, port: mysqlPort, user: 'root', password: 'pintail-root', database: schema, multipleStatements: false })
-  const pt = await textConnection({ host: '127.0.0.1', port: pintailWirePort, user: schema, password: key.secret, database: schema })
+  const my = new Side(() =>
+    textConnection({ host, port: mysqlPort, user: 'root', password: 'pintail-root', database: schema, multipleStatements: false }),
+  )
+  const pt = new Side(() =>
+    textConnection({ host: '127.0.0.1', port: pintailWirePort, user: schema, password: key.secret, database: schema }),
+  )
   const epochs = new Epochs()
 
-  const run = async (connection: mysql.Connection, sql: string): Promise<Answer> => {
+  const run = async (connection: Side, sql: string): Promise<Answer> => {
     const [rows, fields] = await connection.query<mysql.RowDataPacket[][]>({ sql, rowsAsArray: true, timeout: QUERY_TIMEOUT_MS })
     return { names: (fields ?? []).map((field) => field.name), rows: rows as unknown as string[][] }
   }
