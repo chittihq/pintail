@@ -813,6 +813,7 @@ impl CompiledExpr {
                         | ScalarFunction::Curtime
                         | ScalarFunction::Rand
                         | ScalarFunction::Pi
+                        | ScalarFunction::RandSeeded
                 ) {
                     return None;
                 }
@@ -1189,6 +1190,7 @@ impl CompiledExpr {
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
+                    | ScalarFunction::RandSeeded
                     // CONV and MAKETIME render short fixed-width strings,
                     // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
@@ -1374,6 +1376,7 @@ impl CompiledExpr {
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
+                    | ScalarFunction::RandSeeded
                     // CONV and MAKETIME render short fixed-width strings,
                     // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
@@ -2825,6 +2828,19 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Rand => Ok(Value::float64(rand::random::<f64>())),
         ScalarFunction::Pi => Ok(Value::float64(std::f64::consts::PI)),
+        ScalarFunction::RandSeeded => {
+            // MySQL's generator (sql/item_func.cc): two 30-bit seeds derived
+            // from the argument, stepped once. A statement calling RAND(seed)
+            // per row continues the sequence in MySQL; each call here starts it.
+            const MAX: u64 = 0x3FFF_FFFF;
+            let seed = u64::from_ne_bytes(mysql_i64(&values[0])?.to_ne_bytes());
+            let seed1 = seed.wrapping_mul(0x10001).wrapping_add(55_555_555) % MAX;
+            let seed2 = seed.wrapping_mul(0x1000_0001) % MAX;
+            let seed1 = (seed1 * 3 + seed2) % MAX;
+            #[allow(clippy::cast_precision_loss)]
+            let value = seed1 as f64 / MAX as f64;
+            Ok(Value::float64(value))
+        }
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
             let match_type = values.get(2).map(scalar_string).transpose()?;

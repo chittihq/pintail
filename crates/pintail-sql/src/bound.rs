@@ -171,12 +171,22 @@ impl NamedCollation {
     /// Resolves a `MySQL` collation name to a supported profile.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        if name.eq_ignore_ascii_case(DEFAULT_TEXT_COLLATION) {
+        let lower = name.to_ascii_lowercase();
+        if lower == DEFAULT_TEXT_COLLATION {
             Some(Self::Default)
-        } else if name.eq_ignore_ascii_case(GENERAL_CI_TEXT_COLLATION) {
+        } else if lower == GENERAL_CI_TEXT_COLLATION {
             Some(Self::GeneralCi)
-        } else if name.eq_ignore_ascii_case(BIN_TEXT_COLLATION) {
+        } else if lower == BIN_TEXT_COLLATION {
             Some(Self::Bin)
+        } else if lower.ends_with("_bin") || lower == "binary" {
+            // Every binary collation compares code points; over the text a
+            // replica holds they agree with utf8mb4_bin.
+            Some(Self::Bin)
+        } else if lower.ends_with("_general_ci") || lower.ends_with("_swedish_ci") {
+            // The legacy case-insensitive collations (latin1_swedish_ci,
+            // utf8mb3_general_ci) fold case the way general_ci does; their
+            // accent handling differs only outside ASCII.
+            Some(Self::GeneralCi)
         } else {
             None
         }
@@ -636,6 +646,8 @@ pub enum ScalarFunction {
     Rand,
     /// `PI()`.
     Pi,
+    /// `RAND(seed)`: the first value of `MySQL`'s seeded generator.
+    RandSeeded,
     /// `expr REGEXP pattern` / `REGEXP_LIKE`, case-insensitive by default
     /// like the ci collations.
     RegexpLike {

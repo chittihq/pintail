@@ -447,6 +447,7 @@ pub(super) fn bind_scalar_function(
         "CONVERT_TZ" if args.len() == 3 => ScalarFunction::ConvertTz,
         "CHAR" if !args.is_empty() => ScalarFunction::Char,
         "RAND" if args.is_empty() => ScalarFunction::Rand,
+        "RAND" if args.len() == 1 => ScalarFunction::RandSeeded,
         "PI" if args.is_empty() => ScalarFunction::Pi,
         "REGEXP_LIKE" if matches!(args.len(), 2 | 3) => {
             ScalarFunction::RegexpLike { negated: false }
@@ -497,10 +498,10 @@ pub(super) fn bind_scalar_function(
         "JSON_OBJECT" if args.len() % 2 == 0 => ScalarFunction::JsonObject,
         "JSON_ARRAY" => ScalarFunction::JsonArray,
         "GREATEST" if args.len() >= 2 => ScalarFunction::Greatest {
-            decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
         "LEAST" if args.len() >= 2 => ScalarFunction::Least {
-            decimal: matches!(common_result_type(&args)?, Some(DataType::Decimal { .. })),
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
         // MOD(a, b) is the % operator spelled as a function.
         "MOD" if args.len() == 2 => return Ok(bind_modulo(args)),
@@ -1289,7 +1290,7 @@ pub(super) fn bind_scalar(
             true,
         ),
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. } => (
-            common_result_type(&args)?,
+            extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::ConcatWs
@@ -1409,7 +1410,9 @@ pub(super) fn bind_scalar(
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
-        ScalarFunction::Rand | ScalarFunction::Pi => (Some(DataType::Float64), false),
+        ScalarFunction::Rand | ScalarFunction::Pi | ScalarFunction::RandSeeded => {
+            (Some(DataType::Float64), false)
+        }
         ScalarFunction::Instr
         | ScalarFunction::FindInSet
         | ScalarFunction::Ascii
@@ -1622,6 +1625,34 @@ fn coerce_decimal_branches(
             };
         }
     }
+}
+
+/// The result type of GREATEST and LEAST. They pick one argument rather than
+/// computing with it, so a mix of signed and unsigned integers - which
+/// arithmetic widens to DOUBLE - stays exact here, as `MySQL` keeps it: a
+/// DECIMAL wide enough for either sign of BIGINT.
+fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
+    let types = args
+        .iter()
+        .filter_map(|arg| arg.data_type)
+        .collect::<Vec<_>>();
+    let integers_only = types
+        .iter()
+        .all(|data_type| matches!(data_type.storage_type(), DataType::Int64 | DataType::UInt64));
+    if integers_only
+        && types
+            .iter()
+            .any(|data_type| data_type.storage_type() == DataType::Int64)
+        && types
+            .iter()
+            .any(|data_type| data_type.storage_type() == DataType::UInt64)
+    {
+        return Ok(Some(DataType::Decimal {
+            precision: 20,
+            scale: 0,
+        }));
+    }
+    common_result_type(args)
 }
 
 fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {

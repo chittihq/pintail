@@ -335,3 +335,52 @@ fn addtime_subtime_and_timediff_follow_the_manual() {
         ]
     );
 }
+
+#[test]
+fn having_without_group_by_and_a_seeded_rand() {
+    let fixture = local_fixture();
+    run(&fixture, "CREATE TABLE h (id BIGINT PRIMARY KEY, v INT)").expect("create");
+    run(&fixture, "INSERT INTO h (id, v) VALUES (1, 10), (2, 20)").expect("insert");
+    let kept = run(
+        &fixture,
+        "SELECT id, v * 2 AS doubled FROM h HAVING doubled = 40",
+    )
+    .expect("select");
+    assert_eq!(
+        kept.rows.len(),
+        1,
+        "HAVING filters by the alias without GROUP BY"
+    );
+    assert_eq!(kept.rows[0][0], pintail_types::Value::Int64(2));
+    let none = run(
+        &fixture,
+        "SELECT id, v * 2 AS doubled FROM h HAVING doubled = 41",
+    )
+    .expect("select");
+    assert_eq!(none.rows.len(), 0);
+    // RAND(10) in MySQL 8.4 is 0.6570515219653505 on the first call.
+    let seeded = run(&fixture, "SELECT RAND(10), RAND(0)").expect("select");
+    assert_eq!(
+        seeded.rows[0][0],
+        pintail_types::Value::float64(0.657_051_521_965_350_5)
+    );
+    assert_eq!(
+        seeded.rows[0][1],
+        pintail_types::Value::float64(0.155_220_427_694_935_74)
+    );
+}
+
+#[test]
+fn greatest_and_least_stay_exact_across_the_signed_boundary() {
+    let fixture = local_fixture();
+    let output = run(
+        &fixture,
+        "SELECT GREATEST(9223372036854775807, 9223372036854775808), \
+         LEAST(9223372036854775807, 9223372036854775808), GREATEST(1, 2.5)",
+    )
+    .expect("select");
+    let text = |value: &str| pintail_types::Value::Utf8(value.to_owned());
+    assert_eq!(output.rows[0][0], text("9223372036854775808"));
+    assert_eq!(output.rows[0][1], text("9223372036854775807"));
+    assert_eq!(output.rows[0][2], text("2.5"));
+}

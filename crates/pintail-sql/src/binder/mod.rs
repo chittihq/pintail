@@ -730,11 +730,12 @@ impl<'catalog> Binder<'catalog> {
                     rewrite_group_references(&mut key.expr, &group_by)?;
                 }
             }
-        } else if having.is_some() {
-            return Err(BindError::InvalidGrouping(
-                "HAVING requires GROUP BY or an aggregate".to_owned(),
-            ));
         }
+        // With neither GROUP BY nor an aggregate, MySQL still accepts HAVING:
+        // it filters the rows by the select list, aliases included. The
+        // aliases were substituted above, so what remains is a predicate over
+        // the FROM scope and the planner's filter placement serves it.
+
         let distinct = match select.distinct {
             None | Some(Distinct::All) => false,
             Some(Distinct::Distinct) => true,
@@ -5400,6 +5401,14 @@ mod tests {
     }
 
     #[test]
+    fn having_without_group_by_filters_the_select_list() {
+        let query =
+            bind("SELECT a, 2 AS b FROM (SELECT 1 AS a) t HAVING b = 2 AND a = 1").expect("binds");
+        assert!(query.having.is_some(), "HAVING survives as a predicate");
+        assert!(query.group_by.is_empty());
+    }
+
+    #[test]
     fn typed_string_literals_cast_to_their_type() {
         let query = bind("SELECT DATE '2024-02-29', TIME '10:11:12'").expect("binds");
         assert!(matches!(
@@ -5893,8 +5902,8 @@ mod tests {
     fn binds_char_and_rand() {
         let query = bind("SELECT CHAR(77, 121, NULL), RAND() FROM Events").expect("binds");
         assert_eq!(query.projection.len(), 2);
-        // The seeded form stays unsupported.
-        assert!(bind("SELECT RAND(3) FROM Events").is_err());
+        // The seeded form binds too, as MySQL's generator.
+        assert!(bind("SELECT RAND(3) FROM Events").is_ok());
     }
 
     #[test]
