@@ -613,6 +613,12 @@ pub enum ScalarFunction {
     TimeToSec,
     /// `SEC_TO_TIME(seconds)`, clamped to `MySQL`'s TIME range.
     SecToTime,
+    /// `ADDTIME(expr1, expr2)`: a time or datetime plus a time.
+    AddTime,
+    /// `SUBTIME(expr1, expr2)`: a time or datetime minus a time.
+    SubTime,
+    /// `TIMEDIFF(expr1, expr2)`: the time between two times or two datetimes.
+    TimeDiff,
     /// `MAKEDATE(year, dayofyear)`: NULL when day < 1.
     MakeDate,
     /// `CURTIME()`.

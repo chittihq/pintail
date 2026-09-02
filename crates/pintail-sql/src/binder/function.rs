@@ -438,6 +438,9 @@ pub(super) fn bind_scalar_function(
         "YEARWEEK" if args.len() == 1 => ScalarFunction::YearWeek,
         "TIME_TO_SEC" if args.len() == 1 => ScalarFunction::TimeToSec,
         "SEC_TO_TIME" if args.len() == 1 => ScalarFunction::SecToTime,
+        "ADDTIME" if args.len() == 2 => ScalarFunction::AddTime,
+        "SUBTIME" if args.len() == 2 => ScalarFunction::SubTime,
+        "TIMEDIFF" if args.len() == 2 => ScalarFunction::TimeDiff,
         "MAKEDATE" if args.len() == 2 => ScalarFunction::MakeDate,
         "CURTIME" | "CURRENT_TIME" if args.is_empty() => ScalarFunction::Curtime,
         "STR_TO_DATE" if args.len() == 2 => ScalarFunction::StrToDate,
@@ -1328,7 +1331,10 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::SecToTime => (
+        ScalarFunction::SecToTime
+        | ScalarFunction::AddTime
+        | ScalarFunction::SubTime
+        | ScalarFunction::TimeDiff => (
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),

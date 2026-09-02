@@ -306,3 +306,32 @@ fn numeric_and_temporal_edges_follow_mysql() {
     assert_eq!(row[7], pintail_types::Value::UInt64(0));
     assert_eq!(row[8], pintail_types::Value::float64(std::f64::consts::PI));
 }
+
+#[test]
+fn addtime_subtime_and_timediff_follow_the_manual() {
+    let fixture = local_fixture();
+    let output = run(
+        &fixture,
+        "SELECT ADDTIME('2007-12-31 23:59:59.999999', '1 1:1:1.000002'), \
+         ADDTIME('01:00:00.999999', '02:00:00.999998'), \
+         SUBTIME('2007-12-31 23:59:59.999999', '1 1:1:1.000002'), \
+         SUBTIME('01:00:00.999999', '02:00:00.999998'), \
+         TIMEDIFF('2000-01-01 00:00:00', '2000-01-01 00:00:00.000001'), \
+         TIMEDIFF('2008-12-31 23:59:59.000001', '2008-12-30 01:01:01.000002'), \
+         TIMEDIFF('2000-01-01 00:00:00', '00:00:01')",
+    )
+    .expect("select");
+    let text = |value: &str| pintail_types::Value::Utf8(value.to_owned());
+    assert_eq!(
+        output.rows[0],
+        [
+            text("2008-01-02 01:01:01.000001"),
+            text("03:00:01.999997"),
+            text("2007-12-30 22:58:58.999997"),
+            text("-00:59:59.999999"),
+            text("-00:00:00.000001"),
+            text("46:58:57.999999"),
+            pintail_types::Value::Null,
+        ]
+    );
+}

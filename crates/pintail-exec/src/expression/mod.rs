@@ -1179,6 +1179,9 @@ impl CompiledExpr {
                     | ScalarFunction::LastDay
                     | ScalarFunction::FromDays
                     | ScalarFunction::SecToTime
+                    | ScalarFunction::AddTime
+                    | ScalarFunction::SubTime
+                    | ScalarFunction::TimeDiff
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
@@ -1361,6 +1364,9 @@ impl CompiledExpr {
                     | ScalarFunction::LastDay
                     | ScalarFunction::FromDays
                     | ScalarFunction::SecToTime
+                    | ScalarFunction::AddTime
+                    | ScalarFunction::SubTime
+                    | ScalarFunction::TimeDiff
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
@@ -2688,6 +2694,46 @@ fn evaluate_eager_scalar_inner(
             let total = hours * 3600 + minutes * 60 + seconds;
             Ok(Value::Int64(if negative { -total } else { total }))
         }
+        ScalarFunction::AddTime | ScalarFunction::SubTime => {
+            let (Some(left), Some(right)) = (
+                parse_temporal_micros(&scalar_string(&values[0])?),
+                parse_temporal_micros(&scalar_string(&values[1])?),
+            ) else {
+                return Ok(Value::Null);
+            };
+            // The second argument is a time; a datetime there is NULL in MySQL.
+            if right.datetime {
+                return Ok(Value::Null);
+            }
+            let sign = if matches!(function, ScalarFunction::SubTime) {
+                -1
+            } else {
+                1
+            };
+            let total = left.micros + sign * right.micros;
+            let fsp = left.fsp.max(right.fsp);
+            Ok(if left.datetime {
+                render_datetime_micros(total, fsp).map_or(Value::Null, Value::Utf8)
+            } else {
+                Value::Utf8(render_time_micros(total, fsp))
+            })
+        }
+        ScalarFunction::TimeDiff => {
+            let (Some(left), Some(right)) = (
+                parse_temporal_micros(&scalar_string(&values[0])?),
+                parse_temporal_micros(&scalar_string(&values[1])?),
+            ) else {
+                return Ok(Value::Null);
+            };
+            // Both times or both datetimes; MySQL answers NULL for a mix.
+            if left.datetime != right.datetime {
+                return Ok(Value::Null);
+            }
+            Ok(Value::Utf8(render_time_micros(
+                left.micros - right.micros,
+                left.fsp.max(right.fsp),
+            )))
+        }
         ScalarFunction::SecToTime => {
             // MySQL keeps the argument's fractional seconds: SEC_TO_TIME(1.5)
             // is '00:00:01.5', not '00:00:01'. The fraction is rendered from
@@ -3329,6 +3375,108 @@ fn cast_mysql_year(value: &Value, source_type: Option<DataType>) -> Result<Value
         _ => return Ok(Value::Null),
     };
     Ok(Value::UInt64(year))
+}
+
+/// A TIME or DATETIME argument of `ADDTIME`, `SUBTIME` and `TIMEDIFF`, in
+/// microseconds: a datetime counts from the epoch, a time from midnight,
+/// negative and multi-day (`D HH:MM:SS`) forms included. `fsp` is the number
+/// of fraction digits the text carried, which sets the result's.
+struct TemporalMicros {
+    micros: i128,
+    datetime: bool,
+    fsp: u8,
+}
+
+fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
+    let text = text.trim();
+    let fraction_digits = |text: &str| -> u8 {
+        text.rsplit_once('.').map_or(0, |(_, fraction)| {
+            u8::try_from(fraction.len().min(6)).unwrap_or(6)
+        })
+    };
+    if let Ok(datetime) = parse_mysql_datetime(text) {
+        return Some(TemporalMicros {
+            micros: i128::from(datetime.and_utc().timestamp_micros()),
+            datetime: true,
+            fsp: fraction_digits(text),
+        });
+    }
+    let (negative, unsigned) = text
+        .strip_prefix('-')
+        .map_or((false, text), |unsigned| (true, unsigned));
+    let unsigned = unsigned.strip_prefix('+').unwrap_or(unsigned);
+    let (clock, fraction) = unsigned
+        .split_once('.')
+        .map_or((unsigned, ""), |(clock, fraction)| (clock, fraction));
+    if fraction.len() > 6 || !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+    let (days, clock) = match clock.split_once(' ') {
+        Some((days, clock)) => (days.parse::<u64>().ok()?, clock),
+        None => (0, clock),
+    };
+    let parts = clock.split(':').collect::<Vec<_>>();
+    let (hours, minutes, seconds) = match parts.as_slice() {
+        [hours, minutes, seconds] => (
+            hours.parse::<u64>().ok()?,
+            minutes.parse::<u64>().ok()?,
+            seconds.parse::<u64>().ok()?,
+        ),
+        [hours, minutes] => (hours.parse::<u64>().ok()?, minutes.parse::<u64>().ok()?, 0),
+        [compact] if !compact.is_empty() && compact.bytes().all(|digit| digit.is_ascii_digit()) => {
+            let value = compact.parse::<u64>().ok()?;
+            (value / 10_000, value / 100 % 100, value % 100)
+        }
+        _ => return None,
+    };
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
+    let micro_fraction = format!("{fraction:0<6}").parse::<u64>().ok()?;
+    let seconds_total = days
+        .checked_mul(86_400)?
+        .checked_add(hours.checked_mul(3_600)?)?
+        .checked_add(minutes * 60 + seconds)?;
+    let total = i128::from(seconds_total) * 1_000_000 + i128::from(micro_fraction);
+    Some(TemporalMicros {
+        micros: if negative { -total } else { total },
+        datetime: false,
+        fsp: u8::try_from(fraction.len()).unwrap_or(6),
+    })
+}
+
+/// Renders a signed duration as `MySQL` TIME text, clamped to +/-838:59:59
+/// like the type, with exactly `fsp` fraction digits.
+fn render_time_micros(micros: i128, fsp: u8) -> String {
+    const MAX_SECONDS: u128 = 838 * 3600 + 59 * 60 + 59;
+    let negative = micros < 0;
+    let magnitude = micros.unsigned_abs();
+    let (seconds, fraction) = if magnitude / 1_000_000 > MAX_SECONDS {
+        (MAX_SECONDS, 999_999)
+    } else {
+        (magnitude / 1_000_000, magnitude % 1_000_000)
+    };
+    let base = format!(
+        "{}{:02}:{:02}:{:02}",
+        if negative { "-" } else { "" },
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60
+    );
+    if fsp == 0 {
+        base
+    } else {
+        format!(
+            "{base}.{}",
+            &format!("{fraction:06}")[..usize::from(fsp.min(6))]
+        )
+    }
+}
+
+fn render_datetime_micros(micros: i128, fsp: u8) -> Option<String> {
+    let datetime =
+        chrono::DateTime::from_timestamp_micros(i64::try_from(micros).ok()?)?.naive_utc();
+    Some(format_with_fraction(datetime, fsp, "%Y-%m-%d %H:%M:%S"))
 }
 
 fn format_mysql_time(
