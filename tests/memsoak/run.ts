@@ -188,17 +188,18 @@ async function seed() {
     `GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'`,
   )
   log(`seeding ${TABLES} tables of ${ROWS_PER_TABLE} rows`)
-  for (let start = 0; start < TABLES; start += 25) {
-    const statements: string[] = []
-    for (let index = start; index < Math.min(start + 25, TABLES); index += 1) {
-      const table = tableName(index)
-      statements.push(
-        `CREATE TABLE ${table} (id INT PRIMARY KEY, v INT NOT NULL, note VARCHAR(32) NOT NULL)`,
+  // One statement per table and 5,000 rows per INSERT: large tables would
+  // otherwise exceed MySQL's packet limit in a single statement.
+  for (let index = 0; index < TABLES; index += 1) {
+    const table = tableName(index)
+    await sql(`CREATE TABLE ${table} (id INT PRIMARY KEY, v INT NOT NULL, note VARCHAR(32) NOT NULL)`)
+    for (let start = 0; start < ROWS_PER_TABLE; start += 5_000) {
+      const rows = Array.from(
+        { length: Math.min(5_000, ROWS_PER_TABLE - start) },
+        (_, offset) => `(${start + offset}, ${(start + offset) * 7}, 'n${start + offset}')`,
       )
-      const rows = Array.from({ length: ROWS_PER_TABLE }, (_, row) => `(${row}, ${row * 7}, 'n${row}')`)
-      statements.push(`INSERT INTO ${table} VALUES ${rows.join(',')}`)
+      await sql(`INSERT INTO ${table} VALUES ${rows.join(',')}`)
     }
-    await sql(statements.join(';\n'))
   }
 }
 
