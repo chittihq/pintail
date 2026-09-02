@@ -622,7 +622,7 @@ async fn repair_candidates(
                 }
             }
             if !repairs.is_empty() {
-                target.store.ingest_scan(repairs)?;
+                target.store.ingest(repairs)?;
             }
         }
     }
@@ -958,6 +958,10 @@ impl<'a> ReplicaCursor<'a> {
     }
 }
 
+// Every repair a reconciliation ingests is a row the pass has already
+// compared against the replica, so it goes through the plain ingest: the
+// scan ingest's no-op suppression would look each row up again, and two
+// million tombstones cost two million block decodes that way.
 /// Full-row compare by merge: the replica streamed once in key order, in
 /// step with the source's pages. Replica rows up to a page's last key that
 /// the page lacks are gone from the source; rows the page has with other
@@ -1019,7 +1023,7 @@ async fn reconcile_by_merge(
         ingested += page.len();
         repairs.extend(page.into_values());
         if !repairs.is_empty() {
-            target.store.ingest_scan(repairs)?;
+            target.store.ingest(repairs)?;
         }
         last_key = Some(page_last);
         if fetched < chunk_rows {
@@ -1032,7 +1036,7 @@ async fn reconcile_by_merge(
             .map(|(key, values)| StoredRow::new(key, values, version, true))
             .collect::<Vec<_>>();
         tombstones += repairs.len();
-        target.store.ingest_scan(repairs)?;
+        target.store.ingest(repairs)?;
     }
     Ok((ingested, tombstones, source_count))
 }
@@ -1083,7 +1087,7 @@ async fn reconcile_by_lookup(
             }
         }
         if !mutations.is_empty() {
-            target.store.ingest_scan(mutations)?;
+            target.store.ingest(mutations)?;
         }
         if fetched < chunk_rows {
             break;
