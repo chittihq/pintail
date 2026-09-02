@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-02
+
 Makes the server fit a small container under a lot of concurrent load, and
 adds the stress evidence that proves it: a memory-pressure phase in the
 end-to-end gate and a constrained profile in the load harness.
@@ -44,7 +46,7 @@ end-to-end gate and a constrained profile in the load harness.
 
 Measured on the constrained profile at 128 clients reconnecting per query
 with a CDC writer, dashboards and HTTP queries alongside, before and
-after: wire p50 5.1s → 2.0s, wire p99 147s → 2.5s, peak RSS 2,354 MB '
+after: wire p50 5.1s → 2.0s, wire p99 147s → 2.5s, peak RSS 2,354 MB →
 727 MB, dashboard p99 10.5s → 27ms, and the admission window's refusals
 now arrive in the client as the designed 1040 instead of as latency. The
 e2e memory-pressure phase reads wire p99 826ms, health p99 18ms and peak
