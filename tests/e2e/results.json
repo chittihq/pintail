@@ -12672,7 +12672,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150033 sync_runs rows for db_5959ec50efe2224843a0316429afcddc"
+    "detail": "150047 sync_runs rows for db_5715d6f11aabd88d7a51c4d88f93c45a"
   },
   {
     "phase": "activity-history",
@@ -12684,25 +12684,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms over 150000 rows"
+    "detail": "p50 1ms p95 1ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms"
+    "detail": "p50 1ms p95 1ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 37ms p99 58ms"
+    "detail": "p50 31ms p99 43ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 24ms"
+    "detail": "health p95 20ms"
   },
   {
     "phase": "activity-history",
@@ -13595,25 +13595,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4811"
+    "detail": "0 failed of 4836"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4811 requests: p50 2ms p99 22ms"
+    "detail": "4836 requests: p50 2ms p99 22ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 5ms"
+    "detail": "health p99 24ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 819 vs source 819"
+    "detail": "orders replica 790 vs source 790"
   },
   {
     "phase": "poll-storm",
@@ -18236,7 +18236,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_5959ec50efe2224843a0316429afcddc\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-02T04:00:56.702931+00:00\",\"updated_at\":\"2026-09-02T04:09:21.190863+00:00\"},\"tables\":18,\"rows\":1326}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_5715d6f11aabd88d7a51c4d88f93c45a\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-02T05:15:09.518312+00:00\",\"updated_at\":\"2026-09-02T05:24:16.338639+00:00\"},\"tables\":18,\"rows\":1297}"
   },
   {
     "phase": "drop-table-polling",
@@ -20045,6 +20045,946 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:the process survives the storm",
+    "status": "PASS",
+    "detail": "wire 240 ok, http 62 ok, dashboards 139 ok; no errors"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:every failure is a designed refusal",
+    "status": "PASS",
+    "detail": "only refusals; 0 dashboard requests failed"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:work still gets done",
+    "status": "PASS",
+    "detail": "wire 240 of 240, http 62"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:wire queries are not starved by the HTTP surface",
+    "status": "PASS",
+    "detail": "wire p50 410ms p99 891ms over 240 queries"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:health never stalls",
+    "status": "PASS",
+    "detail": "health p99 23ms over 10 samples"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:the process stays inside its ceiling",
+    "status": "PASS",
+    "detail": "peak RSS 385MB with a 256MB budget"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:the replica catches up after the storm",
+    "status": "PASS",
+    "detail": "big 200600 vs source 200600"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "memory-pressure:queries recover once the storm passes",
+    "status": "PASS",
+    "detail": "3 of 3 sequential queries succeeded"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "query:json: distinct case variants survive a derived table",
     "status": "PASS"
   },
