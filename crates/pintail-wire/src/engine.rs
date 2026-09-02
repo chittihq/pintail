@@ -447,6 +447,7 @@ impl ReplicaEngine {
         match statement {
             Statement::Query(_) => self.execute_select(
                 &statement,
+                sql,
                 &catalog,
                 &provider,
                 &facts,
@@ -527,6 +528,7 @@ impl ReplicaEngine {
     fn execute_select(
         &self,
         statement: &Statement,
+        sql: &str,
         catalog: &CatalogSnapshot,
         provider: &SnapshotScanProvider<'_>,
         facts: &SourceFacts,
@@ -537,6 +539,7 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
         let bound = Binder::new(catalog, Some(database_name))
+            .with_source(sql)
             .bind(statement)
             .map_err(|error| query_bind_error(&error))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);

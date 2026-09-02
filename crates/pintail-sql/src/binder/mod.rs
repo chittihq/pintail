@@ -14,8 +14,8 @@ use sqlparser::ast::{
     BinaryOperator, CastKind, CeilFloorKind, DateTimeField, Distinct, DuplicateTreatment, Expr,
     Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, JoinConstraint,
     JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
-    SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Statement, TableFactor,
-    TableWithJoins, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Spanned, Statement,
+    TableFactor, TableWithJoins, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
 };
 
 use crate::bound::{
@@ -34,6 +34,10 @@ pub struct Binder<'catalog> {
     /// Relations visible only to expressions in this query. They are never
     /// added to its FROM plan; their columns carry `outer = true`.
     outer_tables: Vec<BoundTable>,
+    /// The statement's text, when the caller has it. `MySQL` names an
+    /// unaliased output column by the exact text the user typed for it -
+    /// `floor(5.5)`, `round(5.64,1)` - and only the text can reproduce that.
+    source: Option<&'catalog str>,
 }
 
 #[derive(Clone)]
@@ -60,7 +64,16 @@ impl<'catalog> Binder<'catalog> {
             current_database,
             next_derived_id: Cell::new(u64::MAX),
             outer_tables: Vec::new(),
+            source: None,
         }
+    }
+
+    /// Supplies the statement text the AST was parsed from, so unaliased
+    /// output columns can be named the way `MySQL` names them.
+    #[must_use]
+    pub const fn with_source(mut self, source: &'catalog str) -> Self {
+        self.source = Some(source);
+        self
     }
 
     fn bind_subquery(
@@ -80,6 +93,7 @@ impl<'catalog> Binder<'catalog> {
             current_database: self.current_database,
             next_derived_id: Cell::new(self.next_derived_id.get()),
             outer_tables,
+            source: self.source,
         };
         let result = nested.bind_query(query, ctes);
         self.next_derived_id.set(nested.next_derived_id.get());
@@ -164,7 +178,7 @@ impl<'catalog> Binder<'catalog> {
         }
 
         let mut bound = self.bind_set_expr(&query.body, &ctes)?;
-        bind_order_by(query, &mut bound)?;
+        bind_order_by(self.source, query, &mut bound)?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)
     }
@@ -539,7 +553,13 @@ impl<'catalog> Binder<'catalog> {
             {
                 zero_folds.push(relation.value.clone());
             }
-            let alias = alias.unwrap_or_else(|| Ident::new(projection_name(&original)));
+            let alias = alias.unwrap_or_else(|| {
+                Ident::new(projection_name(
+                    &original,
+                    self.source,
+                    SourceClause::Projection,
+                ))
+            });
             *item = SelectItem::ExprWithAlias {
                 expr: replacement,
                 alias,
@@ -550,6 +570,7 @@ impl<'catalog> Binder<'catalog> {
         let expression_tables = expression_scope(&tables, &self.outer_tables);
         let resolve_subquery = |query: &Query| self.bind_subquery(query, ctes, &expression_tables);
         let mut projection = bind_projection(
+            self.source,
             &projection_items,
             &tables,
             &expression_tables,
@@ -2062,7 +2083,11 @@ fn validate_select_shape(select: &Select) -> Result<(), BindError> {
     Ok(())
 }
 
+// The projection is the one place every binding context meets, and the
+// statement text is one more thing it needs.
+#[allow(clippy::too_many_arguments)]
 fn bind_projection(
+    source: Option<&str>,
     items: &[SelectItem],
     tables: &[BoundTable],
     expression_tables: &[BoundTable],
@@ -2083,7 +2108,7 @@ fn bind_projection(
                     subqueries,
                 )?;
                 projection.push(BoundProjection {
-                    name: projection_name(expr),
+                    name: projection_name(expr, source, SourceClause::Projection),
                     expr: bound,
                 });
             }
@@ -4404,7 +4429,11 @@ fn bind_limit(limit: &LimitClause) -> Result<BoundLimit, BindError> {
     }
 }
 
-fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError> {
+fn bind_order_by(
+    source: Option<&str>,
+    query: &Query,
+    bound: &mut BoundQuery,
+) -> Result<(), BindError> {
     let Some(order_by) = &query.order_by else {
         return Ok(());
     };
@@ -4432,6 +4461,7 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
                 return Err(BindError::InvalidOrderBy(order.to_string()));
             }
             let index = match resolve_order_index(
+                source,
                 &order.expr,
                 visible,
                 &mut bound.projection,
@@ -4526,6 +4556,7 @@ fn bind_order_by(query: &Query, bound: &mut BoundQuery) -> Result<(), BindError>
 }
 
 fn resolve_order_index(
+    source: Option<&str>,
     expr: &Expr,
     visible: usize,
     projection: &mut Vec<BoundProjection>,
@@ -4556,7 +4587,7 @@ fn resolve_order_index(
     }
     let requested = match expr {
         Expr::Identifier(identifier) => identifier.value.clone(),
-        _ => projection_name(expr),
+        _ => projection_name(expr, source, SourceClause::OrderBy),
     };
     let matches = projection[..visible]
         .iter()
@@ -4605,14 +4636,215 @@ fn unsigned_literal(expr: &Expr) -> Result<u64, BindError> {
         .map_err(|_| BindError::InvalidLimit(expr.to_string()))
 }
 
-fn projection_name(expr: &Expr) -> String {
+/// The name `MySQL` gives an unaliased output column: a column's own name, a
+/// string literal's value, and for anything else the expression exactly as
+/// the user typed it - `floor(5.5)` stays lowercase, `round(5.64,1)` keeps
+/// its spacing. Without the statement text the parser's rendering stands in.
+fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> String {
     match expr {
         Expr::Identifier(identifier) => identifier.value.clone(),
         Expr::CompoundIdentifier(identifiers) => identifiers
             .last()
             .map_or_else(|| expr.to_string(), |identifier| identifier.value.clone()),
-        _ => expr.to_string(),
+        Expr::Value(value)
+            if matches!(
+                value.value,
+                SqlValue::SingleQuotedString(_) | SqlValue::DoubleQuotedString(_)
+            ) =>
+        {
+            match &value.value {
+                SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => {
+                    text.clone()
+                }
+                _ => unreachable!("guarded above"),
+            }
+        }
+        _ => source
+            .and_then(|sql| source_text(sql, expr, clause))
+            .unwrap_or_else(|| expr.to_string()),
     }
+}
+
+/// Which list an expression sits in, and so which tokens bound it.
+#[derive(Clone, Copy)]
+enum SourceClause {
+    /// The select list: items end at a comma or the next clause keyword.
+    Projection,
+    /// ORDER BY: items end at a comma, a direction, or the next clause.
+    OrderBy,
+}
+
+impl SourceClause {
+    fn opens(self, word: &str) -> bool {
+        match self {
+            Self::Projection => matches!(
+                word,
+                "SELECT"
+                    | "DISTINCT"
+                    | "DISTINCTROW"
+                    | "ALL"
+                    | "HIGH_PRIORITY"
+                    | "STRAIGHT_JOIN"
+                    | "SQL_SMALL_RESULT"
+                    | "SQL_BIG_RESULT"
+                    | "SQL_BUFFER_RESULT"
+                    | "SQL_NO_CACHE"
+                    | "SQL_CALC_FOUND_ROWS"
+            ),
+            Self::OrderBy => word == "BY",
+        }
+    }
+
+    fn closes(self, word: &str) -> bool {
+        let shared = matches!(
+            word,
+            "FROM"
+                | "WHERE"
+                | "GROUP"
+                | "HAVING"
+                | "WINDOW"
+                | "ORDER"
+                | "LIMIT"
+                | "OFFSET"
+                | "FETCH"
+                | "UNION"
+                | "EXCEPT"
+                | "INTERSECT"
+                | "INTO"
+                | "FOR"
+                | "LOCK"
+                | "PROCEDURE"
+        );
+        shared || (matches!(self, Self::OrderBy) && matches!(word, "ASC" | "DESC" | "WITH"))
+    }
+}
+
+/// The exact text of `expr` inside `sql`: the item that contains the
+/// parser's recorded start of the expression, bounded by the list it sits
+/// in. The parser's spans are used only to land inside the item - for some
+/// nodes they start inside an argument or end a character late - and the
+/// tokens around that point say where the item really begins and ends.
+fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
+    use sqlparser::tokenizer::{Token, Tokenizer};
+
+    let start = expr.span().start;
+    if start.line == 0 {
+        return None;
+    }
+    let tokens = Tokenizer::new(&sqlparser::dialect::MySqlDialect {}, sql)
+        .tokenize_with_location()
+        .ok()?;
+    let offsets = line_offsets(sql);
+    let offset_of = |location: sqlparser::tokenizer::Location| -> Option<usize> {
+        let line = offsets.get(usize::try_from(location.line).ok()?.checked_sub(1)?)?;
+        let column = usize::try_from(location.column).ok()?.checked_sub(1)?;
+        let mut chars = sql[*line..].char_indices();
+        Some(
+            *line
+                + chars
+                    .nth(column)
+                    .map_or(sql.len() - *line, |(index, _)| index),
+        )
+    };
+    let mut at = tokens.iter().position(|token| {
+        (token.span.start.line, token.span.start.column) >= (start.line, start.column)
+    })?;
+    // A scalar subquery's span may begin at its SELECT; the item begins at
+    // the parenthesis before it.
+    if matches!(&tokens[at].token, Token::Word(word) if word.value.eq_ignore_ascii_case("SELECT"))
+        && let Some(paren) = tokens[..at]
+            .iter()
+            .rposition(|token| !matches!(token.token, Token::Whitespace(_)))
+            .filter(|&index| matches!(tokens[index].token, Token::LParen))
+    {
+        at = paren;
+    }
+
+    // Walk back to the list's opening keyword, counting the parentheses the
+    // recorded position sits inside: that many levels of the item are
+    // function calls or nesting, and only commas at that level separate
+    // items. Parentheses closed on the way are skipped whole.
+    let mut skipped = 0u32;
+    let mut exited = 0u32;
+    let mut separators: Vec<(usize, u32)> = Vec::new();
+    let mut opener = None;
+    let mut item_depth = None;
+    for (index, token) in tokens[..at].iter().enumerate().rev() {
+        match &token.token {
+            Token::RParen => skipped += 1,
+            Token::LParen => {
+                if skipped > 0 {
+                    skipped -= 1;
+                } else {
+                    exited += 1;
+                }
+            }
+            Token::Comma if skipped == 0 => separators.push((index, exited)),
+            Token::Word(word) if skipped == 0 && clause.opens(&word.value.to_ascii_uppercase()) => {
+                opener = Some(index);
+                item_depth = Some(exited);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let depth = item_depth?;
+    let after = separators
+        .iter()
+        .find(|(_, level)| *level == depth)
+        .map_or(opener?, |(index, _)| *index);
+    let first = tokens[after + 1..=at]
+        .iter()
+        .position(|token| !matches!(token.token, Token::Whitespace(_)))
+        .map(|offset| after + 1 + offset)?;
+
+    // Forward to the item's end: a separator or clause keyword at the item's
+    // level, the parenthesis that closes the enclosing list, or the end.
+    let mut skipped = 0u32;
+    let mut closed = 0u32;
+    let mut end = sql.len();
+    for token in &tokens[at..] {
+        let boundary = match &token.token {
+            Token::LParen => {
+                skipped += 1;
+                false
+            }
+            Token::RParen => {
+                if skipped > 0 {
+                    skipped -= 1;
+                    false
+                } else if closed == depth {
+                    true
+                } else {
+                    closed += 1;
+                    false
+                }
+            }
+            Token::Comma => skipped == 0 && closed == depth,
+            Token::Word(word) => {
+                skipped == 0 && closed == depth && clause.closes(&word.value.to_ascii_uppercase())
+            }
+            Token::EOF => true,
+            _ => false,
+        };
+        if boundary {
+            end = offset_of(token.span.start)?;
+            break;
+        }
+    }
+    let begin = offset_of(tokens[first].span.start)?;
+    (begin < end).then(|| sql[begin..end].trim().to_owned())
+}
+
+/// Byte offset of the first character of every line.
+fn line_offsets(sql: &str) -> Vec<usize> {
+    let mut offsets = vec![0];
+    for (index, character) in sql.char_indices() {
+        if character == '\n' {
+            offsets.push(index + 1);
+        }
+    }
+    offsets
 }
 
 fn object_name_parts(name: &ObjectName) -> Result<Vec<&str>, BindError> {
@@ -4991,6 +5223,34 @@ mod tests {
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         Binder::new(&catalog, Some("analytics")).bind(&statement)
+    }
+
+    /// `MySQL` names an unaliased output column by the text the user typed:
+    /// case, spacing and all. A string literal is named by its value.
+    #[test]
+    fn unaliased_output_columns_are_named_by_their_source_text() {
+        let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined";
+        let catalog = catalog();
+        let statement = parse_statement(sql).expect("parse");
+        let query = Binder::new(&catalog, Some("analytics"))
+            .with_source(sql)
+            .bind(&statement)
+            .expect("binds");
+        let names = query
+            .projection
+            .iter()
+            .map(|item| item.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            names,
+            ["floor(5.5)", "round(5.64,1)", "abc", "1 +  1", "joined"]
+        );
+
+        // Without the text, the parser's rendering stands in.
+        let query = Binder::new(&catalog, Some("analytics"))
+            .bind(&statement)
+            .expect("binds");
+        assert_eq!(query.projection[0].name, "FLOOR(5.5)");
     }
 
     /// A schema on `MySQL` 5.x's default is now queryable, not just readable.
