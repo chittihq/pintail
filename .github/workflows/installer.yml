@@ -1,0 +1,123 @@
+# Tests scripts/install.sh, the `curl | sh` path the README offers, on the
+# two hosts it meets: one with Docker already present and one without.
+#
+# Runs after every successful Release so the image it installs exists,
+# pinned to the tag that release built; on pull requests that touch the
+# script; and by hand for any version.
+name: Installer
+
+on:
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  pull_request:
+    paths:
+      - scripts/install.sh
+      - .github/workflows/installer.yml
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to install, e.g. 0.1.0 (empty: the latest release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    # A release that failed has no image to install; there is nothing to test.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+    steps:
+      - id: derive
+        shell: bash
+        run: |
+          case "${{ github.event_name }}" in
+            workflow_run)
+              # For a tag push the run's head_branch is the tag itself.
+              ref="${{ github.event.workflow_run.head_branch }}"
+              echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+              ;;
+            workflow_dispatch)
+              echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "version=" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
+  install:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - name: docker-preinstalled
+            remove_docker: false
+            http_port: 8080
+            wire_port: 3306
+          - name: fresh
+            remove_docker: true
+            http_port: 18080
+            wire_port: 13306
+    name: install (${{ matrix.host.name }})
+    env:
+      PINTAIL_VERSION: ${{ needs.version.outputs.version }}
+      PINTAIL_HTTP_PORT: ${{ matrix.host.http_port }}
+      PINTAIL_WIRE_PORT: ${{ matrix.host.wire_port }}
+      COMPOSE: /opt/pintail/docker-compose.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free the default ports
+        run: sudo systemctl stop mysql 2>/dev/null || true
+
+      - name: Remove Docker so the installer has to install it
+        if: matrix.host.remove_docker
+        run: |
+          sudo systemctl stop docker docker.socket containerd 2>/dev/null || true
+          sudo apt-get remove -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin moby-engine moby-cli moby-compose moby-containerd moby-buildx 2>/dev/null || true
+          sudo rm -f /usr/bin/docker /usr/local/bin/docker /usr/bin/docker-compose /usr/local/bin/docker-compose
+          sudo rm -rf /usr/libexec/docker /usr/local/lib/docker /usr/lib/docker
+          if command -v docker >/dev/null 2>&1; then
+            echo "docker is still on PATH at $(command -v docker)"; exit 1
+          fi
+
+      - name: Run the installer the way the README does
+        # Piped through stdin, as `curl | sh` delivers it - no $0, no
+        # arguments, nothing the script could learn from its own path.
+        run: cat scripts/install.sh | sh 2>&1 | tee install.log
+
+      - name: The server is healthy on the chosen ports
+        run: |
+          curl --fail --silent "http://127.0.0.1:${PINTAIL_HTTP_PORT}/health"
+          curl --fail --silent "http://127.0.0.1:${PINTAIL_HTTP_PORT}/status" | grep -q '"status":"ready"'
+          timeout 5 bash -c "</dev/tcp/127.0.0.1/${PINTAIL_WIRE_PORT}"
+          sudo docker compose -f "$COMPOSE" ps --format '{{.Name}} {{.Status}}' | grep -q 'pintail-pintail-1 Up'
+
+      - name: The installed image is the requested release
+        if: env.PINTAIL_VERSION != ''
+        run: |
+          grep -q "image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION}$" "$COMPOSE"
+
+      - name: The first-boot secrets were surfaced, not buried
+        run: |
+          grep -q 'PINTAIL_JWT_SECRET=' install.log
+          grep -q 'PINTAIL_DSN_ENCRYPTION_KEY=' install.log
+          grep -q 'Dashboard:' install.log
+
+      - name: A second run upgrades in place and keeps the configuration
+        run: |
+          before=$(sudo sha256sum "$COMPOSE")
+          cat scripts/install.sh | sh
+          after=$(sudo sha256sum "$COMPOSE")
+          [ "$before" = "$after" ] || { echo "the installer rewrote an existing configuration"; exit 1; }
+          curl --fail --silent "http://127.0.0.1:${PINTAIL_HTTP_PORT}/health"
+
+      - name: Server log on failure
+        if: failure()
+        run: sudo docker compose -f "$COMPOSE" logs pintail || true
