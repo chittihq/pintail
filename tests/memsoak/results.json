@@ -1,0 +1,246 @@
+{
+  "image": "pintail-memsoak:mtju6h4z",
+  "tables": 20,
+  "rowsPerTable": 200000,
+  "supervisorMs": 300,
+  "durationMs": 600000,
+  "warmupMs": 180000,
+  "memoryLimit": "2g",
+  "slopeLimitMibPerMin": 2,
+  "growthLimitMib": 128,
+  "slopeMibPerMin": -4.194401303894782,
+  "verdict": [],
+  "samples": [
+    {
+      "atMs": 0.0012500000011641532,
+      "rssPlusSwapMib": 806.875,
+      "swapMib": 0,
+      "cgroupMib": 852.90625,
+      "cdcStarts": 15
+    },
+    {
+      "atMs": 16493.912291999994,
+      "rssPlusSwapMib": 1282.2421875,
+      "swapMib": 0,
+      "cgroupMib": 1329.96875,
+      "cdcStarts": 83
+    },
+    {
+      "atMs": 37240.878999999986,
+      "rssPlusSwapMib": 220.2109375,
+      "swapMib": 0,
+      "cgroupMib": 242.9140625,
+      "cdcStarts": 163
+    },
+    {
+      "atMs": 61512.11758400002,
+      "rssPlusSwapMib": 152.86328125,
+      "swapMib": 0,
+      "cgroupMib": 178.6328125,
+      "cdcStarts": 227
+    },
+    {
+      "atMs": 80757.79962500001,
+      "rssPlusSwapMib": 353.91796875,
+      "swapMib": 0,
+      "cgroupMib": 377.57421875,
+      "cdcStarts": 285
+    },
+    {
+      "atMs": 98082.41449999998,
+      "rssPlusSwapMib": 331.85546875,
+      "swapMib": 0,
+      "cgroupMib": 358.62890625,
+      "cdcStarts": 343
+    },
+    {
+      "atMs": 115488.82137500003,
+      "rssPlusSwapMib": 184.38671875,
+      "swapMib": 0,
+      "cgroupMib": 211.765625,
+      "cdcStarts": 399
+    },
+    {
+      "atMs": 132616.07350000003,
+      "rssPlusSwapMib": 271.1875,
+      "swapMib": 0,
+      "cgroupMib": 299.79296875,
+      "cdcStarts": 458
+    },
+    {
+      "atMs": 150102.08200000002,
+      "rssPlusSwapMib": 478.70703125,
+      "swapMib": 0,
+      "cgroupMib": 508.1015625,
+      "cdcStarts": 515
+    },
+    {
+      "atMs": 167141.096584,
+      "rssPlusSwapMib": 169.4140625,
+      "swapMib": 0,
+      "cgroupMib": 198.3515625,
+      "cdcStarts": 571
+    },
+    {
+      "atMs": 183745.049042,
+      "rssPlusSwapMib": 366.75,
+      "swapMib": 0,
+      "cgroupMib": 397.890625,
+      "cdcStarts": 626
+    },
+    {
+      "atMs": 200303.386875,
+      "rssPlusSwapMib": 1208.09375,
+      "swapMib": 0,
+      "cgroupMib": 1264.63671875,
+      "cdcStarts": 703
+    },
+    {
+      "atMs": 224330.28912499998,
+      "rssPlusSwapMib": 360.90625,
+      "swapMib": 0,
+      "cgroupMib": 392.20703125,
+      "cdcStarts": 760
+    },
+    {
+      "atMs": 240729.17537500002,
+      "rssPlusSwapMib": 448.5859375,
+      "swapMib": 0,
+      "cgroupMib": 479.81640625,
+      "cdcStarts": 823
+    },
+    {
+      "atMs": 259454.93954199998,
+      "rssPlusSwapMib": 763.3515625,
+      "swapMib": 0,
+      "cgroupMib": 797.15234375,
+      "cdcStarts": 884
+    },
+    {
+      "atMs": 277814.1311669999,
+      "rssPlusSwapMib": 348.73046875,
+      "swapMib": 0,
+      "cgroupMib": 370.2421875,
+      "cdcStarts": 940
+    },
+    {
+      "atMs": 294363.231375,
+      "rssPlusSwapMib": 1044.40234375,
+      "swapMib": 0,
+      "cgroupMib": 1090.421875,
+      "cdcStarts": 994
+    },
+    {
+      "atMs": 310581.07987499994,
+      "rssPlusSwapMib": 613.24609375,
+      "swapMib": 0,
+      "cgroupMib": 654.34765625,
+      "cdcStarts": 1054
+    },
+    {
+      "atMs": 328821.56999999995,
+      "rssPlusSwapMib": 1077.65234375,
+      "swapMib": 0,
+      "cgroupMib": 1138.5390625,
+      "cdcStarts": 1122
+    },
+    {
+      "atMs": 349132.387292,
+      "rssPlusSwapMib": 452.9921875,
+      "swapMib": 0,
+      "cgroupMib": 487.921875,
+      "cdcStarts": 1206
+    },
+    {
+      "atMs": 375806.43966699997,
+      "rssPlusSwapMib": 345.171875,
+      "swapMib": 0,
+      "cgroupMib": 380.328125,
+      "cdcStarts": 1266
+    },
+    {
+      "atMs": 392404.637917,
+      "rssPlusSwapMib": 310.1171875,
+      "swapMib": 0,
+      "cgroupMib": 346.171875,
+      "cdcStarts": 1320
+    },
+    {
+      "atMs": 408942.77341699996,
+      "rssPlusSwapMib": 433.59375,
+      "swapMib": 0,
+      "cgroupMib": 470.2265625,
+      "cdcStarts": 1396
+    },
+    {
+      "atMs": 431457.35337499995,
+      "rssPlusSwapMib": 399.78515625,
+      "swapMib": 0,
+      "cgroupMib": 437.4453125,
+      "cdcStarts": 1468
+    },
+    {
+      "atMs": 453023.66983399994,
+      "rssPlusSwapMib": 437.109375,
+      "swapMib": 0,
+      "cgroupMib": 474.8828125,
+      "cdcStarts": 1522
+    },
+    {
+      "atMs": 469224.5509169999,
+      "rssPlusSwapMib": 614.015625,
+      "swapMib": 0,
+      "cgroupMib": 650.6796875,
+      "cdcStarts": 1576
+    },
+    {
+      "atMs": 486455.596959,
+      "rssPlusSwapMib": 1278.36328125,
+      "swapMib": 0,
+      "cgroupMib": 1347.2265625,
+      "cdcStarts": 1634
+    },
+    {
+      "atMs": 503981.501209,
+      "rssPlusSwapMib": 342.31640625,
+      "swapMib": 0,
+      "cgroupMib": 382.13671875,
+      "cdcStarts": 1693
+    },
+    {
+      "atMs": 521091.328,
+      "rssPlusSwapMib": 759.75,
+      "swapMib": 0,
+      "cgroupMib": 800.43359375,
+      "cdcStarts": 1761
+    },
+    {
+      "atMs": 541177.072042,
+      "rssPlusSwapMib": 920.6328125,
+      "swapMib": 0,
+      "cgroupMib": 967.76953125,
+      "cdcStarts": 1817
+    },
+    {
+      "atMs": 557647.003959,
+      "rssPlusSwapMib": 709.390625,
+      "swapMib": 0,
+      "cgroupMib": 765.76953125,
+      "cdcStarts": 1878
+    },
+    {
+      "atMs": 576255.4450419999,
+      "rssPlusSwapMib": 751.08203125,
+      "swapMib": 0,
+      "cgroupMib": 800.30859375,
+      "cdcStarts": 1934
+    },
+    {
+      "atMs": 592741.568584,
+      "rssPlusSwapMib": 343.23046875,
+      "swapMib": 23.0859375,
+      "cgroupMib": 365.60546875,
+      "cdcStarts": 1988
+    }
+  ]
+}

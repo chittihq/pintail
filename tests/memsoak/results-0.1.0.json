@@ -1,0 +1,271 @@
+{
+  "image": "ghcr.io/chittihq/pintail:0.1.0",
+  "tables": 20,
+  "rowsPerTable": 200000,
+  "supervisorMs": 300,
+  "durationMs": 600000,
+  "warmupMs": 180000,
+  "memoryLimit": "2g",
+  "slopeLimitMibPerMin": 2,
+  "growthLimitMib": 128,
+  "slopeMibPerMin": 23.11094345256833,
+  "verdict": [
+    "the process was swapped out (peak 1512 MiB in swap): it holds more than the container has",
+    "the memory floor climbs 23.11 MiB/min after warm-up (limit 2)",
+    "the memory floor grew 196 MiB after warm-up (limit 128)"
+  ],
+  "samples": [
+    {
+      "atMs": 0.0008749999979045242,
+      "rssPlusSwapMib": 951.8359375,
+      "swapMib": 0,
+      "cgroupMib": 974.37890625,
+      "cdcStarts": 5
+    },
+    {
+      "atMs": 15451.176500000001,
+      "rssPlusSwapMib": 2686.890625,
+      "swapMib": 681.921875,
+      "cgroupMib": 2044.74609375,
+      "cdcStarts": 54
+    },
+    {
+      "atMs": 31118.653292000003,
+      "rssPlusSwapMib": 2954.32421875,
+      "swapMib": 921.41015625,
+      "cgroupMib": 2045.234375,
+      "cdcStarts": 95
+    },
+    {
+      "atMs": 46772.195917000005,
+      "rssPlusSwapMib": 2976.1328125,
+      "swapMib": 969,
+      "cgroupMib": 2047.98828125,
+      "cdcStarts": 136
+    },
+    {
+      "atMs": 62424.478,
+      "rssPlusSwapMib": 2999.87890625,
+      "swapMib": 996.62890625,
+      "cgroupMib": 2046.5546875,
+      "cdcStarts": 184
+    },
+    {
+      "atMs": 78215.09566700002,
+      "rssPlusSwapMib": 3028.53125,
+      "swapMib": 1030.55078125,
+      "cgroupMib": 2046.734375,
+      "cdcStarts": 235
+    },
+    {
+      "atMs": 95018.61762499998,
+      "rssPlusSwapMib": 3045.97265625,
+      "swapMib": 993.15234375,
+      "cgroupMib": 2047.84765625,
+      "cdcStarts": 279
+    },
+    {
+      "atMs": 110637.73887500001,
+      "rssPlusSwapMib": 3046.24609375,
+      "swapMib": 1016.87890625,
+      "cgroupMib": 2047.765625,
+      "cdcStarts": 329
+    },
+    {
+      "atMs": 126428.051917,
+      "rssPlusSwapMib": 3002.16796875,
+      "swapMib": 980.59375,
+      "cgroupMib": 2046.1484375,
+      "cdcStarts": 379
+    },
+    {
+      "atMs": 142111.42833400003,
+      "rssPlusSwapMib": 3063.53125,
+      "swapMib": 1036.2421875,
+      "cgroupMib": 2040.7265625,
+      "cdcStarts": 430
+    },
+    {
+      "atMs": 158190.11425,
+      "rssPlusSwapMib": 2988.62109375,
+      "swapMib": 968.0390625,
+      "cgroupMib": 2046,
+      "cdcStarts": 474
+    },
+    {
+      "atMs": 173866.59237500004,
+      "rssPlusSwapMib": 3005.03125,
+      "swapMib": 986.890625,
+      "cgroupMib": 2047.9296875,
+      "cdcStarts": 523
+    },
+    {
+      "atMs": 189585.387042,
+      "rssPlusSwapMib": 2976.328125,
+      "swapMib": 962.86328125,
+      "cgroupMib": 2022.82421875,
+      "cdcStarts": 571
+    },
+    {
+      "atMs": 205380.59641700002,
+      "rssPlusSwapMib": 2973.578125,
+      "swapMib": 1047.15234375,
+      "cgroupMib": 1947.50390625,
+      "cdcStarts": 666
+    },
+    {
+      "atMs": 235512.45208400002,
+      "rssPlusSwapMib": 2960.609375,
+      "swapMib": 920.1640625,
+      "cgroupMib": 2045.56640625,
+      "cdcStarts": 712
+    },
+    {
+      "atMs": 251429.23179200004,
+      "rssPlusSwapMib": 2987.171875,
+      "swapMib": 945.15234375,
+      "cgroupMib": 2047.66015625,
+      "cdcStarts": 750
+    },
+    {
+      "atMs": 267193.68804200005,
+      "rssPlusSwapMib": 3072.19140625,
+      "swapMib": 1046.44140625,
+      "cgroupMib": 2045.140625,
+      "cdcStarts": 789
+    },
+    {
+      "atMs": 288299.957834,
+      "rssPlusSwapMib": 3091.92578125,
+      "swapMib": 1051.15234375,
+      "cgroupMib": 2045.4609375,
+      "cdcStarts": 813
+    },
+    {
+      "atMs": 304772.26450000005,
+      "rssPlusSwapMib": 3150.51171875,
+      "swapMib": 1122.75390625,
+      "cgroupMib": 2045.71484375,
+      "cdcStarts": 839
+    },
+    {
+      "atMs": 320823.256709,
+      "rssPlusSwapMib": 3247.6484375,
+      "swapMib": 1228.51171875,
+      "cgroupMib": 2045.68359375,
+      "cdcStarts": 870
+    },
+    {
+      "atMs": 338093.32775000005,
+      "rssPlusSwapMib": 3090.57421875,
+      "swapMib": 1069.39453125,
+      "cgroupMib": 2037.74609375,
+      "cdcStarts": 895
+    },
+    {
+      "atMs": 354913.885792,
+      "rssPlusSwapMib": 3146.33984375,
+      "swapMib": 1146.59375,
+      "cgroupMib": 2039.10546875,
+      "cdcStarts": 919
+    },
+    {
+      "atMs": 371098.76875000005,
+      "rssPlusSwapMib": 2933.06640625,
+      "swapMib": 982.734375,
+      "cgroupMib": 1970.296875,
+      "cdcStarts": 942
+    },
+    {
+      "atMs": 388661.821584,
+      "rssPlusSwapMib": 3047.40234375,
+      "swapMib": 1084.8203125,
+      "cgroupMib": 1984.62109375,
+      "cdcStarts": 966
+    },
+    {
+      "atMs": 405020.3621670001,
+      "rssPlusSwapMib": 3048.77734375,
+      "swapMib": 1045.06640625,
+      "cgroupMib": 2038.578125,
+      "cdcStarts": 986
+    },
+    {
+      "atMs": 421254.82504200004,
+      "rssPlusSwapMib": 3048.10546875,
+      "swapMib": 1006.8828125,
+      "cgroupMib": 2044.234375,
+      "cdcStarts": 1011
+    },
+    {
+      "atMs": 438670.01920900005,
+      "rssPlusSwapMib": 3109.625,
+      "swapMib": 1089.30078125,
+      "cgroupMib": 2044.7890625,
+      "cdcStarts": 1031
+    },
+    {
+      "atMs": 456494.7429170001,
+      "rssPlusSwapMib": 3348.5625,
+      "swapMib": 1334.45703125,
+      "cgroupMib": 2029.484375,
+      "cdcStarts": 1050
+    },
+    {
+      "atMs": 472618.132292,
+      "rssPlusSwapMib": 2947.09375,
+      "swapMib": 965.69140625,
+      "cgroupMib": 2001.23046875,
+      "cdcStarts": 1067
+    },
+    {
+      "atMs": 489218.95212500007,
+      "rssPlusSwapMib": 3086.28125,
+      "swapMib": 1164.67578125,
+      "cgroupMib": 1976.125,
+      "cdcStarts": 1087
+    },
+    {
+      "atMs": 506313.085834,
+      "rssPlusSwapMib": 3210.18359375,
+      "swapMib": 1179.60546875,
+      "cgroupMib": 2047.8046875,
+      "cdcStarts": 1101
+    },
+    {
+      "atMs": 522467.52575000003,
+      "rssPlusSwapMib": 3303.375,
+      "swapMib": 1290.58984375,
+      "cgroupMib": 2047.9765625,
+      "cdcStarts": 1116
+    },
+    {
+      "atMs": 538670.05675,
+      "rssPlusSwapMib": 3538.43359375,
+      "swapMib": 1511.77734375,
+      "cgroupMib": 2045.7734375,
+      "cdcStarts": 1127
+    },
+    {
+      "atMs": 554668.7309170001,
+      "rssPlusSwapMib": 3494.3046875,
+      "swapMib": 1480.70703125,
+      "cgroupMib": 2045.984375,
+      "cdcStarts": 1141
+    },
+    {
+      "atMs": 571689.690792,
+      "rssPlusSwapMib": 3196.26171875,
+      "swapMib": 1312.55859375,
+      "cgroupMib": 1955.3828125,
+      "cdcStarts": 1158
+    },
+    {
+      "atMs": 587946.46875,
+      "rssPlusSwapMib": 3156.68359375,
+      "swapMib": 1146.16015625,
+      "cgroupMib": 2047.62109375,
+      "cdcStarts": 1171
+    }
+  ]
+}
