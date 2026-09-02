@@ -3704,6 +3704,11 @@ async function startPintail(queryMemoryLimit?: number, extraEnv: Record<string, 
         // Test cadence: every adoption/auto-include/re-probe wait in the
         // lifecycle phases is a multiple of the supervisor interval.
         PINTAIL_SUPERVISOR_INTERVAL_MS: SUPERVISOR_MS,
+        // jemalloc keeps freed pages for ten seconds by default, and on macOS
+        // that shows up in RSS as if it were live; the memory-pressure phase
+        // measures RSS, so the local binary returns pages at once, the way the
+        // release image is configured to.
+        _RJEM_MALLOC_CONF: 'dirty_decay_ms:0,muzzy_decay_ms:0',
         ...(queryMemoryLimit === undefined
           ? {}
           : { PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(queryMemoryLimit) }),
