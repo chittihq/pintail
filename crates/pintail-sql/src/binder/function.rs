@@ -444,6 +444,7 @@ pub(super) fn bind_scalar_function(
         "CONVERT_TZ" if args.len() == 3 => ScalarFunction::ConvertTz,
         "CHAR" if !args.is_empty() => ScalarFunction::Char,
         "RAND" if args.is_empty() => ScalarFunction::Rand,
+        "PI" if args.is_empty() => ScalarFunction::Pi,
         "REGEXP_LIKE" if matches!(args.len(), 2 | 3) => {
             ScalarFunction::RegexpLike { negated: false }
         }
@@ -1402,7 +1403,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
-        ScalarFunction::Rand => (Some(DataType::Float64), false),
+        ScalarFunction::Rand | ScalarFunction::Pi => (Some(DataType::Float64), false),
         ScalarFunction::Instr
         | ScalarFunction::FindInSet
         | ScalarFunction::Ascii

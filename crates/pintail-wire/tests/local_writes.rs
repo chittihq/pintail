@@ -263,3 +263,46 @@ fn insert_and_time_follow_mysql() {
         ]
     );
 }
+
+#[test]
+fn numeric_and_temporal_edges_follow_mysql() {
+    let fixture = local_fixture();
+    let output = run(
+        &fixture,
+        "SELECT ROUND(4, 18446744073709551614), TRUNCATE(1.5, -9223372036854775808), \
+         DATE('1997-13-31'), FORMAT(4.55, 1), FORMAT(1234567.891, 2), FORMAT(-0.5, 0), \
+         FROM_UNIXTIME(32536771200), UNIX_TIMESTAMP('3001-01-20 00:00:00'), PI()",
+    )
+    .expect("select");
+    let text = |value: &str| pintail_types::Value::Utf8(value.to_owned());
+    let row = &output.rows[0];
+    assert_eq!(
+        row[0],
+        pintail_types::Value::float64(4.0),
+        "ROUND with an unsigned digit count past i64"
+    );
+    assert_eq!(
+        row[1],
+        text("0"),
+        "TRUNCATE with the most negative digit count"
+    );
+    assert_eq!(
+        row[2],
+        pintail_types::Value::Null,
+        "an invalid date is NULL, not an error"
+    );
+    assert_eq!(
+        row[3],
+        text("4.6"),
+        "FORMAT rounds half away from zero on the text"
+    );
+    assert_eq!(row[4], text("1,234,567.89"));
+    assert_eq!(row[5], text("-1"));
+    assert_eq!(
+        row[6],
+        pintail_types::Value::Null,
+        "past 3001-01-18 23:59:59"
+    );
+    assert_eq!(row[7], pintail_types::Value::UInt64(0));
+    assert_eq!(row[8], pintail_types::Value::float64(std::f64::consts::PI));
+}

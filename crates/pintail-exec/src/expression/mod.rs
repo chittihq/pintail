@@ -812,6 +812,7 @@ impl CompiledExpr {
                         | ScalarFunction::UnixTimestamp
                         | ScalarFunction::Curtime
                         | ScalarFunction::Rand
+                        | ScalarFunction::Pi
                 ) {
                     return None;
                 }
@@ -1184,6 +1185,7 @@ impl CompiledExpr {
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
+                    | ScalarFunction::Pi
                     // CONV and MAKETIME render short fixed-width strings,
                     // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
@@ -1365,6 +1367,7 @@ impl CompiledExpr {
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
+                    | ScalarFunction::Pi
                     // CONV and MAKETIME render short fixed-width strings,
                     // as do BIN (64 digits at most), OCT and the INET forms.
                     | ScalarFunction::Conv
@@ -1726,7 +1729,33 @@ fn evaluate_eager_scalar(
 }
 
 #[allow(clippy::too_many_lines)]
+/// Evaluates one scalar call over materialized arguments. `MySQL` answers an
+/// unparseable date or time with NULL and a warning, not an error -
+/// DATE('1997-13-31') is NULL - and that mapping lives here, outside the
+/// evaluator proper, because its arms return early through `?`.
 fn evaluate_eager_scalar_typed(
+    function: ScalarFunction,
+    values: &[Value],
+    argument_types: &[Option<DataType>],
+    literal_regex: Option<&CompiledRegex>,
+    data_type: Option<DataType>,
+    collation: Collation,
+) -> Result<Value, ExecError> {
+    match evaluate_eager_scalar_inner(
+        function,
+        values,
+        argument_types,
+        literal_regex,
+        data_type,
+        collation,
+    ) {
+        Err(ExecError::InvalidDateTime) => Ok(Value::Null),
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn evaluate_eager_scalar_inner(
     function: ScalarFunction,
     values: &[Value],
     argument_types: &[Option<DataType>],
@@ -2052,7 +2081,7 @@ fn evaluate_eager_scalar_typed(
         }
         ScalarFunction::Truncate { decimal } => {
             if decimal && let Value::Utf8(text) = &values[0] {
-                let digits = mysql_i64(&values[1])?;
+                let digits = mysql_decimals(&values[1])?;
                 let input_scale = i64::try_from(
                     text.rsplit_once('.')
                         .map_or(0, |(_, fraction)| fraction.len()),
@@ -2077,7 +2106,7 @@ fn evaluate_eager_scalar_typed(
                 // i128 division truncates toward zero — TRUNCATE's contract.
                 let mut units = units / factor;
                 if digits < 0 {
-                    let zeroed = u32::try_from((-digits).min(38)).unwrap_or(38);
+                    let zeroed = u32::try_from(digits.saturating_neg().min(38)).unwrap_or(38);
                     let zero_factor = 10_i128
                         .checked_pow(zeroed)
                         .ok_or(ExecError::NumericOverflow)?;
@@ -2373,12 +2402,27 @@ fn evaluate_eager_scalar_typed(
             Ok(Value::UInt64(0))
         }
         ScalarFunction::Format => {
-            let value = mysql_f64(&values[0])?;
-            let digits = mysql_i64(&values[1])?.clamp(0, 30);
-            Ok(Value::Utf8(format_grouped(
-                value,
-                usize::try_from(digits).expect("clamped to usize range"),
-            )))
+            // MySQL rounds the decimal text half away from zero: FORMAT(4.55, 1)
+            // is 4.6, which rounding the nearest double would not give. A
+            // DOUBLE is first rendered at fifteen decimals, as MySQL does.
+            let scale = u8::try_from(mysql_decimals(&values[1])?.clamp(0, 30))
+                .expect("clamped to u8 range");
+            let text = match &values[0] {
+                Value::Utf8(text) | Value::Enum { label: text, .. } => text.trim().to_owned(),
+                Value::Int64(number) => number.to_string(),
+                Value::UInt64(number) => number.to_string(),
+                Value::Boolean(flag) => u8::from(*flag).to_string(),
+                other => format!("{:.15}", mysql_f64(other)?),
+            };
+            let units = pintail_types::parse_decimal_rounded(&text, scale)
+                .or_else(|| {
+                    pintail_types::parse_decimal_rounded(
+                        &format!("{:.15}", parse_mysql_number(&text)),
+                        scale,
+                    )
+                })
+                .ok_or(ExecError::NumericOverflow)?;
+            Ok(Value::Utf8(format_grouped(units, scale)))
         }
         ScalarFunction::ToBase64 => {
             let text = scalar_string(&values[0])?;
@@ -2400,7 +2444,7 @@ fn evaluate_eager_scalar_typed(
         }
         ScalarFunction::Round { decimal } => {
             if decimal && let Value::Utf8(text) = &values[0] {
-                let digits = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
+                let digits = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);
                 let input_scale = i64::try_from(
                     text.rsplit_once('.')
                         .map_or(0, |(_, fraction)| fraction.len()),
@@ -2414,7 +2458,7 @@ fn evaluate_eager_scalar_typed(
                 let render_scale = u8::try_from(digits.clamp(0, declared_cap))
                     .map_err(|_| ExecError::NumericOverflow)?;
                 let units = if digits < 0 {
-                    let zeroed = u32::try_from((-digits).min(38)).unwrap_or(38);
+                    let zeroed = u32::try_from(digits.saturating_neg().min(38)).unwrap_or(38);
                     let input_scale =
                         u8::try_from(input_scale).map_err(|_| ExecError::NumericOverflow)?;
                     let raw_units = pintail_types::parse_decimal_rounded(text, input_scale)
@@ -2448,7 +2492,7 @@ fn evaluate_eager_scalar_typed(
                 )));
             }
             let value = mysql_f64(&values[0])?;
-            let decimals = values.get(1).map(mysql_i64).transpose()?.unwrap_or(0);
+            let decimals = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);
             let decimals =
                 i32::try_from(decimals.clamp(-308, 308)).map_err(|_| ExecError::NumericOverflow)?;
             // MySQL rounds an APPROXIMATE operand to nearest-even, deferring
@@ -2734,6 +2778,7 @@ fn evaluate_eager_scalar_typed(
             Ok(Value::Binary(bytes))
         }
         ScalarFunction::Rand => Ok(Value::float64(rand::random::<f64>())),
+        ScalarFunction::Pi => Ok(Value::float64(std::f64::consts::PI)),
         ScalarFunction::RegexpLike { negated } => {
             let text = scalar_string(&values[0])?;
             let match_type = values.get(2).map(scalar_string).transpose()?;
@@ -3024,10 +3069,22 @@ fn evaluate_eager_scalar_typed(
                     .ok_or(ExecError::InvalidDateTime)?
                     .timestamp()
             };
-            Ok(Value::UInt64(u64::try_from(timestamp).unwrap_or(0)))
+            // MySQL 8.0.28 raised the ceiling to 3001-01-18 23:59:59 UTC; past
+            // it UNIX_TIMESTAMP is 0 and FROM_UNIXTIME is NULL.
+            Ok(Value::UInt64(
+                u64::try_from(timestamp)
+                    .ok()
+                    .filter(|seconds| *seconds <= UNIX_TIMESTAMP_MAX)
+                    .unwrap_or(0),
+            ))
         }
         ScalarFunction::FromUnixTime => {
             let timestamp = mysql_i64(&values[0])?;
+            if timestamp < 0
+                || u64::try_from(timestamp).is_ok_and(|seconds| seconds > UNIX_TIMESTAMP_MAX)
+            {
+                return Ok(Value::Null);
+            }
             let value = Local
                 .timestamp_opt(timestamp, 0)
                 .single()
@@ -3046,6 +3103,10 @@ fn evaluate_eager_scalar_typed(
         _ => cast_scalar(&value, data_type),
     })
 }
+
+/// The last second `MySQL`'s `UNIX_TIMESTAMP` and `FROM_UNIXTIME` accept:
+/// 3001-01-18 23:59:59 UTC.
+const UNIX_TIMESTAMP_MAX: u64 = 32_536_771_199;
 
 fn hex_lower(bytes: &[u8]) -> String {
     let mut hex = String::with_capacity(bytes.len() * 2);
@@ -3635,12 +3696,19 @@ fn unhex(text: &str) -> Option<Vec<u8>> {
 }
 
 /// `en_US` thousands grouping with fixed fraction digits, `MySQL` `FORMAT`.
-fn format_grouped(value: f64, digits: usize) -> String {
-    let formatted = format!("{value:.digits$}");
-    let (sign, rest) = formatted
-        .strip_prefix('-')
-        .map_or(("", formatted.as_str()), |rest| ("-", rest));
-    let (integer, fraction) = rest.split_once('.').unwrap_or((rest, ""));
+/// Renders `units` scaled by `10^scale` with thousands separators, the way
+/// `FORMAT()` prints: sign, grouped integer digits, then exactly `scale`
+/// fraction digits.
+fn format_grouped(units: i128, scale: u8) -> String {
+    let sign = if units < 0 { "-" } else { "" };
+    let magnitude = units.unsigned_abs().to_string();
+    let scale = usize::from(scale);
+    let padded = if magnitude.len() <= scale {
+        format!("{}{magnitude}", "0".repeat(scale + 1 - magnitude.len()))
+    } else {
+        magnitude
+    };
+    let (integer, fraction) = padded.split_at(padded.len() - scale);
     let mut grouped = String::with_capacity(integer.len() + integer.len() / 3);
     for (index, digit) in integer.chars().enumerate() {
         if index > 0 && (integer.len() - index) % 3 == 0 {
@@ -5382,6 +5450,31 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
         }
         Value::Null => Err(ExecError::InvalidExpressionType),
     }
+}
+
+/// The decimals argument of `ROUND`, `TRUNCATE` and `FORMAT`. `MySQL` reads it as a
+/// signed 64-bit integer and saturates anything wider - an unsigned value
+/// past `i64::MAX`, a `DECIMAL` or `DOUBLE` out of range - rather than refusing;
+/// every such value behaves like an extreme one, so it is clamped to a
+/// range the callers' arithmetic cannot overflow on.
+fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
+    let saturated = match value {
+        Value::UInt64(unsigned) => i64::try_from(*unsigned).unwrap_or(i64::MAX),
+        Value::Float64(number) => saturating_i64(number.get()),
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            saturating_i64(parse_mysql_number(text))
+        }
+        other => mysql_i64(other)?,
+    };
+    Ok(saturated.clamp(-100, 100))
+}
+
+fn saturating_i64(number: f64) -> i64 {
+    float_to_i64(number).unwrap_or(if number.is_sign_negative() {
+        i64::MIN
+    } else {
+        i64::MAX
+    })
 }
 
 pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {

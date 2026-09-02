@@ -3034,6 +3034,35 @@ fn bind_unary(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    // A negated unsigned literal is how -9223372036854775808 reaches the
+    // binder: the magnitude alone does not fit BIGINT, so it arrives
+    // unsigned. MySQL reads the negation as BIGINT when it fits and as a
+    // DECIMAL past that; folding the literal here gives it the same types.
+    if operator == UnaryOperator::Minus
+        && let BoundExprKind::Literal(Value::UInt64(magnitude)) = &expr.kind
+    {
+        let magnitude = *magnitude;
+        let (value, data_type) = if let Ok(signed) = i64::try_from(magnitude) {
+            (Value::Int64(-signed), DataType::Int64)
+        } else if magnitude == 1 << 63 {
+            (Value::Int64(i64::MIN), DataType::Int64)
+        } else {
+            let text = format!("-{magnitude}");
+            let precision = u8::try_from(text.len() - 1).unwrap_or(MAX_DECIMAL_PRECISION);
+            (
+                Value::Utf8(text),
+                DataType::Decimal {
+                    precision,
+                    scale: 0,
+                },
+            )
+        };
+        return Ok(BoundExpr {
+            nullable: false,
+            data_type: Some(data_type),
+            kind: BoundExprKind::Literal(value),
+        });
+    }
     let (op, data_type) = match operator {
         UnaryOperator::Plus if is_numeric(expr.data_type) => (UnaryOp::Plus, expr.data_type),
         UnaryOperator::Minus if is_numeric(expr.data_type) => (UnaryOp::Minus, expr.data_type),

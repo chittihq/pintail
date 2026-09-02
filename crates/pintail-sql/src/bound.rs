@@ -628,6 +628,8 @@ pub enum ScalarFunction {
     /// `RAND()`: volatile uniform value in `[0, 1)`; never memoized or
     /// constant-folded. The seeded form is unsupported.
     Rand,
+    /// `PI()`.
+    Pi,
     /// `expr REGEXP pattern` / `REGEXP_LIKE`, case-insensitive by default
     /// like the ci collations.
     RegexpLike {
