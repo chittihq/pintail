@@ -23,7 +23,9 @@ use thiserror::Error;
 use crate::{
     checksum::{SourceChunk, replica_checksum, source_chunks},
     cursor::{CursorValue, ProbeToken},
-    decoder::{decode_key, decode_row, key_projection, quote_identifier, source_projection},
+    decoder::{
+        decode_key, decode_row, key_projection, physical_key, quote_identifier, source_projection,
+    },
 };
 
 /// One probed table and its existing snapshot store.
@@ -347,61 +349,65 @@ async fn reconcile_cdc_target(
     target: &mut PollTarget,
     chunk_rows: usize,
 ) -> Result<CdcReconcileOutcome, PollError> {
-    let current = target
-        .store
-        .snapshot()
-        .scan()?
-        .into_iter()
-        .map(|row| (row.key().clone(), row))
-        .collect::<BTreeMap<_, _>>();
+    // A cascade-affected table can be the largest in the source. Holding
+    // its every row twice - the replica's and the source's - while comparing
+    // them held gigabytes for minutes on a staging node, and with an
+    // allocator that never returned them it was the memory the process was
+    // reported to be "using". Two bounded passes instead: the source, one
+    // page at a time by key, each row compared against the replica by point
+    // lookup, keeping only the keys (tens of megabytes for millions of rows);
+    // then the replica, streamed in key order within a memory bound, for the
+    // rows the source no longer has.
+    let snapshot = target.store.snapshot();
     let durable_version = metadata
         .poll_state(database_id, &target.source.name)?
         .map_or(0, |state| state.version);
-    let version = current
-        .values()
-        .map(StoredRow::version)
-        .max()
-        .unwrap_or(0)
+    let version = target
+        .store
+        .commit_version()
         .max(durable_version)
         .checked_add(1)
         .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
-    let rows = fetch_rows(
-        connection,
-        source_database,
-        &target.source,
-        "",
-        Vec::new(),
-        &poll_order(&target.source, None),
-        chunk_rows,
-    )
-    .await?;
-    let source_count =
-        u64::try_from(rows.len()).map_err(|error| PollError::Decode(error.to_string()))?;
+    let order = poll_order(&target.source, None);
     let mut source_keys = BTreeSet::new();
     let mut mutations = Vec::new();
     let mut ingested = 0;
-    for (index, row) in rows.into_iter().enumerate() {
-        let decoded = decode_row(
+    let mut source_count = 0_u64;
+    let mut last_key: Option<PrimaryKey> = None;
+    loop {
+        let (condition, parameters) = keyset_condition(&target.source, last_key.as_ref());
+        let rows = fetch_rows_page(
+            connection,
+            source_database,
             &target.source,
-            row,
-            u64::try_from(index + 1).map_err(|error| PollError::Decode(error.to_string()))?,
-            version,
-            false,
-        )?;
-        source_keys.insert(decoded.key().clone());
-        if current
-            .get(decoded.key())
-            .is_none_or(|stored| stored.values() != decoded.values())
-        {
-            ingested += 1;
-            mutations.push(decoded);
+            &condition,
+            parameters,
+            &order,
+            chunk_rows,
+            0,
+        )
+        .await?;
+        let fetched = rows.len();
+        for row in rows {
+            source_count = source_count
+                .checked_add(1)
+                .ok_or_else(|| PollError::Decode("source row count exceeds UInt64".to_owned()))?;
+            let decoded = decode_row(&target.source, row, source_count, version, false)?;
+            last_key = Some(decoded.key().clone());
+            source_keys.insert(decoded.key().clone());
+            if snapshot
+                .get(decoded.key())?
+                .is_none_or(|stored| stored.values() != decoded.values())
+            {
+                ingested += 1;
+                mutations.push(decoded);
+            }
+        }
+        if fetched < chunk_rows {
+            break;
         }
     }
-    let tombstones = current
-        .into_values()
-        .filter(|row| !source_keys.contains(row.key()))
-        .map(|row| StoredRow::new(row.key().clone(), row.values().to_vec(), version, true))
-        .collect::<Vec<_>>();
+    let tombstones = tombstones_absent_from(&snapshot, &target.source, &source_keys, version)?;
     let tombstone_count = tombstones.len();
     mutations.extend(tombstones);
     target.store.ingest_scan(mutations)?;
@@ -975,15 +981,78 @@ async fn reconcile_missing_keys(
     chunk_rows: usize,
 ) -> Result<usize, PollError> {
     let source_keys = fetch_source_keys(connection, database, &target.source, chunk_rows).await?;
-    let current = target.store.snapshot().scan()?;
-    let tombstones = current
-        .into_iter()
-        .filter(|row| !source_keys.contains(row.key()))
-        .map(|row| StoredRow::new(row.key().clone(), row.values().to_vec(), version, true))
-        .collect::<Vec<_>>();
+    let tombstones = tombstones_absent_from(
+        &target.store.snapshot(),
+        &target.source,
+        &source_keys,
+        version,
+    )?;
     let count = tombstones.len();
     target.store.ingest(tombstones)?;
     Ok(count)
+}
+
+/// The `WHERE` clause and parameters that continue a key-ordered walk of a
+/// source table after `last_key`, or nothing for the first page.
+fn keyset_condition(
+    table: &SourceTable,
+    last_key: Option<&PrimaryKey>,
+) -> (String, Vec<MysqlValue>) {
+    let Some(key) = last_key else {
+        return (String::new(), Vec::new());
+    };
+    let columns = table
+        .key
+        .columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>();
+    let placeholders = vec!["?"; columns.len()];
+    let comparison = if columns.len() == 1 {
+        format!("{} > ?", columns[0])
+    } else {
+        format!("({}) > ({})", columns.join(","), placeholders.join(","))
+    };
+    (
+        format!(" WHERE {comparison}"),
+        key.parts().iter().map(key_part_mysql_value).collect(),
+    )
+}
+
+/// Memory a reconciliation lets one streamed replica chunk hold.
+const RECONCILE_SCAN_MEMORY: usize = 64 * 1024 * 1024;
+
+/// Tombstones for every visible replica row whose key `source_keys` lacks,
+/// found by streaming the replica in key order within a memory bound rather
+/// than materializing it.
+fn tombstones_absent_from(
+    snapshot: &pintail_store::TableSnapshot,
+    source: &SourceTable,
+    source_keys: &BTreeSet<PrimaryKey>,
+    version: u64,
+) -> Result<Vec<StoredRow>, PollError> {
+    let mut tombstones = Vec::new();
+    let Some((first, last)) = snapshot.key_bounds() else {
+        return Ok(tombstones);
+    };
+    let column_ids = snapshot
+        .schema()
+        .columns()
+        .iter()
+        .map(pintail_types::Column::id)
+        .collect::<Vec<_>>();
+    let Some(mut stream) = snapshot.scan_projected_range_stream(&first, &last, &column_ids)? else {
+        return Ok(tombstones);
+    };
+    while let Some(chunk) = stream.next_chunk(RECONCILE_SCAN_MEMORY)? {
+        for values in chunk.into_rows() {
+            let key = physical_key(source, &values)?;
+            if !source_keys.contains(&key) {
+                tombstones.push(StoredRow::new(key, values, version, true));
+            }
+        }
+    }
+    Ok(tombstones)
 }
 
 async fn fetch_source_keys(
@@ -996,30 +1065,7 @@ async fn fetch_source_keys(
     let mut output = BTreeSet::new();
     let mut last_key = None;
     loop {
-        let (condition, parameters) = last_key.as_ref().map_or_else(
-            || (String::new(), Vec::new()),
-            |key: &PrimaryKey| {
-                let columns = table
-                    .key
-                    .columns
-                    .iter()
-                    .map(|column| quote_identifier(column))
-                    .collect::<Vec<_>>();
-                let placeholders = vec!["?"; columns.len()];
-                let comparison = if columns.len() == 1 {
-                    format!("{} > ?", columns[0])
-                } else {
-                    format!("({}) > ({})", columns.join(","), placeholders.join(","))
-                };
-                (
-                    format!(" WHERE {comparison}"),
-                    key.parts()
-                        .iter()
-                        .map(key_part_mysql_value)
-                        .collect::<Vec<_>>(),
-                )
-            },
-        );
+        let (condition, parameters) = keyset_condition(table, last_key.as_ref());
         let sql = format!(
             "SELECT {} FROM {}.{}{}{} LIMIT {}",
             key_projection(table),

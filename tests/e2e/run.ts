@@ -2226,6 +2226,115 @@ async function phaseMemoryPressure() {
   }
 }
 
+/// Cascade reconciliation of a large table, with the server's memory watched.
+///
+/// MySQL runs ON DELETE CASCADE inside InnoDB without writing the child rows
+/// it deletes to the binlog, so a replica keeps them until reconciliation
+/// compares the table with the source. That comparison used to hold every
+/// row of both sides in memory at once: on a staging node it held two to
+/// four gigabytes for minutes on the largest table, and with an allocator
+/// that never returned freed memory it was the seven gigabytes the process
+/// was reported to be using. This phase reconciles a two-million-row child
+/// table after cascading deletes and asserts the reconciliation is both
+/// right - the replica converges on the source - and bounded: the server's
+/// peak resident memory over the reconciliation stays within a fixed
+/// margin of where it started, whatever the table's size.
+async function phaseReconcileMemory() {
+  const phase = 'reconcile-memory'
+  const host = await dockerHost()
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  const schema = `cascade_${nonce}`
+  const PARENTS = 1_000
+  const CHILDREN = 2_000_000
+  const MEMORY_MARGIN_MB = 768
+
+  await sql(`CREATE DATABASE ${schema}`)
+  await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
+  await sql(
+    `INSERT INTO ${schema}.seed VALUES ${Array.from({ length: 100 }, (_, n) => `(${n})`).join(',')}`,
+  )
+  await sql(`CREATE TABLE ${schema}.parent (id INT PRIMARY KEY, label VARCHAR(16) NOT NULL)`)
+  await sql(`INSERT INTO ${schema}.parent SELECT a.n * 10 + b.n, CONCAT('p', a.n) FROM ${schema}.seed a, ${schema}.seed b WHERE b.n < 10`)
+  await sql(
+    `CREATE TABLE ${schema}.child (id INT PRIMARY KEY, parent_id INT NOT NULL, payload VARCHAR(64) NOT NULL, ` +
+      `FOREIGN KEY (parent_id) REFERENCES parent(id) ON DELETE CASCADE)`,
+  )
+  // 2,000,000 rows: a.n in 0..200 by two hundred-row seeds; parent_id spreads
+  // every child over all thousand parents.
+  await sql(
+    `INSERT INTO ${schema}.child SELECT a.n * 10000 + b.n * 100 + c.n, (a.n * 10000 + b.n * 100 + c.n) % ${PARENTS}, ` +
+      `CONCAT(REPEAT('x', 32), a.n, '-', b.n, '-', c.n) ` +
+      `FROM (SELECT n FROM ${schema}.seed UNION ALL SELECT n + 100 FROM ${schema}.seed) a, ${schema}.seed b, ${schema}.seed c`,
+  )
+  const childrenSeeded = Number(
+    ((await mysqlConnection!.query(`SELECT COUNT(*) FROM ${schema}.child`))[0] as Array<Record<string, unknown>>)[0]!['COUNT(*)'],
+  )
+  record(phase, 'reconcile-memory:the source holds the large child table', childrenSeeded === CHILDREN ? 'PASS' : 'FAIL', `${childrenSeeded} rows`)
+
+  let created = ''
+  try {
+    created = (
+      await api<{ id: string }>('/api/databases', {
+        method: 'POST',
+        body: { name: schema, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`, mode: 'cdc' },
+      })
+    ).id
+    await reprobe(created)
+    await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+    const ready = await waitUntil(async () => {
+      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`)
+      return status.state === 'streaming' || status.state === 'polling'
+    }, 600_000)
+    if (!ready) {
+      record(phase, 'reconcile-memory:the source replicates before the deletes', 'FAIL', await replicationDiagnostics(created))
+      return
+    }
+    const childCount = async () =>
+      (await api<{ count: number }>(`/api/tables/child/count?db=${created}`).catch(() => ({ count: -1 }))).count
+    const replicated = await waitUntil(async () => (await childCount()) === CHILDREN, 300_000)
+    record(phase, 'reconcile-memory:every child row arrives', replicated ? 'PASS' : 'FAIL', `${await childCount()} of ${CHILDREN}`)
+
+    // Cascading deletes: a tenth of the parents take a tenth of the children
+    // with them, and none of those child deletions reach the binlog.
+    await sql(`DELETE FROM ${schema}.parent WHERE id % 10 = 0`)
+    const remaining = Number(
+      ((await mysqlConnection!.query(`SELECT COUNT(*) FROM ${schema}.child`))[0] as Array<Record<string, unknown>>)[0]!['COUNT(*)'],
+    )
+    record(phase, 'reconcile-memory:the cascade removed a tenth of the children', remaining === CHILDREN - CHILDREN / 10 ? 'PASS' : 'FAIL', `${remaining} remain`)
+
+    const baseline = await serverRssMb()
+    let peak = baseline
+    let sampling = true
+    const sampler = (async () => {
+      while (sampling) {
+        peak = Math.max(peak, await serverRssMb())
+        await Bun.sleep(250)
+      }
+    })()
+    const started = performance.now()
+    await api(`/api/databases/${created}/tables/child/reconcile`, { method: 'POST' })
+    const converged = await waitUntil(async () => (await childCount()) === remaining, 600_000)
+    sampling = false
+    await sampler
+    const seconds = ((performance.now() - started) / 1000).toFixed(1)
+    record(
+      phase,
+      'reconcile-memory:reconciliation converges the replica on the source',
+      converged ? 'PASS' : 'FAIL',
+      `child ${await childCount()} vs source ${remaining} after ${seconds}s`,
+    )
+    record(
+      phase,
+      'reconcile-memory:reconciliation is bounded in memory',
+      peak - baseline < MEMORY_MARGIN_MB ? 'PASS' : 'FAIL',
+      `RSS ${baseline.toFixed(0)}MB before, peak ${peak.toFixed(0)}MB during (margin ${MEMORY_MARGIN_MB}MB)`,
+    )
+  } finally {
+    if (created) await api(`/api/databases/${created}`, { method: 'DELETE' }).catch(() => undefined)
+    await sql(`DROP DATABASE IF EXISTS ${schema}`)
+  }
+}
+
 async function phaseExecutionBudget() {
   const phase = 'execution-budget'
   const record = (check: string, ok: boolean, detail?: string) => {
@@ -3883,6 +3992,7 @@ async function main() {
     ['drop-table-polling', phaseDropTablePolling],
     ['restart-during-snapshot', phaseRestartDuringSnapshot],
     ['memory-pressure', phaseMemoryPressure],
+    ['reconcile-memory', phaseReconcileMemory],
     ['drop-database', phaseDropDatabase],
     // Last: the rename gap leaves the replica holding a table under a name
     // MySQL no longer uses, and the lifecycle phases re-probe, which would
