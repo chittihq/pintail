@@ -396,14 +396,16 @@ async fn run_table_resnapshot_job(
         // Without a fence the stream would replay events this snapshot has
         // already copied. Deletes and updates would land again harmlessly on a
         // keyed table, but an append-keyed one would duplicate, so refuse
-        // rather than leave that to chance.
-        None => {
+        // rather than leave that to chance. A polling database has no stream
+        // to replay, and its source may not write a binlog at all.
+        None if effective_mode(&database) == "cdc" => {
             return Err(
                 "source did not report a binlog position for the snapshot, so the table \
                  cannot be fenced against replaying its own rows"
                     .to_owned(),
             );
         }
+        None => {}
     }
     Ok(rows)
 }

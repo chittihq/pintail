@@ -485,8 +485,9 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
     assert_eq!(rows[0][10], json!(341));
     assert_eq!(rows[0][11], json!("0x00ff10"));
     assert_eq!(rows[0][12], json!("0xdeadbeef"));
-    assert!(rows[1][3].is_null());
-    assert!(rows[1][4].is_null());
+    // The all-zero date is a value MySQL returns, not an absence.
+    assert_eq!(rows[1][3], json!("0000-00-00"));
+    assert_eq!(rows[1][4], json!("0000-00-00 00:00:00.000000"));
 
     let key = json_response(
         request(
