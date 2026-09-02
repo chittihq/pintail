@@ -1832,9 +1832,6 @@ async function phaseRestartDuringSnapshot() {
           name: schema,
           dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`,
           mode: 'cdc',
-          // A scale run can leave the repair to the supervisor's own pass
-          // by shortening the interval instead of requesting one.
-          ...(VIA_SUPERVISOR ? { reconcile_interval_seconds: 5 } : {}),
         },
       })
     ).id
@@ -2292,7 +2289,14 @@ async function phaseReconcileMemory() {
     created = (
       await api<{ id: string }>('/api/databases', {
         method: 'POST',
-        body: { name: schema, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`, mode: 'cdc' },
+        body: {
+          name: schema,
+          dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`,
+          mode: 'cdc',
+          // A scale run can leave the repair to the supervisor's own pass
+          // by shortening the interval instead of requesting one.
+          ...(VIA_SUPERVISOR ? { reconcile_interval_seconds: 5 } : {}),
+        },
       })
     ).id
     await reprobe(created)
