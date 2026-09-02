@@ -546,14 +546,23 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
             mysql_async::Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
         ]
     );
-    let normalized = connection
-        .exec_first::<(Option<String>, Option<String>), _, _>(
+    // The binary protocol carries the all-zero date as a zero-length
+    // temporal, which the client decodes as the zero date itself.
+    let zero_row = connection
+        .exec_first::<(mysql_async::Value, mysql_async::Value), _, _>(
             "SELECT date_value, datetime_value FROM type_fidelity WHERE id = ?",
             (2_u64,),
         )
         .await
-        .expect("normalized zero dates");
-    assert_eq!(normalized, Some((None, None)));
+        .expect("zero dates over the wire")
+        .expect("zero-date row");
+    assert_eq!(
+        zero_row,
+        (
+            mysql_async::Value::Date(0, 0, 0, 0, 0, 0, 0),
+            mysql_async::Value::Date(0, 0, 0, 0, 0, 0, 0)
+        )
+    );
     drop(connection);
     pool.disconnect().await.expect("disconnect wire client");
     let _ = shutdown_tx.send(());

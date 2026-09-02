@@ -1406,6 +1406,13 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
             value.to_le_bytes().to_vec()
         }
         (_, Value::Float64(value)) => value.get().to_le_bytes().to_vec(),
+        // The all-zero date is a value MySQL returns, and the binary protocol
+        // carries it as a zero-length temporal rather than a calendar date.
+        (Some(DataType::Date32 | DataType::DateTime64 { .. }), Value::Utf8(value))
+            if value.starts_with("0000-00-00") =>
+        {
+            vec![0]
+        }
         (Some(DataType::Date32), Value::Utf8(value)) => {
             let date = NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(io_invalid)?;
             encode_binary_datetime(
