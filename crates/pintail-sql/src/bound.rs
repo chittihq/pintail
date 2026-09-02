@@ -549,6 +549,8 @@ pub enum ScalarFunction {
     Reverse,
     /// `REPEAT(str, count)`; results are capped at 4096 bytes.
     Repeat,
+    /// `INSERT(str, pos, len, newstr)` by characters.
+    Insert,
     /// `SPACE(n)`; capped like `REPEAT`.
     Space,
     /// `LPAD(str, len, pad)`; capped like `REPEAT`.
@@ -704,6 +706,8 @@ pub enum ScalarFunction {
     CurrentDate,
     /// Extract the date component.
     Date,
+    /// Extract the time component.
+    Time,
     /// Extract a calendar/time component.
     DatePart(DatePart),
     /// Format a date/time with a `MySQL` format string.

@@ -10,7 +10,7 @@ use std::{cmp::Ordering, sync::Arc};
 
 use crate::collation::Collation;
 
-use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use md5::{Digest as _, Md5};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
@@ -1166,6 +1166,7 @@ impl CompiledExpr {
                     ScalarFunction::Now
                     | ScalarFunction::CurrentDate
                     | ScalarFunction::Date
+                    | ScalarFunction::Time
                     | ScalarFunction::DateInterval { .. }
                     | ScalarFunction::FromUnixTime
                     | ScalarFunction::Abs { .. }
@@ -1237,6 +1238,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonContains
                     | ScalarFunction::JsonContainsPath => 0,
                     ScalarFunction::Repeat
+                    | ScalarFunction::Insert
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
@@ -1344,6 +1346,7 @@ impl CompiledExpr {
                     ScalarFunction::Now
                     | ScalarFunction::CurrentDate
                     | ScalarFunction::Date
+                    | ScalarFunction::Time
                     | ScalarFunction::DateInterval { .. }
                     | ScalarFunction::DateFormat
                     | ScalarFunction::FromUnixTime
@@ -1414,6 +1417,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonOverlaps
                     | ScalarFunction::JsonMemberOf => 24,
                     ScalarFunction::Repeat
+                    | ScalarFunction::Insert
                     | ScalarFunction::Space
                     | ScalarFunction::Lpad
                     | ScalarFunction::Rpad => STRING_BUILD_CAP,
@@ -2143,6 +2147,34 @@ fn evaluate_eager_scalar_typed(
             }
             repeat_capped(&text, count)
         }
+        ScalarFunction::Insert => {
+            // Positions count characters from one. A position outside the
+            // string returns it unchanged; a length past the end, or a
+            // negative one, replaces the rest of the string.
+            let text = scalar_string(&values[0])?;
+            let position = mysql_i64(&values[1])?;
+            let length = mysql_i64(&values[2])?;
+            let replacement = scalar_string(&values[3])?;
+            let characters: Vec<char> = text.chars().collect();
+            let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
+            if position < 1 || position > total + 1 {
+                return Ok(Value::Utf8(text));
+            }
+            let start = position - 1;
+            let end = if length < 0 {
+                total
+            } else {
+                start.saturating_add(length).min(total)
+            };
+            let (start, end) = (
+                usize::try_from(start).map_err(|_| ExecError::NumericOverflow)?,
+                usize::try_from(end).map_err(|_| ExecError::NumericOverflow)?,
+            );
+            let mut result: String = characters[..start].iter().collect();
+            result.push_str(&replacement);
+            result.extend(&characters[end..]);
+            Ok(Value::Utf8(result))
+        }
         ScalarFunction::Space => {
             let count = mysql_i64(&values[0])?;
             if count <= 0 {
@@ -2482,6 +2514,28 @@ fn evaluate_eager_scalar_typed(
                 .format("%Y-%m-%d")
                 .to_string(),
         )),
+        ScalarFunction::Time => {
+            // The time of a datetime, or a bare time kept as it was written;
+            // fractional seconds survive when present.
+            let text = scalar_string(&values[0])?;
+            if let Ok(value) = parse_mysql_datetime(&text) {
+                let time = value.time();
+                let rendered = if time.nanosecond() == 0 {
+                    time.format("%H:%M:%S").to_string()
+                } else {
+                    time.format("%H:%M:%S%.6f").to_string()
+                };
+                return Ok(Value::Utf8(rendered));
+            }
+            let trimmed = text.trim();
+            let time_only = NaiveTime::parse_from_str(trimmed, "%H:%M:%S%.f")
+                .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M:%S"))
+                .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M"));
+            match time_only {
+                Ok(_) => Ok(Value::Utf8(trimmed.to_owned())),
+                Err(_) => Ok(Value::Null),
+            }
+        }
         ScalarFunction::DatePart(part) => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
             Ok(Value::Int64(

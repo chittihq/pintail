@@ -387,6 +387,7 @@ pub(super) fn bind_scalar_function(
         "CONCAT_WS" if args.len() >= 2 => ScalarFunction::ConcatWs,
         "REVERSE" if args.len() == 1 => ScalarFunction::Reverse,
         "REPEAT" if args.len() == 2 => ScalarFunction::Repeat,
+        "INSERT" if args.len() == 4 => ScalarFunction::Insert,
         "SPACE" if args.len() == 1 => ScalarFunction::Space,
         "LPAD" if args.len() == 3 => ScalarFunction::Lpad,
         "RPAD" if args.len() == 3 => ScalarFunction::Rpad,
@@ -502,6 +503,7 @@ pub(super) fn bind_scalar_function(
         "NOW" if args.is_empty() => ScalarFunction::Now,
         "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
         "DATE" if args.len() == 1 => ScalarFunction::Date,
+        "TIME" if args.len() == 1 => ScalarFunction::Time,
         "YEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Year),
         "MONTH" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Month),
         "DAY" | "DAYOFMONTH" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Day),
@@ -1291,6 +1293,7 @@ pub(super) fn bind_scalar(
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
         | ScalarFunction::Repeat
+        | ScalarFunction::Insert
         | ScalarFunction::Space
         | ScalarFunction::Lpad
         | ScalarFunction::Rpad
@@ -1453,6 +1456,10 @@ pub(super) fn bind_scalar(
         ScalarFunction::Curtime => (Some(DataType::Time64 { fsp: 0 }), false),
         ScalarFunction::Date => (
             Some(DataType::Date32),
+            args.iter().any(|argument| argument.nullable),
+        ),
+        ScalarFunction::Time => (
+            Some(DataType::Time64 { fsp: 0 }),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::FromUnixTime => (

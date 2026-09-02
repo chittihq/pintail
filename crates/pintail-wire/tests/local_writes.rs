@@ -238,3 +238,28 @@ fn bit_operators_evaluate_over_unsigned_64_bit_patterns() {
     ];
     assert_eq!(output.rows[0], expected);
 }
+
+#[test]
+fn insert_and_time_follow_mysql() {
+    let fixture = local_fixture();
+    let output = run(
+        &fixture,
+        "SELECT INSERT('Quadratic', 3, 4, 'What'), INSERT('Quadratic', -1, 4, 'What'), \
+         INSERT('Quadratic', 3, 100, 'What'), INSERT('Quadratic', 10, 1, 'X'), \
+         TIME('2003-12-31 01:02:03'), TIME('01:02:03'), TIME('2003-12-31 01:02:03.000123')",
+    )
+    .expect("select");
+    let text = |value: &str| pintail_types::Value::Utf8(value.to_owned());
+    assert_eq!(
+        output.rows[0],
+        [
+            text("QuWhattic"),
+            text("Quadratic"),
+            text("QuWhat"),
+            text("QuadraticX"),
+            text("01:02:03"),
+            text("01:02:03"),
+            text("01:02:03.000123"),
+        ]
+    );
+}
