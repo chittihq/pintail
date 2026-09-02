@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A restart during a database's snapshot no longer strands it. Quarantining
+  the tables caught mid-copy was only half of recovery: the database itself
+  was left in `created`, `probed` or `snapshotting`, none of which the
+  supervisor schedules, so nothing ever ran its cycles, reached the automatic
+  table repair, or copied the tables it had not got to. A production instance
+  sat that way for over a day with 108 tables quarantined and 134 never
+  copied. The copy now resumes at boot on the same job slot an operator's
+  click would take - forced if the interrupted copy was a forced one - and
+  says so in the activity feed, or says why it could not. Pinned by a new
+  e2e phase that kills pintail with a copy provably in flight and then
+  touches nothing.
+
 ## [0.0.5-rc3] - 2026-09-02
 
 Corrects a caching defect introduced in 0.0.5-rc2 that pinned browsers to

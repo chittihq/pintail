@@ -41,6 +41,17 @@ pub fn spawn(
         // mid-resnapshot. Left alone it answered queries as a healthy
         // 'streaming' table with a fraction of the source's rows -
         // quarantine each one visibly before the first cadence runs.
+        // Databases whose copy the restart cut short, and whether that copy
+        // was a forced re-snapshot. Quarantining the tables is only half of
+        // recovery: a database interrupted mid-snapshot is left in
+        // 'created', 'probed' or 'snapshotting', none of which the
+        // supervisor schedules, so nothing would ever run its cycles, reach
+        // the automatic table repair, or copy the tables it never got to.
+        // A production instance sat that way for over a day with 108 tables
+        // quarantined and 134 never copied. The copy is re-armed here, on
+        // the same job slot an operator's click would take.
+        let mut resume: std::collections::BTreeMap<String, bool> =
+            std::collections::BTreeMap::new();
         if let Ok(metadata) = state.metadata() {
             match metadata.quarantine_interrupted_snapshots(
                 "a table copy was interrupted by a restart; resync to repair the partial data",
@@ -56,6 +67,7 @@ pub fn spawn(
                                  answers as healthy"
                             ),
                         ));
+                        resume.entry(database_id).or_insert(false);
                     }
                 }
                 Err(error) => {
@@ -65,6 +77,48 @@ pub fn spawn(
                         format!("interrupted-snapshot sweep failed: {error}"),
                     ));
                 }
+            }
+            // A database row still in 'snapshotting' was a FORCED copy, which
+            // recopies everything; resuming it non-forced would leave the
+            // tables the sweep did not touch believing they are current.
+            match metadata.databases_left_snapshotting() {
+                Ok(forced) => {
+                    for database_id in forced {
+                        resume.insert(database_id, true);
+                    }
+                }
+                Err(error) => {
+                    state.publish(ApiEvent::database(
+                        "supervisor.error",
+                        "control-plane",
+                        format!("interrupted-database sweep failed: {error}"),
+                    ));
+                }
+            }
+        }
+        for (database_id, force) in resume {
+            match crate::snapshot::begin_snapshot_job(&state, &database_id, force) {
+                Ok(run_id) => state.publish(ApiEvent::database(
+                    "snapshot.resumed",
+                    &database_id,
+                    format!(
+                        "a copy interrupted by the restart is resuming as snapshot {run_id}\
+                         {}",
+                        if force {
+                            " (forced: it was a full re-snapshot)"
+                        } else {
+                            ""
+                        }
+                    ),
+                )),
+                // Said out loud rather than swallowed: a paused database is an
+                // operator's choice and stays put, but anything else here is
+                // the exact silence that let the stranding go unnoticed.
+                Err(error) => state.publish(ApiEvent::database(
+                    "snapshot.resume_failed",
+                    &database_id,
+                    format!("the copy interrupted by the restart could not resume: {error}"),
+                )),
             }
         }
         let mut interval = tokio::time::interval(supervisor_interval());

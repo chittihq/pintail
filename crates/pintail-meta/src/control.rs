@@ -1245,6 +1245,27 @@ impl MetaStore {
         Ok(interrupted)
     }
 
+    /// Databases a dead process left mid-snapshot. No job survives a
+    /// restart, so a database still in 'snapshotting' at boot has no copy
+    /// running - and the supervisor will not schedule it either, because
+    /// 'snapshotting' is not a live state. Left alone it never replicates
+    /// again: no cycle, no automatic table repair, no resume.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the query fails.
+    pub fn databases_left_snapshotting(&self) -> Result<Vec<String>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT id FROM databases WHERE state = 'snapshotting' ORDER BY id")
+            .context("failed to prepare interrupted-database sweep")?;
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .context("failed to query interrupted databases")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("failed to decode interrupted databases")
+    }
+
     /// Records a database-level API job failure.
     ///
     /// # Errors
