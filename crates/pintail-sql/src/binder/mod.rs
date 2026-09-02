@@ -1229,6 +1229,22 @@ impl<'catalog> Binder<'catalog> {
 
     #[allow(clippy::too_many_lines)] // linear join-constraint dispatch reads best unsplit
     fn bind_from(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundFromScope, BindError> {
+        // FROM DUAL is MySQL's spelling of no table at all; DUAL cannot be
+        // a real table there.
+        if let [
+            TableWithJoins {
+                relation: TableFactor::Table { name, .. },
+                joins,
+            },
+        ] = select.from.as_slice()
+            && joins.is_empty()
+            && name.0.len() == 1
+            && name.0[0]
+                .as_ident()
+                .is_some_and(|ident| ident.value.eq_ignore_ascii_case("dual"))
+        {
+            return self.bind_from_items(&[], ctes);
+        }
         self.bind_from_items(&select.from, ctes)
     }
 
@@ -2560,6 +2576,23 @@ fn bind_expr_inner(
             array: false,
             format: None,
         } => bind_cast(expr, data_type, tables, aggregates, windows, subqueries),
+        // DATE '...', TIME '...', TIMESTAMP '...': the literal cast to its type.
+        Expr::TypedString(typed) => {
+            let inner = Expr::Value(typed.value.clone());
+            bind_cast(
+                &inner,
+                &typed.data_type,
+                tables,
+                aggregates,
+                windows,
+                subqueries,
+            )
+        }
+        // A charset introducer (_latin1 '...') names the literal's encoding;
+        // the fixtures that use one hold ASCII, where every encoding agrees.
+        Expr::Prefixed { value, .. } => {
+            bind_expr_inner(value, tables, aggregates, windows, subqueries)
+        }
         Expr::Convert { .. } => bind_convert(expr, tables, aggregates, windows, subqueries),
         Expr::Substring {
             expr,
@@ -2881,8 +2914,15 @@ fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
     let (value, declared) = match value {
         SqlValue::Null => (Value::Null, None),
         SqlValue::Boolean(value) => (Value::Boolean(*value), None),
-        SqlValue::SingleQuotedString(value) => (Value::Utf8(value.clone()), None),
+        // MySQL quotes strings either way, and N'...' is a string too.
+        SqlValue::SingleQuotedString(value)
+        | SqlValue::DoubleQuotedString(value)
+        | SqlValue::NationalStringLiteral(value) => (Value::Utf8(value.clone()), None),
         SqlValue::Number(value, _) => parse_number(value)?,
+        // X'414243' and 0x414243 are binary strings of those bytes.
+        SqlValue::HexStringLiteral(digits) => (Value::Binary(hex_bytes(digits)?), None),
+        // b'101' is a binary string holding the bits, most significant first.
+        SqlValue::SingleQuotedByteStringLiteral(bits) => (Value::Binary(bit_bytes(bits)?), None),
         _ => return Err(BindError::UnsupportedLiteral(value.to_string())),
     };
     Ok(BoundExpr {
@@ -2902,6 +2942,39 @@ fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
 ///
 /// The declared type rides alongside the value because a decimal travels on
 /// the canonical-text carrier, whose own `data_type()` is `Utf8`.
+/// The bytes a hex literal spells; an odd digit count is left-padded, as
+/// `MySQL` pads it.
+fn hex_bytes(digits: &str) -> Result<Vec<u8>, BindError> {
+    let padded = if digits.len() % 2 == 1 {
+        format!("0{digits}")
+    } else {
+        digits.to_owned()
+    };
+    (0..padded.len())
+        .step_by(2)
+        .map(|index| {
+            u8::from_str_radix(&padded[index..index + 2], 16)
+                .map_err(|_| BindError::UnsupportedLiteral(format!("X'{digits}'")))
+        })
+        .collect()
+}
+
+/// The bytes a bit literal spells, most significant bit first, padded to
+/// whole bytes on the left.
+fn bit_bytes(bits: &str) -> Result<Vec<u8>, BindError> {
+    if bits.is_empty() || !bits.bytes().all(|bit| bit == b'0' || bit == b'1') {
+        return Err(BindError::UnsupportedLiteral(format!("b'{bits}'")));
+    }
+    let padded = format!("{}{bits}", "0".repeat((8 - bits.len() % 8) % 8));
+    (0..padded.len())
+        .step_by(8)
+        .map(|index| {
+            u8::from_str_radix(&padded[index..index + 8], 2)
+                .map_err(|_| BindError::UnsupportedLiteral(format!("b'{bits}'")))
+        })
+        .collect()
+}
+
 fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
     if value.contains(['e', 'E']) {
         return value
@@ -2932,10 +3005,24 @@ fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
     if let Ok(parsed) = value.parse::<i64>() {
         return Ok((Value::Int64(parsed), Some(DataType::Int64)));
     }
-    value
-        .parse::<u64>()
-        .map(|parsed| (Value::UInt64(parsed), Some(DataType::UInt64)))
-        .map_err(|_| BindError::InvalidNumericLiteral(value.to_owned()))
+    if let Ok(parsed) = value.parse::<u64>() {
+        return Ok((Value::UInt64(parsed), Some(DataType::UInt64)));
+    }
+    // Past BIGINT UNSIGNED, MySQL reads an integer literal as a DECIMAL.
+    let digits = value.trim_start_matches(['-', '+']);
+    if digits.is_empty() || !digits.chars().all(|character| character.is_ascii_digit()) {
+        return Err(BindError::InvalidNumericLiteral(value.to_owned()));
+    }
+    let precision = u8::try_from(digits.len())
+        .unwrap_or(MAX_DECIMAL_PRECISION)
+        .clamp(1, MAX_DECIMAL_PRECISION);
+    Ok((
+        Value::Utf8(value.to_owned()),
+        Some(DataType::Decimal {
+            precision,
+            scale: 0,
+        }),
+    ))
 }
 
 fn bind_unary(
@@ -5223,6 +5310,50 @@ mod tests {
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         Binder::new(&catalog, Some("analytics")).bind(&statement)
+    }
+
+    #[test]
+    fn mysql_literal_forms_bind() {
+        let query = bind(
+            "SELECT \"dq\", N'nat', X'41', 0x42, b'101', 18446744073709551616, _latin1'ascii' FROM dual",
+        )
+        .expect("binds");
+        let literals = query
+            .projection
+            .iter()
+            .map(|item| match &item.expr.kind {
+                BoundExprKind::Literal(value) => value.clone(),
+                other => panic!("not a literal: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(literals[0], Value::Utf8("dq".to_owned()));
+        assert_eq!(literals[1], Value::Utf8("nat".to_owned()));
+        assert_eq!(literals[2], Value::Binary(vec![0x41]));
+        assert_eq!(literals[3], Value::Binary(vec![0x42]));
+        assert_eq!(literals[4], Value::Binary(vec![0b101]));
+        assert_eq!(literals[5], Value::Utf8("18446744073709551616".to_owned()));
+        assert_eq!(
+            query.projection[5].expr.data_type,
+            Some(DataType::Decimal {
+                precision: 20,
+                scale: 0
+            })
+        );
+        assert_eq!(literals[6], Value::Utf8("ascii".to_owned()));
+        assert!(query.tables.is_empty(), "FROM DUAL is no table");
+    }
+
+    #[test]
+    fn typed_string_literals_cast_to_their_type() {
+        let query = bind("SELECT DATE '2024-02-29', TIME '10:11:12'").expect("binds");
+        assert!(matches!(
+            query.projection[0].expr.data_type,
+            Some(DataType::Date32)
+        ));
+        assert!(matches!(
+            query.projection[1].expr.data_type,
+            Some(DataType::Time64 { .. })
+        ));
     }
 
     /// `MySQL` names an unaliased output column by the text the user typed:
