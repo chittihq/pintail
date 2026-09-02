@@ -2134,6 +2134,19 @@ struct SegmentColumnsHeader {
     block_rows: usize,
 }
 
+/// The row count of one block of `meta`, from the segment's header: the
+/// unit a projected read decodes at once, so the unit a memory-bounded
+/// slice of the segment should be cut on.
+pub(crate) fn block_rows(
+    directory: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+) -> Result<usize, StoreError> {
+    let path = directory.join(&meta.file_name);
+    let mut decoder = FileDecoder::open(&path)?;
+    Ok(read_segment_columns_header(&path, &mut decoder, meta, schema)?.block_rows)
+}
+
 fn read_segment_columns_header(
     path: &Path,
     decoder: &mut FileDecoder,

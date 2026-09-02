@@ -3,7 +3,7 @@
 //! and a reconciliation streaming it under a fixed budget found the stream
 //! answering "projected scan memory limit exceeded" for the whole segment.
 
-use pintail_store::{StoreOptions, TableStore};
+use pintail_store::{StoreOptions, TableStore, WalSync};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
 fn schema() -> TableSchema {
@@ -21,8 +21,15 @@ fn schema() -> TableSchema {
 fn a_segment_beyond_the_budget_streams_in_slices_with_every_row() {
     const ROWS: u64 = 60_000;
     let directory = tempfile::tempdir().expect("store directory");
-    let mut writer =
-        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("writer");
+    let mut writer = TableStore::open(
+        directory.path(),
+        schema(),
+        StoreOptions {
+            wal_sync: WalSync::Off,
+            ..StoreOptions::default()
+        },
+    )
+    .expect("writer");
     let rows = (0..ROWS)
         .map(|id| {
             StoredRow::new(

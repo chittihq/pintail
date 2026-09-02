@@ -1542,8 +1542,19 @@ impl ProjectedScanStream {
         end_row: u64,
         memory_limit: usize,
     ) -> Result<ProjectedColumnChunk, StoreError> {
+        // Slices are whole blocks: the reader decodes a block at once, so a
+        // slice cut inside one pays for the whole block anyway, and a slice
+        // straddling two would shrink toward single rows.
+        let block = u64::try_from(segment::block_rows(
+            &self.snapshot.directory,
+            &segment,
+            &self.snapshot.schema,
+        )?)
+        .unwrap_or(u64::MAX)
+        .max(1);
         let span = end_row.saturating_sub(start_row).max(1);
-        let mut rows = self.direct_slice_rows.unwrap_or(span).min(span).max(1);
+        let align = |rows: u64| rows.div_ceil(block).max(1).saturating_mul(block).min(span);
+        let mut rows = align(self.direct_slice_rows.unwrap_or(span));
         loop {
             let slice_end = start_row.saturating_add(rows).min(end_row);
             match self.decode_column_chunk_rows(&segment, start_row, slice_end, memory_limit) {
@@ -1556,7 +1567,9 @@ impl ProjectedScanStream {
                     }
                     return Ok(chunk);
                 }
-                Err(StoreError::MemoryLimitExceeded { .. }) if rows > 1 => rows /= 2,
+                Err(StoreError::MemoryLimitExceeded { .. }) if rows > block => {
+                    rows = align(rows / 2);
+                }
                 Err(error) => return Err(error),
             }
         }
