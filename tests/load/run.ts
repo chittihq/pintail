@@ -3,22 +3,33 @@
 /// Every other gate measures one query at a time. The benchmark reports
 /// single-query latency, the oracle and E2E gates assert correctness on a
 /// quiet server. None of them answer the question this harness exists for:
-/// what happens when N clients query at once.
+/// what happens when N clients query at once, on a machine that cannot
+/// hold N copies of anything.
 ///
-/// That matters because the query memory ceiling is enforced PER QUERY
-/// (`MemoryTracker`, built in `Execution::start_with_deadline`), while the
-/// wire server accepts connections unconditionally — no semaphore, no
-/// admission control. The arithmetic bound is therefore
-/// `concurrent_queries x per_query_limit`, and nothing enforces the left
-/// factor. This harness measures where that lands in practice.
+/// Three ceilings are in play. The per-query ceiling (`MemoryTracker`,
+/// `PINTAIL_QUERY_MEMORY_LIMIT_BYTES`) bounds one query. The process budget
+/// (`PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES`) bounds their sum, and since
+/// the replica cache charges its resident memtables to the same budget, it
+/// bounds what the server holds between queries too. Admission
+/// (`PINTAIL_MAX_CONCURRENT_QUERIES`) bounds how many run at once. This
+/// harness sets all three and measures where they land in practice: peak
+/// RSS is the load-bearing number, because it is what distinguishes "the
+/// ceilings held" from "each ceiling held and the process still grew".
 ///
-/// It reports, per concurrency level: latency percentiles, error counts
-/// bucketed by kind, and the server's peak RSS. RSS is the load-bearing
-/// number — it is what distinguishes "the ceiling held" from "the ceiling
-/// held per query and the process still grew without bound".
+/// Two profiles. The default sweeps concurrency with the production
+/// defaults - the historical table, comparable across runs. `constrained`
+/// is the scenario a small container faces: a small budget, a narrow
+/// admission window, every client reconnecting per query, and the
+/// dashboard, HTTP queries and a CDC writer all arriving at the same time
+/// as the wire clients. It fails the run if the process outgrows its
+/// ceiling or the replica stops keeping up.
 ///
 /// Run with: bun run run.ts
+///           LOAD_PROFILE=constrained bun run run.ts
 ///           LOAD_LEVELS=1,8,32 LOAD_MEMORY_MB=64 bun run run.ts
+///
+/// Every setting is an environment variable; the profile only supplies
+/// defaults, and an explicit variable wins.
 
 import { createServer } from 'node:net'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -31,23 +42,69 @@ const nonce = Date.now().toString(36)
 const mysqlName = `pintail-load-mysql-${process.pid}-${nonce}`
 const DATABASE = 'load_db'
 
+const PROFILE = process.env.LOAD_PROFILE ?? 'default'
+const PRESETS: Record<string, Record<string, string>> = {
+  default: {},
+  constrained: {
+    LOAD_LEVELS: '16,64,128',
+    LOAD_MEMORY_MB: '64',
+    LOAD_TOTAL_MEMORY_MB: '512',
+    LOAD_MAX_CONCURRENT: '16',
+    LOAD_SIDELOADS: 'cdc,dashboard,http',
+    LOAD_CONNECTION_STORM: '1',
+    LOAD_RSS_CEILING_MB: '1024',
+  },
+}
+if (!(PROFILE in PRESETS)) {
+  throw new Error(`unknown LOAD_PROFILE ${PROFILE}; known: ${Object.keys(PRESETS).join(', ')}`)
+}
+function setting(name: string, fallback: string): string {
+  return process.env[name] ?? PRESETS[PROFILE]![name] ?? fallback
+}
+
 /// Concurrency levels to sweep. Rising powers of two make the shape of the
 /// degradation curve readable rather than a single pass/fail point.
-const LEVELS = (process.env.LOAD_LEVELS ?? '1,4,16,64')
+const LEVELS = setting('LOAD_LEVELS', '1,4,16,64')
   .split(',')
   .map((level) => Number(level.trim()))
   .filter((level) => Number.isFinite(level) && level > 0)
 
 /// Per-query ceiling for the server under test. Deliberately small: the
 /// point is to reach the ceiling, not to avoid it.
-const MEMORY_MB = Number(process.env.LOAD_MEMORY_MB ?? '64')
+const MEMORY_MB = Number(setting('LOAD_MEMORY_MB', '64'))
+
+/// Process-wide budget across every query and the replica cache. Zero
+/// leaves the server's default (three quarters of what the container has).
+const TOTAL_MEMORY_MB = Number(setting('LOAD_TOTAL_MEMORY_MB', '0'))
+
+/// Admission window. Zero leaves the server's default (cores x 4, at least 16).
+const MAX_CONCURRENT = Number(setting('LOAD_MAX_CONCURRENT', '0'))
 
 /// Queries per client per level.
-const ITERATIONS = Number(process.env.LOAD_ITERATIONS ?? '10')
+const ITERATIONS = Number(setting('LOAD_ITERATIONS', '10'))
 
 /// Rows seeded into the source. Large enough that a sort or aggregate has
 /// to do real work, small enough that snapshotting stays under a minute.
-const SEED_ROWS = Number(process.env.LOAD_SEED_ROWS ?? '200000')
+const SEED_ROWS = Number(setting('LOAD_SEED_ROWS', '200000'))
+
+/// What runs alongside the wire clients at every level: `cdc` keeps the
+/// source changing so every query sees a moved stamp, `dashboard` polls the
+/// control-plane endpoints an open tab hits, `http` sends queries through
+/// the HTTP surface, which builds an engine per request.
+const SIDELOADS = new Set(
+  setting('LOAD_SIDELOADS', '')
+    .split(',')
+    .map((name) => name.trim())
+    .filter(Boolean),
+)
+
+/// A connection per query instead of per client. What a pooled application
+/// tier looks like from the server, and the shape that made a
+/// per-connection replica cache expensive.
+const CONNECTION_STORM = setting('LOAD_CONNECTION_STORM', '0') === '1'
+
+/// Peak RSS a level may reach before the run fails. Zero disables the check.
+const RSS_CEILING_MB = Number(setting('LOAD_RSS_CEILING_MB', '0'))
 
 let mysqlConnection: mysql.Connection | undefined
 let mysqlStarted = false
@@ -60,6 +117,14 @@ let pintailUrl = ''
 let token = ''
 let databaseId = ''
 let wireSecret = ''
+let nextSourceId = SEED_ROWS
+
+interface SideResult {
+  completed: number
+  failed: number
+  p99Ms: number
+  errors: Record<string, number>
+}
 
 interface LevelResult {
   concurrency: number
@@ -71,6 +136,12 @@ interface LevelResult {
   maxMs: number
   peakRssMb: number
   errors: Record<string, number>
+  http?: SideResult
+  dashboard?: SideResult
+  /// Rows the CDC writer committed during the level, and how long after the
+  /// level ended the replica had all of them (-1: never, within the wait).
+  cdcRows?: number
+  cdcConvergeMs?: number
 }
 
 const results: LevelResult[] = []
@@ -211,12 +282,23 @@ function errorKind(message: string): string {
   // It must be distinguishable from a real error or the load evidence
   // cannot tell load shedding apart from the server falling over.
   if (/concurrent queries/i.test(message)) return 'admission-refused'
-  if (/query memory limit exceeded/i.test(message)) return 'query-memory-limit'
+  if (/memory limit exceeded|memory budget/i.test(message)) return 'query-memory-limit'
   if (/too many connections|connection limit/i.test(message)) return 'connection-limit'
   if (/ECONNRESET|socket hang up|closed/i.test(message)) return 'connection-dropped'
   if (/ETIMEDOUT|timeout/i.test(message)) return 'timeout'
   if (/ECONNREFUSED/i.test(message)) return 'connection-refused'
   return 'other'
+}
+
+function tally(errors: Record<string, number>, message: string) {
+  const kind = errorKind(message)
+  errors[kind] = (errors[kind] ?? 0) + 1
+}
+
+function describeErrors(errors: Record<string, number>): string {
+  return Object.entries(errors)
+    .map(([kind, count]) => `${kind}×${count}`)
+    .join(', ')
 }
 
 /// The query mix. Each shape allocates differently, so the mix exercises
@@ -229,8 +311,116 @@ const QUERIES = [
   'SELECT region, GROUP_CONCAT(note) FROM events GROUP BY region',
 ]
 
+function wireConnection() {
+  return mysql.createConnection({
+    host: '127.0.0.1',
+    port: pintailWirePort,
+    user: DATABASE,
+    password: wireSecret,
+    database: DATABASE,
+    supportBigNumbers: true,
+    bigNumberStrings: true,
+    dateStrings: true,
+  })
+}
+
+async function replicaEventCount(): Promise<number> {
+  const connection = await wireConnection()
+  try {
+    const [rows] = await connection.query<mysql.RowDataPacket[]>({
+      sql: 'SELECT COUNT(*) FROM events',
+      rowsAsArray: true,
+    })
+    return Number((rows[0] as unknown[])[0])
+  } finally {
+    await connection.end().catch(() => {})
+  }
+}
+
+/// Commits rows to the source for as long as `running` holds, so the
+/// replica's files - and therefore every query's stamp - keep moving.
+async function cdcWriter(running: () => boolean): Promise<number> {
+  let written = 0
+  while (running()) {
+    const values: string[] = []
+    for (let row = 0; row < 200; row += 1) {
+      const id = nextSourceId
+      nextSourceId += 1
+      values.push(`(${id},'r${id % 64}',${(id % 10_000) / 100},'note-${id % 997}')`)
+    }
+    await sql(`INSERT INTO events VALUES ${values.join(',')}`)
+    written += values.length
+    await Bun.sleep(250)
+  }
+  return written
+}
+
+/// What an open dashboard tab does: the endpoints it polls, at its cadence.
+async function dashboardPollers(running: () => boolean, count: number): Promise<SideResult> {
+  const endpoints = [
+    `/api/activity?db=${databaseId}&limit=200`,
+    `/api/dlq?db=${databaseId}`,
+    `/api/databases/${databaseId}/status`,
+    '/status',
+  ]
+  const latencies: number[] = []
+  const errors: Record<string, number> = {}
+  let failed = 0
+  const poller = async (seat: number) => {
+    let turn = seat
+    while (running()) {
+      const started = performance.now()
+      try {
+        await api(endpoints[turn % endpoints.length]!)
+        latencies.push(performance.now() - started)
+      } catch (error) {
+        tally(errors, String(error))
+        failed += 1
+      }
+      turn += 1
+      await Bun.sleep(100)
+    }
+  }
+  await Promise.all(Array.from({ length: count }, (_, seat) => poller(seat)))
+  latencies.sort((left, right) => left - right)
+  return { completed: latencies.length, failed, p99Ms: percentile(latencies, 0.99), errors }
+}
+
+/// Queries through the HTTP surface, which builds an engine per request:
+/// the path where a per-request replica load was invisible to the wire
+/// numbers.
+async function httpQueryClients(running: () => boolean, count: number): Promise<SideResult> {
+  const latencies: number[] = []
+  const errors: Record<string, number> = {}
+  let failed = 0
+  const client = async (seat: number) => {
+    let turn = seat
+    while (running()) {
+      const started = performance.now()
+      try {
+        await api('/api/query', {
+          method: 'POST',
+          body: { db: databaseId, sql: QUERIES[turn % QUERIES.length] },
+        })
+        latencies.push(performance.now() - started)
+      } catch (error) {
+        tally(errors, String(error))
+        failed += 1
+      }
+      turn += 1
+    }
+  }
+  await Promise.all(Array.from({ length: count }, (_, seat) => client(seat)))
+  latencies.sort((left, right) => left - right)
+  return { completed: latencies.length, failed, p99Ms: percentile(latencies, 0.99), errors }
+}
+
 async function runLevel(concurrency: number): Promise<LevelResult> {
-  log(`level ${concurrency}: ${ITERATIONS} queries per client`)
+  log(
+    `level ${concurrency}: ${ITERATIONS} queries per client` +
+      (CONNECTION_STORM ? ', a connection per query' : '') +
+      (SIDELOADS.size ? `, with ${[...SIDELOADS].join('+')}` : ''),
+  )
   const latencies: number[] = []
   const errors: Record<string, number> = {}
   let completed = 0
@@ -239,9 +429,9 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
 
   // Sample RSS while the level runs; a peak taken only at the end misses
   // the spike that matters.
-  let sampling = true
+  let running = true
   const sampler = (async () => {
-    while (sampling) {
+    while (running) {
       peakRssMb = Math.max(peakRssMb, await serverRssMb())
       await Bun.sleep(200)
     }
@@ -249,24 +439,18 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
 
   const client = async (index: number) => {
     let connection: mysql.Connection | undefined
-    try {
-      connection = await mysql.createConnection({
-        host: '127.0.0.1',
-        port: pintailWirePort,
-        user: DATABASE,
-        password: wireSecret,
-        database: DATABASE,
-        supportBigNumbers: true,
-        bigNumberStrings: true,
-        dateStrings: true,
-      })
-    } catch (error) {
-      const kind = errorKind(String(error))
-      errors[kind] = (errors[kind] ?? 0) + 1
-      failed += ITERATIONS
-      return
-    }
     for (let iteration = 0; iteration < ITERATIONS; iteration += 1) {
+      if (!connection || CONNECTION_STORM) {
+        await connection?.end().catch(() => {})
+        try {
+          connection = await wireConnection()
+        } catch (error) {
+          tally(errors, String(error))
+          failed += CONNECTION_STORM ? 1 : ITERATIONS - iteration
+          if (CONNECTION_STORM) continue
+          return
+        }
+      }
       const statement = QUERIES[(index + iteration) % QUERIES.length]
       const started = performance.now()
       try {
@@ -274,17 +458,46 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
         latencies.push(performance.now() - started)
         completed += 1
       } catch (error) {
-        const kind = errorKind(String(error))
-        errors[kind] = (errors[kind] ?? 0) + 1
+        tally(errors, String(error))
         failed += 1
       }
     }
-    await connection.end().catch(() => {})
+    await connection?.end().catch(() => {})
   }
 
+  const replicaBefore = SIDELOADS.has('cdc') ? await replicaEventCount() : 0
+  const isRunning = () => running
+  const sideloads = {
+    cdc: SIDELOADS.has('cdc') ? cdcWriter(isRunning) : undefined,
+    dashboard: SIDELOADS.has('dashboard') ? dashboardPollers(isRunning, 4) : undefined,
+    http: SIDELOADS.has('http')
+      ? httpQueryClients(isRunning, Math.max(1, Math.floor(concurrency / 4)))
+      : undefined,
+  }
   await Promise.all(Array.from({ length: concurrency }, (_, index) => client(index)))
-  sampling = false
+  running = false
   await sampler
+  const [cdcRows, dashboard, http] = await Promise.all([
+    sideloads.cdc,
+    sideloads.dashboard,
+    sideloads.http,
+  ])
+
+  // The replica has to hold every row the writer committed, and how long
+  // that takes after the storm is the recovery number.
+  let cdcConvergeMs: number | undefined
+  if (cdcRows !== undefined) {
+    const wanted = replicaBefore + cdcRows
+    const started = performance.now()
+    cdcConvergeMs = -1
+    while (performance.now() - started < 120_000) {
+      if ((await replicaEventCount()) >= wanted) {
+        cdcConvergeMs = performance.now() - started
+        break
+      }
+      await Bun.sleep(500)
+    }
+  }
 
   latencies.sort((left, right) => left - right)
   return {
@@ -297,6 +510,10 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
     maxMs: latencies.at(-1) ?? 0,
     peakRssMb,
     errors,
+    http,
+    dashboard,
+    cdcRows,
+    cdcConvergeMs,
   }
 }
 
@@ -328,6 +545,10 @@ async function startPintail() {
       env: {
         ...process.env,
         PINTAIL_QUERY_MEMORY_LIMIT_BYTES: String(MEMORY_MB * 1024 * 1024),
+        ...(TOTAL_MEMORY_MB > 0
+          ? { PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES: String(TOTAL_MEMORY_MB * 1024 * 1024) }
+          : {}),
+        ...(MAX_CONCURRENT > 0 ? { PINTAIL_MAX_CONCURRENT_QUERIES: String(MAX_CONCURRENT) } : {}),
       },
     },
   )
@@ -370,34 +591,97 @@ async function seed() {
   }
 }
 
+function side(result: SideResult | undefined): string {
+  if (!result) return '—'
+  const errors = describeErrors(result.errors)
+  return `${result.completed} ok / ${result.failed} failed, p99 ${result.p99Ms.toFixed(0)}ms${errors ? ` (${errors})` : ''}`
+}
+
+function cdc(result: LevelResult): string {
+  if (result.cdcRows === undefined) return '—'
+  if (result.cdcConvergeMs === undefined || result.cdcConvergeMs < 0) {
+    return `${result.cdcRows} rows, NOT converged`
+  }
+  return `${result.cdcRows} rows, converged in ${result.cdcConvergeMs.toFixed(0)}ms`
+}
+
+function resultsPath(extension: string): string {
+  const suffix = PROFILE === 'default' ? '' : `-${PROFILE}`
+  return join(import.meta.dir, `results${suffix}.${extension}`)
+}
+
 function publish() {
   const lines = [
-    '# Pintail concurrency load results',
+    `# Pintail concurrency load results${PROFILE === 'default' ? '' : ` (${PROFILE})`}`,
     '',
     `Measured ${new Date().toISOString()}.`,
     '',
-    `Per-query memory ceiling: ${MEMORY_MB} MB. Seed rows: ${SEED_ROWS}.`,
-    `Queries per client per level: ${ITERATIONS}.`,
+    `Per-query memory ceiling: ${MEMORY_MB} MB. ` +
+      `Process budget: ${TOTAL_MEMORY_MB > 0 ? `${TOTAL_MEMORY_MB} MB` : 'server default'}. ` +
+      `Admission: ${MAX_CONCURRENT > 0 ? `${MAX_CONCURRENT} concurrent` : 'server default'}.`,
+    `Seed rows: ${SEED_ROWS}. Queries per client per level: ${ITERATIONS}. ` +
+      `Connections: ${CONNECTION_STORM ? 'one per query' : 'one per client'}. ` +
+      `Side-loads: ${SIDELOADS.size ? [...SIDELOADS].join(', ') : 'none'}. ` +
+      `RSS ceiling: ${RSS_CEILING_MB > 0 ? `${RSS_CEILING_MB} MB` : 'unchecked'}.`,
     '',
-    '| Concurrency | Completed | Failed | p50 ms | p95 ms | p99 ms | max ms | peak RSS MB | Errors |',
-    '|---:|---:|---:|---:|---:|---:|---:|---:|---|',
+    '| Concurrency | Completed | Failed | p50 ms | p95 ms | p99 ms | max ms | peak RSS MB | Errors | HTTP queries | Dashboard | CDC |',
+    '|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|',
     ...results.map((result) => {
-      const errors = Object.entries(result.errors)
-        .map(([kind, count]) => `${kind}×${count}`)
-        .join(', ')
-      return `| ${result.concurrency} | ${result.completed} | ${result.failed} | ${result.p50Ms.toFixed(0)} | ${result.p95Ms.toFixed(0)} | ${result.p99Ms.toFixed(0)} | ${result.maxMs.toFixed(0)} | ${result.peakRssMb.toFixed(0)} | ${errors || '—'} |`
+      const errors = describeErrors(result.errors)
+      return `| ${result.concurrency} | ${result.completed} | ${result.failed} | ${result.p50Ms.toFixed(0)} | ${result.p95Ms.toFixed(0)} | ${result.p99Ms.toFixed(0)} | ${result.maxMs.toFixed(0)} | ${result.peakRssMb.toFixed(0)} | ${errors || '—'} | ${side(result.http)} | ${side(result.dashboard)} | ${cdc(result)} |`
     }),
     '',
   ]
-  writeFileSync(join(import.meta.dir, 'results.md'), lines.join('\n'))
+  writeFileSync(resultsPath('md'), lines.join('\n'))
   writeFileSync(
-    join(import.meta.dir, 'results.json'),
-    JSON.stringify({ memoryMb: MEMORY_MB, seedRows: SEED_ROWS, iterations: ITERATIONS, results }, null, 2),
+    resultsPath('json'),
+    JSON.stringify(
+      {
+        profile: PROFILE,
+        memoryMb: MEMORY_MB,
+        totalMemoryMb: TOTAL_MEMORY_MB,
+        maxConcurrent: MAX_CONCURRENT,
+        seedRows: SEED_ROWS,
+        iterations: ITERATIONS,
+        connectionStorm: CONNECTION_STORM,
+        sideloads: [...SIDELOADS],
+        rssCeilingMb: RSS_CEILING_MB,
+        results,
+      },
+      null,
+      2,
+    ),
   )
+}
+
+/// What the profile promised: the process stayed under its ceiling, and
+/// the replica held every row the writer committed. Either failing is a
+/// defect in the server, not in the harness, so the run exits non-zero.
+function verdict(): string[] {
+  const failures: string[] = []
+  for (const result of results) {
+    if (RSS_CEILING_MB > 0 && result.peakRssMb > RSS_CEILING_MB) {
+      failures.push(
+        `level ${result.concurrency}: peak RSS ${result.peakRssMb.toFixed(0)}MB over the ${RSS_CEILING_MB}MB ceiling`,
+      )
+    }
+    if (result.cdcRows !== undefined && (result.cdcConvergeMs ?? -1) < 0) {
+      failures.push(`level ${result.concurrency}: replica never caught up with the CDC writer`)
+    }
+    // Load shedding and the memory ceiling are designed answers. A dropped
+    // connection, a timeout or anything unclassified is not.
+    for (const [kind, count] of Object.entries(result.errors)) {
+      if (kind !== 'admission-refused' && kind !== 'query-memory-limit') {
+        failures.push(`level ${result.concurrency}: ${count} wire ${kind} errors`)
+      }
+    }
+  }
+  return failures
 }
 
 async function main() {
   const host = await dockerHost()
+  log(`profile ${PROFILE}`)
   log(`starting MySQL source ${mysqlName}`)
   await docker(
     'run',
@@ -478,17 +762,20 @@ async function main() {
   for (const level of LEVELS) {
     const result = await runLevel(level)
     results.push(result)
-    const errors = Object.entries(result.errors)
-      .map(([kind, count]) => `${kind}×${count}`)
-      .join(', ')
+    const errors = describeErrors(result.errors)
     log(
       `level ${level}: ${result.completed} ok, ${result.failed} failed, ` +
         `p50 ${result.p50Ms.toFixed(0)}ms p99 ${result.p99Ms.toFixed(0)}ms, ` +
-        `peak RSS ${result.peakRssMb.toFixed(0)}MB${errors ? ` — ${errors}` : ''}`,
+        `peak RSS ${result.peakRssMb.toFixed(0)}MB${errors ? ` — ${errors}` : ''}` +
+        (result.http ? `; http ${side(result.http)}` : '') +
+        (result.dashboard ? `; dashboard ${side(result.dashboard)}` : '') +
+        (result.cdcRows !== undefined ? `; cdc ${cdc(result)}` : ''),
     )
   }
   publish()
-  log(`results written to ${join(import.meta.dir, 'results.md')}`)
+  log(`results written to ${resultsPath('md')}`)
+  const failures = verdict()
+  if (failures.length) throw new Error(`the profile's promises did not hold:\n  ${failures.join('\n  ')}`)
 }
 
 async function teardown() {
