@@ -67,6 +67,9 @@ const SLOPE_LIMIT_MIB_PER_MIN = Number(process.env.MEMSOAK_SLOPE_LIMIT ?? '2')
 const GROWTH_LIMIT_MIB = Number(process.env.MEMSOAK_GROWTH_LIMIT ?? '128')
 /// An image to test instead of building one from the tree.
 const IMAGE = process.env.MEMSOAK_IMAGE ?? ''
+/// Names the report: results-<label>.md. A banked comparison keeps the
+/// shipped run next to the fixed one.
+const LABEL = process.env.MEMSOAK_LABEL ?? ''
 /// Extra environment for the server container, comma-separated NAME=VALUE
 /// pairs: how an allocator setting is tried without a new image.
 const EXTRA_ENV = (process.env.MEMSOAK_ENV ?? '')
@@ -77,6 +80,7 @@ const EXTRA_ENV = (process.env.MEMSOAK_ENV ?? '')
 interface Sample {
   atMs: number
   rssPlusSwapMib: number
+  swapMib: number
   cgroupMib: number
   cdcStarts: number
 }
@@ -213,7 +217,7 @@ async function sample(atMs: number): Promise<Sample> {
       pintailName,
       'sh',
       '-c',
-      'awk \'/VmRSS|VmSwap/ {s+=$2} END {print s}\' /proc/1/status; cat /sys/fs/cgroup/memory.current',
+      'awk \'/VmRSS|VmSwap/ {s+=$2} /VmSwap/ {w=$2} END {print s; print w+0}\' /proc/1/status; cat /sys/fs/cgroup/memory.current',
     )
   ).stdout.split('\n')
   const logs = await docker('logs', pintailName)
@@ -221,9 +225,24 @@ async function sample(atMs: number): Promise<Sample> {
   return {
     atMs,
     rssPlusSwapMib: Number(status[0]) / 1024,
-    cgroupMib: Number(status[1]) / 1024 / 1024,
+    swapMib: Number(status[1]) / 1024,
+    cgroupMib: Number(status[2]) / 1024 / 1024,
     cdcStarts,
   }
+}
+
+/// One sample per minute: the smallest reading in that minute. Query
+/// working sets come and go within a minute, so raw samples oscillate by
+/// hundreds of megabytes on a healthy server; what must not climb is the
+/// floor between bursts.
+function floors(samples: Sample[]): Sample[] {
+  const byMinute = new Map<number, Sample>()
+  for (const s of samples) {
+    const minute = Math.floor(s.atMs / 60_000)
+    const current = byMinute.get(minute)
+    if (!current || s.rssPlusSwapMib < current.rssPlusSwapMib) byMinute.set(minute, s)
+  }
+  return [...byMinute.values()].sort((a, b) => a.atMs - b.atMs)
 }
 
 /// Least-squares slope of memory over time, in MiB per minute.
@@ -243,8 +262,11 @@ function slope(samples: Sample[]): number {
 
 function publish(image: string, samples: Sample[], verdict: string[]) {
   const judged = samples.filter((s) => s.atMs >= WARMUP_MS)
-  const first = judged[0]
-  const last = judged.at(-1)
+  const floor = floors(judged)
+  const first = floor[0]
+  const last = floor.at(-1)
+  const peak = judged.reduce((m, s) => Math.max(m, s.rssPlusSwapMib), 0)
+  const peakSwap = judged.reduce((m, s) => Math.max(m, s.swapMib), 0)
   const lines = [
     '# Pintail memory-churn soak',
     '',
@@ -256,23 +278,24 @@ function publish(image: string, samples: Sample[], verdict: string[]) {
     '',
     `**Verdict: ${verdict.length ? 'FAIL' : 'PASS'}.** ` +
       (first && last
-        ? `After warm-up: ${first.rssPlusSwapMib.toFixed(0)} → ${last.rssPlusSwapMib.toFixed(0)} MiB ` +
-          `(${(last.rssPlusSwapMib - first.rssPlusSwapMib).toFixed(0)} MiB growth, ` +
-          `slope ${slope(judged).toFixed(2)} MiB/min, limits ${GROWTH_LIMIT_MIB} MiB and ${SLOPE_LIMIT_MIB_PER_MIN} MiB/min), ` +
+        ? `After warm-up the per-minute memory floor went ${first.rssPlusSwapMib.toFixed(0)} → ${last.rssPlusSwapMib.toFixed(0)} MiB ` +
+          `(${(last.rssPlusSwapMib - first.rssPlusSwapMib).toFixed(0)} MiB growth, slope ${slope(floor).toFixed(2)} MiB/min, limits ${GROWTH_LIMIT_MIB} MiB and ${SLOPE_LIMIT_MIB_PER_MIN} MiB/min); ` +
+          `peak ${peak.toFixed(0)} MiB, peak swap ${peakSwap.toFixed(0)} MiB, ` +
           `${last.cdcStarts - first.cdcStarts} CDC cycles.`
         : 'no samples after warm-up.'),
     ...verdict.map((line) => `- ${line}`),
     '',
-    '| t (s) | RSS+swap MiB | cgroup MiB | CDC cycles |',
-    '|---:|---:|---:|---:|',
+    '| t (s) | RSS+swap MiB | swap MiB | cgroup MiB | CDC cycles |',
+    '|---:|---:|---:|---:|---:|',
     ...samples.map(
-      (s) => `| ${(s.atMs / 1000).toFixed(0)} | ${s.rssPlusSwapMib.toFixed(0)} | ${s.cgroupMib.toFixed(0)} | ${s.cdcStarts} |`,
+      (s) => `| ${(s.atMs / 1000).toFixed(0)} | ${s.rssPlusSwapMib.toFixed(0)} | ${s.swapMib.toFixed(0)} | ${s.cgroupMib.toFixed(0)} | ${s.cdcStarts} |`,
     ),
     '',
   ]
-  writeFileSync(join(import.meta.dir, 'results.md'), lines.join('\n'))
+  const suffix = LABEL ? `-${LABEL}` : ''
+  writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
   writeFileSync(
-    join(import.meta.dir, 'results.json'),
+    join(import.meta.dir, `results${suffix}.json`),
     JSON.stringify(
       {
         image,
@@ -284,7 +307,7 @@ function publish(image: string, samples: Sample[], verdict: string[]) {
         memoryLimit: MEMORY_LIMIT,
         slopeLimitMibPerMin: SLOPE_LIMIT_MIB_PER_MIN,
         growthLimitMib: GROWTH_LIMIT_MIB,
-        slopeMibPerMin: slope(judged),
+        slopeMibPerMin: slope(floors(judged)),
         verdict,
         samples,
       },
@@ -451,13 +474,18 @@ async function main() {
   const state = (await docker('inspect', pintailName, '--format', '{{.State.Running}} {{.State.OOMKilled}}')).stdout
   if (state !== 'true false') verdict.push(`the container is not running cleanly (running/oom: ${state})`)
   const judged = samples.filter((s) => s.atMs >= WARMUP_MS)
-  const growth = judged.length >= 2 ? judged.at(-1)!.rssPlusSwapMib - judged[0]!.rssPlusSwapMib : 0
-  const rate = slope(judged)
+  const floor = floors(judged)
+  const growth = floor.length >= 2 ? floor.at(-1)!.rssPlusSwapMib - floor[0]!.rssPlusSwapMib : 0
+  const rate = slope(floor)
+  const peakSwap = Math.max(0, ...judged.map((s) => s.swapMib))
+  const pinned = judged.filter((s) => s.cgroupMib >= 0.97 * (judged.reduce((m, x) => Math.max(m, x.cgroupMib), 0))).length
   if (judged.length < 4) verdict.push(`only ${judged.length} samples after warm-up`)
-  if (rate > SLOPE_LIMIT_MIB_PER_MIN) verdict.push(`memory climbs ${rate.toFixed(2)} MiB/min after warm-up (limit ${SLOPE_LIMIT_MIB_PER_MIN})`)
-  if (growth > GROWTH_LIMIT_MIB) verdict.push(`memory grew ${growth.toFixed(0)} MiB after warm-up (limit ${GROWTH_LIMIT_MIB})`)
+  if (peakSwap > 64) verdict.push(`the process was swapped out (peak ${peakSwap.toFixed(0)} MiB in swap): it holds more than the container has`)
+  if (rate > SLOPE_LIMIT_MIB_PER_MIN) verdict.push(`the memory floor climbs ${rate.toFixed(2)} MiB/min after warm-up (limit ${SLOPE_LIMIT_MIB_PER_MIN})`)
+  if (growth > GROWTH_LIMIT_MIB) verdict.push(`the memory floor grew ${growth.toFixed(0)} MiB after warm-up (limit ${GROWTH_LIMIT_MIB})`)
+  void pinned
   publish(image, samples, verdict)
-  log(`results written to ${join(import.meta.dir, 'results.md')}`)
+  log(`results written to ${join(import.meta.dir, `results${LABEL ? `-${LABEL}` : ''}.md`)}`)
   if (verdict.length) throw new Error(`memory does not settle:\n  ${verdict.join('\n  ')}`)
   log(`PASS: ${growth.toFixed(0)} MiB growth, ${rate.toFixed(2)} MiB/min after warm-up`)
 }
