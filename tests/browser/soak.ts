@@ -90,6 +90,11 @@ async function docker(...args: string[]) {
   return command(['docker', ...args], { quiet: true })
 }
 
+/// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
+function dsnHost(host: string): string {
+  return host.includes(':') ? `[]` : host
+}
+
 async function dockerHost(): Promise<string> {
   let endpoint = process.env.DOCKER_HOST?.trim()
   if (!endpoint) {
@@ -384,7 +389,7 @@ async function main() {
     await page!.getByLabel('MySQL schema').fill(DATABASE)
     await page!
       .getByLabel('MySQL DSN')
-      .fill(`mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`)
+      .fill(`mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${DATABASE}`)
     await page!.getByRole('button', { name: 'Test connection' }).click()
     await page!.getByText('Recommended: CDC').waitFor({ timeout: 60_000 })
     await page!.getByRole('button', { name: 'Choose tables' }).click()
@@ -571,7 +576,7 @@ async function main() {
     await page!.getByLabel('MySQL schema').fill(SAKILA)
     await page!
       .getByLabel('MySQL DSN')
-      .fill(`mysql://pintail:pintail@${host}:${mysqlPort}/${SAKILA}`)
+      .fill(`mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${SAKILA}`)
     await page!.getByRole('button', { name: 'Test connection' }).click()
     await page!.getByText(/Recommended:/).waitFor({ timeout: 120_000 })
     await page!.getByRole('button', { name: 'Choose tables' }).click()

@@ -169,6 +169,11 @@ async function docker(...args: string[]) {
 
 /// Resolve the host that published container ports are reachable on. The
 /// Docker daemon here is remote over SSH, so "localhost" is wrong.
+/// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
+function dsnHost(host: string): string {
+  return host.includes(':') ? `[]` : host
+}
+
 async function dockerHost(): Promise<string> {
   let endpoint = process.env.DOCKER_HOST?.trim()
   if (!endpoint) {
@@ -730,7 +735,7 @@ async function main() {
     method: 'POST',
     body: {
       name: DATABASE,
-      dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`,
+      dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${DATABASE}`,
       mode: 'cdc',
     },
   })

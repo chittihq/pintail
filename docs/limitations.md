@@ -92,8 +92,10 @@ stays readable as a list of things to fix.
 - Byte-level transcoding among character sets other than UTF-8 and binary is
   unsupported and rejects explicitly.
 - Explicit `COLLATE` accepts the three replicated profiles
-  (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_bin`); other names
-  reject. Because replicated text is stored transcoded to UTF-8, a supported
+  (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_bin`) and maps the
+  legacy names onto them - every `*_bin` and `binary` to `utf8mb4_bin`,
+  `*_general_ci` and `*_swedish_ci` to `utf8mb4_general_ci` - which is exact
+  over ASCII and an approximation outside it; other names reject. Because replicated text is stored transcoded to UTF-8, a supported
   `COLLATE` override is accepted even where MySQL would raise a
   charset-mismatch error (e.g. over a latin1-sourced column). Cross-profile
   coercibility is not implemented, so mixed source profiles without an

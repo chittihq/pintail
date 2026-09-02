@@ -3132,7 +3132,7 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
         ),
         (
             "reject unknown collate",
-            "SELECT name FROM users ORDER BY name COLLATE latin1_swedish_ci",
+            "SELECT name FROM users ORDER BY name COLLATE big5_chinese_ci",
             "collat",
         ),
         (

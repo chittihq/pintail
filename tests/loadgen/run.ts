@@ -75,6 +75,11 @@ async function docker(...args: string[]) {
   return command(['docker', ...args], { quiet: true })
 }
 
+/// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
+function dsnHost(host: string): string {
+  return host.includes(':') ? `[]` : host
+}
+
 async function dockerHost() {
   const context = (await docker('context', 'show')).stdout
   const endpoint = (
@@ -631,7 +636,7 @@ async function main() {
     method: 'POST',
     body: { email: 'soak@pintail.local', password: 'pintail-release-soak' },
   })
-  const dsn = `mysql://replicator:replicatorpass@${host}:${mysqlPort}/soak_db`
+  const dsn = `mysql://replicator:replicatorpass@${dsnHost(host)}:${mysqlPort}/soak_db`
   const databaseId = await createReplica(pintailUrl, setup.token, dsn)
   log(
     `generating ${targetEventsPerSecond.toLocaleString()} events/s for ` +

@@ -134,6 +134,11 @@ async function docker(...args: string[]) {
   return command(['docker', ...args], { quiet: true })
 }
 
+/// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
+function dsnHost(host: string): string {
+  return host.includes(':') ? `[]` : host
+}
+
 async function dockerHost(): Promise<string> {
   let endpoint = process.env.DOCKER_HOST?.trim()
   if (!endpoint) {
@@ -1823,7 +1828,7 @@ async function phaseRestartDuringSnapshot() {
     created = (
       await api<{ id: string }>('/api/databases', {
         method: 'POST',
-        body: { name: schema, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${schema}`, mode: 'cdc' },
+        body: { name: schema, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`, mode: 'cdc' },
       })
     ).id
     await reprobe(created)
@@ -1973,7 +1978,7 @@ async function phaseMemoryPressure() {
     created = (
       await api<{ id: string }>('/api/databases', {
         method: 'POST',
-        body: { name: schema, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${schema}`, mode: 'cdc' },
+        body: { name: schema, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`, mode: 'cdc' },
       })
     ).id
     await reprobe(created)
@@ -3045,7 +3050,7 @@ async function phaseControlPlane() {
     const host = await dockerHost()
     const mysqlPort = await publishedPort(mysqlName, 3306)
     const dsn =
-      `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}` +
+      `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${DATABASE}` +
       '?multipleStatements=true&dateStrings=date'
     // `name` is both the label and the source schema, and it is unique per
     // workspace - so this cannot reuse the gate's own schema to assert a
@@ -3076,7 +3081,7 @@ async function phaseControlPlane() {
       method: 'POST',
       body: {
         name: 'e2e_dup',
-        dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`,
+        dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${DATABASE}`,
         mode: 'cdc',
       },
     })
@@ -3564,7 +3569,7 @@ async function phaseDropDatabase() {
       method: 'POST',
       body: {
         name: source,
-        dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${source}`,
+        dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${source}`,
         mode: 'cdc',
       },
     })
@@ -3818,7 +3823,7 @@ async function main() {
 
   const database = await api<{ id: string }>('/api/databases', {
     method: 'POST',
-    body: { name: DATABASE, dsn: `mysql://pintail:pintail@${host}:${mysqlPort}/${DATABASE}`, mode: 'cdc' },
+    body: { name: DATABASE, dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${DATABASE}`, mode: 'cdc' },
   })
   databaseId = database.id
   const apiKey = await api<{ secret: string }>(`/api/databases/${databaseId}/api-keys`, {
