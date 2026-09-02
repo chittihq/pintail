@@ -1616,6 +1616,7 @@ async function timedApi(path: string): Promise<number> {
 async function phaseActivityHistory() {
   const phase = 'activity-history'
   const HISTORY_ROWS = 150_000
+  let seeded = 0
 
   log(`SIGKILLing pintail to seed ${HISTORY_ROWS} sync_runs rows of history`)
   pintailProcess!.kill(9)
@@ -1637,10 +1638,28 @@ async function phaseActivityHistory() {
       }
     })
     seed(HISTORY_ROWS)
+    // Written to the file pintail opens, or the rest of this phase measures
+    // an empty table and passes for nothing.
+    seeded = Number(
+      (meta.query('SELECT COUNT(*) AS n FROM sync_runs WHERE db_id = ?1').get(databaseId) as { n: number }).n,
+    )
   } finally {
     meta.close()
   }
+  record(
+    phase,
+    'activity-history:the history is in the control plane pintail reads',
+    seeded >= HISTORY_ROWS ? 'PASS' : 'FAIL',
+    `${seeded} sync_runs rows for ${databaseId}`,
+  )
   await startPintail()
+  const page = await api<unknown[]>(`/api/activity?db=${databaseId}&limit=200`)
+  record(
+    phase,
+    'activity-history:the feed pages the full history',
+    page.length === 200 ? 'PASS' : 'FAIL',
+    `limit=200 returned ${page.length}`,
+  )
 
   // The two shapes the dashboard issues: scoped to one database, and the
   // workspace-wide feed. Sequential first, so the number is the query's own.
@@ -1807,28 +1826,37 @@ async function phaseRestartDuringSnapshot() {
       })
     ).id
     await reprobe(created)
-    await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
 
-    // Kill the moment the copy is observably in flight.
+    // A WRITE lock held by another session blocks every other session's
+    // reads of the table, so the copy of `big` cannot finish while it is
+    // held: the kill below lands with the snapshot provably in flight, on
+    // every host speed, instead of racing a sub-second copy.
+    const locker = await waitForMysql(host, mysqlPort)
     let caughtMidCopy = false
-    const killBy = Date.now() + 60_000
-    while (Date.now() < killBy) {
-      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`).catch(() => undefined)
-      if (status?.state === 'snapshotting') {
-        caughtMidCopy = true
-        break
+    try {
+      await locker.query(`LOCK TABLES ${schema}.big WRITE`)
+      await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+      // The database row reads 'created' throughout a first snapshot and
+      // 'snapshotting' only during a forced one; the TABLE rows say
+      // 'snapshotting' in both, so that is the in-flight signal.
+      caughtMidCopy = await waitUntil(async () => {
+        const status = await api<{ tables: Array<{ name: string; state: string }> }>(
+          `/api/databases/${created}/snapshot/status`,
+        )
+        return status.tables.some((table) => table.state === 'snapshotting')
+      }, 60_000)
+      if (!caughtMidCopy) {
+        record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'FAIL', 'no table ever reported snapshotting')
+        return
       }
-      if (status?.state === 'streaming' || status?.state === 'polling') break
-      await Bun.sleep(25)
+      log('SIGKILLing pintail mid-snapshot')
+      pintailProcess!.kill(9)
+      await pintailProcess!.exited
+      record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'PASS')
+    } finally {
+      await locker.query('UNLOCK TABLES').catch(() => undefined)
+      await locker.end().catch(() => undefined)
     }
-    if (!caughtMidCopy) {
-      record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'WARN', 'the copy finished before it could be interrupted')
-      return
-    }
-    log('SIGKILLing pintail mid-snapshot')
-    pintailProcess!.kill(9)
-    await pintailProcess!.exited
-    record(phase, 'restart-during-snapshot:interrupts a copy in flight', 'PASS')
 
     await startPintail()
     // No operator action from here on.
