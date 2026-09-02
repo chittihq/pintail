@@ -10,7 +10,9 @@ use axum::{
 use chrono::Utc;
 use mysql_async::Pool;
 use pintail_meta::DatabaseRecord;
-use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
+use pintail_poll::{
+    CdcReconcileScope, PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle,
+};
 use pintail_probe::ProbeReport;
 use pintail_snapshot::{SnapshotOptions, SnapshotPosition, SnapshotTarget};
 use serde::Serialize;
@@ -659,6 +661,7 @@ pub(crate) async fn run_reconcile_job(
             database_id,
             &report,
             vec![target],
+            CdcReconcileScope::Full,
             10_000,
         )
         .await

@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
-use pintail_poll::{PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle};
+use pintail_poll::{
+    CdcReconcileScope, PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle,
+};
 use pintail_probe::ProbeReport;
 use pintail_store::StoreOptions;
 
@@ -423,12 +425,11 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 let names = due.join(", ");
                 match open_targets(&metadata_path, &database.id, &root, &report, &records) {
                     Ok(all) => {
+                        // Every target is opened: the due tables are
+                        // repaired through their parents, so the parents
+                        // ride along as read-only replicas.
                         let cascade = all
                             .into_iter()
-                            .filter(|target| {
-                                due.iter()
-                                    .any(|name| name.eq_ignore_ascii_case(&target.source().name))
-                            })
                             .map(|target| {
                                 let source = target.source().clone();
                                 PollTarget::new(source, target.into_store())
@@ -451,6 +452,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                             &database.id,
                             &report,
                             cascade,
+                            CdcReconcileScope::Cascade(&due),
                             10_000,
                         )
                         .await

@@ -318,8 +318,12 @@ stays readable as a list of things to fix.
 - Source-key reconciliation materializes the full source and replica keysets in
   memory, so very large tables need memory proportional to their key inventory
   until a bloom-assisted or partitioned anti-join is implemented.
-- CDC-side cascade/SET NULL reconciliation materializes a table-sized
-  comparison in memory.
+- A cascading foreign key that references a parent Pintail does not
+  replicate, a parent without a primary key, or a unique key that is not
+  the parent's primary key sends its child table through the full compare:
+  every source row is read again, in pages, and every replica key is
+  verified against the source a thousand at a time. Memory stays bounded,
+  but the pass takes as long as reading the table.
 - Rows removed by an invisible foreign-key cascade stay visible in the replica
   until that reconciliation runs, so the replica reads AHEAD of the source -
   more rows, larger sums - rather than behind it. A full production run with

@@ -121,7 +121,7 @@ pub(crate) fn quote_identifier(identifier: &str) -> String {
     format!("`{}`", identifier.replace('`', "``"))
 }
 
-fn key_part(value: &Value) -> Option<KeyPart> {
+pub(crate) fn key_part(value: &Value) -> Option<KeyPart> {
     match value {
         Value::Null => None,
         Value::Boolean(value) => Some(KeyPart::UInt64(u64::from(*value))),

@@ -294,6 +294,21 @@ impl TableSnapshot {
         Some((minimum, maximum))
     }
 
+    /// The highest row version this snapshot holds, across segments and
+    /// the memtable, or `None` for an empty table. A repair that must win
+    /// last-write-wins against every current row stamps itself above it.
+    #[must_use]
+    pub fn max_row_version(&self) -> Option<u64> {
+        let segments = self
+            .manifest
+            .segments
+            .iter()
+            .map(|segment| segment.max_version)
+            .max();
+        let memtable = self.memtable.values().map(StoredRow::version).max();
+        segments.into_iter().chain(memtable).max()
+    }
+
     /// Returns visible rows in primary-key order, excluding tombstones.
     ///
     /// # Errors

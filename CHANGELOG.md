@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Cascade reconciliation no longer reads the child table from the source.
+  A child row an invisible `ON DELETE`/`ON UPDATE` cascade can have touched
+  is one whose parent the replica no longer holds, so the scheduled pass
+  streams the child replica's key and referencing columns, looks each
+  parent up in the parent replica, and verifies only those candidates
+  against the source. A staging node had spent minutes and gigabytes every
+  ten minutes re-reading a two-million-row child for a handful of parent
+  deletes; the same repair now touches the source for the affected rows
+  alone, and its memory is one streamed chunk regardless of table size.
+- The full compare an operator requests, and the fallback for cascading
+  keys that do not reference a replicated parent's primary key, no longer
+  holds the table's key set: replica keys are verified against the source
+  in batches, so its memory is bounded for tables of any size.
+- A grouped aggregation whose group map had filled the query ceiling could
+  fail on a small reservation the partial-group build made; the build now
+  spills before that point and retries once on a full budget.
+
 ## [0.1.1-rc1] - 2026-09-02
 
 A release candidate for the memory fix: the server no longer hoards freed

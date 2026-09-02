@@ -16,7 +16,7 @@ use std::{
 use mysql_async::{Opts, Pool, prelude::Queryable};
 use pintail_cdc::{CdcCheckpoint, CdcError, CdcOptions, CdcTarget, run_cdc};
 use pintail_meta::MetaStore;
-use pintail_poll::{PollTarget, run_cdc_reconciliation};
+use pintail_poll::{CdcReconcileScope, PollTarget, run_cdc_reconciliation};
 use pintail_probe::{ProbeReport, RecommendedMode, probe};
 use pintail_snapshot::{SnapshotOptions, SnapshotTarget, run_snapshot};
 use pintail_store::{StoreOptions, TableSnapshot, TableStore};
@@ -281,7 +281,11 @@ impl MysqlContainer {
     }
 
     fn dsn(&self) -> String {
-        format!("mysql://pintail:pintail@{}:{}/app", self.host, self.port)
+        format!(
+            "mysql://pintail:pintail@{}:{}/app",
+            dsn_host(&self.host),
+            self.port
+        )
     }
 
     fn query_batch(&self, sql: &str) -> Result<String, String> {
@@ -763,23 +767,24 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
         .snapshot_checkpoint(DATABASE_ID)
         .unwrap()
         .expect("CDC checkpoint before reconcile");
-    let child_index = negative
-        .targets
-        .iter()
-        .position(|target| target.source().name == "cascade_child")
-        .expect("child target index");
-    let mut cdc_targets = negative.targets;
-    let child = cdc_targets.remove(child_index);
-    let child_source = child.source().clone();
+    // The scheduled repair opens every table and names the child: the
+    // parent rides along, and the child's rows are verified through it.
+    let cdc_targets = negative.targets;
+    let targets = cdc_targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            PollTarget::new(source, target.into_store()).expect("cascade reconciliation target")
+        })
+        .collect::<Vec<_>>();
+    let due = vec!["cascade_child".to_owned()];
     let reconciliation = run_cdc_reconciliation(
         &pool,
         &metadata_path,
         DATABASE_ID,
         &report,
-        vec![
-            PollTarget::new(child_source, child.into_store())
-                .expect("cascade reconciliation target"),
-        ],
+        targets,
+        CdcReconcileScope::Cascade(&due),
         1,
     )
     .await
@@ -1938,6 +1943,13 @@ fn docker_host() -> Result<String, String> {
         .to_owned();
     if let Some(target) = endpoint.strip_prefix("ssh://") {
         let target = target.split('@').next_back().unwrap_or(target);
+        // A bracketed IPv6 literal is the host itself; splitting it at the
+        // first colon would hand SSH a fragment.
+        if let Some(literal) = target.strip_prefix('[')
+            && let Some((address, _)) = literal.split_once(']')
+        {
+            return Ok(address.to_owned());
+        }
         let target = target.split(':').next().unwrap_or(target);
         let config = checked_output(
             Command::new("ssh").args(["-G", target]),
@@ -1962,4 +1974,14 @@ fn docker_host() -> Result<String, String> {
             .to_owned());
     }
     Ok("127.0.0.1".to_owned())
+}
+
+/// A host as a DSN authority: an IPv6 literal bracketed, anything else as is.
+fn dsn_host(host: &str) -> String {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if bare.contains(':') {
+        format!("[{bare}]")
+    } else {
+        bare.to_owned()
+    }
 }

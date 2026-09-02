@@ -82,7 +82,11 @@ impl MysqlContainer {
     }
 
     fn dsn(&self) -> String {
-        format!("mysql://pintail:pintail@{}:{}/app", self.host, self.port)
+        format!(
+            "mysql://pintail:pintail@{}:{}/app",
+            dsn_host(&self.host),
+            self.port
+        )
     }
 
     fn query_batch(&self, sql: &str) -> Result<String, String> {
@@ -524,6 +528,13 @@ fn docker_host() -> Result<String, String> {
         .to_owned();
     if let Some(target) = endpoint.strip_prefix("ssh://") {
         let target = target.split('@').next_back().unwrap_or(target);
+        // A bracketed IPv6 literal is the host itself; splitting it at the
+        // first colon would hand SSH a fragment.
+        if let Some(literal) = target.strip_prefix('[')
+            && let Some((address, _)) = literal.split_once(']')
+        {
+            return Ok(address.to_owned());
+        }
         let target = target.split(':').next().unwrap_or(target);
         let config = checked_output(
             Command::new("ssh").args(["-G", target]),
@@ -602,3 +613,13 @@ CREATE TABLE cascade_child (\
 INSERT INTO cascade_parent VALUES (1),(2);\
 INSERT INTO cascade_child VALUES (10,1),(11,2);\
 ";
+
+/// A host as a DSN authority: an IPv6 literal bracketed, anything else as is.
+fn dsn_host(host: &str) -> String {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if bare.contains(':') {
+        format!("[{bare}]")
+    } else {
+        bare.to_owned()
+    }
+}

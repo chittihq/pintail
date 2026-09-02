@@ -5,7 +5,7 @@ mod cursor;
 mod decoder;
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::Path,
 };
 
@@ -24,7 +24,8 @@ use crate::{
     checksum::{SourceChunk, replica_checksum, source_chunks},
     cursor::{CursorValue, ProbeToken},
     decoder::{
-        decode_key, decode_row, key_projection, physical_key, quote_identifier, source_projection,
+        decode_key, decode_row, key_part, key_projection, physical_key, quote_identifier,
+        source_projection,
     },
 };
 
@@ -172,6 +173,20 @@ pub struct CdcReconcileResult {
     pub targets: Vec<PollTarget>,
 }
 
+/// Which targets a CDC reconciliation repairs, and how.
+#[derive(Clone, Copy, Debug)]
+pub enum CdcReconcileScope<'a> {
+    /// Every target, compared row by row against the source.
+    Full,
+    /// The named targets, repaired through their cascading foreign keys:
+    /// a child row whose parent the replica no longer holds is the only
+    /// kind of row an invisible cascade can have touched, so those are the
+    /// rows verified against the source. The remaining targets serve as
+    /// parents. A named table whose cascading keys do not all reference a
+    /// replicated parent's primary key is compared in full instead.
+    Cascade(&'a [String]),
+}
+
 struct PollChunkCheckpoint {
     chunk_id: String,
     source_count: u64,
@@ -295,6 +310,7 @@ pub async fn run_cdc_reconciliation(
     database_id: &str,
     report: &ProbeReport,
     mut targets: Vec<PollTarget>,
+    scope: CdcReconcileScope<'_>,
     chunk_rows: usize,
 ) -> Result<CdcReconcileResult, PollError> {
     if chunk_rows == 0 {
@@ -305,39 +321,462 @@ pub async fn run_cdc_reconciliation(
     targets.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     let mut metadata = MetaStore::open(metadata_path)?;
     let mut connection = pool.get_conn().await?;
-    let mut outcomes = Vec::with_capacity(targets.len());
-    for target in &mut targets {
-        if target.source.key.mode == KeyMode::AppendRowId {
+    let selected = match scope {
+        CdcReconcileScope::Full => targets
+            .iter()
+            .map(|target| target.source.name.clone())
+            .collect::<Vec<_>>(),
+        CdcReconcileScope::Cascade(names) => cascade_order(names, &targets),
+    };
+    let mut outcomes = Vec::with_capacity(selected.len());
+    for name in selected {
+        let index = targets
+            .iter()
+            .position(|target| target.source.name.eq_ignore_ascii_case(&name))
+            .ok_or_else(|| {
+                PollError::InvalidConfiguration(format!(
+                    "reconciliation target {name} is not among the opened targets"
+                ))
+            })?;
+        if targets[index].source.key.mode == KeyMode::AppendRowId {
             return Err(PollError::InvalidConfiguration(format!(
-                "{} has no source key for CDC reconciliation",
-                target.source.name
+                "{name} has no source key for CDC reconciliation"
             )));
         }
         if !report
             .tables
             .iter()
-            .any(|source| source.name.eq_ignore_ascii_case(&target.source.name))
+            .any(|source| source.name.eq_ignore_ascii_case(&name))
         {
             return Err(PollError::InvalidConfiguration(format!(
-                "target {} is absent from the probe report",
-                target.source.name
+                "target {name} is absent from the probe report"
             )));
         }
-        outcomes.push(
-            reconcile_cdc_target(
-                &mut connection,
-                &mut metadata,
-                database_id,
-                &report.database,
-                target,
-                chunk_rows,
-            )
-            .await?,
-        );
+        let parents = match scope {
+            CdcReconcileScope::Full => None,
+            CdcReconcileScope::Cascade(_) => cascade_parents(&targets, index),
+        };
+        let target = &mut targets[index];
+        let outcome = match parents {
+            Some(parents) => {
+                reconcile_cascade_target(
+                    &mut connection,
+                    &mut metadata,
+                    database_id,
+                    &report.database,
+                    target,
+                    &parents,
+                )
+                .await?
+            }
+            None => {
+                reconcile_cdc_target(
+                    &mut connection,
+                    &mut metadata,
+                    database_id,
+                    &report.database,
+                    target,
+                    chunk_rows,
+                )
+                .await?
+            }
+        };
+        outcomes.push(outcome);
     }
     Ok(CdcReconcileResult {
         tables: outcomes,
         targets,
+    })
+}
+
+/// A replicated parent a child's cascading foreign key points at, resolved
+/// to the parent's primary key so a child row's reference is one point
+/// lookup in the parent replica.
+struct CascadeParent {
+    /// Referencing column names on the child, in the parent's key order.
+    columns: Vec<String>,
+    /// The parent replica.
+    snapshot: pintail_store::TableSnapshot,
+}
+
+/// Whether an `ON DELETE`/`ON UPDATE` rule changes child rows without a
+/// binlog row event, so `MySQL` never shows the change to a CDC reader.
+fn invisible_fk_rule(rule: &str) -> bool {
+    rule.eq_ignore_ascii_case("CASCADE") || rule.eq_ignore_ascii_case("SET NULL")
+}
+
+/// The parents for a targeted pass over `targets[child]`, or `None` when
+/// any cascading key of the child references something a point lookup
+/// cannot answer: an unreplicated table, a parent without a primary key,
+/// or a unique key that is not the parent's primary key.
+fn cascade_parents(targets: &[PollTarget], child: usize) -> Option<Vec<CascadeParent>> {
+    let source = &targets[child].source;
+    let mut parents = Vec::new();
+    for key in source
+        .foreign_keys
+        .iter()
+        .filter(|key| invisible_fk_rule(&key.delete_rule) || invisible_fk_rule(&key.update_rule))
+    {
+        let parent = targets.iter().find(|target| {
+            target
+                .source
+                .name
+                .eq_ignore_ascii_case(&key.referenced_table)
+        })?;
+        if parent.source.key.mode == KeyMode::AppendRowId
+            || parent.source.key.columns.len() != key.referenced_columns.len()
+        {
+            return None;
+        }
+        // The child's referencing columns, arranged in the parent's key
+        // order, so the parent key is built straight from a child row.
+        let mut columns = Vec::with_capacity(key.columns.len());
+        for parent_column in &parent.source.key.columns {
+            let position = key
+                .referenced_columns
+                .iter()
+                .position(|referenced| referenced.eq_ignore_ascii_case(parent_column))?;
+            columns.push(key.columns[position].clone());
+        }
+        parents.push(CascadeParent {
+            columns,
+            snapshot: parent.store.snapshot(),
+        });
+    }
+    (!parents.is_empty()).then_some(parents)
+}
+
+/// Orders the named tables so a parent is repaired before the children
+/// that reference it: a cascade removes rows at every level, and the child
+/// pass detects a missing parent, so the parent's tombstones must land
+/// first. A cycle keeps the remaining names in their given order.
+fn cascade_order(names: &[String], targets: &[PollTarget]) -> Vec<String> {
+    let mut remaining = names.to_vec();
+    let mut ordered = Vec::with_capacity(names.len());
+    while !remaining.is_empty() {
+        let independent = remaining.iter().position(|name| {
+            targets
+                .iter()
+                .find(|target| target.source.name.eq_ignore_ascii_case(name))
+                .is_none_or(|target| {
+                    !target.source.foreign_keys.iter().any(|key| {
+                        !key.referenced_table.eq_ignore_ascii_case(name)
+                            && remaining
+                                .iter()
+                                .any(|other| other.eq_ignore_ascii_case(&key.referenced_table))
+                    })
+                })
+        });
+        let next = independent.unwrap_or(0);
+        ordered.push(remaining.remove(next));
+    }
+    ordered
+}
+
+/// Keys a membership query verifies at once: a thousand keys keep the
+/// placeholder count far below the prepared-statement limit for any
+/// composite key while amortizing the round trip.
+const MEMBERSHIP_BATCH: usize = 1_000;
+
+/// The `WHERE` clause and parameters selecting exactly `keys` from a source
+/// table, as a single-column `IN` list or a row-constructor `IN` list.
+fn key_membership_condition(table: &SourceTable, keys: &[PrimaryKey]) -> (String, Vec<MysqlValue>) {
+    let columns = table
+        .key
+        .columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>();
+    let row = if columns.len() == 1 {
+        "?".to_owned()
+    } else {
+        format!("({})", vec!["?"; columns.len()].join(","))
+    };
+    let list = vec![row.as_str(); keys.len()].join(",");
+    let lhs = if columns.len() == 1 {
+        columns[0].clone()
+    } else {
+        format!("({})", columns.join(","))
+    };
+    (
+        format!(" WHERE {lhs} IN ({list})"),
+        keys.iter()
+            .flat_map(|key| key.parts().iter().map(key_part_mysql_value))
+            .collect(),
+    )
+}
+
+/// Store column ids for `names`, in that order, resolved case-insensitively
+/// against the replica schema.
+fn column_ids_named(
+    snapshot: &pintail_store::TableSnapshot,
+    table: &str,
+    names: &[String],
+) -> Result<Vec<u32>, PollError> {
+    names
+        .iter()
+        .map(|name| {
+            snapshot
+                .schema()
+                .columns()
+                .iter()
+                .find(|column| column.name().eq_ignore_ascii_case(name))
+                .map(pintail_types::Column::id)
+                .ok_or_else(|| {
+                    PollError::Decode(format!("{table} column {name} is absent from its replica"))
+                })
+        })
+        .collect()
+}
+
+/// A key from the values at `positions`, or `None` when any is NULL.
+fn key_at(values: &[Value], positions: &[usize]) -> Option<PrimaryKey> {
+    let parts = positions
+        .iter()
+        .map(|&position| key_part(&values[position]))
+        .collect::<Option<Vec<_>>>()?;
+    PrimaryKey::new(parts).ok()
+}
+
+/// Candidates whose replica values one range scan gathers at a time: the
+/// span of fifty thousand sorted keys is decoded once, in chunks, and only
+/// the candidates' rows are kept.
+const CANDIDATE_SLICE: usize = 50_000;
+
+/// The replica's current values for `keys`, which must be sorted, read by
+/// streaming the key span once rather than a point lookup per key.
+fn replica_rows_for(
+    snapshot: &pintail_store::TableSnapshot,
+    source: &SourceTable,
+    keys: &[PrimaryKey],
+) -> Result<BTreeMap<PrimaryKey, Vec<Value>>, PollError> {
+    let mut rows = BTreeMap::new();
+    let (Some(first), Some(last)) = (keys.first(), keys.last()) else {
+        return Ok(rows);
+    };
+    let wanted = keys.iter().collect::<BTreeSet<_>>();
+    let column_ids = snapshot
+        .schema()
+        .columns()
+        .iter()
+        .map(pintail_types::Column::id)
+        .collect::<Vec<_>>();
+    let mut chunks = ProjectedChunks::open(snapshot, first, last, &column_ids)?;
+    while let Some(scanned) = chunks.next()? {
+        for values in scanned {
+            let key = physical_key(source, &values)?;
+            if wanted.contains(&key) {
+                rows.insert(key, values);
+            }
+        }
+    }
+    Ok(rows)
+}
+
+/// Verifies sorted `candidates` against the source: a candidate the source
+/// still holds with different content is refreshed, one it no longer holds
+/// is tombstoned. Returns (refreshed, tombstoned) after ingesting both.
+async fn repair_candidates(
+    connection: &mut Conn,
+    source_database: &str,
+    target: &mut PollTarget,
+    snapshot: &pintail_store::TableSnapshot,
+    candidates: &[PrimaryKey],
+    version: u64,
+) -> Result<(usize, usize), PollError> {
+    let mut refreshed = 0;
+    let mut tombstoned = 0;
+    for slice in candidates.chunks(CANDIDATE_SLICE) {
+        let mut replica = replica_rows_for(snapshot, &target.source, slice)?;
+        for batch in slice.chunks(MEMBERSHIP_BATCH) {
+            let (condition, parameters) = key_membership_condition(&target.source, batch);
+            let rows = fetch_rows_page(
+                connection,
+                source_database,
+                &target.source,
+                &condition,
+                parameters,
+                "",
+                batch.len(),
+                0,
+            )
+            .await?;
+            let mut present = BTreeMap::new();
+            for row in rows {
+                let decoded = decode_row(&target.source, row, 0, version, false)?;
+                present.insert(decoded.key().clone(), decoded);
+            }
+            let mut repairs = Vec::new();
+            for key in batch {
+                let Some(values) = replica.remove(key) else {
+                    continue;
+                };
+                if let Some(decoded) = present.remove(key) {
+                    if decoded.values() != values.as_slice() {
+                        refreshed += 1;
+                        repairs.push(decoded);
+                    }
+                } else {
+                    tombstoned += 1;
+                    repairs.push(StoredRow::new(key.clone(), values, version, true));
+                }
+            }
+            if !repairs.is_empty() {
+                target.store.ingest_scan(repairs)?;
+            }
+        }
+    }
+    Ok((refreshed, tombstoned))
+}
+
+/// The one projection a targeted pass streams: the child's key, then every
+/// referencing column once, with the positions each key is built from.
+struct CascadeProjection {
+    names: Vec<String>,
+    key_positions: Vec<usize>,
+    parent_positions: Vec<Vec<usize>>,
+}
+
+impl CascadeProjection {
+    fn new(source: &SourceTable, parents: &[CascadeParent]) -> Self {
+        let mut names = source.key.columns.clone();
+        for parent in parents {
+            for column in &parent.columns {
+                if !names.iter().any(|name| name.eq_ignore_ascii_case(column)) {
+                    names.push(column.clone());
+                }
+            }
+        }
+        let position_of = |column: &str| {
+            names
+                .iter()
+                .position(|name| name.eq_ignore_ascii_case(column))
+                .expect("projected column")
+        };
+        let key_positions = source
+            .key
+            .columns
+            .iter()
+            .map(|column| position_of(column))
+            .collect();
+        let parent_positions = parents
+            .iter()
+            .map(|parent| {
+                parent
+                    .columns
+                    .iter()
+                    .map(|column| position_of(column))
+                    .collect()
+            })
+            .collect();
+        Self {
+            names,
+            key_positions,
+            parent_positions,
+        }
+    }
+}
+
+/// Repairs a cascade-affected child through its parents: the replica's
+/// child rows are streamed with only their key and referencing columns,
+/// each reference is one point lookup in the parent replica, and only the
+/// rows whose parent is gone are verified against the source. Parent
+/// deletes and updates are ordinary binlog events, so the parent replica
+/// is current; the source is read for the candidates alone, never the
+/// table, and memory holds one streamed chunk at a time.
+async fn reconcile_cascade_target(
+    connection: &mut Conn,
+    metadata: &mut MetaStore,
+    database_id: &str,
+    source_database: &str,
+    target: &mut PollTarget,
+    parents: &[CascadeParent],
+) -> Result<CdcReconcileOutcome, PollError> {
+    let snapshot = target.store.snapshot();
+    let durable_version = metadata
+        .poll_state(database_id, &target.source.name)?
+        .map_or(0, |state| state.version);
+    let version = snapshot
+        .max_row_version()
+        .unwrap_or(0)
+        .max(target.store.commit_version())
+        .max(durable_version)
+        .checked_add(1)
+        .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
+
+    let projection = CascadeProjection::new(&target.source, parents);
+    let column_ids = column_ids_named(&snapshot, &target.source.name, &projection.names)?;
+    let key_positions = &projection.key_positions;
+    let parent_positions = &projection.parent_positions;
+
+    let mut streamed = 0_u64;
+    let mut ingested = 0;
+    let mut tombstones = 0;
+    // Children share parents, so a parent's presence is remembered while
+    // the cache stays small enough to be free.
+    let mut known = vec![HashMap::<PrimaryKey, bool>::new(); parents.len()];
+    if let Some((first, last)) = snapshot.key_bounds() {
+        let mut chunks = ProjectedChunks::open(&snapshot, &first, &last, &column_ids)?;
+        while let Some(rows) = chunks.next()? {
+            let mut candidates = Vec::new();
+            for values in rows {
+                streamed = streamed.saturating_add(1);
+                let Some(key) = key_at(&values, key_positions) else {
+                    continue;
+                };
+                for (index, parent) in parents.iter().enumerate() {
+                    let Some(parent_key) = key_at(&values, &parent_positions[index]) else {
+                        continue;
+                    };
+                    let present = if let Some(&present) = known[index].get(&parent_key) {
+                        present
+                    } else {
+                        let present = parent.snapshot.get(&parent_key)?.is_some();
+                        if known[index].len() >= 100_000 {
+                            known[index].clear();
+                        }
+                        known[index].insert(parent_key, present);
+                        present
+                    };
+                    if !present {
+                        candidates.push(key);
+                        break;
+                    }
+                }
+            }
+            // Streamed in key order, so the candidates are already sorted.
+            if !candidates.is_empty() {
+                let (fresh, gone) = repair_candidates(
+                    connection,
+                    source_database,
+                    target,
+                    &snapshot,
+                    &candidates,
+                    version,
+                )
+                .await?;
+                ingested += fresh;
+                tombstones += gone;
+            }
+        }
+    }
+    if ingested > 0 || tombstones > 0 {
+        target.store.checkpoint()?;
+    }
+    let source_count = streamed.saturating_sub(u64::try_from(tombstones).unwrap_or(u64::MAX));
+    metadata.commit_cdc_reconciliation(
+        database_id,
+        &target.source.name,
+        source_count,
+        version,
+        &Utc::now().to_rfc3339(),
+    )?;
+    Ok(CdcReconcileOutcome {
+        table: target.source.name.clone(),
+        ingested,
+        tombstones,
+        source_count,
+        version,
     })
 }
 
@@ -353,64 +792,47 @@ async fn reconcile_cdc_target(
     // its every row twice - the replica's and the source's - while comparing
     // them held gigabytes for minutes on a staging node, and with an
     // allocator that never returned them it was the memory the process was
-    // reported to be "using". Two bounded passes instead: the source, one
-    // page at a time by key, each row compared against the replica by point
-    // lookup, keeping only the keys (tens of megabytes for millions of rows);
-    // then the replica, streamed in key order within a memory bound, for the
-    // rows the source no longer has.
+    // reported to be "using". A point lookup per source row instead cost an
+    // hour for two million rows, each decoding a column block. So: the
+    // source is read one page at a time by key, and for keys `MySQL` and the
+    // replica order alike the replica is streamed in step with it, so both
+    // sides are compared by one merge that holds a page and a chunk at a
+    // time. Keys the two order differently - text under a collation - keep
+    // the point lookups and verify the replica's keys against the source in
+    // batches afterwards; that path is slow, but nothing in it grows with
+    // the table.
     let snapshot = target.store.snapshot();
     let durable_version = metadata
         .poll_state(database_id, &target.source.name)?
         .map_or(0, |state| state.version);
-    let version = target
-        .store
-        .commit_version()
+    let version = snapshot
+        .max_row_version()
+        .unwrap_or(0)
+        .max(target.store.commit_version())
         .max(durable_version)
         .checked_add(1)
         .ok_or_else(|| PollError::Decode("reconcile version exceeds UInt64".to_owned()))?;
-    let order = poll_order(&target.source, None);
-    let mut source_keys = BTreeSet::new();
-    let mut mutations = Vec::new();
-    let mut ingested = 0;
-    let mut source_count = 0_u64;
-    let mut last_key: Option<PrimaryKey> = None;
-    loop {
-        let (condition, parameters) = keyset_condition(&target.source, last_key.as_ref());
-        let rows = fetch_rows_page(
+    let (ingested, tombstone_count, source_count) = if keys_order_like_mysql(&target.source) {
+        reconcile_by_merge(
             connection,
             source_database,
-            &target.source,
-            &condition,
-            parameters,
-            &order,
+            target,
+            &snapshot,
+            version,
             chunk_rows,
-            0,
         )
-        .await?;
-        let fetched = rows.len();
-        for row in rows {
-            source_count = source_count
-                .checked_add(1)
-                .ok_or_else(|| PollError::Decode("source row count exceeds UInt64".to_owned()))?;
-            let decoded = decode_row(&target.source, row, source_count, version, false)?;
-            last_key = Some(decoded.key().clone());
-            source_keys.insert(decoded.key().clone());
-            if snapshot
-                .get(decoded.key())?
-                .is_none_or(|stored| stored.values() != decoded.values())
-            {
-                ingested += 1;
-                mutations.push(decoded);
-            }
-        }
-        if fetched < chunk_rows {
-            break;
-        }
-    }
-    let tombstones = tombstones_absent_from(&snapshot, &target.source, &source_keys, version)?;
-    let tombstone_count = tombstones.len();
-    mutations.extend(tombstones);
-    target.store.ingest_scan(mutations)?;
+        .await?
+    } else {
+        reconcile_by_lookup(
+            connection,
+            source_database,
+            target,
+            &snapshot,
+            version,
+            chunk_rows,
+        )
+        .await?
+    };
     if ingested > 0 || tombstone_count > 0 {
         target.store.checkpoint()?;
     }
@@ -428,6 +850,222 @@ async fn reconcile_cdc_target(
         source_count,
         version,
     })
+}
+
+/// Whether `MySQL`'s `ORDER BY` over the key and the replica's key order
+/// agree, so a source page and a replica range can be merged. Integers
+/// compare numerically on both sides and binary strings byte by byte; text
+/// orders by collation in `MySQL` and by code point here, and floats reach
+/// the key as text.
+fn keys_order_like_mysql(table: &SourceTable) -> bool {
+    table.key.columns.iter().all(|name| {
+        table
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(name))
+            .is_some_and(|column| {
+                matches!(
+                    column.pintail_type,
+                    pintail_types::DataType::Boolean
+                        | pintail_types::DataType::Int8
+                        | pintail_types::DataType::Int16
+                        | pintail_types::DataType::Int32
+                        | pintail_types::DataType::Int64
+                        | pintail_types::DataType::UInt8
+                        | pintail_types::DataType::UInt16
+                        | pintail_types::DataType::UInt32
+                        | pintail_types::DataType::UInt64
+                        | pintail_types::DataType::Binary
+                )
+            })
+    })
+}
+
+/// Full-row compare by merge: each source page against the replica keys
+/// from just after the previous page's last key through this page's last,
+/// then the replica's tail past the last source key. Returns (refreshed or
+/// inserted, tombstoned, source rows).
+async fn reconcile_by_merge(
+    connection: &mut Conn,
+    source_database: &str,
+    target: &mut PollTarget,
+    snapshot: &pintail_store::TableSnapshot,
+    version: u64,
+    chunk_rows: usize,
+) -> Result<(usize, usize, u64), PollError> {
+    let order = poll_order(&target.source, None);
+    let bounds = snapshot.key_bounds();
+    let column_ids = snapshot
+        .schema()
+        .columns()
+        .iter()
+        .map(pintail_types::Column::id)
+        .collect::<Vec<_>>();
+    let mut ingested = 0;
+    let mut tombstones = 0;
+    let mut source_count = 0_u64;
+    let mut last_key: Option<PrimaryKey> = None;
+    loop {
+        let (condition, parameters) = keyset_condition(&target.source, last_key.as_ref());
+        let rows = fetch_rows_page(
+            connection,
+            source_database,
+            &target.source,
+            &condition,
+            parameters,
+            &order,
+            chunk_rows,
+            0,
+        )
+        .await?;
+        let fetched = rows.len();
+        let mut page = BTreeMap::new();
+        for row in rows {
+            source_count = source_count
+                .checked_add(1)
+                .ok_or_else(|| PollError::Decode("source row count exceeds UInt64".to_owned()))?;
+            let decoded = decode_row(&target.source, row, source_count, version, false)?;
+            page.insert(decoded.key().clone(), decoded);
+        }
+        let Some(page_last) = page.keys().next_back().cloned() else {
+            break;
+        };
+        let mut repairs = Vec::new();
+        // Replica rows up to the page's last key that the page lacks are
+        // gone from the source; rows the page has with other content are
+        // stale; what remains in the page is new.
+        if let Some((first, _)) = &bounds {
+            let start = last_key.as_ref().unwrap_or(first);
+            if start <= &page_last {
+                let mut chunks = ProjectedChunks::open(snapshot, start, &page_last, &column_ids)?;
+                while let Some(rows) = chunks.next()? {
+                    for values in rows {
+                        let key = physical_key(&target.source, &values)?;
+                        if last_key.as_ref() == Some(&key) {
+                            continue;
+                        }
+                        if let Some(decoded) = page.remove(&key) {
+                            if decoded.values() != values.as_slice() {
+                                ingested += 1;
+                                repairs.push(decoded);
+                            }
+                        } else {
+                            tombstones += 1;
+                            repairs.push(StoredRow::new(key, values, version, true));
+                        }
+                    }
+                }
+            }
+        }
+        ingested += page.len();
+        repairs.extend(page.into_values());
+        if !repairs.is_empty() {
+            target.store.ingest_scan(repairs)?;
+        }
+        last_key = Some(page_last);
+        if fetched < chunk_rows {
+            break;
+        }
+    }
+    tombstones += tombstone_tail(target, snapshot, last_key.as_ref(), version)?;
+    Ok((ingested, tombstones, source_count))
+}
+
+/// Tombstones every replica row past `last_key`, the last key the source
+/// holds, or every row when the source is empty. Returns the count.
+fn tombstone_tail(
+    target: &mut PollTarget,
+    snapshot: &pintail_store::TableSnapshot,
+    last_key: Option<&PrimaryKey>,
+    version: u64,
+) -> Result<usize, PollError> {
+    let Some((first, last)) = snapshot.key_bounds() else {
+        return Ok(0);
+    };
+    let start = last_key.unwrap_or(&first);
+    if start > &last {
+        return Ok(0);
+    }
+    let column_ids = snapshot
+        .schema()
+        .columns()
+        .iter()
+        .map(pintail_types::Column::id)
+        .collect::<Vec<_>>();
+    let mut chunks = ProjectedChunks::open(snapshot, start, &last, &column_ids)?;
+    let mut count = 0;
+    while let Some(rows) = chunks.next()? {
+        let mut repairs = Vec::new();
+        for values in rows {
+            let key = physical_key(&target.source, &values)?;
+            if last_key == Some(&key) {
+                continue;
+            }
+            repairs.push(StoredRow::new(key, values, version, true));
+        }
+        count += repairs.len();
+        if !repairs.is_empty() {
+            target.store.ingest_scan(repairs)?;
+        }
+    }
+    Ok(count)
+}
+
+/// Full-row compare for keys the two sides order differently: a point
+/// lookup per source row, then the replica's keys verified against the
+/// source in batches. Returns (refreshed or inserted, tombstoned, source
+/// rows).
+async fn reconcile_by_lookup(
+    connection: &mut Conn,
+    source_database: &str,
+    target: &mut PollTarget,
+    snapshot: &pintail_store::TableSnapshot,
+    version: u64,
+    chunk_rows: usize,
+) -> Result<(usize, usize, u64), PollError> {
+    let order = poll_order(&target.source, None);
+    let mut ingested = 0;
+    let mut source_count = 0_u64;
+    let mut last_key: Option<PrimaryKey> = None;
+    loop {
+        let (condition, parameters) = keyset_condition(&target.source, last_key.as_ref());
+        let rows = fetch_rows_page(
+            connection,
+            source_database,
+            &target.source,
+            &condition,
+            parameters,
+            &order,
+            chunk_rows,
+            0,
+        )
+        .await?;
+        let fetched = rows.len();
+        let mut mutations = Vec::new();
+        for row in rows {
+            source_count = source_count
+                .checked_add(1)
+                .ok_or_else(|| PollError::Decode("source row count exceeds UInt64".to_owned()))?;
+            let decoded = decode_row(&target.source, row, source_count, version, false)?;
+            last_key = Some(decoded.key().clone());
+            if snapshot
+                .get(decoded.key())?
+                .is_none_or(|stored| stored.values() != decoded.values())
+            {
+                ingested += 1;
+                mutations.push(decoded);
+            }
+        }
+        if !mutations.is_empty() {
+            target.store.ingest_scan(mutations)?;
+        }
+        if fetched < chunk_rows {
+            break;
+        }
+    }
+    let tombstones =
+        tombstone_absent_keys(connection, source_database, target, snapshot, version).await?;
+    Ok((ingested, tombstones, source_count))
 }
 
 fn validate_configuration(
@@ -1019,8 +1657,84 @@ fn keyset_condition(
     )
 }
 
+/// Key-ordered projected rows of a replica range, a bounded chunk at a
+/// time. The store declines to stream a small range whose rows need
+/// visibility resolution and expects the caller to read it whole; that
+/// case is a single chunk here, so every reconciliation pass reads a range
+/// the same way whether it lives in segments or in the memtable.
+enum ProjectedChunks {
+    Stream(Box<pintail_store::ProjectedScanStream>),
+    Whole(Option<Vec<Vec<Value>>>),
+}
+
+impl ProjectedChunks {
+    fn open(
+        snapshot: &pintail_store::TableSnapshot,
+        start: &PrimaryKey,
+        end: &PrimaryKey,
+        column_ids: &[u32],
+    ) -> Result<Self, PollError> {
+        if let Some(stream) = snapshot.scan_projected_range_stream(start, end, column_ids)? {
+            return Ok(Self::Stream(Box::new(stream)));
+        }
+        let scan = snapshot.scan_projected_range(start, end, column_ids)?;
+        Ok(Self::Whole(Some(
+            scan.into_rows()
+                .into_iter()
+                .map(pintail_store::ProjectedRow::into_values)
+                .collect(),
+        )))
+    }
+
+    fn next(&mut self) -> Result<Option<Vec<Vec<Value>>>, PollError> {
+        match self {
+            Self::Stream(stream) => Ok(stream
+                .next_chunk(RECONCILE_SCAN_MEMORY)?
+                .map(pintail_store::ProjectedValueChunk::into_rows)),
+            Self::Whole(rows) => Ok(rows.take()),
+        }
+    }
+}
+
 /// Memory a reconciliation lets one streamed replica chunk hold.
 const RECONCILE_SCAN_MEMORY: usize = 64 * 1024 * 1024;
+
+/// Tombstones every visible replica row the source no longer holds, found
+/// by streaming the replica's keys in order and asking the source about
+/// each batch of them. Returns the count after ingesting.
+async fn tombstone_absent_keys(
+    connection: &mut Conn,
+    source_database: &str,
+    target: &mut PollTarget,
+    snapshot: &pintail_store::TableSnapshot,
+    version: u64,
+) -> Result<usize, PollError> {
+    let Some((first, last)) = snapshot.key_bounds() else {
+        return Ok(0);
+    };
+    let key_columns = target.source.key.columns.clone();
+    let column_ids = column_ids_named(snapshot, &target.source.name, &key_columns)?;
+    let mut chunks = ProjectedChunks::open(snapshot, &first, &last, &column_ids)?;
+    let positions = (0..key_columns.len()).collect::<Vec<_>>();
+    let mut count = 0;
+    while let Some(rows) = chunks.next()? {
+        let keys = rows
+            .iter()
+            .filter_map(|values| key_at(values, &positions))
+            .collect::<Vec<_>>();
+        let (_, tombstoned) = repair_candidates(
+            connection,
+            source_database,
+            target,
+            snapshot,
+            &keys,
+            version,
+        )
+        .await?;
+        count += tombstoned;
+    }
+    Ok(count)
+}
 
 /// Tombstones for every visible replica row whose key `source_keys` lacks,
 /// found by streaming the replica in key order within a memory bound rather
@@ -1041,11 +1755,9 @@ fn tombstones_absent_from(
         .iter()
         .map(pintail_types::Column::id)
         .collect::<Vec<_>>();
-    let Some(mut stream) = snapshot.scan_projected_range_stream(&first, &last, &column_ids)? else {
-        return Ok(tombstones);
-    };
-    while let Some(chunk) = stream.next_chunk(RECONCILE_SCAN_MEMORY)? {
-        for values in chunk.into_rows() {
+    let mut chunks = ProjectedChunks::open(snapshot, &first, &last, &column_ids)?;
+    while let Some(rows) = chunks.next()? {
+        for values in rows {
             let key = physical_key(source, &values)?;
             if !source_keys.contains(&key) {
                 tombstones.push(StoredRow::new(key, values, version, true));
