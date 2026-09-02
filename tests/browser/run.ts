@@ -297,7 +297,7 @@ async function main() {
   )
   rustfsStarted = true
   const rustfsPort = await publishedPort(rustfsName, 9000)
-  rustfsEndpoint = `http://${host}:${rustfsPort}`
+  rustfsEndpoint = `http://${dsnHost(host)}:${rustfsPort}`
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(`${rustfsEndpoint}/health`)
