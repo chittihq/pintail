@@ -80,6 +80,13 @@ async function dockerHost(): Promise<string> {
   return hostname
 }
 
+/// A host inside a URL or a DSN authority: an IPv6 literal has to be
+/// bracketed, or the DSN the server is handed does not parse.
+function urlHost(host: string): string {
+  const bare = host.replace(/^\[|\]$/g, '')
+  return bare.includes(':') ? `[${bare}]` : bare
+}
+
 async function publishedPort(name: string, port: number): Promise<number> {
   const output = await docker('port', name, `${port}/tcp`)
   const match = output.split('\n')[0]?.match(/:(\d+)$/)
@@ -211,7 +218,7 @@ async function setupPintail(mysqlHost: string, mysqlPort: number): Promise<void>
     method: 'POST',
     body: {
       name: 'production_db',
-      dsn: `mysql://benchmark:benchmarkpass@${mysqlHost}:${mysqlPort}/production_db`,
+      dsn: `mysql://benchmark:benchmarkpass@${urlHost(mysqlHost)}:${mysqlPort}/production_db`,
       mode: 'cdc',
       // The replicated set is the verified set plus the lag sentinel. It is
       // deliberately NOT in TABLES: that list drives fingerprint comparison,

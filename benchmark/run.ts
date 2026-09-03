@@ -230,6 +230,14 @@ async function dockerHost(): Promise<string> {
   return hostname
 }
 
+/// A host inside a URL or a DSN authority: an IPv6 literal has to be
+/// bracketed or the URL does not parse, and a `fetch` on an unparseable
+/// URL throws where a readiness loop reads it as "not ready yet".
+function urlHost(host: string): string {
+  const bare = host.replace(/^\[|\]$/g, '')
+  return bare.includes(':') ? `[${bare}]` : bare
+}
+
 async function publishedPort(name: string, containerPort: number): Promise<number> {
   const output = (await docker('port', name, `${containerPort}/tcp`)).stdout
   const match = output.split('\n')[0]?.match(/:(\d+)$/)
@@ -1377,7 +1385,7 @@ async function main() {
   const host = await dockerHost()
   let mysqlPort = await publishedPort(mysqlName, 3306)
   const clickhousePort = await publishedPort(clickhouseName, 8123)
-  const clickhouseUrl = `http://${host}:${clickhousePort}`
+  const clickhouseUrl = `http://${urlHost(host)}:${clickhousePort}`
   mysqlConnection = await waitForMysql(host, mysqlPort)
   await waitForClickhouse(clickhouseUrl)
   if (haveSeedVolume) {
@@ -1449,7 +1457,7 @@ async function main() {
       'pintail-benchmark:latest',
     )
     const pintailPort = await publishedPort(pintailName, 8080)
-    pintailUrl = `http://${host}:${pintailPort}`
+    pintailUrl = `http://${urlHost(host)}:${pintailPort}`
     dsn = `mysql://benchmark:benchmarkpass@${mysqlName}:3306/benchmark_db`
   } else {
     const binary = await buildPintail()
@@ -1476,7 +1484,7 @@ async function main() {
         stderr: 'inherit',
       },
     )
-    dsn = `mysql://benchmark:benchmarkpass@${host}:${mysqlPort}/benchmark_db`
+    dsn = `mysql://benchmark:benchmarkpass@${urlHost(host)}:${mysqlPort}/benchmark_db`
   }
   await waitForHttp(pintailUrl)
   const setup = await api<{ token: string }>(pintailUrl, '/api/auth/setup', {
@@ -1530,7 +1538,7 @@ async function main() {
       'pintail-benchmark:latest',
     )
     const enginePort = await publishedPort(pintailName, 8080)
-    const engineUrl = `http://${host}:${enginePort}`
+    const engineUrl = `http://${urlHost(host)}:${enginePort}`
     await waitForHttp(engineUrl)
     engineResults = await runQueries(
       mysqlConnection,

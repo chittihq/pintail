@@ -61,11 +61,19 @@ async function dockerHost(): Promise<string> {
     endpoint = await docker('context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}')
   }
   if (!endpoint.startsWith('ssh://')) return '127.0.0.1'
-  const target = endpoint.slice('ssh://'.length).split('@').at(-1)!.split(':')[0]
+  // URL parsing keeps an IPv6 literal (ssh://user@[fd7a::1]) intact.
+  const target = new URL(endpoint).hostname.replace(/^\[|\]$/g, '')
   const ssh = await command(['ssh', '-G', target])
   const hostname = ssh.split('\n').find((l) => l.startsWith('hostname '))?.slice(9)
   if (!hostname) throw new Error(`cannot resolve docker ssh host ${target}`)
   return hostname
+}
+
+/// A host inside a URL or a DSN authority: an IPv6 literal has to be
+/// bracketed, or the DSN the server is handed does not parse.
+function urlHost(host: string): string {
+  const bare = host.replace(/^\[|\]$/g, '')
+  return bare.includes(':') ? `[${bare}]` : bare
 }
 
 async function publishedPort(name: string, port: number): Promise<number> {
@@ -179,7 +187,7 @@ async function replicate(mysqlHost: string, mysqlPort: number): Promise<void> {
     method: 'POST',
     body: {
       name: 'tpch',
-      dsn: `mysql://benchmark:benchmarkpass@${mysqlHost}:${mysqlPort}/tpch`,
+      dsn: `mysql://benchmark:benchmarkpass@${urlHost(mysqlHost)}:${mysqlPort}/tpch`,
       mode: 'cdc',
       include_tables: TABLES,
     },
