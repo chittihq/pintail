@@ -12672,7 +12672,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150031 sync_runs rows for db_5d81c458a326003c4d15bbc28a233e2a"
+    "detail": "150034 sync_runs rows for db_ff5da8e2d7b11d228dddc024df203a35"
   },
   {
     "phase": "activity-history",
@@ -12684,7 +12684,7 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 3ms over 150000 rows"
+    "detail": "p50 1ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
@@ -12696,13 +12696,13 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 39ms p99 52ms"
+    "detail": "p50 33ms p99 51ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 45ms"
+    "detail": "health p95 38ms"
   },
   {
     "phase": "activity-history",
@@ -13595,25 +13595,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4772"
+    "detail": "0 failed of 4815"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4772 requests: p50 2ms p99 31ms"
+    "detail": "4815 requests: p50 2ms p99 21ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 8ms"
+    "detail": "health p99 5ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 835 vs source 835"
+    "detail": "orders replica 813 vs source 813"
   },
   {
     "phase": "poll-storm",
@@ -18235,7 +18235,8 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_ff5da8e2d7b11d228dddc024df203a35\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-03T07:15:05.597310+00:00\",\"updated_at\":\"2026-09-03T07:22:44.395632+00:00\"},\"tables\":18,\"rows\":1320}"
   },
   {
     "phase": "drop-table-polling",
@@ -20051,7 +20052,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 56 ok, dashboards 185 ok; no errors"
+    "detail": "wire 240 ok, http 68 ok, dashboards 184 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -20063,31 +20064,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 56"
+    "detail": "wire 240 of 240, http 68"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 569ms p99 910ms over 240 queries"
+    "detail": "wire p50 544ms p99 1089ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 7ms over 13 samples"
+    "detail": "health p99 21ms over 13 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 310MB with a 256MB budget"
+    "detail": "peak RSS 337MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201200 vs source 201200"
+    "detail": "big 200900 vs source 200900"
   },
   {
     "phase": "memory-pressure",
@@ -21001,7 +21002,7 @@
   },
   {
     "phase": "reconcile-memory",
-    "check": "reconcile-memory:the cascade removed a tenth of the children",
+    "check": "reconcile-memory:the cascade removed the deleted parents' children",
     "status": "PASS",
     "detail": "1800000 remain"
   },
@@ -21009,13 +21010,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 342.5s"
+    "detail": "child 1800000 vs source 1800000 after 29.7s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 29MB before, peak 183MB during (margin 768MB)"
+    "detail": "RSS 27MB before, peak 177MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
