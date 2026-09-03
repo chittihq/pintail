@@ -159,7 +159,14 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
     await o.docker('cp', `${txtDir}/.`, `${o.mysqlName}:/var/lib/mysql-files/ds`)
     return
   }
-  const target = endpoint.slice('ssh://'.length).split(':')[0]
+  // URL parsing keeps an IPv6 literal (ssh://user@[fd7a::1]) intact, and
+  // ssh wants that literal WITHOUT its brackets: it rejects the bracketed
+  // form outright, which read here as an unresolvable hostname "[fd7a".
+  const endpointUrl = new URL(endpoint)
+  const endpointHost = endpointUrl.hostname.replace(/^\[|\]$/g, '')
+  const target = endpointUrl.username
+    ? `${endpointUrl.username}@${endpointHost}`
+    : endpointHost
   o.log('copying dataset over ssh (gzipped tar into remote docker cp)')
   // --no-xattrs/--no-mac-metadata: macOS tar embeds Apple extended
   // attributes that a Linux daemon cannot restore (lsetxattr fails).

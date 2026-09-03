@@ -426,7 +426,11 @@ async function dockerHostPreflight(
     stageEnv?.DOCKER_HOST?.trim() || process.env.DOCKER_HOST?.trim() || inspected.output.trim()
   const remote = endpoint.startsWith('ssh://')
   if (remote) {
-    const sshTarget = endpoint.slice('ssh://'.length).replace(/\/.*$/, '').replace(/:\d+$/, '')
+    // URL parsing keeps an IPv6 literal intact; ssh takes the address
+    // without brackets, so they come off before the user is put back.
+    const sshUrl = new URL(endpoint)
+    const sshHost = sshUrl.hostname.replace(/^\[|\]$/g, '')
+    const sshTarget = sshUrl.username ? `${sshUrl.username}@${sshHost}` : sshHost
     // Remembered so the liveness probe can reach the same machine without
     // re-deriving it mid-stage.
     remoteSshTarget = sshTarget
