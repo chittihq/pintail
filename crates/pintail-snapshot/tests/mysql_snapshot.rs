@@ -116,7 +116,11 @@ impl MysqlContainer {
     }
 
     fn dsn(&self) -> String {
-        format!("mysql://pintail:pintail@{}:{}/app", self.host, self.port)
+        format!(
+            "mysql://pintail:pintail@{}:{}/app",
+            dsn_host(&self.host),
+            self.port
+        )
     }
 
     fn query_batch(&self, sql: &str) -> Result<String, String> {
@@ -444,9 +448,11 @@ async fn snapshot_compatibility_matrix_covers_file_position_mariadb_and_polling_
             .iter()
             .position(|column| column.name == "date_value")
             .expect("date column");
+        // The all-zero date is a value every one of these sources returns,
+        // not an absence; the replica preserves it.
         assert_eq!(
             rows[0].values()[date_index],
-            Value::Null,
+            Value::Utf8("0000-00-00".to_owned()),
             "{}",
             variant.label
         );
@@ -693,9 +699,21 @@ fn assert_type_values(targets: &[SnapshotTarget]) {
         rows[0].values()[columns["latin_value"]],
         Value::Utf8("café".to_owned())
     );
-    assert_eq!(rows[1].values()[columns["date_value"]], Value::Null);
-    assert_eq!(rows[1].values()[columns["datetime_value"]], Value::Null);
-    assert_eq!(rows[1].values()[columns["timestamp_value"]], Value::Null);
+    // MySQL returns the all-zero date from a SELECT, does not match it with
+    // IS NULL, and counts it in COUNT(column); the replica preserves it
+    // rather than inverting all three.
+    assert_eq!(
+        rows[1].values()[columns["date_value"]],
+        Value::Utf8("0000-00-00".to_owned())
+    );
+    assert_eq!(
+        rows[1].values()[columns["datetime_value"]],
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned())
+    );
+    assert_eq!(
+        rows[1].values()[columns["timestamp_value"]],
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned())
+    );
 }
 
 fn assert_pk_counts(targets: &[SnapshotTarget]) {
@@ -882,6 +900,13 @@ fn docker_host() -> Result<String, String> {
         .to_owned();
     if let Some(target) = endpoint.strip_prefix("ssh://") {
         let target = target.split('@').next_back().unwrap_or(target);
+        // A bracketed IPv6 literal is the host itself; splitting it at the
+        // first colon would hand SSH a fragment.
+        if let Some(literal) = target.strip_prefix('[')
+            && let Some((address, _)) = literal.split_once(']')
+        {
+            return Ok(address.to_owned());
+        }
         let target = target.split(':').next().unwrap_or(target);
         let config = checked_output(
             Command::new("ssh").args(["-G", target]),
@@ -906,4 +931,14 @@ fn docker_host() -> Result<String, String> {
             .to_owned());
     }
     Ok("127.0.0.1".to_owned())
+}
+
+/// A host as a DSN authority: an IPv6 literal bracketed, anything else as is.
+fn dsn_host(host: &str) -> String {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if bare.contains(':') {
+        format!("[{bare}]")
+    } else {
+        bare.to_owned()
+    }
 }

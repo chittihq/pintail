@@ -1211,19 +1211,22 @@ fn assert_compatibility_rows(label: &str, targets: &[CdcTarget]) {
         .enumerate()
         .map(|(index, column)| (column.name.as_str(), index))
         .collect::<BTreeMap<_, _>>();
+    // MySQL returns the all-zero date from a SELECT, does not match it with
+    // IS NULL, and counts it in COUNT(column); the replica preserves it
+    // rather than inverting all three.
     assert_eq!(
         rows[1].values()[columns["date_value"]],
-        Value::Null,
+        Value::Utf8("0000-00-00".to_owned()),
         "{label}"
     );
     assert_eq!(
         rows[1].values()[columns["datetime_value"]],
-        Value::Null,
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned()),
         "{label}"
     );
     assert_eq!(
         rows[1].values()[columns["timestamp_value"]],
-        Value::Null,
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned()),
         "{label}"
     );
     assert_eq!(
@@ -1666,9 +1669,21 @@ fn assert_replica(targets: &[CdcTarget]) {
         .map(|(index, column)| (column.name.as_str(), index))
         .collect::<BTreeMap<_, _>>();
     let row = &rows[1];
-    assert_eq!(row.values()[columns["date_value"]], Value::Null);
-    assert_eq!(row.values()[columns["datetime_value"]], Value::Null);
-    assert_eq!(row.values()[columns["timestamp_value"]], Value::Null);
+    // MySQL returns the all-zero date from a SELECT, does not match it with
+    // IS NULL, and counts it in COUNT(column); the replica preserves it
+    // rather than inverting all three.
+    assert_eq!(
+        row.values()[columns["date_value"]],
+        Value::Utf8("0000-00-00".to_owned())
+    );
+    assert_eq!(
+        row.values()[columns["datetime_value"]],
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned())
+    );
+    assert_eq!(
+        row.values()[columns["timestamp_value"]],
+        Value::Utf8("0000-00-00 00:00:00.000000".to_owned())
+    );
     assert_eq!(
         row.values()[columns["decimal_value"]],
         Value::Utf8("1234567890123456789012345678.1234567890".to_owned())
