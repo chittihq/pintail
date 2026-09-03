@@ -6,6 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-03
+
+Stops the server growing without bound on a database whose tables cascade.
+0.1.0 had left the allocator holding everything it freed; the candidates
+fixed that and then removed what was allocating it, the scheduled cascade
+reconciliation, which re-read whole child tables from the source and held
+them in memory. This release carries both candidates and the work that
+made the repair fast as well as bounded: at twenty million rows a cascade
+of ten parents is repaired in half a minute inside a two-hundred-megabyte
+peak, where the same repair on 0.1.0 peaked at a gigabyte over its
+baseline on a table a tenth the size.
+
+Includes everything in 0.1.1-rc1 and 0.1.1-rc2.
+
 ### Fixed
 
 - Creating a database honours the `poll_interval_seconds` and
@@ -18,6 +32,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   placeholder values, and candidates are verified five thousand a query.
   At twenty million rows the operator's full compare converges in about
   three minutes where it had not converged in half an hour.
+
+### Added
+
+- `tests/e2e/results-scale.md` records the reconciliation measured at ten
+  times the gate's size, both passes, with what it implies for tables in
+  the hundred-gigabyte range.
 
 ## [0.1.1-rc2] - 2026-09-02
 
