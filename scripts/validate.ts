@@ -545,7 +545,12 @@ async function main() {
   const ARTIFACT_PREFIXES = [
     'tests/e2e/results',
     'benchmark/results.',
+    // Re-measured whenever the benchmark's fingerprint or its host changes,
+    // and banked with the rest of the bench evidence. Its absence here
+    // aborted a release chain after a passing 49-minute benchmark.
+    'benchmark/mysql-baseline.json',
     'benchmark/workloads/commerce-production-v1/results/',
+    'benchmark/workloads/tpch-v1/results/',
   ]
   const shelfDir = join(reportDir, 'artifact-shelf')
   let shelved: string[] = []
