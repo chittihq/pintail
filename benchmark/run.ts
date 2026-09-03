@@ -85,6 +85,7 @@ const CONCURRENCY_CLIENTS = (process.env.BENCHMARK_CONCURRENCY ?? '1,4,8,16')
   .filter((value) => Number.isFinite(value) && value > 0)
 const CONCURRENCY_SECONDS = Number(process.env.BENCHMARK_CONCURRENCY_SECONDS ?? 10)
 const mysqlImage = 'mysql:8.4'
+const clickhouseImage = 'clickhouse/clickhouse-server:25.8'
 const mysqlServerArgs = [
   '--server-id=909',
   '--log-bin=mysql-bin',
@@ -1332,6 +1333,7 @@ async function main() {
       'cp -a /from/. /to/',
     )
   }
+  await docker('pull', '--quiet', mysqlImage)
   await docker(
     'run',
     '--detach',
@@ -1348,6 +1350,10 @@ async function main() {
     mysqlImage,
     ...mysqlServerArgs,
   )
+  // Pulled before the container starts: a `docker run` that downloads the
+  // image first spends the readiness window on the download, and a pruned
+  // host failed the whole stage with "ClickHouse did not become ready".
+  await docker('pull', '--quiet', clickhouseImage)
   await docker(
     'run',
     '--detach',
@@ -1366,7 +1372,7 @@ async function main() {
     ...engineLimits,
     '--env',
     'CLICKHOUSE_PASSWORD=pintail-benchmark',
-    'clickhouse/clickhouse-server:25.8',
+    clickhouseImage,
   )
   const host = await dockerHost()
   let mysqlPort = await publishedPort(mysqlName, 3306)
