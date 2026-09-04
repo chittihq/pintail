@@ -42,6 +42,14 @@ services:
       #     - "100.x.y.z:3306:3306"
       #     - "192.168.1.10:3306:3306"
       #
+      # Often one address serves both audiences and the second entry is
+      # unnecessary. If the readers that must reach this service sit on two
+      # networks - other machines on a private cloud network, and people on
+      # a VPN - bind the cloud address and advertise its subnet from this
+      # host as a VPN route (a NetBird network route, a Tailscale subnet
+      # router). VPN peers then reach the same private address, so the
+      # service has one published address and no public one.
+      #
       # For anything more selective than a fixed list of addresses - allow
       # a subnet, deny the rest - publish on 0.0.0.0 and filter in the
       # DOCKER-USER iptables chain, which Docker consults before its own
@@ -52,7 +60,8 @@ services:
       # The address has to exist on the host when the container starts, or
       # Docker refuses with "cannot assign requested address". If the VPN
       # comes up after Docker on boot, order the units (a systemd
-      # After=/Requires= on tailscaled) or the stack restarts until it does.
+      # After=/Requires= on the VPN service) or the stack restarts until
+      # it does.
       #
       # The dashboard and HTTP query API. Put a TLS terminator in front of
       # this: the dashboard is a control plane, not a security boundary.
