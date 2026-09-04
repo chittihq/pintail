@@ -6,16 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc1] - 2026-09-04
+
+A candidate for the `GROUP BY` refusal that took a customer's analytics
+endpoint down. Pintail required every selected column to be grouped or
+aggregated; MySQL requires it to hold ONE value per group and proves that
+through the table's key, which is why grouping by a foreign key and
+selecting the joined dimension's name is ordinary SQL everywhere else.
+The candidate also carries the deployment work that keeps a published
+port off the public internet, which a host firewall cannot do on its own.
+
 ### Fixed
 
-- A column the grouping keys functionally determine is answered rather than
-  refused with `ER_WRONG_FIELD_WITH_GROUP` (1055). MySQL's
-  `ONLY_FULL_GROUP_BY` proves single-valuedness through a table's key and
-  through the equalities that reach it, so `GROUP BY orders.id` may select
-  `orders.placed_at`, and grouping by a foreign key may select the joined
-  dimension's columns - the shape every BI tool and dashboard writes. The
-  refusal took down a customer's analytics endpoint, whose queries group by
-  `paymentTypeId` and read `PaymentType.paymentTypeName` off a LEFT JOIN.
+- A column the grouping keys functionally determine is answered rather
+  than refused with `ER_WRONG_FIELD_WITH_GROUP` (1055). The proof follows
+  MySQL's own `ONLY_FULL_GROUP_BY` rules: a table's key fixes the rest of
+  its row, and an equality in `WHERE`, in an inner `ON`, or in an outer
+  join's `ON` against the outer side carries that onto the joined table's
+  key. So `GROUP BY orders.id` may select `orders.placed_at`, and
+  `GROUP BY enrollment.payment_type_id` may select the LEFT JOINed
+  `payment_type.name` - the shape every dashboard and BI tool writes, and
+  the one whose refusal broke a customer's analytics endpoint. A
+  determined column reads as `ANY_VALUE`, so a group whose outer join
+  matched for some rows and not others stays one group with one set of
+  counts, as MySQL answers it.
+
+### Added
+
+- `PINTAIL_BIND` sets the host address both published ports bind to,
+  default `0.0.0.0` as before. A deployment that must stay on a private
+  network could previously only be kept off the public internet by editing
+  the compose file: Docker publishes ports through its own NAT rules,
+  which are consulted before the filter rules `ufw` and `firewalld`
+  manage, so a port on `0.0.0.0` answers the internet while the firewall
+  claims to deny it. The installer carries the variable and reaches the
+  service at that address. Two published addresses are two entries per
+  port; where the readers sit on a private cloud network and a VPN,
+  binding the cloud address and advertising its subnet as a VPN route
+  reaches both from one published address. Selective rules belong in the
+  `DOCKER-USER` chain; both are documented beside the ports.
 
 ## [0.1.1] - 2026-09-03
 
