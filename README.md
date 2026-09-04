@@ -96,6 +96,13 @@ leaves its configuration alone. `PINTAIL_VERSION`, `PINTAIL_DIR`,
 defaults, and [scripts/install.sh](scripts/install.sh) is short enough to
 read first.
 
+To keep the service off the public internet, publish it on one address
+rather than filtering it afterwards: set `PINTAIL_BIND` to the host's
+private address, for example its Tailscale or WireGuard one, and Docker
+binds the ports there and nowhere else. A host firewall is not a
+substitute, because Docker's own NAT rules are consulted before the
+filter rules `ufw` and `firewalld` manage.
+
 MySQL 5.7, 8.x and MariaDB are supported as sources.
 
 ## Querying

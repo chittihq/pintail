@@ -14,6 +14,12 @@
 #   PINTAIL_DIR        where the compose file lives (default: /opt/pintail)
 #   PINTAIL_HTTP_PORT  dashboard and HTTP API port (default: 8080)
 #   PINTAIL_WIRE_PORT  MySQL wire port (default: 3306)
+#   PINTAIL_BIND       host address to publish on (default: 0.0.0.0, every
+#                      interface). Set it to a private address - Tailscale,
+#                      WireGuard, a LAN address - to keep the service off
+#                      the public internet. A host firewall does not do
+#                      that on its own: Docker's NAT rules are consulted
+#                      before the filter rules ufw and firewalld manage.
 
 set -eu
 
@@ -23,6 +29,7 @@ FALLBACK_VERSION="0.1.0"
 PINTAIL_DIR="${PINTAIL_DIR:-/opt/pintail}"
 PINTAIL_HTTP_PORT="${PINTAIL_HTTP_PORT:-8080}"
 PINTAIL_WIRE_PORT="${PINTAIL_WIRE_PORT:-3306}"
+PINTAIL_BIND="${PINTAIL_BIND:-0.0.0.0}"
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -94,8 +101,8 @@ services:
   pintail:
     image: ${IMAGE}:${PINTAIL_VERSION}
     ports:
-      - "${PINTAIL_HTTP_PORT}:8080"   # dashboard and HTTP API
-      - "${PINTAIL_WIRE_PORT}:3306"   # MySQL wire endpoint
+      - "${PINTAIL_BIND}:${PINTAIL_HTTP_PORT}:8080"   # dashboard and HTTP API
+      - "${PINTAIL_BIND}:${PINTAIL_WIRE_PORT}:3306"   # MySQL wire endpoint
     environment:
       PINTAIL_BUILD_VERSION: "${PINTAIL_VERSION}"
       PINTAIL_DATA_DIR: /var/lib/pintail
@@ -119,8 +126,15 @@ say "Starting Pintail ${PINTAIL_VERSION} ..."
 $SUDO docker compose -f "$COMPOSE" pull --quiet
 $SUDO docker compose -f "$COMPOSE" up --detach
 
+# Where to reach it from this host: the published address itself, since a
+# service bound to one private address does not answer on 127.0.0.1.
+case "$PINTAIL_BIND" in
+  0.0.0.0 | '') PINTAIL_REACH="127.0.0.1" ;;
+  *) PINTAIL_REACH="$PINTAIL_BIND" ;;
+esac
+
 attempt=0
-until curl -fsS "http://127.0.0.1:${PINTAIL_HTTP_PORT}/health" >/dev/null 2>&1; do
+until curl -fsS "http://${PINTAIL_REACH}:${PINTAIL_HTTP_PORT}/health" >/dev/null 2>&1; do
   attempt=$((attempt + 1))
   [ "$attempt" -lt 60 ] || fail "Pintail did not report healthy within two minutes; inspect with: docker compose -f $COMPOSE logs pintail"
   sleep 2
@@ -129,8 +143,16 @@ done
 say ""
 say "Pintail ${PINTAIL_VERSION} is running."
 say ""
-say "  Dashboard:  http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1):${PINTAIL_HTTP_PORT}"
-say "  MySQL:      port ${PINTAIL_WIRE_PORT}"
+case "$PINTAIL_BIND" in
+  0.0.0.0 | '')
+    say "  Dashboard:  http://$(hostname -I 2>/dev/null | awk '{print $1}' || echo 127.0.0.1):${PINTAIL_HTTP_PORT}"
+    say "  MySQL:      port ${PINTAIL_WIRE_PORT}"
+    ;;
+  *)
+    say "  Dashboard:  http://${PINTAIL_BIND}:${PINTAIL_HTTP_PORT}"
+    say "  MySQL:      ${PINTAIL_BIND} port ${PINTAIL_WIRE_PORT}"
+    ;;
+esac
 say "  Config:     $COMPOSE"
 say "  Data:       docker volume pintail_pintail-data"
 say ""
