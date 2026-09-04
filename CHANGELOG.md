@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A column the grouping keys functionally determine is answered rather than
+  refused with `ER_WRONG_FIELD_WITH_GROUP` (1055). MySQL's
+  `ONLY_FULL_GROUP_BY` proves single-valuedness through a table's key and
+  through the equalities that reach it, so `GROUP BY orders.id` may select
+  `orders.placed_at`, and grouping by a foreign key may select the joined
+  dimension's columns - the shape every BI tool and dashboard writes. The
+  refusal took down a customer's analytics endpoint, whose queries group by
+  `paymentTypeId` and read `PaymentType.paymentTypeName` off a LEFT JOIN.
+
 ## [0.1.1] - 2026-09-03
 
 Stops the server growing without bound on a database whose tables cascade.

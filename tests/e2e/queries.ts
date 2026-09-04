@@ -1177,6 +1177,38 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['orders'],
   },
   {
+    // Chitti LMS's analytics endpoint, in this corpus's tables: group by the
+    // foreign key, read the LEFT JOINed dimension's name. MySQL proves the
+    // name single-valued through customers' primary key; Pintail refused the
+    // whole family with ER_WRONG_FIELD_WITH_GROUP until it proved the same.
+    name: 'bi looker: a grouped foreign key reads the joined dimension',
+    sql:
+      'SELECT c.name AS customer, ' +
+      "COUNT(DISTINCT CASE WHEN o.status IN ('shipped', 'delivered') THEN o.id END) AS done, " +
+      'COUNT(*) AS n FROM orders o LEFT JOIN customers c ON c.id = o.customer_id ' +
+      'GROUP BY o.customer_id ORDER BY o.customer_id LIMIT 40',
+    tables: ['orders', 'customers'],
+  },
+  {
+    // The primary key fixes every other column of its own row.
+    name: 'bi looker: the grouped primary key determines the row',
+    sql:
+      'SELECT o.id, o.status, o.total, COUNT(*) AS n FROM orders o ' +
+      'GROUP BY o.id ORDER BY o.id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    // Same rule across a self-join, where the determination has to be kept
+    // per ALIAS: both sides are the same table, and grouping by the
+    // manager's id says nothing about the employee's own columns.
+    name: 'bi looker: a grouped self-join key reads the managers row',
+    sql:
+      'SELECT m.name AS manager, m.active AS manager_active, COUNT(*) AS reports ' +
+      'FROM staff s LEFT JOIN staff m ON m.id = s.manager_id ' +
+      'GROUP BY s.manager_id ORDER BY s.manager_id',
+    tables: ['staff'],
+  },
+  {
     name: 'bi tableau: explicit cast ladder',
     sql:
       'SELECT id, CAST(total AS DECIMAL(18,4)) AS amt, CAST(updated_at AS DATE) AS d, ' +

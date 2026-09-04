@@ -1,3 +1,4 @@
+mod dependency;
 mod function;
 
 use function::{
@@ -708,11 +709,16 @@ impl<'catalog> Binder<'catalog> {
                     group_by.push(value);
                 }
             }
+            // What the grouping keys already decide. A column MySQL proves
+            // single-valued per group is answered rather than refused, so
+            // this is computed once and consulted by every rewrite below.
+            let determined =
+                dependency::determined_columns(&group_by, &from, &tables, filter.as_ref());
             for item in &mut projection {
-                rewrite_group_references(&mut item.expr, &group_by)?;
+                rewrite_group_references(&mut item.expr, &group_by, &determined, &mut aggregates)?;
             }
             if let Some(predicate) = &mut having {
-                rewrite_group_references(predicate, &group_by)?;
+                rewrite_group_references(predicate, &group_by, &determined, &mut aggregates)?;
             }
             // Windows evaluate above the aggregation, so their arguments,
             // PARTITION BY, and ORDER BY re-express in terms of group keys
@@ -721,13 +727,18 @@ impl<'catalog> Binder<'catalog> {
                 if let WindowFunction::Aggregate(aggregate) = &mut window.function
                     && let Some(expr) = &mut aggregate.expr
                 {
-                    rewrite_group_references(expr, &group_by)?;
+                    rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
                 }
                 for expr in &mut window.partition_by {
-                    rewrite_group_references(expr, &group_by)?;
+                    rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
                 }
                 for key in &mut window.order_by {
-                    rewrite_group_references(&mut key.expr, &group_by)?;
+                    rewrite_group_references(
+                        &mut key.expr,
+                        &group_by,
+                        &determined,
+                        &mut aggregates,
+                    )?;
                 }
             }
         }
@@ -4235,9 +4246,51 @@ fn bind_window_frame(
     Ok(Some(BoundWindowFrame { range, start, end }))
 }
 
-fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Result<(), BindError> {
+fn rewrite_group_references(
+    expr: &mut BoundExpr,
+    group_by: &[BoundExpr],
+    determined: &dependency::DeterminedColumns,
+    aggregates: &mut Vec<BoundAggregate>,
+) -> Result<(), BindError> {
     if let Some(index) = group_by.iter().position(|group| group == expr) {
         expr.kind = BoundExprKind::GroupKey(index);
+        return Ok(());
+    }
+    // A column the grouping keys determine holds one value per group, which
+    // is what ANY_VALUE reads. Adding it to the grouping keys instead would
+    // be wrong for the outer-join case: a group whose join matched for some
+    // rows and not others would split in two and the counts alongside it
+    // would split with it, where MySQL returns one row.
+    if let BoundExprKind::Column(column) = &expr.kind
+        && !column.relation_name.starts_with(SCALAR_TABLE_PREFIX)
+        && determined.contains(column)
+        && is_mysql_scalar(expr.data_type)
+    {
+        let argument = expr.clone();
+        let index = aggregates
+            .iter()
+            .position(|aggregate| {
+                aggregate.function == AggregateFunction::AnyValue
+                    && !aggregate.distinct
+                    && aggregate.expr.as_ref() == Some(&argument)
+            })
+            .unwrap_or_else(|| {
+                aggregates.push(BoundAggregate {
+                    function: AggregateFunction::AnyValue,
+                    data_type: argument.data_type,
+                    expr: Some(argument),
+                    distinct: false,
+                    nullable: true,
+                    separator: None,
+                    order_within: Vec::new(),
+                });
+                aggregates.len() - 1
+            });
+        // Already offset: the arm below shifts the aggregates it finds in
+        // the tree past the group keys, and this one is written after that
+        // shift would have applied.
+        expr.kind = BoundExprKind::Aggregate(group_by.len().saturating_add(index));
+        expr.nullable = true;
         return Ok(());
     }
     match &mut expr.kind {
@@ -4255,16 +4308,18 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
             "{}.{}",
             column.relation_name, column.name
         ))),
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            rewrite_group_references(expr, group_by)
+        BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. }
+        | BoundExprKind::InSubquery { expr, .. } => {
+            rewrite_group_references(expr, group_by, determined, aggregates)
         }
         BoundExprKind::Binary { left, right, .. } => {
-            rewrite_group_references(left, group_by)?;
-            rewrite_group_references(right, group_by)
+            rewrite_group_references(left, group_by, determined, aggregates)?;
+            rewrite_group_references(right, group_by, determined, aggregates)
         }
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
-                rewrite_group_references(argument, group_by)?;
+                rewrite_group_references(argument, group_by, determined, aggregates)?;
             }
             Ok(())
         }
@@ -4272,7 +4327,6 @@ fn rewrite_group_references(expr: &mut BoundExpr, group_by: &[BoundExpr]) -> Res
             *index = index.saturating_add(group_by.len());
             Ok(())
         }
-        BoundExprKind::InSubquery { expr, .. } => rewrite_group_references(expr, group_by),
         // Window references resolve above the aggregation; the window's own
         // internals are rewritten separately by the caller.
         BoundExprKind::Window(_)
@@ -4629,8 +4683,19 @@ fn bind_order_by(
                     // over `GROUP BY name` is still meaningless and still
                     // rejects - reported as an invalid ORDER BY, because that
                     // is the clause the author has to fix.
-                    rewrite_group_references(&mut expr, &bound.group_by)
-                        .map_err(|_| BindError::InvalidOrderBy(order.expr.to_string()))?;
+                    let determined = dependency::determined_columns(
+                        &bound.group_by,
+                        &bound.from,
+                        &bound.tables,
+                        bound.filter.as_ref(),
+                    );
+                    rewrite_group_references(
+                        &mut expr,
+                        &bound.group_by,
+                        &determined,
+                        &mut bound.aggregates,
+                    )
+                    .map_err(|_| BindError::InvalidOrderBy(order.expr.to_string()))?;
                     bound.projection.push(BoundProjection {
                         name: format!("<order-{}>", bound.projection.len()),
                         expr,
@@ -5294,7 +5359,9 @@ mod tests {
             .expect("schema"),
             TableStatistics::with_row_count(120),
         )
-        .expect("table");
+        .expect("table")
+        .with_key_columns([1])
+        .expect("events key");
         let users = TableEntry::new(
             TableId::new(12),
             "users",
@@ -5467,26 +5534,78 @@ mod tests {
     /// Both halves are supported and they still cannot meet: `general_ci` and
     /// `0900_ai_ci` disagree about trailing spaces and about every character
     /// above the BMP, so the comparison has no single right answer.
-    /// A column determined by the grouped key is still refused.
+    /// A column the grouped key determines is answered, not refused.
     ///
     /// `MySQL` under `ONLY_FULL_GROUP_BY` accepts this: grouping by a primary
-    /// key determines every other column of the row, so selecting one is
-    /// unambiguous. That analysis does not exist here.
-    ///
-    /// Pinned as a test rather than left in prose because the limitation was
-    /// first written down on the strength of an error message whose real
-    /// cause turned out to be something else entirely - an unsupported
-    /// `GROUP BY` ordinal. This one is checked.
+    /// key fixes every other column of the row, so selecting one is
+    /// unambiguous. It reads as `ANY_VALUE` because that is what "one value per
+    /// group" means to the executor - the group cannot be split on a column
+    /// that does not vary within it.
     #[test]
-    fn a_column_determined_by_the_grouped_key_is_still_refused() {
-        assert!(
-            matches!(
-                bind("SELECT id, Name FROM Events GROUP BY id"),
-                Err(BindError::UngroupedColumn(_)),
+    fn a_column_determined_by_the_grouped_key_is_answered() {
+        let bound = bind("SELECT id, Name FROM Events GROUP BY id").expect("bind");
+        assert!(matches!(
+            bound.projection[0].expr.kind,
+            BoundExprKind::GroupKey(0)
+        ));
+        assert!(matches!(
+            bound.projection[1].expr.kind,
+            BoundExprKind::Aggregate(1)
+        ));
+        assert_eq!(bound.aggregates.len(), 1);
+        assert_eq!(bound.aggregates[0].function, AggregateFunction::AnyValue);
+    }
+
+    /// Grouping by a column that is not a key decides nothing else about the
+    /// row, and the refusal stands. This is the load-bearing half: an
+    /// analysis that determined too much would answer with an arbitrary
+    /// value where `MySQL` reports an error.
+    #[test]
+    fn a_non_key_grouping_determines_nothing() {
+        assert!(matches!(
+            bind("SELECT Events.active, COUNT(*) FROM Events GROUP BY Events.Name"),
+            Err(BindError::UngroupedColumn(_)),
+        ));
+        // `amount` belongs to a table with no unique key at all, so even
+        // grouping by every column of another table cannot reach it.
+        assert!(matches!(
+            bind("SELECT payments.amount, COUNT(*) FROM Events, payments GROUP BY Events.id"),
+            Err(BindError::UngroupedColumn(_)),
+        ));
+    }
+
+    /// Chitti LMS: `GROUP BY UserSection.paymentTypeId` while selecting
+    /// `PaymentType.paymentTypeName` off a LEFT JOIN on that same key. The
+    /// join equality carries the grouping key onto the dimension's primary
+    /// key, and the primary key fixes the name.
+    #[test]
+    fn an_equality_carries_the_grouping_key_across_a_join() {
+        for sql in [
+            "SELECT users.email, COUNT(*) FROM Events \
+             JOIN users ON users.id = Events.id GROUP BY Events.id",
+            "SELECT users.email, COUNT(*) FROM Events \
+             LEFT JOIN users ON users.id = Events.id GROUP BY Events.id",
+            // The reported shape: a second ON conjunct that the grouping key
+            // does not decide does not undo the first one.
+            "SELECT users.email, COUNT(*) FROM Events \
+             LEFT JOIN users ON users.id = Events.id AND users.email = Events.Name \
+             GROUP BY Events.id",
+            // WHERE carries it too, and a constant decides outright.
+            "SELECT users.email, COUNT(*) FROM Events, users \
+             WHERE users.id = Events.id GROUP BY Events.id",
+            "SELECT Events.Name, COUNT(*) FROM Events WHERE Events.Name = 'x'",
+        ] {
+            bind(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+        }
+        // The join equality runs one way only: grouping by the dimension's
+        // NAME does not decide which fact row was joined.
+        assert!(matches!(
+            bind(
+                "SELECT Events.Name, COUNT(*) FROM Events \
+                 JOIN users ON users.id = Events.id GROUP BY users.email"
             ),
-            "functional-dependency analysis is not implemented; if this now \
-             passes, the limitation in docs/limitations.md is stale",
-        );
+            Err(BindError::UngroupedColumn(_)),
+        ));
     }
 
     /// Chitti LMS PT-3, both directions. The negative case is the
