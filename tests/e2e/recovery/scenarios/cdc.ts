@@ -1,4 +1,5 @@
 import { until, type Context, type Scenario } from '../harness'
+import { gtidContains } from '../policy'
 
 /** GOAL.md:324 and pintail-cdc/src/lib.rs:4: all touched WALs precede the SQLite position. */
 async function durability(ctx: Context, site: string, committed = false) {
@@ -6,12 +7,14 @@ async function durability(ctx: Context, site: string, committed = false) {
   await ctx.converge('before-fault')
   await ctx.stop()
   const before = ctx.durable('before-cdc-fault').checkpoints[0]
+  const witness = await ctx.commitWitness()
   await ctx.startChurn()
   const first = ctx.commits
   await until('multi-table transactions accumulate during downtime', async () => ctx.commits >= first + 2)
   await ctx.start(site)
   await ctx.fired(site)
   const after = ctx.durable('after-cdc-fault').checkpoints[0]
+  ctx.check('checkpoint:acknowledges-exact-witness-only-after-commit', gtidContains(after.gtid_set, witness) === committed, witness)
   if (committed) {
     ctx.check('checkpoint:advances-after-commit', after.gtid_set !== before.gtid_set, JSON.stringify({ before: before.gtid_set, after: after.gtid_set }))
   } else {

@@ -3,7 +3,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
-import { docker, dockerHost, dsnHost, publishedPort, freePort, waitForMysql } from '../lib'
+import { docker, dockerHost, dsnHost, publishedPort, freePort } from '../lib'
 import { assertAutomaticRequest, exactDiff } from './policy'
 import { seedStandard, transfer } from './schema'
 import { SourceProxy } from './proxy'
@@ -20,8 +20,6 @@ export interface Scenario {
   proxy?: boolean
   seed?: (ctx: Context) => Promise<void>
   run: (ctx: Context) => Promise<void>
-  /** An explicitly scoped documented gap. All other tables still compare. */
-  gap?: { table: string; pattern: RegExp; promise: string }
 }
 export interface ApiOptions { method?: string; body?: unknown }
 const rawApis = new WeakMap<Context, <T>(path: string, options?: ApiOptions) => Promise<T>>()
@@ -34,7 +32,13 @@ export async function until(label: string, predicate: () => Promise<boolean>, ti
   const deadline = Date.now() + timeout
   let last = ''
   do {
-    try { if (await predicate()) return } catch (error) { last = String(error) }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      if (await Promise.race([predicate(), new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label}: pending operation exceeded deadline`)), Math.max(1, deadline - Date.now()))
+      })])) return
+    } catch (error) { last = String(error) }
+    finally { clearTimeout(timer) }
     await Bun.sleep(100)
   } while (Date.now() < deadline)
   throw new Error(`${label} timed out${last ? `: ${last}` : ''}`)
@@ -54,16 +58,23 @@ export class Source {
       '--enforce-gtid-consistency=ON', '--default-time-zone=+00:00', '--sql-mode=NO_ENGINE_SUBSTITUTION')
     this.created = true
     this.port = await publishedPort(this.name, 3306)
-    this.root = await waitForMysql(this.host, this.port)
-    await this.root.query("CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'; GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'")
+    await until('MySQL fixture ready', async () => {
+      const connection = await this.connectOnce()
+      try { await connection.query({sql:'SELECT 1',timeout:2_000}); this.root=connection; return true }
+      catch(error) { connection.destroy(); throw error }
+    }, 120_000)
+    await this.root.query({sql:"CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'; GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'",timeout:15_000})
+  }
+  private connectOnce(schema?: string) {
+    return mysql.createConnection({ host: this.host, port: this.port, user: 'root', password: 'pintail-root', database: schema,
+      multipleStatements: true, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true, connectTimeout: 5_000 })
   }
   async connect(schema?: string) {
     let connection: mysql.Connection | undefined
     // Retry fixture connections only. Replication failures remain visible in
     // the product's activity log and are never retried by an API wrapper.
     await until('source fixture connection', async () => {
-      connection = await mysql.createConnection({ host: this.host, port: this.port, user: 'root', password: 'pintail-root', database: schema,
-        multipleStatements: true, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true, connectTimeout: 5_000 })
+      connection = await this.connectOnce(schema)
       return true
     }, 30_000)
     return connection!
@@ -107,7 +118,10 @@ export class Context {
   events: string[] = []
   checks: Check[] = []
   restartCount = 0
+  /** A named stale state only; rows, metadata and DLQ still compare fully. */
+  gap?: { table: string; pattern: RegExp; promise: string }
   constructor(readonly source: Source, readonly binary: string, readonly scenario: Scenario, runDir: string) {
+    if (!Number.isSafeInteger(this.seed) || this.seed < 0) throw new Error('recovery seed must be a nonnegative safe integer')
     this.schema = `rec_${scenario.slug.replaceAll('-', '_')}_${crypto.randomUUID().slice(0, 6)}`
     this.dataDir = mkdtempSync(join(tmpdir(), 'pintail-recovery-'))
     this.artifactDir = join(runDir, scenario.slug)
@@ -212,7 +226,7 @@ export class Context {
   async restart(failpoint = '') { await this.stop(); this.restartCount++; await this.start(failpoint) }
   async setup() {
     this.httpPort = await freePort(); this.wirePort = await freePort()
-    await this.source.root.query(`CREATE DATABASE ${identifier(this.schema)}`)
+    await this.source.root.query({sql:`CREATE DATABASE ${identifier(this.schema)}`,timeout:15_000})
     this.sourceConnection = await this.source.connect(this.schema)
     await (this.scenario.seed ?? seedStandard)(this)
     await this.start()
@@ -232,11 +246,24 @@ export class Context {
     await until(`event ${pattern}`, async () => this.events.some(event => pattern.test(event)))
     this.check(`event:${pattern.source}`, true)
   }
+  async diagnostic(pattern: RegExp) {
+    await until(`diagnostic ${pattern}`, async () => pattern.test(this.stderr))
+    this.check(`diagnostic:${pattern.source}`, true, this.stderr.split('\n').find(line => pattern.test(line)))
+  }
   async status(): Promise<{ state: string; tables: Array<{ name: string; state: string; last_error?: string; last_reconcile_at?: string }> }> {
     return this.api(`${this.path}/snapshot/status`)
   }
-  async activity(): Promise<Array<{ kind: string; status: string; error?: string; id: string }>> {
+  async activity(): Promise<Array<{ kind: string; status: string; error?: string; id: string; rows: number }>> {
     return this.api(`/api/activity?db=${this.databaseId}&limit=1000`)
+  }
+  async commitWitness(): Promise<string> {
+    if (this.churning || this.alive) throw new Error('capture the witness with replica and churn stopped')
+    const before = String((await this.rows('SELECT @@GLOBAL.gtid_executed'))[0][0])
+    await transfer(this.sourceConnection, ++this.attempts + this.seed, false)
+    this.commits++
+    const gtid = String((await this.rows(`SELECT GTID_SUBTRACT(@@GLOBAL.gtid_executed,${mysql.escape(before)})`))[0][0])
+    this.check('fixture:single-witness-transaction', /^[0-9a-f-]+:\d+$/i.test(gtid), gtid)
+    return gtid
   }
   async startChurn() {
     if (this.churning) return
@@ -295,10 +322,10 @@ export class Context {
   }
   async allRows(query: string, replica: boolean): Promise<unknown[][]> {
     const result: unknown[][] = []
-    for (let offset = 0; ; offset += 5000) {
-      const page = await (replica ? this.replicaRows(`${query} LIMIT 5000 OFFSET ${offset}`) : this.rows(`${query} LIMIT 5000 OFFSET ${offset}`))
+    for (let offset = 0; ; offset += 10000) {
+      const page = await (replica ? this.replicaRows(`${query} LIMIT 10000 OFFSET ${offset}`) : this.rows(`${query} LIMIT 10000 OFFSET ${offset}`))
       result.push(...page)
-      if (page.length < 5000) return result
+      if (page.length < 10000) return result
     }
   }
   pollStates(): Array<Record<string, any>> {
@@ -309,7 +336,6 @@ export class Context {
   async compareExact(): Promise<string | undefined> {
     const tables = (await this.rows(`SELECT table_name FROM information_schema.tables WHERE table_schema='${this.schema}' AND table_type='BASE TABLE' ORDER BY table_name`)).map(row => String(row[0]))
     for (const table of tables) {
-      if (this.scenario.gap?.table === table) continue
       const columns = (await this.rows(`SELECT column_name FROM information_schema.columns WHERE table_schema='${this.schema}' AND table_name='${table}' ORDER BY ordinal_position`)).map(row => identifier(String(row[0])))
       const keys = (await this.rows(`SELECT column_name FROM information_schema.key_column_usage WHERE table_schema='${this.schema}' AND table_name='${table}' AND constraint_name='PRIMARY' ORDER BY ordinal_position`)).map(row => identifier(String(row[0])))
       const query = `SELECT ${columns.join(',')} FROM ${identifier(table)}${keys.length ? ` ORDER BY ${keys.join(',')}` : ''}`
@@ -321,8 +347,7 @@ export class Context {
         if (diff) return `${table} grouped multiplicity: ${diff}`
       }
     }
-    const gap = this.scenario.gap ? ` AND table_name <> '${this.scenario.gap.table}'` : ''
-    const metadata = `SELECT table_name,column_name,ordinal_position,data_type,column_type,is_nullable,character_maximum_length,character_octet_length,numeric_precision,numeric_scale,datetime_precision,column_default,extra,generation_expression FROM information_schema.columns WHERE table_schema='${this.schema}'${gap} ORDER BY table_name,ordinal_position`
+    const metadata = `SELECT table_name,column_name,ordinal_position,data_type,column_type,is_nullable,character_maximum_length,character_octet_length,numeric_precision,numeric_scale,datetime_precision,column_default,extra,generation_expression FROM information_schema.columns WHERE table_schema='${this.schema}' ORDER BY table_name,ordinal_position`
     return exactDiff(await this.rows(metadata), await this.replicaRows(metadata))
   }
   async converge(label: string) {
@@ -333,12 +358,19 @@ export class Context {
       const status = await this.status()
       const dlq = await this.api<any[]>(`/api/dlq?db=${this.databaseId}`)
       if (dlq.length) { last = `DLQ not yet repaired: ${JSON.stringify(dlq)}`; return false }
-      return ['streaming', 'polling'].includes(status.state)
-        && status.tables.every(table => ['streaming', 'polling', 'completed'].includes(table.state) || table.name === this.scenario.gap?.table)
+      const healthy = ['streaming', 'polling'].includes(status.state)
+        && status.tables.every(table => ['streaming', 'polling', 'completed'].includes(table.state)
+          || (table.name === this.gap?.table && this.gap.pattern.test(table.state)))
+      if (!healthy) last = `states: ${JSON.stringify(status)}`
+      return healthy
     }).catch(error => { throw new Error(`${error}; last diff: ${last}`) })
     this.check(`converged:${label}`, true)
     const dlq = await this.api<any[]>(`/api/dlq?db=${this.databaseId}`)
     this.check(`dlq:${label}`, dlq.length === 0, JSON.stringify(dlq))
+    if (this.gap) {
+      const table = (await this.status()).tables.find(t=>t.name===this.gap!.table)
+      if (table && this.gap.pattern.test(table.state)) this.checks.push({scenario:this.scenario.slug,area:this.scenario.area,check:`documented-state-gap:${label}`,status:'WARN',detail:`${table.name}: ${table.state}; ${this.gap.promise}. All source rows and columns compared exactly.`})
+    }
   }
   async liveWrites() {
     // Standard tables all see INSERT, UPDATE and DELETE, plus a rolled-back
@@ -347,14 +379,21 @@ export class Context {
     await this.sql(`START TRANSACTION;
       INSERT INTO accounts VALUES(900000,'later',3.14,NOW(6)); UPDATE accounts SET balance=4.14,updated_at=NOW(6) WHERE id=900000; DELETE FROM accounts WHERE id=900000;
       INSERT INTO ledger(id,account_id,amount,note) VALUES(900000,1,3.14,'later'); UPDATE ledger SET note='changed' WHERE id=900000; DELETE FROM ledger WHERE id=900000;
-      INSERT INTO audit VALUES('later','single'); UPDATE audit SET payload='changed' WHERE kind='later'; DELETE FROM audit WHERE kind='later'; COMMIT;
+      INSERT INTO audit VALUES('later','single'); UPDATE audit SET payload='changed' WHERE kind='later'; DELETE FROM audit WHERE kind='later';
+      UPDATE accounts SET owner='after-repair',balance=balance+7,updated_at=NOW(6) WHERE id=1; DELETE FROM accounts WHERE id=2;
+      UPDATE ledger SET note='after-repair',amount=3.14 WHERE id=1; DELETE FROM ledger WHERE id=2;
+      UPDATE audit SET payload='updated-seed' WHERE kind='seed'; DELETE FROM audit WHERE kind='seed' LIMIT 1; COMMIT;
       START TRANSACTION; UPDATE accounts SET balance=999999 WHERE id=1; INSERT INTO ledger(id,account_id,amount,note) VALUES(900002,1,7,'rolled-back'); INSERT INTO audit VALUES('rollback','absent'); ROLLBACK;
       INSERT INTO accounts VALUES(900001,'retained',7.77,NOW(6)); INSERT INTO ledger(id,account_id,amount,note) VALUES(900001,1,7.77,'retained'); INSERT INTO audit VALUES('retained','must arrive')`)
     const tables = (await this.rows(`SELECT table_name FROM information_schema.tables WHERE table_schema='${this.schema}' AND table_name NOT IN ('accounts','ledger','audit')`)).map(r => String(r[0]))
     for (const table of tables) {
-      if (table === this.scenario.gap?.table) continue
       const columns = await this.rows(`SELECT column_name FROM information_schema.columns WHERE table_schema='${this.schema}' AND table_name='${table}' ORDER BY ordinal_position`)
-      if (columns.some(c => c[0] === 'value')) await this.sql(`INSERT INTO ${identifier(table)}(id,value) VALUES(999999,'live'); UPDATE ${identifier(table)} SET value='updated' WHERE id=999999; DELETE FROM ${identifier(table)} WHERE id=999999; INSERT INTO ${identifier(table)}(id,value) VALUES(999998,'retained')`)
+      if (columns.some(c => c[0] === 'value')) {
+        const existing = await this.rows(`SELECT id FROM ${identifier(table)} ORDER BY id LIMIT 2`)
+        if (existing[0]) await this.sql(`UPDATE ${identifier(table)} SET value='after-repair' WHERE id=${mysql.escape(String(existing[0][0]))}`)
+        if (existing[1]) await this.sql(`DELETE FROM ${identifier(table)} WHERE id=${mysql.escape(String(existing[1][0]))}`)
+        await this.sql(`INSERT INTO ${identifier(table)}(id,value) VALUES(999999,'live'); UPDATE ${identifier(table)} SET value='updated' WHERE id=999999; DELETE FROM ${identifier(table)} WHERE id=999999; INSERT INTO ${identifier(table)}(id,value) VALUES(999998,'retained'); START TRANSACTION; UPDATE ${identifier(table)} SET value='rollback' WHERE id=999998; ROLLBACK`)
+      }
     }
   }
   async proveConverged() {
@@ -364,17 +403,28 @@ export class Context {
     await this.converge('after-live-writes')
     await this.restart()
     await this.converge('after-second-restart')
+    if (this.gap) {
+      await this.stop()
+      const table=this.durable('documented-state-gap').tables.find(t=>t.name===this.gap!.table)
+      if (table) this.check('gap:old-name-is-not-a-complete-copy',table.copy_complete===0 && this.gap.pattern.test(table.state))
+    }
     this.check('automatic:no-manual-repair-event', this.scenario.area === 'operator' || !this.events.some(e => /resync\.manual/.test(e)))
   }
   async close() {
+    const failures: unknown[] = []
+    const attempt = async (work: () => unknown | Promise<unknown>) => { try { await work() } catch (error) { failures.push(error) } }
     this.churning = false; this.churnConnection?.destroy()
-    await this.churnTask?.catch(() => {})
-    await this.stop()
+    await attempt(async () => { await this.churnTask })
+    await attempt(() => this.stop())
     this.sourceConnection?.destroy()
-    await this.proxy?.close()
-    writeFileSync(join(this.artifactDir, 'events.json'), JSON.stringify(this.events, null, 2))
-    await this.source.root.query(`DROP DATABASE IF EXISTS ${identifier(this.schema)}`)
-    rmSync(this.dataDir, { recursive: true, force: true })
+    await attempt(async () => { await this.proxy?.close() })
+    await attempt(() => writeFileSync(join(this.artifactDir, 'events.json'), JSON.stringify(this.events, null, 2)))
+    await attempt(() => this.source.root.query({sql:`DROP DATABASE IF EXISTS ${identifier(this.schema)}`,timeout:15_000}))
+    await attempt(() => {
+      if (this.alive) throw new Error('retaining data directory because Pintail did not stop')
+      rmSync(this.dataDir, { recursive: true, force: true })
+    })
+    if (failures.length) throw new AggregateError(failures, failures.map(String).join('; '))
   }
 }
 

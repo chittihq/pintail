@@ -11,17 +11,25 @@ export async function seedStandard(ctx: Context) { await ctx.sql(standardSchema)
 
 /** Every committed generation contains changes to every standard table. */
 export async function transfer(connection: import('mysql2/promise').Connection, sequence: number, rollback: boolean) {
-  await connection.beginTransaction()
+  const query = (sql:string, values:(string|number)[] = []) => connection.query({sql,timeout:15_000},values)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const transaction = (async () => {
+    await query('START TRANSACTION')
+    try {
+      await query('UPDATE accounts SET balance=balance+?,updated_at=NOW(6) WHERE id=1', [sequence % 2 ? 1 : -1])
+      await query('UPDATE accounts SET balance=balance-?,updated_at=NOW(6) WHERE id=2', [sequence % 2 ? 1 : -1])
+      await query("INSERT INTO ledger(id,account_id,amount,note) VALUES (?,1,1.00,?),(?,2,-1.00,?)", [sequence * 2 + 3, `tx-${sequence}`, sequence * 2 + 4, `tx-${sequence}`])
+      await query("DELETE FROM ledger WHERE id > 2 AND id < (SELECT boundary FROM (SELECT MAX(id)-16 AS boundary FROM ledger) q)")
+      await query("INSERT INTO audit VALUES ('transfer',?)", [`tx-${sequence}`])
+      await query(rollback ? 'ROLLBACK' : 'COMMIT')
+    } catch (error) {
+      await query('ROLLBACK').catch(() => {})
+      throw error
+    }
+  })()
   try {
-    await connection.query('UPDATE accounts SET balance=balance+?,updated_at=NOW(6) WHERE id=1', [sequence % 2 ? 1 : -1])
-    await connection.query('UPDATE accounts SET balance=balance-?,updated_at=NOW(6) WHERE id=2', [sequence % 2 ? 1 : -1])
-    await connection.query("INSERT INTO ledger(id,account_id,amount,note) VALUES (?,1,1.00,?),(?,2,-1.00,?)", [sequence * 2 + 3, `tx-${sequence}`, sequence * 2 + 4, `tx-${sequence}`])
-    await connection.query("DELETE FROM ledger WHERE id > 2 AND id < (SELECT boundary FROM (SELECT MAX(id)-16 AS boundary FROM ledger) q)")
-    await connection.query("INSERT INTO audit VALUES ('transfer',?)", [`tx-${sequence}`])
-    if (rollback) await connection.rollback()
-    else await connection.commit()
-  } catch (error) {
-    await connection.rollback().catch(() => {})
-    throw error
-  }
+    await Promise.race([transaction,new Promise<never>((_,reject)=>{
+      timer=setTimeout(()=>{connection.destroy();reject(new Error('source transaction exceeded 30-second deadline'))},30_000)
+    })])
+  } finally { clearTimeout(timer) }
 }

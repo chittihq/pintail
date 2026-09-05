@@ -39,3 +39,8 @@ export function gtidContains(set: string, transaction: string): boolean {
     })
   })
 }
+
+/** Bootstrap failures can contain an unresolved Docker context or SSH target. */
+export function ledgerDetail(status: 'PASS' | 'FAIL' | 'WARN', detail: string): string {
+  return status === 'FAIL' ? 'Failed; details retained in private run artifacts.' : detail
+}

@@ -21,14 +21,15 @@ export function partialIsNotHealthy(ctx: Context, label: string) {
 }
 async function recover(ctx: Context, faults: string[]) {
   await purgeWhileDown(ctx)
-  for (const fault of faults) {
+  for (const [index, fault] of faults.entries()) {
     await ctx.start(fault)
+    if (index === 0) await ctx.diagnostic(/cdc\.resnapshot .*unavailable source position/)
     await ctx.fired(fault.split('@')[0])
     partialIsNotHealthy(ctx, `after-${fault.replaceAll('@', '-')}`)
   }
   await ctx.start()
+  if (!faults.length) await ctx.diagnostic(/cdc\.resnapshot .*unavailable source position/)
   await until('purge recovery returns to streaming', async () => (await ctx.status()).state === 'streaming')
-  ctx.check('purge:automatic-recovery-observed', ctx.events.some(e => /snapshot|resync|recovery/i.test(e)))
 }
 export const purgeScenarios: Scenario[] = [
   { slug: 'purge-auto-resnapshot', area: 'purge', promise: 'docs/limitations.md: automatic purge recovery', run: ctx => recover(ctx, []) },

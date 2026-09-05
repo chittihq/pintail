@@ -1,8 +1,14 @@
 import { until, type Context, type Scenario } from '../harness'
+import { partialIsNotHealthy } from './purge'
 
 async function pollingCheckpoint(ctx: Context) {
   await ctx.switchMode('polling')
-  await until('a changed polling cycle completed', async () => (await ctx.activity()).some(run => run.kind === 'polling' && run.status === 'completed'))
+  await until('CDC yields to the first polling cycle',async()=>(await ctx.activity()).some(r=>r.kind==='polling'&&r.status==='completed'))
+  const known = new Set((await ctx.activity()).map(r=>r.id))
+  await ctx.sql("INSERT INTO audit VALUES('polling-era','must survive handoff')")
+  await until('a changed polling cycle copied the polling-era mutation', async () =>
+    (await ctx.activity()).some(run => !known.has(run.id) && run.kind === 'polling' && run.status === 'completed' && run.rows > 0)
+    && (await ctx.replicaRows("SELECT payload FROM audit WHERE kind='polling-era'"))[0]?.[0] === 'must survive handoff')
   await ctx.stop()
   const state = ctx.durable('polling-handoff')
   ctx.check('handoff:starts-with-polling-checkpoint', state.checkpoints[0]?.kind === 'polling')
@@ -15,6 +21,7 @@ async function handoff(ctx: Context, failpoint = '') {
   await ctx.switchMode('cdc')
   if (failpoint) {
     await ctx.fired(failpoint.split('@')[0])
+    if (failpoint.startsWith('snapshot.')) partialIsNotHealthy(ctx, 'mode-handoff-copy')
     await ctx.start()
   }
   await until('CDC handoff snapshot completes', async () => (await ctx.activity()).some(r => !known.has(r.id) && r.kind === 'snapshot' && r.status === 'completed') && (await ctx.status()).state === 'streaming')

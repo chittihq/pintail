@@ -1,3 +1,4 @@
+import { ledgerDetail } from './policy'
 import { expect, test } from 'bun:test'
 import { assertAutomaticRequest, exactDiff, gtidContains, selected } from './policy'
 
@@ -24,4 +25,9 @@ test('scenario selectors are anchored glob unions', () => {
 test('GTID membership handles holes, multiple sources and integers beyond 2^53', () => {
   expect(gtidContains('a:1-3:7-9,b:9007199254740992-9007199254740994', 'a:4')).toBe(false)
   expect(gtidContains('a:1-3:7-9,b:9007199254740992-9007199254740994', 'b:9007199254740993')).toBe(true)
+})
+
+test('public failure ledger excludes unresolved private setup diagnostics', () => {
+  expect(ledgerDetail('FAIL', 'PRIVATE_SETUP_DIAGNOSTIC')).not.toContain('PRIVATE_SETUP_DIAGNOSTIC')
+  expect(ledgerDetail('PASS', 'checkpoint witness verified')).toBe('checkpoint witness verified')
 })
