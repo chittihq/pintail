@@ -12922,7 +12922,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150049 sync_runs rows for db_5aabb588ee70288e4f8cb79e2ac963cd"
+    "detail": "150058 sync_runs rows for db_f64c171dad563dc3aa0a1d13da6c317e"
   },
   {
     "phase": "activity-history",
@@ -12934,19 +12934,19 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 5ms over 150000 rows"
+    "detail": "p50 3ms p95 18ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 6ms"
+    "detail": "p50 3ms p95 13ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 30ms p99 48ms"
+    "detail": "p50 31ms p99 60ms"
   },
   {
     "phase": "activity-history",
@@ -13860,25 +13860,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4753"
+    "detail": "0 failed of 4819"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4753 requests: p50 3ms p99 20ms"
+    "detail": "4819 requests: p50 2ms p99 19ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 21ms"
+    "detail": "health p99 5ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 620 vs source 620"
+    "detail": "orders replica 590 vs source 590"
   },
   {
     "phase": "poll-storm",
@@ -21366,7 +21366,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 62 ok, dashboards 157 ok; no errors"
+    "detail": "wire 240 ok, http 70 ok, dashboards 198 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -21378,31 +21378,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 62"
+    "detail": "wire 240 of 240, http 70"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 449ms p99 832ms over 240 queries"
+    "detail": "wire p50 496ms p99 1567ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 9ms over 11 samples"
+    "detail": "health p99 14ms over 14 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 340MB with a 256MB budget"
+    "detail": "peak RSS 268MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201000 vs source 201000"
+    "detail": "big 200900 vs source 200900"
   },
   {
     "phase": "memory-pressure",
@@ -22339,13 +22339,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 11.4s"
+    "detail": "child 1800000 vs source 1800000 after 38.9s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 30MB before, peak 133MB during (margin 768MB)"
+    "detail": "RSS 27MB before, peak 208MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
