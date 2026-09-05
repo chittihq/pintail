@@ -18,7 +18,7 @@ serialized and uses only containers created by this repository's harnesses.
    wire decoding, binlog decoding and persisted-format readers, with a local
    smoke corpus and reproducible commands. Reject malformed input gracefully;
    never hide unexpected panics.
-4. [ ] **Instruction-count gate.** Add a deterministic in-process workload
+4. [x] **Instruction-count gate.** Add a deterministic in-process workload
    and Linux instruction-count comparison with explicit baseline provenance,
    thresholds and a CI job. Keep correctness checks and timed benchmarks.
 5. [ ] **Release profile, then PGO.** Enable explicit release optimization
@@ -38,6 +38,12 @@ serialized and uses only containers created by this repository's harnesses.
    and classification. Document that classification is not a latency guarantee.
 
 ## Evidence and decisions
+
+- Item 4: four answer-checked in-process workloads, a Callgrind recorder,
+  per-query 5% comparison, and a push/PR workflow are implemented. A baseline
+  was recorded on Linux x86_64 with rustc 1.97.1 and Valgrind 3.19.0; an
+  independent repeat passed all four comparisons. The ledger records three
+  samples per query, source/binary hashes, compiler and workload identity.
 
 - Item 3: three cargo-fuzz targets, committed seeds, local smoke checks in
   push CI, and a manual fuzz workflow are implemented. Wire and storage each

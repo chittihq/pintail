@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "head": "5ffde1e8398e581fcbb1a53b147a1afbdbca5687",
+  "label": "release-default",
+  "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
+  "valgrind": "valgrind-3.19.0",
+  "architecture": "x86_64",
+  "threads": 1,
+  "workload_sha256": "1e253b6a8f807e8c93c373f1d1de69e891bf69db8a6a8f80eec838d3f8470e40",
+  "binary_sha256": "f0cac47b053a949acd82d944a922483038a02128a6eecad71ac753732cfec655",
+  "instructions": {
+    "filter": 8081261,
+    "aggregate": 2574133,
+    "join": 40356511,
+    "sort": 9540207
+  },
+  "samples": {
+    "filter": [
+      8081261,
+      8081261,
+      8081261
+    ],
+    "aggregate": [
+      2574133,
+      2574240,
+      2574129
+    ],
+    "join": [
+      40356322,
+      40356511,
+      40357110
+    ],
+    "sort": [
+      9540220,
+      9540207,
+      9540207
+    ]
+  },
+  "verdict": "RECORDED"
+}

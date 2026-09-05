@@ -1,4 +1,4 @@
-FROM rust:1.97-bookworm
+FROM rust:1.97.1-bookworm
 RUN apt-get update && apt-get install --yes --no-install-recommends valgrind python3 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /source

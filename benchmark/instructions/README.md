@@ -19,6 +19,10 @@ SOURCE_COMMIT=$(git rev-parse HEAD) -t pintail-instructions .`, then run
 The JSON is printed to stdout for capture even with a remote daemon; no bind
 mount or privileged performance-counter access is required.
 
+The banked baseline uses rustc 1.97.1 and Valgrind 3.19.0 on Linux x86_64.
+The measurement CI job pins that compiler independently of the normal test
+toolchain so a repository toolchain file cannot silently change the comparison.
+
 Use `--record --label <build>` to collect a candidate baseline without claiming
 a pass. Review and explicitly bank `baseline-linux.json` after measurement.
 Architecture, compiler, Valgrind, workload hash and thread count must match for

@@ -7,7 +7,9 @@ permissions:
 jobs:
   instructions:
     runs-on: ubuntu-latest
-    container: rust:1.97-bookworm
+    container: rust:1.97.1-bookworm
+    env:
+      RUSTUP_TOOLCHAIN: 1.97.1
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
