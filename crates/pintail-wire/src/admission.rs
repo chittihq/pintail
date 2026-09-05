@@ -68,9 +68,22 @@ pub fn default_max_concurrent_queries() -> usize {
 #[derive(Debug)]
 pub struct QueryAdmission {
     limit: usize,
-    available: Mutex<usize>,
+    available: Mutex<Capacity>,
     released: Condvar,
     wait: Duration,
+}
+
+#[derive(Debug)]
+struct Capacity {
+    general: usize,
+    reserved: usize,
+}
+
+/// Reserved capacity is available only to conservatively bounded queries.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QueryClass {
+    General,
+    Short,
 }
 
 impl QueryAdmission {
@@ -81,7 +94,10 @@ impl QueryAdmission {
     pub fn new(limit: usize) -> Self {
         Self {
             limit,
-            available: Mutex::new(limit),
+            available: Mutex::new(Capacity {
+                general: limit - reserved_slots(limit),
+                reserved: reserved_slots(limit),
+            }),
             released: Condvar::new(),
             wait: DEFAULT_QUEUE_WAIT,
         }
@@ -107,27 +123,42 @@ impl QueryAdmission {
     /// server is saturated and the caller should refuse the query.
     #[must_use]
     pub fn try_admit(&self) -> Option<QueryPermit<'_>> {
+        self.try_admit_class(QueryClass::General)
+    }
+
+    /// Short queries use their reserved slots first, then may borrow general
+    /// slots. General queries cannot borrow the reserve. Both share one total.
+    #[must_use]
+    pub fn try_admit_class(&self, class: QueryClass) -> Option<QueryPermit<'_>> {
         if self.limit == 0 {
-            return Some(QueryPermit { admission: None });
+            return Some(QueryPermit {
+                admission: None,
+                reserved: false,
+            });
         }
-        let Ok(available) = self.available.lock() else {
-            // A poisoned lock means another query panicked while holding
-            // the count. Admitting is the safe direction: refusing every
-            // query afterwards would turn one panic into an outage.
-            return Some(QueryPermit { admission: None });
+        let available = self
+            .available
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (mut available, _) = self
+            .released
+            .wait_timeout_while(available, self.wait, |capacity| {
+                capacity.general == 0 && (class == QueryClass::General || capacity.reserved == 0)
+            })
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reserved = class == QueryClass::Short && available.reserved > 0;
+        let slots = if reserved {
+            &mut available.reserved
+        } else {
+            &mut available.general
         };
-        let Ok((mut available, timeout)) =
-            self.released
-                .wait_timeout_while(available, self.wait, |available| *available == 0)
-        else {
-            return Some(QueryPermit { admission: None });
-        };
-        if timeout.timed_out() && *available == 0 {
+        if *slots == 0 {
             return None;
         }
-        *available -= 1;
+        *slots -= 1;
         Some(QueryPermit {
             admission: Some(self),
+            reserved,
         })
     }
 }
@@ -137,6 +168,7 @@ impl QueryAdmission {
 #[derive(Debug)]
 pub struct QueryPermit<'admission> {
     admission: Option<&'admission QueryAdmission>,
+    reserved: bool,
 }
 
 impl Drop for QueryPermit<'_> {
@@ -144,17 +176,56 @@ impl Drop for QueryPermit<'_> {
         let Some(admission) = self.admission else {
             return;
         };
-        if let Ok(mut available) = admission.available.lock() {
-            *available += 1;
-            admission.released.notify_one();
+        let mut available = admission
+            .available
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self.reserved {
+            available.reserved += 1;
+        } else {
+            available.general += 1;
         }
+        // The released pool may serve only one class. Wake both classes so a
+        // general waiter cannot swallow a reserved-slot notification.
+        admission.released.notify_all();
+    }
+}
+
+// Preserve at least one general slot; small configured limits stay useful.
+const fn reserved_slots(limit: usize) -> usize {
+    if limit < 4 {
+        0
+    } else if limit < 8 {
+        1
+    } else {
+        2
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryAdmission, default_max_concurrent_queries};
+    use super::{QueryAdmission, QueryClass, default_max_concurrent_queries};
     use std::{sync::Arc, thread, time::Duration};
+
+    #[test]
+    fn short_queries_remain_admissible_under_general_saturation() {
+        let admission = QueryAdmission::with_wait(4, Duration::from_millis(1));
+        let general = (0..3)
+            .map(|_| admission.try_admit().unwrap())
+            .collect::<Vec<_>>();
+        assert!(admission.try_admit().is_none());
+        let short = admission.try_admit_class(QueryClass::Short).unwrap();
+        assert!(admission.try_admit_class(QueryClass::Short).is_none());
+        drop(short);
+        assert!(admission.try_admit().is_none());
+        drop(general);
+        let short = (0..4)
+            .map(|_| admission.try_admit_class(QueryClass::Short).unwrap())
+            .collect::<Vec<_>>();
+        assert!(admission.try_admit_class(QueryClass::Short).is_none());
+        drop(short);
+        assert!(admission.try_admit().is_some());
+    }
 
     #[test]
     fn a_permit_is_returned_when_capacity_exists() {

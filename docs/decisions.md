@@ -1125,3 +1125,29 @@ rebuild during the Docker build; the default is 0. Profiling tools and training
 data never enter the runtime image. The four-query executor training workload
 has an independent result oracle and produces a separate PGO binary; it is not
 representative evidence for replication, networking or all SQL workloads.
+
+### Reserved admission for conservatively bounded queries
+
+Query admission keeps the configured process-wide total. Limits below four
+reserve no slots; limits four through seven reserve one; larger limits reserve
+two. General work cannot consume the reserve. Eligible short work prefers the
+reserve and may borrow general capacity. Slots return on errors and unwinding;
+waiters of both classes wake when capacity returns. A zero limit remains
+unbounded. The general-work ceiling is therefore lower by the reserved count.
+
+The first cost estimate combines syntax with the actual pinned replica. SQL
+up to 8 KiB with at most 128 simple expressions may qualify. Functions, joins,
+CTEs, subqueries, grouping and unknown expression kinds do not qualify. The
+whole cached database must contain at most 16 tables, 128 columns and 1,024
+physical input rows (including WAL/memtable rows, old versions and tombstones),
+with at most 128 stamped files totaling 4 MiB. The cache must still match its
+on-disk stamp. The exact pinned copy that passed those checks executes; cold
+or stale copies load only after acquiring general capacity. A small LIMIT
+alone cannot turn a large scan into reserved work.
+
+This deliberately leaves many fast queries in the general pool, including
+point lookups on large tables and aggregates. It is an initial admission cost
+estimate, not a duration promise: disk latency, compression and contention
+still matter. Broader planner estimates can extend eligibility without
+changing the two-pool admission contract. The shared total applies equally
+to HTTP and wire requests.

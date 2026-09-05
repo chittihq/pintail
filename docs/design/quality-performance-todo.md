@@ -32,7 +32,7 @@ serialized and uses only containers created by this repository's harnesses.
 7. [x] **Auditor benchmark kit.** Provide one documented command for a clean
    machine to run the published workload, with dependencies checked, isolated
    owned resources, machine/toolchain provenance and portable output artifacts.
-8. [ ] **Two-tier admission.** Reserve bounded capacity for conservatively
+8. [x] **Two-tier admission.** Reserve bounded capacity for conservatively
    classified short queries without allowing unknown/heavy plans to consume
    the reserve. Keep the process-wide total bound and test contention, release
    and classification. Document that classification is not a latency guarantee.

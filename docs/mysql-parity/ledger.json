@@ -32,7 +32,7 @@
     },
     {
       "path": "crates/pintail-sql/src/lib.rs",
-      "sha256": "eb049c4a094bf02f05272b6061024a5285553ddb43743966e58a5cebefca2b2d"
+      "sha256": "18a6503e28df2f164f68e540dbf3bbe19af192424f372a96a7091e9003938cb2"
     },
     {
       "path": "crates/pintail-wire/src/server.rs",

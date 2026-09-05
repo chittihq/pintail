@@ -14,7 +14,7 @@ use pintail_exec::{
 };
 use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 
-use crate::admission::{QueryAdmission, shared_admission};
+use crate::admission::{QueryAdmission, QueryClass, shared_admission};
 use crate::replica_cache::{
     self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp,
 };
@@ -311,6 +311,50 @@ impl ReplicaEngine {
         (self.data_dir.clone(), database_id.to_owned())
     }
 
+    // Only reuse a revalidated, small pinned replica for reserved work. A
+    // concurrent CDC write after this stamp does not change the pinned view.
+    // Cold/stale replicas are loaded only after obtaining general capacity.
+    fn short_query_replica(
+        &self,
+        database_id: &str,
+        statement: &Statement,
+    ) -> Option<Arc<LoadedReplica>> {
+        if !pintail_sql::has_bounded_admission_shape(statement) {
+            return None;
+        }
+        let key = self.cache_key(database_id);
+        let replica = self.cache.peek(&key)?;
+        if replica.targets.len() > 16 {
+            return None;
+        }
+        let mut rows = 0_u64;
+        let mut columns = 0_usize;
+        for table in &replica.targets {
+            rows = rows.saturating_add(table.snapshot.physical_row_upper_bound());
+            columns = columns.saturating_add(table.snapshot.schema().columns().len());
+            if rows > 1024 || columns > 128 {
+                return None;
+            }
+        }
+        let stamp = self.replica_stamp(database_id);
+        if stamp.files() > 128 {
+            return None;
+        }
+        let bytes = stamp
+            .metadata
+            .iter()
+            .chain(stamp.tables.values().flatten())
+            .fold(0_u64, |total, file| total.saturating_add(file.1));
+        if bytes > 4 * 1024 * 1024 {
+            return None;
+        }
+        match self.cache.lookup(&key, &stamp) {
+            // The size checks above must describe exactly the copy we return.
+            Lookup::Hit(current) if Arc::ptr_eq(&replica, &current) => Some(current),
+            _ => None,
+        }
+    }
+
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
         // Every query pays the stamp before it plans anything. A miss used
         // to pay a reload of EVERY table's store - on a replica under active
@@ -423,12 +467,28 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
         let started = Instant::now();
-        // Held for the whole execution and released on drop, including on
-        // an early return or panic. Taken before any replica or catalog
-        // work so a saturated server refuses cheaply.
-        let _permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
-        let statement =
-            parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+        // Bound classification work itself. Large statements acquire general
+        // capacity before parsing; small ones may qualify for the reserve.
+        let (statement, short_replica, _permit) = if sql.len() <= 8192 {
+            let statement =
+                parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+            let replica = self.short_query_replica(database_id, &statement);
+            let class = if replica.is_some() {
+                QueryClass::Short
+            } else {
+                QueryClass::General
+            };
+            let permit = self
+                .admission
+                .try_admit_class(class)
+                .ok_or(QueryError::Overloaded)?;
+            (statement, replica, permit)
+        } else {
+            let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
+            let statement =
+                parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+            (statement, None, permit)
+        };
         // Writes are routed before any replica is loaded: a write needs no
         // catalog snapshot, and a local database that has not created its
         // first table has none to load.
@@ -438,7 +498,10 @@ impl ReplicaEngine {
         if is_transaction_control(&statement) {
             return Err(self.transaction_control_rejection(database_id));
         }
-        let replica = self.load_replica_cached(database_id)?;
+        let replica = match short_replica {
+            Some(replica) => replica,
+            None => self.load_replica_cached(database_id)?,
+        };
         let catalog = build_catalog(&replica)?;
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
@@ -1238,4 +1301,79 @@ fn write_error(error: &pintail_write::WriteError) -> QueryError {
         _ => return QueryError::Invalid(message),
     };
     QueryError::Rejected { rejection, message }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use pintail_write::LocalDatabase;
+
+    #[test]
+    fn reserved_execution_rechecks_real_replica_size_and_freshness() {
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", "2026-09-05T00:00:00Z")
+            .unwrap();
+        drop(meta);
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO a VALUES (1)",
+        ] {
+            writer.execute(&parse_statement(sql).unwrap()).unwrap();
+        }
+        let mut engine = ReplicaEngine::new(directory.path(), &metadata_path);
+        engine.admission = Arc::new(QueryAdmission::with_wait(4, Duration::from_millis(1)));
+        let sql = "SELECT id FROM a WHERE id = 1";
+        // Cold load cannot claim the reserve, even for a small LIMIT.
+        let permits = (0..3)
+            .map(|_| engine.admission.try_admit().unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            engine.execute("db", sql, 10),
+            Err(QueryError::Overloaded)
+        ));
+        drop(permits);
+        engine.execute("db", sql, 10).unwrap();
+        let permits = (0..3)
+            .map(|_| engine.admission.try_admit().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            engine.execute("db", sql, 10).unwrap().rows,
+            vec![vec![Value::UInt64(1)]]
+        );
+        assert!(matches!(
+            engine.execute("db", "SELECT COUNT(*) FROM a", 10),
+            Err(QueryError::Overloaded)
+        ));
+        // A write behind the reader makes the cached classification stale.
+        writer
+            .execute(&parse_statement("INSERT INTO a VALUES (2)").unwrap())
+            .unwrap();
+        assert!(matches!(
+            engine.execute("db", sql, 10),
+            Err(QueryError::Overloaded)
+        ));
+        drop(permits);
+        engine.execute("db", sql, 10).unwrap();
+        // The physical bound includes memtable/CDC rows, not rows_synced.
+        let values = (3..=1025)
+            .map(|id| format!("({id})"))
+            .collect::<Vec<_>>()
+            .join(",");
+        writer
+            .execute(&parse_statement(&format!("INSERT INTO a VALUES {values}")).unwrap())
+            .unwrap();
+        engine.execute("db", sql, 10).unwrap();
+        let _permits = (0..3)
+            .map(|_| engine.admission.try_admit().unwrap())
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            engine.execute("db", "SELECT id FROM a LIMIT 1", 10),
+            Err(QueryError::Overloaded)
+        ));
+    }
 }

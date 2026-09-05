@@ -120,6 +120,15 @@ impl<R> ReplicaCache<R> {
         }
     }
 
+    /// Returns a candidate without disk I/O. It must be revalidated before use.
+    pub(crate) fn peek(&self, key: &CacheKey) -> Option<Arc<R>> {
+        self.entries
+            .lock()
+            .ok()?
+            .get(key)
+            .map(|entry| Arc::clone(&entry.replica))
+    }
+
     /// Judges the cached replica for `key` against `current`, the stamp
     /// just taken from disk.
     pub(crate) fn lookup(&self, key: &CacheKey, current: &ReplicaStamp) -> Lookup<R> {

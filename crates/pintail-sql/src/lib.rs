@@ -11,6 +11,9 @@ use std::ops::ControlFlow;
 use sqlparser::dialect::{Dialect, MySqlDialect};
 use sqlparser::parser::{Parser, ParserError};
 
+mod admission;
+pub use admission::has_bounded_admission_shape;
+
 pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};

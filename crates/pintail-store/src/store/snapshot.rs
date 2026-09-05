@@ -88,6 +88,16 @@ impl BackupSegment {
 }
 
 impl TableSnapshot {
+    /// Upper bound on physical input rows, including obsolete versions and
+    /// tombstones. Unlike source estimates this includes the pinned WAL tail.
+    #[must_use]
+    pub fn physical_row_upper_bound(&self) -> u64 {
+        self.manifest.segments.iter().fold(
+            u64::try_from(self.memtable.len()).unwrap_or(u64::MAX),
+            |rows, segment| rows.saturating_add(segment.row_count),
+        )
+    }
+
     /// Bytes of unflushed rows this snapshot keeps resident: the WAL tail
     /// replayed into memory at open, or the writer's live memtable. Segment
     /// data is read from files and not counted.
