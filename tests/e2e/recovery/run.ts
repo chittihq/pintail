@@ -14,8 +14,9 @@ import { schemaScenarios } from './scenarios/schema'
 import { pollScenarios } from './scenarios/poll'
 import { boundaryScenarios } from './scenarios/boundaries'
 import { outageScenarios } from './scenarios/outage'
+import { operatorScenarios } from './scenarios/operator'
 
-const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios, ...schemaScenarios, ...pollScenarios, ...boundaryScenarios, ...outageScenarios]
+const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios, ...schemaScenarios, ...pollScenarios, ...boundaryScenarios, ...outageScenarios, ...operatorScenarios]
 const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
 if ((process.argv.includes('--only') || process.argv.some(a=>a.startsWith('--only='))) && !arg?.trim()) throw new Error('--only requires a scenario pattern')
