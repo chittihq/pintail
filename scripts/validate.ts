@@ -184,7 +184,7 @@ const STAGES: Stage[] = [
     command: [
       'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture',
     ],
-    env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
+    env: { PINTAIL_DASHBOARD_PREBUILT: '1', PINTAIL_ORACLE_EVIDENCE: join(repository, 'tests/sqllogic/results-oracle.json') },
   },
   {
     name: 'e2e',
@@ -872,6 +872,7 @@ async function main() {
   /// committing it stays a deliberate act.
   const ARTIFACT_PREFIXES = [
     'tests/e2e/results',
+    'tests/sqllogic/results-oracle.json',
     'benchmark/results.',
     // Re-measured whenever the benchmark's fingerprint or its host changes,
     // and banked with the rest of the bench evidence. Its absence here

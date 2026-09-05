@@ -45,10 +45,39 @@ export function differentialCases(ledger: string, queries: CoverageQuery[]) {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export interface DifferentialEvidence {
+export interface EvidenceRun {
   schemaVersion: number; commit: string; measuredAt: string; source: string
   ledgerSha256: string; corpusSha256: string
   cases: ReturnType<typeof differentialCases>
+}
+
+export interface OracleEvidence extends EvidenceRun { sourceCommit: string }
+export interface DifferentialEvidence extends EvidenceRun { oracle?: OracleEvidence }
+
+export function oracleEvidenceFromLedger(ledger: string, corpus: string, commit: string): OracleEvidence {
+  const run = JSON.parse(ledger)
+  if (run.schemaVersion !== 1 || run.verdict !== 'PASS' || run.cleanTree !== true) throw new Error('Oracle evidence requires a clean PASS run')
+  if (!/^[a-f0-9]{40}$/.test(commit) || !/^[a-f0-9]{40}$/.test(run.commit) ||
+      typeof run.measuredAt !== 'string' || !Number.isFinite(Date.parse(run.measuredAt)) ||
+      typeof run.source !== 'string' || !run.source.startsWith('MySQL ')) throw new Error('Invalid oracle provenance')
+  if (run.corpusSha256 !== sha256(corpus)) throw new Error('Stale oracle corpus')
+  const expected = Number(/const EXPECTED_CASES: usize = (\d+);/.exec(corpus)?.[1])
+  if (!expected || run.expectedCases !== expected || !Array.isArray(run.cases) || run.cases.length !== expected) throw new Error('Oracle evidence is not a complete fixed corpus')
+  const names = new Set<string>()
+  const cases = run.cases.map((row: { name: string; sql: string; ordered: boolean; status: string }) => {
+    if (typeof row.name !== 'string' || !row.name || typeof row.sql !== 'string' || !row.sql || typeof row.ordered !== 'boolean' || row.status !== 'PASS') throw new Error('Oracle case lacks SQL or PASS result')
+    if (names.has(row.name)) throw new Error('Duplicate oracle case name')
+    names.add(row.name)
+    return { name: `oracle:${row.name}`, sqlSha256: sha256(row.sql), functions: functionCalls(row.sql), phases: ['fixed-oracle'] }
+  }).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
+  return {
+    schemaVersion: 1, commit, sourceCommit: run.commit, measuredAt: run.measuredAt, source: run.source,
+    ledgerSha256: sha256(ledger), corpusSha256: sha256(corpus), cases,
+  }
+}
+
+export function validateOracleEvidence(evidence: OracleEvidence, ledger: string, corpus: string) {
+  if (JSON.stringify(evidence) !== JSON.stringify(oracleEvidenceFromLedger(ledger, corpus, evidence.commit))) throw new Error('Oracle evidence does not match the recorded run')
 }
 
 export function validateEvidence(evidence: DifferentialEvidence, ledger: string, corpus: string, queries: CoverageQuery[]) {

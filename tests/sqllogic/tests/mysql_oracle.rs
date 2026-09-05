@@ -7,6 +7,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
+
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
@@ -245,6 +247,13 @@ fn oracle_case_inventory_matches_the_declared_gate() {
 
 #[allow(clippy::too_many_lines)]
 fn run_oracle() -> Result<(), String> {
+    let evidence = std::env::var("PINTAIL_ORACLE_EVIDENCE")
+        .ok()
+        .map(|path| {
+            let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+            OracleRunProvenance::capture(root).map(|provenance| (path, provenance))
+        })
+        .transpose()?;
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
 
@@ -317,6 +326,7 @@ fn run_oracle() -> Result<(), String> {
         }
     }
     if failures.is_empty() {
+        export_oracle_evidence(&mysql, &cases, evidence.as_ref())?;
         println!(
             "all {EXPECTED_CASES} generated and hand-written queries matched {}",
             mysql.image
@@ -329,6 +339,122 @@ fn run_oracle() -> Result<(), String> {
             failures.join("\n\n")
         ))
     }
+}
+
+struct OracleRunProvenance {
+    root: std::path::PathBuf,
+    commit: String,
+}
+
+impl OracleRunProvenance {
+    fn git(&self, args: &[&str]) -> Result<String, String> {
+        let output = checked_output(
+            Command::new("git").current_dir(&self.root).args(args),
+            "oracle provenance",
+        )?;
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    }
+
+    fn capture(root: std::path::PathBuf) -> Result<Self, String> {
+        let mut provenance = Self {
+            root,
+            commit: String::new(),
+        };
+        provenance.commit = provenance.git(&["rev-parse", "HEAD"])?;
+        provenance.verify()?;
+        Ok(provenance)
+    }
+
+    fn verify(&self) -> Result<(), String> {
+        if !self.git(&["status", "--porcelain"])?.is_empty()
+            || self.git(&["rev-parse", "HEAD"])? != self.commit
+        {
+            return Err(
+                "oracle evidence requires a clean, unchanged checkout throughout the run".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
+#[test]
+fn oracle_evidence_rejects_dirty_starts_and_changes_during_the_run() {
+    let directory = tempfile::tempdir().expect("repository");
+    let setup = OracleRunProvenance {
+        root: directory.path().to_owned(),
+        commit: String::new(),
+    };
+    setup.git(&["init", "--quiet"]).expect("init");
+    setup
+        .git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ])
+        .expect("commit");
+    let run = OracleRunProvenance::capture(directory.path().to_owned()).expect("clean start");
+    std::fs::write(directory.path().join("engine.rs"), "changed").expect("edit");
+    assert!(OracleRunProvenance::capture(directory.path().to_owned()).is_err());
+    assert!(run.verify().is_err());
+    setup.git(&["add", "engine.rs"]).expect("add");
+    setup
+        .git(&[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "changed engine",
+        ])
+        .expect("commit");
+    assert!(
+        run.verify().is_err(),
+        "a newly clean commit is not the measured revision"
+    );
+}
+
+/// Written only after every fixed-corpus comparison succeeds. The compiled-in
+/// source hash ties generated SQL and fixture data to the exact test source.
+fn export_oracle_evidence(
+    mysql: &MysqlContainer,
+    cases: &[OracleCase],
+    evidence: Option<&(String, OracleRunProvenance)>,
+) -> Result<(), String> {
+    let Some((path, provenance)) = evidence else {
+        return Ok(());
+    };
+    provenance.verify()?;
+    let version = mysql.query_batch("SELECT VERSION();")?;
+    let mut corpus_hash = String::with_capacity(64);
+    for byte in Sha256::digest(include_str!("mysql_oracle.rs").as_bytes()) {
+        write!(corpus_hash, "{byte:02x}").expect("write digest to string");
+    }
+    let report = serde_json::json!({
+        "schemaVersion": 1,
+        "verdict": "PASS",
+        "commit": provenance.commit,
+        "cleanTree": true,
+        "measuredAt": chrono::Utc::now().to_rfc3339(),
+        "source": format!("MySQL {} ({})", version.trim(), mysql.image),
+        "corpusSha256": corpus_hash,
+        "expectedCases": EXPECTED_CASES,
+        "comparator": "exact text except float results: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
+        "cases": cases.iter().enumerate().map(|(index, case)| serde_json::json!({
+            "name": format!("{index:04}:{}", case.family),
+            "sql": case.sql,
+            "ordered": case.ordered,
+            "status": "PASS",
+        })).collect::<Vec<_>>(),
+    });
+    let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+    std::fs::write(path, format!("{text}\n"))
+        .map_err(|error| format!("write oracle evidence: {error}"))
 }
 
 fn checked_output(command: &mut Command, action: &str) -> Result<Output, String> {

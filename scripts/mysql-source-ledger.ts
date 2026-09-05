@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join, relative, resolve } from 'node:path'
 import { surface } from './function-surface.ts'
 import { differentialQueries } from '../tests/e2e/queries.ts'
-import { validateEvidence, type DifferentialEvidence } from './differential-coverage.ts'
+import { validateEvidence, validateOracleEvidence, type DifferentialEvidence } from './differential-coverage.ts'
 
 const root = resolve(import.meta.dir, '..')
 const dir = join(root, 'docs/mysql-parity')
@@ -120,6 +120,13 @@ const implementationPaths = ['crates/pintail-sql/src/binder/mod.rs', 'crates/pin
 const implementation = implementationPaths.map((path) => ({ path, sha256: hash(read(join(root, path))) }))
 const differential: DifferentialEvidence = JSON.parse(read(join(dir, 'differential-evidence.json')))
 validateEvidence(differential, read(join(root, 'tests/e2e/results.md')), read(join(root, 'tests/e2e/queries.ts')), differentialQueries)
+const oraclePath = join(root, 'tests/sqllogic/results-oracle.json')
+if (existsSync(oraclePath) || differential.oracle) {
+  if (!differential.oracle) throw new Error('Oracle evidence is not linked; refresh from the banked run')
+  validateOracleEvidence(differential.oracle, read(oraclePath), read(join(root, 'tests/sqllogic/tests/mysql_oracle.rs')))
+}
+const testedCases = [...differential.cases, ...(differential.oracle?.cases ?? [])]
+
 const binder = surface()
 const sourceLocation = (name: string) => {
   for (const path of implementationPaths.slice(0, 2)) {
@@ -159,7 +166,7 @@ const entries = upstream.entries.map((entry) => {
   const location = arities.length ? sourceLocation(entry.name) : ''
   const status = curated.status ?? (entry.internal ? 'out-of-scope' : arities.length ? 'implemented-unverified' : 'unassessed')
   const note = curated.note ?? (entry.internal ? 'MySQL implementation detail; public SQL parity does not require this helper.' : arities.length ? 'Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.' : 'No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.')
-  const differentialEvidence = entry.kind === 'function' ? differential.cases.filter((c) => c.functions.includes(entry.name)).map((c) => c.name) : []
+  const differentialEvidence = entry.kind === 'function' ? testedCases.filter((c) => c.functions.includes(entry.name)).map((c) => c.name) : []
   const coverage = differentialEvidence.length ? 'differential-tested' : status === 'gap' ? 'missing' : arities.length || ['partial', 'implemented-unverified'].includes(status) ? 'implementation-only' : status === 'out-of-scope' ? 'out-of-scope' : 'unassessed'
   return { ...entry, coverage, differentialEvidence, status, scope: curated.scope ?? (entry.internal ? 'internal' : 'triage'), priority: curated.priority ?? (entry.internal ? 'excluded' : 'P2'),
     pintailEvidence: curated.evidence ?? (location ? [location] : []), binderGuards: arities,
@@ -182,7 +189,7 @@ for (const entry of [...entries, ...features]) {
   }
 }
 const tally = (items: { status: string }[]) => Object.fromEntries([...new Set(items.map((e) => e.status))].sort().map((s) => [s, items.filter((e) => e.status === s).length]))
-const ledger = { schemaVersion: 2, differentialRun: { ...differential, cases: undefined }, baseline: upstream.baseline, pintailImplementation: implementation,
+const ledger = { schemaVersion: 2, differentialRun: { ...differential, cases: undefined, oracle: differential.oracle ? { ...differential.oracle, cases: undefined } : undefined }, baseline: upstream.baseline, pintailImplementation: implementation,
   verification: 'Static review plus linked historical MySQL differential cases; no new run or full semantic certification',
   counts: { entries: entries.length, functions: entries.filter((e) => e.kind === 'function').length, operators: entries.filter((e) => e.kind === 'operator').length, features: features.length, functionCoverage: tally(entries.filter((e) => e.kind === 'function').map((e) => ({ status: e.coverage }))), functionStatus: tally(entries.filter((e) => e.kind === 'function')), featureStatus: tally(features) },
   entries, features }
@@ -197,6 +204,7 @@ const functionMarkdown = ['# MySQL function and operator comparison ledger', '',
   `MySQL source: **${upstream.baseline.sourceVersion}**, branch **${upstream.baseline.branch}**, commit [${upstream.baseline.commit.slice(0, 12)}](https://github.com/mysql/mysql-server/tree/${upstream.baseline.commit}). This is a development-branch snapshot, not a tagged release.`, '',
   `${ledger.counts.functions} distinct callable names; ${ledger.counts.operators} operator/construct rows. Aliases count as separate names; overloads are not separate rows. Source-only entries and internal helpers remain visible. No row is certified by this static audit.`, '',
   `Differential evidence: ${differential.cases.length} passing corpus cases, measured ${differential.measuredAt}, bank [${differential.commit.slice(0, 12)}](https://github.com/chittihq/pintail/commit/${differential.commit}). Tested means at least one linked case, not all overloads or edge cases.`, '',
+  ...(differential.oracle ? [`Fixed oracle evidence: ${differential.oracle.cases.length} passing cases, measured ${differential.oracle.measuredAt}, bank [${differential.oracle.commit.slice(0, 12)}](https://github.com/chittihq/pintail/commit/${differential.oracle.commit}). Exact text comparison except the oracle's documented floating-point tolerance.`, ''] : []),
   '| Coverage | Callable names |', '|---|---:|', ...Object.entries(ledger.counts.functionCoverage).map(([s, n]) => `| ${s} | ${n} |`), '',
   '| Status | Callable names |', '|---|---:|', ...Object.entries(ledger.counts.functionStatus).map(([s, n]) => `| ${s} | ${n} |`), '',
   ...['function', 'operator'].flatMap((kind) => [`## ${kind === 'function' ? 'Functions' : 'Operators and special constructs'}`, '',

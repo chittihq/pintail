@@ -191,3 +191,21 @@ After banking a matching E2E run, refresh with
 `bun run scripts/mysql-source-ledger.ts`. Refresh verifies both the ledger and
 query corpus against that immutable bank commit. Ordinary generation and
 `--check` validate hashes and case mappings offline and reject stale evidence.
+
+
+The fixed sqllogic oracle also contributes differential coverage. Its test
+exports `tests/sqllogic/results-oracle.json` only after all 1,081 comparisons
+pass. Each row records the executed SQL, ordering mode and PASS result. The
+artifact records the source commit captured before execution, clean-tree status, timestamp,
+MySQL version and a hash of the compiled test source (including fixture and
+case generator). Dirty starts and changed HEAD or dirty trees at export reject
+the evidence. Comparison is exact text except for the oracle's explicit
+floating-point tolerance; this is not an all-byte-exact claim.
+
+The validation runner requests this export and shelves it before later remote
+stages. Bank the PASS artifact, then run the same refresh and generation
+commands above. The refresh verifies the artifact and test source at their
+bank commit and the source at the measured commit. The offline generator
+rejects partial, failed, dirty, duplicated or stale oracle evidence. Oracle
+case links are prefixed `oracle:` and combine with E2E links; mere source-text
+occurrences never upgrade a function to differential-tested.
