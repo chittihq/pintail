@@ -1140,8 +1140,8 @@ function publishResults(
     '',
     'All engines run on the docker host under identical limits (8 CPUs, 8 GB).',
     baselineProvenance
-      ? `Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured ${baselineProvenance}.`
-      : 'Canonical queries: 5 warm runs; ad-hoc queries: 5 distinct cold variants.',
+      ? `Canonical queries: ${RUN_COUNT} measured runs after ${WARMUP_COUNT} warmups; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured ${baselineProvenance}.`
+      : `Canonical queries: ${RUN_COUNT} measured runs after ${WARMUP_COUNT} warmups; ad-hoc queries: 5 distinct cold variants.`,
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
     "pintail's always-correct merge-on-read duty.",
     '',
