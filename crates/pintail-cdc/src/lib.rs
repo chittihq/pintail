@@ -923,7 +923,7 @@ async fn resnapshot_targets(
     }
     metadata.begin_resnapshot(database_id, &Utc::now().to_rfc3339())?;
     drop(metadata);
-    let snapshot = run_snapshot(
+    let snapshot = match run_snapshot(
         pool,
         metadata_path,
         database_id,
@@ -931,7 +931,23 @@ async fn resnapshot_targets(
         snapshot_targets,
         snapshot_options,
     )
-    .await?;
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            // The snapshot captured a new source position before copying.
+            // If its connection then fails, a later CDC cycle can connect
+            // at that position even though some stores were reset and never
+            // refilled. Flag those copies now, while the process is alive;
+            // the supervisor's boot-only sweep cannot repair this window.
+            let metadata = MetaStore::open(metadata_path)?;
+            let reason = format!("automatic resnapshot interrupted: {error}");
+            for name in metadata.tables_without_complete_copy(database_id)? {
+                metadata.mark_table_needs_resync(database_id, &name, &reason)?;
+            }
+            return Err(error.into());
+        }
+    };
     let mut metadata = MetaStore::open(metadata_path)?;
     let checkpoint = metadata.snapshot_checkpoint(database_id)?.ok_or_else(|| {
         CdcError::InvalidCheckpoint(
