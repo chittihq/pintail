@@ -398,7 +398,9 @@ stays readable as a list of things to fix.
 - Auto-inclusion uses case-insensitive exact allow/deny names and requires a
   writable target root; glob patterns and dashboard rule editing are not
   implemented. DROP TABLE retains the replica as an orphan with no operator
-  purge action.
+  purge action. In polling mode, a dropped table can also interrupt a cycle
+  before surviving tables advance. The E2E gate observed no progress on a
+  surviving table within 90 seconds; an explicit re-probe restored replication.
 - A dropped source DATABASE is surfaced, not modelled: replication fails
   loudly (`Unknown database` connection errors, database state `error`) and a
   re-probe correctly refuses, but the statement itself never reaches the

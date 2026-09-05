@@ -134,7 +134,7 @@ serialized and uses only containers created by this repository's harnesses.
 1. [x] State the tiny-database admission restriction and the known binlog
    decoder panic in limitations; narrow the changelog claim.
 2. [x] Add a cooldown after watchdog cancellation and test sustained pressure.
-3. [ ] Link the fixed MySQL oracle's executed SQL and passing results into the
+3. [x] Link the fixed MySQL oracle's executed SQL and passing results into the
    completeness ledger with reproducible run and corpus provenance.
 4. [x] Compare pruning enabled/disabled on multiple persisted segments and
    add EXISTS/IN and inner-join permutation rewrites.
@@ -155,3 +155,17 @@ The complete bags agree with and without the optimizer, including after a
 flushed update and tombstone overlap earlier segments. EXISTS/IN membership
 and two- and three-way inner-join permutations also agree with nonempty bags.
 All five partition tests pass in about one second.
+
+
+The first complete rc attempt passed formatting/clippy, dashboard types, all
+856 executed unit tests, the fixed/generated oracle and MySQL 8.4 E2E. That E2E
+leg banked 4,912 PASS / zero FAIL / 57 WARN; the extra warning records a dropped
+source table interrupting polling until re-probe. The oracle bank links 1,081
+fixed cases, raising differential-tested function names from 77 to 159 and
+reducing implementation-only names from 92 to 10.
+
+MySQL 8.0 then stopped on a valid HTTP 409 when the restart-during-resync test
+raced a replication cycle for its job slot. The harness now uses its bounded
+409 retry and releases the source WRITE lock between attempts, so the running
+cycle can finish. This attempt is not claimed as a profile PASS; a complete
+rc run is being repeated after the harness correction.

@@ -342,7 +342,8 @@ async function verifyConvergence(phase: string) {
     // A documented metadata gap never converges by design; its signature
     // is the final answer, and polling it to the timeout added three
     // minutes to the phase that carries it (same rule as the table loop).
-    if (documentedMetadataGaps.some((signature) => signature.test(metadata))) break
+    const difference = metadata
+    if (documentedMetadataGaps.some((signature) => signature.test(difference))) break
     await Bun.sleep(CONVERGE_POLL_MS)
     metadata = await metadataDiff()
   }
@@ -1857,8 +1858,17 @@ async function phaseRestartDuringResync() {
     const locker = await waitForMysql(host, mysqlPort)
     let smallMoved: string | undefined
     try {
-      await locker.query(`LOCK TABLES ${schema}.big WRITE`)
-      await api(`/api/databases/${created}/tables/big/resync`, { method: 'POST' })
+      await retry409(async () => {
+        await locker.query(`LOCK TABLES ${schema}.big WRITE`)
+        try {
+          await api(`/api/databases/${created}/tables/big/resync`, { method: 'POST' })
+        } catch (error) {
+          // Release the source lock while a replication cycle owns the job
+          // slot, so that cycle can finish before the bounded retry.
+          await locker.query('UNLOCK TABLES')
+          throw error
+        }
+      })
       const midCopy = await waitUntil(async () => (await tableStates()).big === 'snapshotting', 60_000)
       if (!midCopy) {
         record(phase, 'restart-during-resync:interrupts a resync in flight', 'FAIL', 'big never reported snapshotting')
