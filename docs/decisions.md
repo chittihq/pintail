@@ -1108,3 +1108,13 @@ source snapshot, and response-buffer allocations are not attributed by this
 registry. Unknown process limits disable the resident-memory trigger; a zero
 query budget disables only the tracked-budget trigger. Cancellation diagnostics
 record byte counts without SQL or client credentials.
+
+### Release optimization and measured profile guidance
+
+Release builds explicitly use optimization level 3, Thin LTO and one codegen
+unit. Line tables remain available for profiling and production backtraces.
+Panic unwinding and portable CPU targeting are preserved. Cargo already used
+level 3 before this change; the new optimization choices are LTO and codegen
+unit count. The instruction workload supplies before/after evidence instead
+of assuming a percentage gain. Profile-guided optimization remains opt-in
+until that evidence supports enabling it for a published build.

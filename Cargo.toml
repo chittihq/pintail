@@ -126,6 +126,15 @@ lto = "off"
 debug = "line-tables-only"
 lto = "off"
 
+# Keep cancellation/panic recovery semantics and portable CPU targeting.
+# Thin LTO and one codegen unit let LLVM optimize across crate boundaries;
+# line tables retain useful production backtraces and profiling locations.
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
+
 # Dependencies carry no debug info: only our own crates get it, which is what
 # backtraces actually read. The line-tables-only setting above already took
 # most of this win - an A/B on a sample dependency under these settings left
