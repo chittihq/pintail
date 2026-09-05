@@ -1267,6 +1267,14 @@ async fn poll_table(
         action: "recovery failpoint".to_owned(),
         source,
     })?;
+    if reconcile_requested {
+        pintail_failpoint::hit("poll.reconcile.before_state_commit").map_err(|source| {
+            StoreError::Io {
+                action: "recovery failpoint".to_owned(),
+                source,
+            }
+        })?;
+    }
     let update = PollStateUpdate {
         cursor_column: cursor.as_ref().map(|column| column.name.as_str()),
         cursor_json: cursor_json.as_deref(),

@@ -508,3 +508,27 @@ lands red.
   part of the implementation's promise. An interrupted consistent snapshot
   may need a fresh source snapshot; convergence and absence of falsely
   healthy partial data remain mandatory regardless of reuse.
+
+- `poll.reconcile.before_state_commit` is an additional, reconciliation-only
+  boundary immediately after `poll.before_state_commit`, guarded by
+  `reconcile_requested`. This makes the schema-during-reconciliation case
+  prove a scheduled reconciliation was interrupted, rather than an ordinary
+  polling cycle that happened to run near the schedule.
+
+- The checksum fixture deliberately gives `ledger` an explicit integer PK
+  without AUTO_INCREMENT or a timestamp cursor. Either of those would select
+  Cursor and let a purported KeyedChecksum scenario test the wrong path.
+- Polling crash tests arm the append/chunk sites on their first hit after
+  baseline. This permits comparison against the captured pre-crash version
+  and complete chunk journal, rather than guessing what a prior cycle wrote.
+
+- Internal CDC purge recovery now emits `cdc.resnapshot` with the unavailable
+  source-position error. Unlike supervisor-triggered repair it does not emit
+  the API's `resync.auto` event. The suite requires this diagnostic from the
+  newly started process; a snapshot event left over from baseline cannot
+  satisfy the recovery witness.
+
+- Observed rename behavior is narrower than the planned gap: `big2` is copied
+  and must pass every exact row, column and later-write check. The leftover
+  `big` progress entry remains `snapshotting` with `copy_complete=0`. Only
+  that named state gets WARN; no table's data or metadata comparison is skipped.

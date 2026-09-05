@@ -373,6 +373,10 @@ stays readable as a list of things to fix.
   table `needs_resync`: table RENAME (the on-disk directory identity derives
   from the table name, so a rename is a safe resnapshot boundary),
   storage-incompatible type changes, and key-strategy changes.
+- Renaming a table while a forced resnapshot is interrupted can leave the old
+  name recorded as `snapshotting` with `copy_complete=0` after that source name
+  is gone. This stale progress entry survives restarts; the recovery suite
+  reports that precise leftover as WARN.
 - Adding or removing a stable key is therefore a safe resnapshot boundary, not
   an in-place identity change. After the replacement generation is published,
   the refreshed probe promotes the table to row-level primary/unique-key CDC or

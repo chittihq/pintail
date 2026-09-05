@@ -2,18 +2,20 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Source, repository, runScenario, type Check, type Scenario } from './harness'
-import { selected } from './policy'
+import { selected, ledgerDetail } from './policy'
 import { command } from '../lib'
 import { baseline } from './scenarios/baseline'
 
 import { modeScenarios } from './scenarios/mode'
 import { cdcScenarios } from './scenarios/cdc'
 import { purgeScenarios } from './scenarios/purge'
+import { schemaScenarios } from './scenarios/schema'
 
-const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios]
+const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios, ...schemaScenarios]
 const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
-const patterns = arg?.split(',').filter(Boolean) ?? []
+if ((process.argv.includes('--only') || process.argv.some(a=>a.startsWith('--only='))) && !arg?.trim()) throw new Error('--only requires a scenario pattern')
+const patterns = arg?.split(',').map(p=>p.trim()).filter(Boolean) ?? []
 const requested = scenarios.filter(s => selected(s.slug, patterns))
 if (!requested.length) throw new Error('no recovery scenarios match --only')
 if (process.argv.includes('--list')) { console.log(requested.map(s => `${s.slug}\t${s.promise}`).join('\n')); process.exit(0) }
@@ -35,14 +37,14 @@ try {
     if (await build.exited !== 0) throw new Error('recovery binary build failed')
   }
   await source.start()
-  const [version] = await source.root.query('SELECT VERSION() AS version')
+  const [version] = await source.root.query({sql:'SELECT VERSION() AS version',timeout:15_000})
   sourceVersion = (version as Array<{version:string}>)[0].version
   for (const scenario of requested) {
     console.log(`recovery: ${scenario.slug} starting`)
     const results = await runScenario(source, binary, scenario, runDir)
     checks.push({ scenario: scenario.slug, area: scenario.area, check: 'contract', status: 'PASS', detail: scenario.promise }, ...results); completed++
     const failed = results.some(r => r.status === 'FAIL')
-    console.log(`recovery: ${scenario.slug} ${failed ? 'FAIL' : 'PASS'}`)
+    console.log(`recovery: ${scenario.slug} ${failed ? 'FAIL' : results.some(r=>r.status==='WARN') ? 'PASS (documented WARN)' : 'PASS'}`)
     if (failed) { for (const result of results.filter(r => r.status === 'FAIL')) console.error(source.host ? result.detail?.replaceAll(source.host, '<source>') : result.detail); break }
   }
 } catch (error) {
@@ -53,9 +55,10 @@ try {
   const sanitize = (text: string) => (source.host ? text.replaceAll(source.host, '<source>') : text).replaceAll(source.name, '<source-container>').replaceAll('|', '\\|').replaceAll('\n', ' ')
   const ledger = [`# Recovery suite — ${new Date().toISOString()}`, '', `Verdict: **${passed ? patterns.length ? 'PASS (SUBSET)' : 'PASS' : 'FAIL'}**`, '',
     `HEAD: ${head}; ${rust}; Bun ${Bun.version}.`,
-    `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${process.env.PINTAIL_RECOVERY_SEED ?? 953}.`,
+    `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${Number(process.env.PINTAIL_RECOVERY_SEED ?? 953)}.`,
+    `Checks: ${checks.filter(r=>r.status==='PASS').length} PASS, ${checks.filter(r=>r.status==='WARN').length} WARN, ${checks.filter(r=>r.status==='FAIL').length} FAIL.`,
     `Scenarios: ${completed}/${requested.length} requested; ${scenarios.length} registered. Duration: ${((Date.now()-started)/60000).toFixed(1)} minutes.`, '',
-    '| scenario | check | status | detail |', '|---|---|---|---|', ...checks.map(r => `| ${r.scenario} | ${r.check} | ${r.status} | ${sanitize(r.detail ?? '')} |`), ''].join('\n')
+    '| scenario | check | status | detail |', '|---|---|---|---|', ...checks.map(r => `| ${r.scenario} | ${r.check} | ${r.status} | ${ledgerDetail(r.status, sanitize(r.detail ?? ''))} |`), ''].join('\n')
   const filename = patterns.length ? 'results-recovery-partial.md' : 'results-recovery.md'
   writeFileSync(join(repository, 'tests/e2e', filename), ledger)
   writeFileSync(join(runDir, 'results.md'), ledger)
