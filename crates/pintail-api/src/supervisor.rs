@@ -212,7 +212,13 @@ fn supervise_once(state: &ApiState) {
             // adoption window with nothing in the log to say why - the
             // handoff was retrying against a held job lock every cadence,
             // and silence here is indistinguishable from not trying.
-            match crate::snapshot::begin_snapshot_job(state, &database.id, true) {
+            let begun =
+                crate::snapshot::begin_snapshot_job(state, &database.id, true).and_then(|run_id| {
+                    pintail_failpoint::hit("supervisor.handoff.after_begin")
+                        .map_err(crate::error::ApiError::internal)?;
+                    Ok(run_id)
+                });
+            match begun {
                 Ok(run_id) => {
                     state.publish(ApiEvent::database(
                         "resync.auto",

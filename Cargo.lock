@@ -2196,9 +2196,13 @@ dependencies = [
  "clap",
  "fs2",
  "pintail-api",
+ "pintail-cdc",
  "pintail-exec",
  "pintail-log",
  "pintail-meta",
+ "pintail-poll",
+ "pintail-snapshot",
+ "pintail-store",
  "pintail-telemetry",
  "pintail-wire",
  "rand 0.9.5",
@@ -2230,6 +2234,7 @@ dependencies = [
  "pintail-catalog",
  "pintail-cdc",
  "pintail-exec",
+ "pintail-failpoint",
  "pintail-log",
  "pintail-meta",
  "pintail-poll",
@@ -2285,6 +2290,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "mysql_async",
+ "pintail-failpoint",
  "pintail-log",
  "pintail-meta",
  "pintail-poll",
@@ -2327,6 +2333,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pintail-failpoint"
+version = "0.1.0"
+
+[[package]]
 name = "pintail-log"
 version = "0.1.0"
 
@@ -2335,6 +2345,7 @@ name = "pintail-meta"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "pintail-failpoint",
  "rusqlite",
  "tempfile",
 ]
@@ -2346,6 +2357,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "mysql_async",
+ "pintail-failpoint",
  "pintail-log",
  "pintail-meta",
  "pintail-probe",
@@ -2392,6 +2404,7 @@ dependencies = [
  "crc32fast",
  "futures-util",
  "mysql_async",
+ "pintail-failpoint",
  "pintail-log",
  "pintail-meta",
  "pintail-probe",
@@ -2432,6 +2445,7 @@ version = "0.1.0"
 dependencies = [
  "fs2",
  "lz4_flex",
+ "pintail-failpoint",
  "pintail-log",
  "pintail-types",
  "rand 0.9.5",

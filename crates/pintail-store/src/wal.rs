@@ -103,6 +103,8 @@ impl Wal {
         schema: &TableSchema,
         rows: &[StoredRow],
     ) -> Result<(), StoreError> {
+        pintail_failpoint::hit("store.wal.append")
+            .map_err(|error| StoreError::io("append WAL record", error))?;
         let payload = encode_batch(sequence, table_id, schema, rows)?;
         let length = u32::try_from(payload.len())
             .map_err(|_| StoreError::FormatLimit("WAL record exceeds u32::MAX".into()))?;
@@ -207,6 +209,9 @@ impl Wal {
 
     pub(crate) fn sync(&mut self) -> Result<(), StoreError> {
         if self.sync_policy != WalSync::Off {
+            pintail_failpoint::hit("store.wal.before_sync")
+                .and_then(|()| pintail_failpoint::hit("store.wal.sync"))
+                .map_err(|error| StoreError::io("sync WAL", error))?;
             self.file
                 .sync_data()
                 .map_err(|error| StoreError::io("sync WAL", error))?;

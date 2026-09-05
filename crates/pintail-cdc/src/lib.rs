@@ -856,6 +856,12 @@ impl AutoResnapshotContext<'_> {
             self.snapshot_options.clone(),
         )
         .await?;
+        pintail_failpoint::hit("cdc.resnapshot.after_targets").map_err(|source| {
+            StoreError::Io {
+                action: "recovery failpoint".to_owned(),
+                source,
+            }
+        })?;
         let checkpoint = MetaStore::open(self.metadata_path)?
             .snapshot_checkpoint(self.database_id)?
             .ok_or_else(|| {
@@ -2033,8 +2039,20 @@ fn commit_pending(
         targets[target_index].store.ingest_cdc(rows)?;
         touched.push(target_index);
     }
-    for target_index in &touched {
+    pintail_failpoint::hit("cdc.after_ingest").map_err(|source| StoreError::Io {
+        action: "recovery failpoint".to_owned(),
+        source,
+    })?;
+    for (index, target_index) in touched.iter().enumerate() {
         targets[*target_index].store.checkpoint()?;
+        if index == 0 && touched.len() > 1 {
+            pintail_failpoint::hit("cdc.after_first_table_sync").map_err(|source| {
+                StoreError::Io {
+                    action: "recovery failpoint".to_owned(),
+                    source,
+                }
+            })?;
+        }
     }
     position.commit_gtid()?;
     let checkpoint = position.checkpoint()?;
@@ -2048,12 +2066,20 @@ fn commit_pending(
         binlog_file: Some(checkpoint.binlog_file),
         binlog_pos: Some(checkpoint.binlog_pos),
     };
+    pintail_failpoint::hit("cdc.before_checkpoint_commit").map_err(|source| StoreError::Io {
+        action: "recovery failpoint".to_owned(),
+        source,
+    })?;
     metadata.commit_cdc_checkpoint(
         database_id,
         &checkpoint_record,
         &touched_names,
         &Utc::now().to_rfc3339(),
     )?;
+    pintail_failpoint::hit("cdc.after_checkpoint_commit").map_err(|source| StoreError::Io {
+        action: "recovery failpoint".to_owned(),
+        source,
+    })?;
     *pending = PendingTransaction::default();
     Ok(mutation_count)
 }

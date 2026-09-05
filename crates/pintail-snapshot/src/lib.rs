@@ -537,7 +537,15 @@ async fn snapshot_worker(
         )
         .await;
         match result {
-            Ok(()) => metadata.complete_snapshot_table(&database_id, &target.source.name)?,
+            Ok(()) => {
+                pintail_failpoint::hit("snapshot.table.before_complete").map_err(|source| {
+                    StoreError::Io {
+                        action: "recovery failpoint".to_owned(),
+                        source,
+                    }
+                })?;
+                metadata.complete_snapshot_table(&database_id, &target.source.name)?;
+            }
             // The source, the metadata store, or the run's own budget: not
             // this table's fault, and the tables after it would fail the
             // same way, so the worker stops as a whole.
@@ -761,6 +769,12 @@ async fn snapshot_table(
                 .map(StoredRow::estimated_bytes)
                 .sum::<usize>();
             let outcome = target.store.bulk_ingest_snapshot(stored_rows)?;
+            pintail_failpoint::hit("snapshot.chunk.after_ingest").map_err(|source| {
+                StoreError::Io {
+                    action: "recovery failpoint".to_owned(),
+                    source,
+                }
+            })?;
             let rows = u64::try_from(outcome.row_count()).unwrap_or(u64::MAX);
             metadata.complete_snapshot_chunk(database_id, &target.source.name, &chunk_id, rows)?;
             if !chunk_reserved {

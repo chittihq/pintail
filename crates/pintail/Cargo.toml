@@ -7,7 +7,21 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+failpoints = [
+    "pintail-api/failpoints",
+    "pintail-cdc/failpoints",
+    "pintail-poll/failpoints",
+    "pintail-snapshot/failpoints",
+    "pintail-store/failpoints",
+    "pintail-meta/failpoints",
+]
+
 [dependencies]
+pintail-cdc.workspace = true
+pintail-poll.workspace = true
+pintail-snapshot.workspace = true
+pintail-store.workspace = true
 anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true

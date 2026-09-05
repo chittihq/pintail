@@ -1,0 +1,14 @@
+[package]
+name = "pintail-failpoint"
+description = "Feature-gated deterministic fault injection for recovery tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[features]
+failpoints = []
+
+[lints]
+workspace = true

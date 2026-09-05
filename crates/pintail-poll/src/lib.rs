@@ -1257,8 +1257,16 @@ async fn poll_table(
         }
     };
     if sync.ingested > 0 || sync.tombstones > 0 {
+        pintail_failpoint::hit("poll.after_ingest").map_err(|source| StoreError::Io {
+            action: "recovery failpoint".to_owned(),
+            source,
+        })?;
         target.store.checkpoint()?;
     }
+    pintail_failpoint::hit("poll.before_state_commit").map_err(|source| StoreError::Io {
+        action: "recovery failpoint".to_owned(),
+        source,
+    })?;
     let update = PollStateUpdate {
         cursor_column: cursor.as_ref().map(|column| column.name.as_str()),
         cursor_json: cursor_json.as_deref(),
@@ -1279,6 +1287,12 @@ async fn poll_table(
                 replica_checksum: &chunk.replica_checksum,
             })
             .collect::<Vec<_>>();
+        pintail_failpoint::hit("poll.checksum.before_chunk_commit").map_err(|source| {
+            StoreError::Io {
+                action: "recovery failpoint".to_owned(),
+                source,
+            }
+        })?;
         metadata.commit_poll_state_with_chunks(
             database_id,
             &target.source.name,
@@ -1639,6 +1653,10 @@ async fn sync_append_table(
         return Ok(0);
     }
     target.store.reset_for_resnapshot()?;
+    pintail_failpoint::hit("poll.append.after_reset").map_err(|source| StoreError::Io {
+        action: "recovery failpoint".to_owned(),
+        source,
+    })?;
     let count = source_rows.len();
     target.store.ingest_scan(source_rows)?;
     Ok(count)

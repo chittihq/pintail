@@ -7,7 +7,11 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+failpoints = ["pintail-failpoint/failpoints"]
+
 [dependencies]
+pintail-failpoint.workspace = true
 pintail-log.workspace = true
 fs2.workspace = true
 lz4_flex.workspace = true

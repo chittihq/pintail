@@ -913,6 +913,7 @@ impl MetaStore {
                 (database_id, now),
             )
             .context("failed to mark database polling")?;
+        pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
             .context("failed to commit polling checkpoint")
@@ -982,6 +983,7 @@ impl MetaStore {
                 (database_id, now),
             )
             .context("failed to mark database streaming")?;
+        pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
             .context("failed to commit CDC checkpoint")
@@ -1481,6 +1483,7 @@ impl MetaStore {
                 (database_id, table_name, rows_i64),
             )
             .context("failed to advance snapshot table progress")?;
+        pintail_failpoint::hit("meta.before_commit")?;
         transaction
             .commit()
             .context("failed to commit snapshot chunk completion")

@@ -219,3 +219,69 @@ fn account(id: u64, name: &str, version: u64, deleted: bool) -> StoredRow {
         deleted,
     )
 }
+
+#[cfg(feature = "failpoints")]
+#[test]
+fn injected_wal_errors_preserve_checkpointed_rows_and_allow_retry() {
+    for site in ["store.wal.append", "store.wal.sync"] {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "suite::recovery::wal_fault_worker",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("PINTAIL_FAILPOINT", format!("{site}@2=error"))
+            .env("PINTAIL_WAL_FAULT_CASE", site)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{site}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr)
+                .contains(&format!("failpoint {site} hit 2: error"))
+        );
+    }
+}
+
+#[cfg(feature = "failpoints")]
+#[test]
+#[ignore = "child process with isolated failpoint configuration"]
+fn wal_fault_worker() {
+    let Some(site) = std::env::var("PINTAIL_WAL_FAULT_CASE").ok() else {
+        return;
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let options = StoreOptions {
+        wal_sync: WalSync::Checkpoint,
+        ..StoreOptions::default()
+    };
+    let mut store = TableStore::open(directory.path(), account_schema(), options).unwrap();
+    store.ingest(vec![account(1, "durable", 1, false)]).unwrap();
+    store.checkpoint().unwrap();
+    if site == "store.wal.append" {
+        assert!(store.ingest(vec![account(2, "retry", 2, false)]).is_err());
+        assert_eq!(
+            store.snapshot().scan().unwrap(),
+            vec![account(1, "durable", 1, false)]
+        );
+        store.ingest(vec![account(2, "retry", 2, false)]).unwrap();
+    } else {
+        store.ingest(vec![account(2, "retry", 2, false)]).unwrap();
+        assert!(store.checkpoint().is_err());
+    }
+    store.checkpoint().unwrap();
+    drop(store);
+    let store = TableStore::open(directory.path(), account_schema(), options).unwrap();
+    assert_eq!(
+        store.snapshot().scan().unwrap(),
+        vec![
+            account(1, "durable", 1, false),
+            account(2, "retry", 2, false)
+        ]
+    );
+}
