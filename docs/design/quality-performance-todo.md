@@ -169,3 +169,12 @@ raced a replication cycle for its job slot. The harness now uses its bounded
 409 retry and releases the source WRITE lock between attempts, so the running
 cycle can finish. This attempt is not claimed as a profile PASS; a complete
 rc run is being repeated after the harness correction.
+
+
+The next rc attempt at `ae0329b` passed both E2E legs, including every
+restart-during-resync assertion, but the browser gate exposed another harness
+race. Its Reset check accepted a queued toast plus the old streaming badge as
+completion, allowing the next Resync check to overlap the pending Reset. The
+Reset check now waits for actual acceptance and reloads the resulting state
+before waiting for completion. A focused browser check precedes the next
+complete rc attempt. Neither failed profile is described as PASS.

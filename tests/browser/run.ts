@@ -327,7 +327,7 @@ async function main() {
   const httpPort = await freePort()
   const wirePort = await freePort()
   pintailUrl = `http://127.0.0.1:${httpPort}`
-  pintailProcess = Bun.spawn(
+  const child = Bun.spawn(
     [
       binary,
       '--data-dir',
@@ -339,8 +339,9 @@ async function main() {
     ],
     { cwd: repository, stdout: 'pipe', stderr: 'pipe' },
   )
-  pintailStdout = new Response(pintailProcess.stdout).text()
-  pintailStderr = new Response(pintailProcess.stderr).text()
+  pintailProcess = child
+  pintailStdout = new Response(child.stdout).text()
+  pintailStderr = new Response(child.stderr).text()
   for (let attempt = 0; ; attempt += 1) {
     try {
       const response = await fetch(`${pintailUrl}/health`)
@@ -748,6 +749,14 @@ async function main() {
       .getByText(/Mirror reset; a fresh snapshot is running|Reset queued/)
       .first()
       .waitFor({ timeout: 30_000 })
+    // A queued reset has not started yet: the old streaming badge cannot
+    // prove completion. Wait for acceptance, then load a fresh view so the
+    // next check cannot race this reset and resync a table being removed.
+    await page!.getByText('Mirror reset; a fresh snapshot is running')
+      .waitFor({ timeout: 180_000 })
+    await page!.reload()
+    await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+
     // The copy is visible while it runs. On the gate's small corpus the
     // window is short, so the strip OR the already-settled streaming badge
     // both count - what must never happen is a silent wedge.
