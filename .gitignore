@@ -34,3 +34,5 @@ REVIEW.md
 # `go build ./...` in the wire-client matrix drops its binary beside the
 # source, named after the module.
 /tests/integration/wire-clients/pintail-wire-clients
+
+/tests/e2e/results-recovery-partial.md
