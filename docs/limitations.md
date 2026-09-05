@@ -260,6 +260,12 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
+- The mysql_common 0.37.3 binlog decoder panics on a transaction-payload
+  header field ID above 255. A corrupted source event can therefore terminate
+  replication processing instead of returning a decoding error. The minimized
+  reproducer is in [the fuzzing guide](../fuzz/README.md). The dependency needs
+  a fallible conversion and a version update; this finding remains unfixed.
+
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a
   newly committed event may wait for the next cycle.
 - MariaDB GTID text is captured for diagnostics, but `mysql_common` 0.37 does
@@ -407,12 +413,6 @@ stays readable as a list of things to fix.
 - The embedded dashboard is a local control plane, not a multi-tenant security
   boundary. Network exposure and TLS are deployment responsibilities.
 
-- The mysql_common 0.37.3 binlog decoder panics on a transaction-payload
-  header field ID above 255. A corrupted source event can therefore terminate
-  replication processing instead of returning a decoding error. The minimized
-  reproducer is in [the fuzzing guide](../fuzz/README.md). The dependency needs
-  a fallible conversion and a version update; this finding remains unfixed.
-
 ## MySQL wire protocol
 
 - `caching_sha2_password` serves both the fast-auth exchange and the
@@ -452,6 +452,11 @@ stays readable as a list of things to fix.
   clients believing a connection died that did not.
 - DBeaver and Metabase application-level smokes are not automated in CI.
 ## Operations and backup
+
+- Memory cancellation is cooperative, and allocator RSS may stay high after
+  a query releases its reservations. The watchdog waits five seconds between
+  victims; prolonged pressure can still cancel successive queries. Untracked
+  snapshot and response-buffer allocations cannot be attributed to a victim.
 
 - Reserved query admission currently applies only to simple queries on a
   revalidated cached database with at most 1,024 physical rows and 4 MiB of

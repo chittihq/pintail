@@ -1089,7 +1089,7 @@ mutations. Those still require their configured policy after the copy finishes.
 Pending copies take priority over new drift repairs and retry at supervisor
 cadence; completed copies that later drift retain the existing cooldown.
 
-### Memory pressure cancels one query per sample
+### Memory pressure cancellation includes a release grace period
 
 The server samples resident memory once per second and requests cooperative
 cancellation of the largest running query by tracked operator reservations
@@ -1099,7 +1099,12 @@ wire executions use the same registry. Nested trackers sharing a cancellation
 handle sum their own reservations; worker estimates already charged by their
 parent do not count twice. Query completion releases its reservations and weak
 registry entries do not keep completed queries alive. Already-cancelled queries
-are skipped on later samples; at most one new query is cancelled per tick.
+are skipped on later samples. After a cancellation the server keeps sampling
+but waits five seconds before selecting another victim, across both pressure
+triggers. A transient low reading does not shorten this grace period. Empty
+samples do not delay the first cancellation. Sustained pressure may still
+cancel another query after each grace period; this bounds the rate rather
+than promising that allocator RSS falls immediately.
 
 This complements admission and spilling. It does not forcibly terminate a
 thread, and cannot promise survival of a sudden allocation spike between

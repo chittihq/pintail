@@ -39,6 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Memory-pressure cancellation now allows five seconds for a victim to release
+  memory before choosing another, preventing cancellation on every sample.
+
 - Benchmark retries refresh ClickHouse's published port after container
   restarts and retain readable crash diagnostics in the private run log.
 

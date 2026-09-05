@@ -133,7 +133,7 @@ serialized and uses only containers created by this repository's harnesses.
 
 1. [x] State the tiny-database admission restriction and the known binlog
    decoder panic in limitations; narrow the changelog claim.
-2. [ ] Add a cooldown after watchdog cancellation and test sustained pressure.
+2. [x] Add a cooldown after watchdog cancellation and test sustained pressure.
 3. [ ] Link the fixed MySQL oracle's executed SQL and passing results into the
    completeness ledger with reproducible run and corpus provenance.
 4. [ ] Compare pruning enabled/disabled on multiple persisted segments and
