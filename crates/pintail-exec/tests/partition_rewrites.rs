@@ -4,7 +4,9 @@ use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
 use pintail_exec::collation::Collation;
-use pintail_exec::{Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider};
+use pintail_exec::{
+    Execution, LogicalPlanner, Optimizer, PhysicalPlanner, PhysicalScanStats, SnapshotScanProvider,
+};
 use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
@@ -27,10 +29,18 @@ impl Fixture {
         )
         .expect("schema");
         let directory = tempfile::tempdir().expect("directory");
-        let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
-            .expect("table");
+        let mut table = TableStore::open(
+            directory.path(),
+            schema.clone(),
+            StoreOptions {
+                block_rows: 4,
+                background_compaction: false,
+                ..StoreOptions::default()
+            },
+        )
+        .expect("table");
         let mut state = seed;
-        let rows = (0..96_u64)
+        let rows: Vec<_> = (0..96_u64)
             .map(|id| {
                 state = state
                     .wrapping_mul(6_364_136_223_846_793_005)
@@ -54,14 +64,20 @@ impl Fixture {
                 )
             })
             .collect();
-        table.bulk_ingest_snapshot(rows).expect("ingest");
+        for segment in rows.chunks(24) {
+            table
+                .bulk_ingest_snapshot(segment.to_vec())
+                .expect("ingest segment");
+        }
         let entry = TableEntry::new(
             TableId::new(1),
             "samples",
             schema,
             TableStatistics::with_row_count(96),
         )
-        .expect("entry");
+        .expect("entry")
+        .with_key_columns([1])
+        .expect("key");
         let database = DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database");
         Self {
             _directory: directory,
@@ -71,6 +87,10 @@ impl Fixture {
     }
 
     fn query(&self, sql: &str) -> Vec<String> {
+        self.query_with_optimizer(sql, true).0
+    }
+
+    fn query_with_optimizer(&self, sql: &str, optimize: bool) -> (Vec<String>, PhysicalScanStats) {
         let snapshot = self.table.snapshot();
         let provider =
             SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
@@ -79,11 +99,15 @@ impl Fixture {
         let bound = Binder::new(&self.catalog, Some("app"))
             .bind(&statement)
             .unwrap_or_else(|e| panic!("{sql}: {e}"));
-        let physical = PhysicalPlanner::plan(
-            Optimizer::optimize(LogicalPlanner::plan(bound)),
-            Collation::default(),
-        )
-        .expect("plan");
+        let logical = LogicalPlanner::plan(bound);
+        // Unoptimized scans receive no pushed predicates, so they read all
+        // segments/blocks and evaluate the original relational filter above.
+        let logical = if optimize {
+            Optimizer::optimize(logical)
+        } else {
+            logical
+        };
+        let physical = PhysicalPlanner::plan(logical, Collation::default()).expect("plan");
         let mut execution =
             Execution::start(physical, &provider, 64 * 1024 * 1024, Collation::default())
                 .expect("execution");
@@ -102,7 +126,12 @@ impl Fixture {
             }
         }
         rows.sort();
-        rows
+        (
+            rows,
+            provider
+                .scan_stats(DatabaseId::new(1), TableId::new(1))
+                .unwrap_or_default(),
+        )
     }
 
     fn partition(&self, projection: &str, from: &str, predicate: &str) {
@@ -202,5 +231,93 @@ fn equivalent_filter_group_and_order_rewrites_agree() {
             fixture.query(right),
             "rewrite: {left} versus {right}"
         );
+    }
+}
+
+#[test]
+fn pruning_and_full_scan_agree_across_segments_and_overlapping_versions() {
+    let mut fixture = Fixture::new(953);
+    let selective = "SELECT id,n,tag FROM samples WHERE id >= 36 AND id < 38";
+    let (pruned, stats) = fixture.query_with_optimizer(selective, true);
+    let (full, reference) = fixture.query_with_optimizer(selective, false);
+    assert_eq!(pruned, full);
+    assert_eq!(pruned.len(), 2);
+    assert!(
+        stats.segments_pruned > 0,
+        "segment pruning must engage: {stats:?}"
+    );
+    assert!(
+        stats.blocks_pruned > 0,
+        "block pruning must engage: {stats:?}"
+    );
+    assert_eq!(reference.segments_pruned, 0);
+    assert_eq!(reference.blocks_pruned, 0);
+    assert!(reference.segments_read > stats.segments_read);
+    assert!(reference.blocks_read > stats.blocks_read);
+
+    for overlap in [false, true] {
+        if overlap {
+            fixture
+                .table
+                .ingest(vec![
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(0)]).expect("key"),
+                        vec![
+                            Value::UInt64(0),
+                            Value::Int64(20),
+                            Value::Utf8("moved".into()),
+                        ],
+                        100,
+                        false,
+                    ),
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(36)]).expect("key"),
+                        vec![Value::UInt64(36), Value::Null, Value::Null],
+                        101,
+                        true,
+                    ),
+                ])
+                .expect("overlapping update and tombstone");
+            fixture.table.flush().expect("flush overlap");
+        }
+        for sql in [
+            selective,
+            "SELECT n,tag FROM samples WHERE n > 3",
+            "SELECT n,tag FROM samples WHERE n IS NULL OR n < -3",
+            "SELECT n,tag FROM samples WHERE tag = 'same' AND id BETWEEN 30 AND 65",
+            "SELECT tag,COUNT(*),SUM(n) FROM samples WHERE id >= 30 GROUP BY tag",
+        ] {
+            assert_eq!(
+                fixture.query_with_optimizer(sql, true).0,
+                fixture.query_with_optimizer(sql, false).0,
+                "overlap={overlap}: {sql}"
+            );
+        }
+    }
+}
+
+#[test]
+fn membership_and_inner_join_permutations_preserve_nulls_and_duplicates() {
+    let fixture = Fixture::new(65_537);
+    for (left, right) in [
+        (
+            "SELECT a.n,a.tag FROM samples a WHERE EXISTS (SELECT 1 FROM samples b WHERE b.n=a.n AND b.id<40)",
+            "SELECT a.n,a.tag FROM samples a WHERE a.n IN (SELECT b.n FROM samples b WHERE b.id<40)",
+        ),
+        (
+            "SELECT a.n,b.tag FROM samples a INNER JOIN samples b ON a.n=b.n WHERE a.id<8 AND b.id<40",
+            "SELECT a.n,b.tag FROM samples b INNER JOIN samples a ON b.n=a.n WHERE b.id<40 AND a.id<8",
+        ),
+        (
+            "SELECT a.n,b.tag,c.n FROM samples a JOIN samples b ON a.id=b.id JOIN samples c ON b.n=c.n WHERE a.id<8 AND c.id<20",
+            "SELECT a.n,b.tag,c.n FROM samples c JOIN samples b ON c.n=b.n JOIN samples a ON b.id=a.id WHERE a.id<8 AND c.id<20",
+        ),
+    ] {
+        let expected = fixture.query(left);
+        assert!(
+            !expected.is_empty(),
+            "rewrite fixture must exercise matches"
+        );
+        assert_eq!(expected, fixture.query(right), "{left} versus {right}");
     }
 }

@@ -136,7 +136,7 @@ serialized and uses only containers created by this repository's harnesses.
 2. [x] Add a cooldown after watchdog cancellation and test sustained pressure.
 3. [ ] Link the fixed MySQL oracle's executed SQL and passing results into the
    completeness ledger with reproducible run and corpus provenance.
-4. [ ] Compare pruning enabled/disabled on multiple persisted segments and
+4. [x] Compare pruning enabled/disabled on multiple persisted segments and
    add EXISTS/IN and inner-join permutation rewrites.
 5. [ ] Run one complete rc validation profile on the corrected tree and bank
    both E2E legs and the oracle evidence. No tag is requested.
@@ -146,3 +146,12 @@ PGO result remains a training-set measurement. Expanding it to large scans and
 multi-segment workloads requires new baselines and is separate performance
 work, not covered by those figures. The pruning tests below add correctness
 coverage without changing what the instruction evidence claims.
+
+
+Review test detail: the partition fixture now has four persisted segments with
+four-row blocks. A selective query must report both segment and block pruning;
+its unoptimized plan must report zero pruning and read more segments/blocks.
+The complete bags agree with and without the optimizer, including after a
+flushed update and tombstone overlap earlier segments. EXISTS/IN membership
+and two- and three-way inner-join permutations also agree with nonempty bags.
+All five partition tests pass in about one second.
