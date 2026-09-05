@@ -89,6 +89,7 @@ export class Source {
 }
 
 export class Context {
+  readonly additionalSchemas = new Set<string>()
   readonly schema: string
   readonly dataDir: string
   readonly artifactDir: string
@@ -428,7 +429,9 @@ export class Context {
     this.sourceConnection?.destroy()
     await attempt(async () => { await this.proxy?.close() })
     await attempt(() => writeFileSync(join(this.artifactDir, 'events.json'), JSON.stringify(this.events, null, 2)))
-    await attempt(() => this.source.root.query({sql:`DROP DATABASE IF EXISTS ${identifier(this.schema)}`,timeout:15_000}))
+    for (const schema of [...this.additionalSchemas, this.schema]) {
+      await attempt(() => this.source.root.query({sql:`DROP DATABASE IF EXISTS ${identifier(schema)}`,timeout:15_000}))
+    }
     await attempt(() => {
       if (this.alive) throw new Error('retaining data directory because Pintail did not stop')
       rmSync(this.dataDir, { recursive: true, force: true })
