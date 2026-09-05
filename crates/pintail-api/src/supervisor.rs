@@ -511,6 +511,18 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
             result
         }
         "polling" => {
+            // Quarantine is per table. In particular, a keyless table under
+            // the default policy needs operator repair and must not hold up
+            // unrelated tables while it waits for that repair.
+            let mut targets = targets
+                .into_iter()
+                .filter(|target| {
+                    !records.iter().any(|record| {
+                        record.name.eq_ignore_ascii_case(&target.source().name)
+                            && record.state == "needs_resync"
+                    })
+                })
+                .collect::<Vec<_>>();
             let reconcile = reconciliation_due(database, &records);
             if reconcile {
                 // Polling has no DDL stream. A projection that still names
@@ -549,7 +561,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                         &database.id,
                         format!("{reason}: {}", changed.join(", ")),
                     ));
-                    return Err(format!("{reason}: {}", changed.join(", ")));
+                    targets.retain(|target| !changed.contains(&target.source().name));
                 }
             }
             // A tracked table can vanish from the source between probes (DROP
@@ -706,18 +718,21 @@ fn cascade_reconciliation_due(
 }
 
 fn reconciliation_due(database: &DatabaseRecord, records: &[TableRecord]) -> bool {
-    records.iter().any(|table| {
-        table
-            .last_reconcile_at
-            .as_deref()
-            .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
-            .is_none_or(|last| {
-                Utc::now()
-                    .signed_duration_since(last.with_timezone(&Utc))
-                    .num_seconds()
-                    >= i64::try_from(database.reconcile_interval_seconds).unwrap_or(i64::MAX)
-            })
-    })
+    records
+        .iter()
+        .filter(|table| table.state != "needs_resync")
+        .any(|table| {
+            table
+                .last_reconcile_at
+                .as_deref()
+                .and_then(|timestamp| DateTime::parse_from_rfc3339(timestamp).ok())
+                .is_none_or(|last| {
+                    Utc::now()
+                        .signed_duration_since(last.with_timezone(&Utc))
+                        .num_seconds()
+                        >= i64::try_from(database.reconcile_interval_seconds).unwrap_or(i64::MAX)
+                })
+        })
 }
 
 fn decode_names(encoded: Option<&str>) -> Result<BTreeSet<String>, String> {
