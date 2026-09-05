@@ -90,6 +90,15 @@ impl<'a> Decoder<'a> {
         Ok(u32::from_le_bytes(bytes))
     }
 
+    /// A collection cannot contain more minimally-sized elements than bytes left.
+    pub(crate) fn count(&mut self, minimum_width: usize) -> Result<usize, String> {
+        let count = self.u32()? as usize;
+        if count > (self.bytes.len() - self.position) / minimum_width {
+            return Err("collection count exceeds remaining payload".to_owned());
+        }
+        Ok(count)
+    }
+
     pub(crate) fn u64(&mut self) -> Result<u64, String> {
         let bytes = self.take_array::<8>()?;
         Ok(u64::from_le_bytes(bytes))
@@ -167,8 +176,8 @@ pub(crate) fn encode_key(encoder: &mut Encoder, key: &PrimaryKey) -> Result<(), 
 }
 
 pub(crate) fn decode_key(decoder: &mut Decoder<'_>) -> Result<PrimaryKey, String> {
-    let key_count = decoder.u32()?;
-    let mut key = Vec::with_capacity(key_count as usize);
+    let key_count = decoder.count(1)?;
+    let mut key = Vec::with_capacity(key_count);
     for _ in 0..key_count {
         key.push(match decoder.u8()? {
             0 => KeyPart::Int64(decoder.i64()?),
@@ -196,8 +205,8 @@ pub(crate) fn encode_row(encoder: &mut Encoder, row: &StoredRow) -> Result<(), S
 pub(crate) fn decode_row(decoder: &mut Decoder<'_>) -> Result<StoredRow, String> {
     let key = decode_key(decoder)?;
 
-    let value_count = decoder.u32()?;
-    let mut values = Vec::with_capacity(value_count as usize);
+    let value_count = decoder.count(1)?;
+    let mut values = Vec::with_capacity(value_count);
     for _ in 0..value_count {
         values.push(decode_value(decoder)?);
     }
@@ -270,4 +279,26 @@ fn decode_utf8(bytes: &[u8], what: &str) -> Result<String, String> {
     std::str::from_utf8(bytes)
         .map(str::to_owned)
         .map_err(|error| format!("invalid {what}: {error}"))
+}
+
+#[cfg(test)]
+mod malformed_counts {
+    use super::{Decoder, decode_key, decode_row};
+
+    #[test]
+    fn tiny_records_cannot_preallocate_billions_of_keys_or_values() {
+        assert!(
+            decode_key(&mut Decoder::new(&u32::MAX.to_le_bytes()))
+                .unwrap_err()
+                .contains("count exceeds")
+        );
+        let mut row = vec![1, 0, 0, 0, 1];
+        row.extend_from_slice(&1_u64.to_le_bytes());
+        row.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(
+            decode_row(&mut Decoder::new(&row))
+                .unwrap_err()
+                .contains("count exceeds")
+        );
+    }
 }

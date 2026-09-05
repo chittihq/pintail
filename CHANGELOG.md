@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Local predicate-partition and equivalent-query checks run in push CI.
+- Fuzz targets exercise wire messages, binlog event decoding and stored
+  records; malformed stored collection counts are rejected before allocation.
 - A memory watchdog samples once per second and cooperatively cancels the
   largest tracked query when process or query-budget usage reaches 90%.
 

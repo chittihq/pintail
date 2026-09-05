@@ -1,0 +1,46 @@
+[package]
+name = "pintail-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[features]
+libfuzzer = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", optional = true }
+pintail-protocol = { path = "../crates/pintail-protocol" }
+pintail-store = { path = "../crates/pintail-store", features = ["fuzzing"] }
+mysql_async = { version = "=0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
+tempfile = "3.20.0"
+tokio = { version = "1.45.1", features = ["rt", "io-util"] }
+
+[[bin]]
+name = "wire"
+path = "fuzz_targets/wire.rs"
+test = false
+doc = false
+bench = false
+required-features = ["libfuzzer"]
+
+[[bin]]
+name = "binlog"
+path = "fuzz_targets/binlog.rs"
+test = false
+doc = false
+bench = false
+required-features = ["libfuzzer"]
+
+[[bin]]
+name = "storage"
+path = "fuzz_targets/storage.rs"
+test = false
+doc = false
+bench = false
+required-features = ["libfuzzer"]

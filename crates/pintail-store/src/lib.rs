@@ -56,3 +56,19 @@ pub fn table_directory(root: &std::path::Path, table: &str) -> std::path::PathBu
     table.to_ascii_lowercase().hash(&mut hasher);
     root.join(format!("table-{safe}-{:016x}", hasher.finish()))
 }
+
+/// Test-only entry points for malformed persisted records. Never enabled by default.
+#[cfg(feature = "fuzzing")]
+pub mod fuzzing {
+    /// Exercises the row and WAL-batch decoders without the checksum envelope,
+    /// allowing mutations to reach their length and type validation.
+    pub fn decode_record(bytes: &[u8]) {
+        let _ = crate::codec::decode_row(&mut crate::codec::Decoder::new(bytes));
+        let _ = crate::wal::decode_batch(bytes);
+    }
+
+    /// Exercises the complete read-only WAL recovery path, including checksums.
+    pub fn read_wal(path: &std::path::Path) {
+        let _ = crate::wal::recover_read_only(path);
+    }
+}

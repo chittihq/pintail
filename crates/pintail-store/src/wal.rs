@@ -327,21 +327,21 @@ fn decode_commit(payload: &[u8]) -> Option<(u64, u64)> {
     Some((sequence, version))
 }
 
-fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
+pub(crate) fn decode_batch(payload: &[u8]) -> Result<RecoveredBatch, String> {
     let mut decoder = Decoder::new(payload);
     let sequence = decoder.u64()?;
     let table_id = decoder.u64()?;
     let _schema_version = decoder.u32()?;
-    let column_count = decoder.u32()?;
-    let mut columns = Vec::with_capacity(column_count as usize);
+    let column_count = decoder.count(5)?;
+    let mut columns = Vec::with_capacity(column_count);
     for _ in 0..column_count {
         columns.push(WalColumn {
             id: decoder.u32()?,
             data_type: decode_data_type(decoder.u8()?)?,
         });
     }
-    let row_count = decoder.u32()?;
-    let mut rows = Vec::with_capacity(row_count as usize);
+    let row_count = decoder.count(1)?;
+    let mut rows = Vec::with_capacity(row_count);
     for _ in 0..row_count {
         let row = decode_row(&mut decoder)?;
         if row.values().len() != columns.len() {

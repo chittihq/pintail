@@ -1,0 +1,37 @@
+name: Parser fuzzing
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: '60'
+        required: true
+permissions:
+  contents: read
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [wire, storage, binlog]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz
+      - run: cargo install cargo-fuzz --locked --version 0.13.2
+      - name: Run target (known binlog failure is reported normally)
+        env:
+          FUZZ_SECONDS: ${{ inputs.seconds }}
+          FUZZ_TARGET: ${{ matrix.target }}
+        run: |
+          [[ "$FUZZ_SECONDS" =~ ^[0-9]+$ ]] && (( FUZZ_SECONDS > 0 && FUZZ_SECONDS <= 600 ))
+          cargo fuzz run "$FUZZ_TARGET" --features libfuzzer -- -max_total_time="$FUZZ_SECONDS" -max_len=65536
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: fuzz-${{ matrix.target }}-crashes
+          path: fuzz/artifacts/

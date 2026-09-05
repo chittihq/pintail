@@ -1,0 +1,8 @@
+/artifacts/
+/coverage/
+/corpus/wire/*
+!/corpus/wire/handshake
+/corpus/binlog/*
+!/corpus/binlog/query
+/corpus/storage/*
+!/corpus/storage/row

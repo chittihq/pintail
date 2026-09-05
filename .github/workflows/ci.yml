@@ -35,3 +35,5 @@ jobs:
       - run: cargo nextest run --workspace --locked
         env:
           PINTAIL_DASHBOARD_PREBUILT: "1"
+      - name: Local parser corpus (known upstream binlog reproducer is explicitly ignored)
+        run: cargo test --manifest-path fuzz/Cargo.toml --locked

@@ -14,7 +14,7 @@ serialized and uses only containers created by this repository's harnesses.
    largest tracked running query, and let existing cooperative cancellation
    release its memory. Cover victim selection, no-pressure behavior, repeated
    ticks and query lifetime cleanup. Apply to HTTP and wire execution.
-3. [ ] **Fuzz targets.** Add bounded byte-input targets for unauthenticated
+3. [x] **Fuzz targets.** Add bounded byte-input targets for unauthenticated
    wire decoding, binlog decoding and persisted-format readers, with a local
    smoke corpus and reproducible commands. Reject malformed input gracefully;
    never hide unexpected panics.
@@ -38,6 +38,14 @@ serialized and uses only containers created by this repository's harnesses.
    and classification. Document that classification is not a latency guarantee.
 
 ## Evidence and decisions
+
+- Item 3: three cargo-fuzz targets, committed seeds, local smoke checks in
+  push CI, and a manual fuzz workflow are implemented. Wire and storage each
+  completed 1,000 instrumented runs. Store clippy/tests pass. Local smoke has
+  two passes and one explicitly ignored known-failing upstream binlog
+  reproducer; unrestricted binlog fuzzing remains enabled and is **not**
+  claimed green. `fuzz/README.md` records reproduction and scope. Malformed
+  storage collection counts are now bounded before allocation.
 
 - Item 2: the server owns a one-second watchdog. Executor tests verify
   90% thresholds, largest-victim selection, repeated ticks, cancellation,
