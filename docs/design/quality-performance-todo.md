@@ -107,5 +107,23 @@ serialized and uses only containers created by this repository's harnesses.
   storage code, recovery passed all 38 scenarios (692 PASS, three existing
   warnings, zero FAIL), and the browser gate passed. The benchmark then stopped
   when ClickHouse restarted and its published port changed; its retry still
-  used the old endpoint. Benchmark reconnect handling and the remaining
-  benchmark/acceptance checks are being completed.
+  used the old endpoint. An isolated automatic-restart probe reproduced the
+  port change. The fix refreshes the shared endpoint, bounds lookup/readiness
+  by cancellation and preserves readable diagnostics. Eight benchmark unit
+  tests and strict TypeScript checking pass.
+
+- Final resumed measurement at `bcafb06`: the 20-million-order benchmark
+  passed all 20 query comparisons against MySQL across repeated, novel and
+  memo-disabled tracks. Both engines recorded zero concurrency errors at
+  1/4/8/16 clients. Acceptance passed all 24 query outcomes (12 queries on
+  each engine), with no errors, mismatches or declared gaps. Reports and the
+  generated README table are banked. The Markdown's old hard-coded sample
+  label was corrected to match the raw data: 15 measurements after two
+  warmups; no timings were changed.
+
+- All eight implementation items are complete. Validation completed across
+  the initial full-profile attempt and targeted resumes after fixing the
+  defects it exposed. This is not a claim that one full-profile invocation
+  passed: the final runner correctly reports **PASS (SUBSET)** for its
+  benchmark/acceptance stage list. The known upstream binlog panic remains
+  reproducible as documented above; unrestricted binlog fuzzing is not green.

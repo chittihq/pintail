@@ -154,14 +154,14 @@ measure of what a dashboard refresh costs, and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,437 ms | 12 ms | 13 ms |
+| Full table count | 1,437 ms | 12 ms | 12 ms |
 | Filtered count | 587 ms | 12 ms | 31 ms |
 | Group by status | 34,398 ms | 13 ms | 69 ms |
-| Region × status breakdown | 13,054 ms | 13 ms | 177 ms |
-| Monthly revenue (2023) | 5,462 ms | 11 ms | 43 ms |
-| Top 10 spenders | 889,417 ms | 77 ms | 176 ms |
-| Regional analytics | 53,410 ms | 12 ms | 130 ms |
-| Join users + orders | 796,769 ms | 15 ms | 163 ms |
+| Region × status breakdown | 13,054 ms | 12 ms | 177 ms |
+| Monthly revenue (2023) | 5,462 ms | 12 ms | 45 ms |
+| Top 10 spenders | 889,417 ms | 76 ms | 174 ms |
+| Regional analytics | 53,410 ms | 12 ms | 132 ms |
+| Join users + orders | 796,769 ms | 12 ms | 168 ms |
 
 **Novel queries — raw engine speed.** The same shapes with constants the memo
 has never seen, so both engines actually execute. **ClickHouse is faster here.**
@@ -170,10 +170,10 @@ win it.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,125 ms | 407 ms | 53 ms | 0.13× |
-| Group by region (novel group column) | 12,949 ms | 846 ms | 93 ms | 0.11× |
-| Monthly revenue, novel year | 8,226 ms | 129 ms | 51 ms | 0.40× |
-| Regional analytics, novel range | 56,145 ms | 544 ms | 139 ms | 0.26× |
+| Filtered count, novel constant | 1,125 ms | 412 ms | 52 ms | 0.13× |
+| Group by region (novel group column) | 12,949 ms | 815 ms | 84 ms | 0.10× |
+| Monthly revenue, novel year | 8,226 ms | 133 ms | 46 ms | 0.35× |
+| Regional analytics, novel range | 56,145 ms | 460 ms | 147 ms | 0.32× |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -193,7 +193,7 @@ queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-09-03T08:25:58.423Z) by
+<sub>Generated from `benchmark/results.json` (2026-09-05T19:03:27.814Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->
