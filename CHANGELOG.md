@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Local predicate-partition and equivalent-query checks run in push CI.
+- A memory watchdog samples once per second and cooperatively cancels the
+  largest tracked query when process or query-budget usage reaches 90%.
+
 - A recovery suite with test-only failpoints and 38 isolated scenarios across
   eight fault areas plus a baseline. It checks exact rows, keyless duplicate
   counts, column metadata, repair state and continued writes after a second

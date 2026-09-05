@@ -106,6 +106,7 @@ async fn main() -> Result<()> {
     let mut http_shutdown = shutdown.subscribe();
     let mut wire_shutdown = shutdown.subscribe();
     let supervisor = spawn_supervisor(api_state.clone(), shutdown.subscribe());
+    let watchdog = pintail::watchdog::spawn(shutdown.subscribe());
     // with_connect_info: the audit trail records the network peer of every
     // action, and without this the socket address never reaches the router.
     let http = axum::serve(
@@ -134,6 +135,7 @@ async fn main() -> Result<()> {
         wire.await.context("MySQL wire server failed")
     })?;
     supervisor.await.context("replication supervisor failed")?;
+    watchdog.await.context("memory watchdog failed")?;
     Ok(())
 }
 

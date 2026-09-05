@@ -1088,3 +1088,23 @@ quarantine policy without authorizing repair of later ambiguous keyless
 mutations. Those still require their configured policy after the copy finishes.
 Pending copies take priority over new drift repairs and retry at supervisor
 cadence; completed copies that later drift retain the existing cooldown.
+
+### Memory pressure cancels one query per sample
+
+The server samples resident memory once per second and requests cooperative
+cancellation of the largest running query by tracked operator reservations
+when resident memory reaches 90% of the detected container/host ceiling, or
+tracked query memory reaches 90% of its configured nonzero budget. HTTP and
+wire executions use the same registry. Nested trackers sharing a cancellation
+handle sum their own reservations; worker estimates already charged by their
+parent do not count twice. Query completion releases its reservations and weak
+registry entries do not keep completed queries alive. Already-cancelled queries
+are skipped on later samples; at most one new query is cancelled per tick.
+
+This complements admission and spilling. It does not forcibly terminate a
+thread, and cannot promise survival of a sudden allocation spike between
+samples. Victim size is tracked operator memory, not per-query RSS: allocator,
+source snapshot, and response-buffer allocations are not attributed by this
+registry. Unknown process limits disable the resident-memory trigger; a zero
+query budget disables only the tracked-budget trigger. Cancellation diagnostics
+record byte counts without SQL or client credentials.

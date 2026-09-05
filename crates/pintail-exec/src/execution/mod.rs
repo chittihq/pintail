@@ -5,7 +5,9 @@ mod join;
 mod memo;
 mod sort;
 mod two_pass;
+mod watchdog;
 mod window;
+pub use watchdog::{ExecutionCancellation, cancel_query_under_memory_pressure};
 
 pub(crate) use aggregate::compare_decimal_text;
 /// Test-only accessor for the SMA fold-hit counter the storage tests assert on.
@@ -31,10 +33,6 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     hash::Hash,
     mem::{size_of, size_of_val},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering as AtomicOrdering},
-    },
     time::Instant,
 };
 
@@ -66,32 +64,6 @@ thread_local! {
         const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
     static EXECUTION_CANCELLATION: std::cell::RefCell<Option<ExecutionCancellation>> =
         const { std::cell::RefCell::new(None) };
-}
-
-/// Cooperative cancellation shared by one query and every nested/parallel
-/// executor path it opens.
-#[derive(Clone, Debug, Default)]
-pub struct ExecutionCancellation {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl ExecutionCancellation {
-    /// Creates a live cancellation handle.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Requests prompt cooperative cancellation.
-    pub fn cancel(&self) {
-        self.cancelled.store(true, AtomicOrdering::Release);
-    }
-
-    /// Returns whether cancellation has been requested.
-    #[must_use]
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(AtomicOrdering::Acquire)
-    }
 }
 
 /// Runs synchronous query setup/execution with a cancellation handle that is
@@ -1194,6 +1166,9 @@ impl Drop for MemoryTracker {
             .swap(0, std::sync::atomic::Ordering::Relaxed);
         if owed > 0 {
             shared_memory_budget().release(owed);
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.release(owed);
+            }
         }
     }
 }
@@ -1220,7 +1195,11 @@ impl MemoryTracker {
         Self {
             limit,
             deadline,
-            cancellation: EXECUTION_CANCELLATION.with(|current| current.borrow().clone()),
+            cancellation: Some(
+                EXECUTION_CANCELLATION
+                    .with(|current| current.borrow().clone())
+                    .unwrap_or_default(),
+            ),
             used: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: true,
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
@@ -1296,6 +1275,9 @@ impl MemoryTracker {
                         self.release_local(bytes);
                         return Err(error);
                     }
+                    if let Some(cancellation) = &self.cancellation {
+                        cancellation.reserve(bytes);
+                    }
                     self.shared_charged
                         .fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
                 }
@@ -1342,6 +1324,9 @@ impl MemoryTracker {
             .map_or(0, |owed| owed.min(bytes));
         if repaid > 0 {
             shared_memory_budget().release(repaid);
+            if let Some(cancellation) = &self.cancellation {
+                cancellation.release(repaid);
+            }
         }
     }
 

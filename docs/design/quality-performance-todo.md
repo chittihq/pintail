@@ -10,7 +10,7 @@ serialized and uses only containers created by this repository's harnesses.
    concatenation of TRUE, FALSE and NULL predicate partitions. Cover nullable
    values, duplicate projections, joins, aggregates and equivalent rewrites.
    Include deterministic generated cases in ordinary push CI.
-2. [ ] **Memory watchdog.** Sample pressure once per second, cancel the
+2. [x] **Memory watchdog.** Sample pressure once per second, cancel the
    largest tracked running query, and let existing cooperative cancellation
    release its memory. Cover victim selection, no-pressure behavior, repeated
    ticks and query lifetime cleanup. Apply to HTTP and wire execution.
@@ -38,6 +38,12 @@ serialized and uses only containers created by this repository's harnesses.
    and classification. Document that classification is not a latency guarantee.
 
 ## Evidence and decisions
+
+- Item 2: the server owns a one-second watchdog. Executor tests verify
+  90% thresholds, largest-victim selection, repeated ticks, cancellation,
+  clone/worker accounting and lifetime cleanup. Strict clippy and all tests
+  of `pintail-exec` and `pintail` pass. See the memory-pressure decision for
+  cooperative-cancellation and untracked-allocation limits.
 
 - Item 1: `partition_rewrites.rs` covers 107 predicate partitions and seven
   equivalent rewrites over deterministic nullable fixtures, including outer

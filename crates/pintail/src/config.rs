@@ -31,7 +31,8 @@ use serde::Deserialize;
 ///
 /// An unknown value is reported as `None` so the caller can stay unbounded
 /// instead of inventing a ceiling from a guess.
-fn available_memory_bytes() -> Option<u64> {
+#[must_use]
+pub fn available_memory_bytes() -> Option<u64> {
     cgroup_memory_limit()
         .or_else(host_memory_bytes)
         .filter(|bytes| *bytes > 0)
