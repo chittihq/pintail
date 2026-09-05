@@ -137,24 +137,29 @@ fn embed_by_type(image: &[ColumnType], schema: &[ColumnType]) -> Option<Vec<usiz
     Some(placement)
 }
 
-/// Placement for a row image exactly as wide as the table's physical columns
-/// when the schema also keeps `VIRTUAL GENERATED` ones.
+/// Placement by source ordinal: each schema column sits at the position the
+/// probe recorded for it, and a position the schema skips - a `VIRTUAL`
+/// generated column the server cannot keep current - decodes to nothing.
 ///
-/// `MySQL` writes those columns into its row images, so a healthy stream is
-/// positional and never reaches this. A server that leaves them out produces
-/// an image one column narrower per virtual column; reading it positionally
-/// over the physical columns alone is the only exact placement, and the
-/// virtual columns decode as absent (NULL) rather than misaligning every
-/// column after the first one.
-fn physical_placement(table: &SourceTable, image_columns: usize) -> Option<Vec<Option<usize>>> {
-    let physical = table
-        .columns
-        .iter()
-        .enumerate()
-        .filter(|(_, column)| !column.virtual_generated())
-        .map(|(index, _)| Some(index))
-        .collect::<Vec<_>>();
-    (physical.len() != table.columns.len() && physical.len() == image_columns).then_some(physical)
+/// Exact only against the layout the probe saw, so it applies when the table
+/// map declares exactly that many columns; any other width is drift, which
+/// the name and type placements below handle as before. Stores probed before
+/// ordinals were recorded carry zeros and fall through as well.
+fn ordinal_placement(table: &SourceTable, image_columns: usize) -> Option<Vec<Option<usize>>> {
+    let declared = usize::try_from(table.source_column_count).ok()?;
+    if declared == 0 || declared != image_columns {
+        return None;
+    }
+    let mut placement = vec![None; declared];
+    for (index, column) in table.columns.iter().enumerate() {
+        let ordinal = usize::try_from(column.ordinal).ok()?.checked_sub(1)?;
+        let slot = placement.get_mut(ordinal)?;
+        if slot.is_some() {
+            return None;
+        }
+        *slot = Some(index);
+    }
+    Some(placement)
 }
 
 impl RowAlignment {
@@ -171,7 +176,7 @@ impl RowAlignment {
         if image_columns == table.columns.len() {
             return Ok(Self::Positional);
         }
-        if let Some(image_to_schema) = physical_placement(table, image_columns) {
+        if let Some(image_to_schema) = ordinal_placement(table, image_columns) {
             return Ok(Self::ByName { image_to_schema });
         }
         let metadata = OptionalMetaExtractor::new(table_map.iter_optional_meta())
@@ -257,41 +262,56 @@ impl RowAlignment {
     }
 }
 
+/// The table-map ordinals a row image carries, from the event's
+/// columns-present bitmap: bit *i* set means the image holds a value for
+/// column *i* of the table map, in ordinal order.
+///
+/// A FULL image sets every bit for the physical columns, but not always for
+/// a `VIRTUAL` generated one: `MariaDB` writes it into after-images and
+/// leaves it out of before-images, so a row's values are placed by the
+/// ordinals its own bitmap names rather than by the table map's width.
+pub(crate) fn image_ordinals(bits: impl Iterator<Item = bool>, columns: usize) -> Vec<usize> {
+    bits.take(columns)
+        .enumerate()
+        .filter_map(|(ordinal, present)| present.then_some(ordinal))
+        .collect()
+}
+
+/// Decodes one row image into the schema's column order. `present` names
+/// the table-map ordinal of each value the image carries; columns the image
+/// leaves out decode as NULL.
 pub(crate) fn decode_row(
     table: &SourceTable,
     row: BinlogRow,
     alignment: &RowAlignment,
+    present: &[usize],
 ) -> Result<Vec<Value>, CdcError> {
-    let image_to_schema = match alignment {
-        RowAlignment::Positional => {
-            if row.len() != table.columns.len() {
-                return Err(CdcError::Decode(format!(
-                    "{} row image contains {} columns; FULL metadata/image requires {}",
-                    table.name,
-                    row.len(),
-                    table.columns.len()
-                )));
-            }
-            return row
-                .unwrap()
-                .into_iter()
-                .zip(&table.columns)
-                .map(|(value, column)| decode_value(&table.name, column, value))
-                .collect();
-        }
-        RowAlignment::ByName { image_to_schema } => image_to_schema,
-    };
-    if row.len() != image_to_schema.len() {
+    if row.len() != present.len() {
         return Err(CdcError::Decode(format!(
-            "{} row image contains {} columns; its table map declared {}",
+            "{} row image carries {} values for {} present columns",
             table.name,
             row.len(),
-            image_to_schema.len()
+            present.len()
         )));
     }
     let mut values = vec![Value::Null; table.columns.len()];
-    for (value, target) in row.unwrap().into_iter().zip(image_to_schema) {
-        let Some(index) = *target else {
+    for (value, ordinal) in row.unwrap().into_iter().zip(present) {
+        let index = match alignment {
+            RowAlignment::Positional => {
+                if *ordinal >= table.columns.len() {
+                    return Err(CdcError::Decode(format!(
+                        "{} row image column {ordinal} is beyond its {}-column schema",
+                        table.name,
+                        table.columns.len()
+                    )));
+                }
+                Some(*ordinal)
+            }
+            RowAlignment::ByName { image_to_schema } => {
+                image_to_schema.get(*ordinal).copied().flatten()
+            }
+        };
+        let Some(index) = index else {
             continue;
         };
         values[index] = decode_value(&table.name, &table.columns[index], value)?;
@@ -564,20 +584,28 @@ mod tests {
     use pintail_types::DataType;
 
     #[test]
-    fn an_image_without_the_virtual_columns_reads_the_physical_ones_in_order() {
+    fn a_row_is_placed_by_the_ordinals_its_image_bitmap_names() {
+        use mysql_async::{
+            Column,
+            binlog::{row::BinlogRow, value::BinlogValue},
+            consts::ColumnType,
+        };
+        use pintail_types::Value;
+
+        let mut id = column("bigint", "bigint");
+        id.name = "id".to_owned();
+        id.pintail_type = DataType::Int64;
+        let mut contact = column("varchar", "varchar(64)");
+        contact.name = "contact".to_owned();
         let mut virtual_column = column("varchar", "varchar(64)");
         virtual_column.name = "contact_clean".to_owned();
         virtual_column.extra = "VIRTUAL GENERATED".to_owned();
-        let mut id = column("bigint", "bigint");
-        id.name = "id".to_owned();
-        let mut contact = column("varchar", "varchar(64)");
-        contact.name = "contact".to_owned();
         let table = pintail_probe::SourceTable {
             name: "contacts".to_owned(),
             engine: None,
             estimated_rows: None,
             rows_are_exact: false,
-            columns: vec![id, virtual_column, contact],
+            columns: vec![id, contact, virtual_column],
             key: pintail_probe::SourceKey {
                 mode: pintail_types::KeyMode::Primary,
                 index_name: None,
@@ -588,16 +616,123 @@ mod tests {
             foreign_keys: Vec::new(),
             secondary_indexes: Vec::new(),
             warnings: Vec::new(),
+            source_column_count: 0,
         };
-        // MySQL logs the virtual column: a full-width image is positional.
-        assert_eq!(super::physical_placement(&table, 3), None);
-        // A server that omits it: the two physical columns, in order.
-        assert_eq!(
-            super::physical_placement(&table, 2),
-            Some(vec![Some(0), Some(2)])
+        let row = |values: Vec<MysqlValue>, types: &[ColumnType]| {
+            BinlogRow::new(
+                values
+                    .into_iter()
+                    .map(|value| Some(BinlogValue::Value(value)))
+                    .collect(),
+                types
+                    .iter()
+                    .map(|kind| Column::new(*kind))
+                    .collect::<Vec<_>>()
+                    .into(),
+            )
+        };
+        let text = ColumnType::MYSQL_TYPE_VARCHAR;
+        let long = ColumnType::MYSQL_TYPE_LONGLONG;
+
+        // A before-image that omits the virtual column: the two physical
+        // values land on their own columns and the virtual one reads NULL.
+        let partial = row(
+            vec![MysqlValue::Int(7), MysqlValue::Bytes(b"x".to_vec())],
+            &[long, text],
         );
-        // Anything else is a real drift and goes to the name/type placement.
-        assert_eq!(super::physical_placement(&table, 4), None);
+        assert_eq!(
+            super::decode_row(&table, partial, &super::RowAlignment::Positional, &[0, 1])
+                .expect("partial image"),
+            vec![Value::Int64(7), Value::Utf8("x".to_owned()), Value::Null]
+        );
+        // An after-image that carries it.
+        let full = row(
+            vec![
+                MysqlValue::Int(7),
+                MysqlValue::Bytes(b"x".to_vec()),
+                MysqlValue::Bytes(b"X".to_vec()),
+            ],
+            &[long, text, text],
+        );
+        assert_eq!(
+            super::decode_row(&table, full, &super::RowAlignment::Positional, &[0, 1, 2])
+                .expect("full image"),
+            vec![
+                Value::Int64(7),
+                Value::Utf8("x".to_owned()),
+                Value::Utf8("X".to_owned())
+            ]
+        );
+        // A bitmap that disagrees with the image is refused, never guessed.
+        let torn = row(
+            vec![MysqlValue::Int(7), MysqlValue::Bytes(b"x".to_vec())],
+            &[long, text],
+        );
+        assert!(
+            super::decode_row(&table, torn, &super::RowAlignment::Positional, &[0, 1, 2]).is_err()
+        );
+        // Under a name placement the ordinal goes through the map.
+        let drifted = row(vec![MysqlValue::Bytes(b"y".to_vec())], &[text]);
+        assert_eq!(
+            super::decode_row(
+                &table,
+                drifted,
+                &super::RowAlignment::ByName {
+                    image_to_schema: vec![Some(0), None, Some(1)],
+                },
+                &[2],
+            )
+            .expect("drifted image"),
+            vec![Value::Null, Value::Utf8("y".to_owned()), Value::Null]
+        );
+        assert_eq!(
+            super::image_ordinals([true, false, true, true].into_iter(), 3),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn a_skipped_source_column_leaves_a_gap_the_image_fills_with_nothing() {
+        let mut id = column("bigint", "bigint");
+        id.name = "id".to_owned();
+        id.ordinal = 1;
+        let mut contact = column("varchar", "varchar(64)");
+        contact.name = "contact".to_owned();
+        contact.ordinal = 3;
+        // Source layout: id, <skipped virtual column>, contact.
+        let table = pintail_probe::SourceTable {
+            name: "contacts".to_owned(),
+            engine: None,
+            estimated_rows: None,
+            rows_are_exact: false,
+            columns: vec![id, contact],
+            key: pintail_probe::SourceKey {
+                mode: pintail_types::KeyMode::Primary,
+                index_name: None,
+                columns: vec!["id".to_owned()],
+            },
+            unique_keys: Vec::new(),
+            requires_reconciliation: false,
+            foreign_keys: Vec::new(),
+            secondary_indexes: Vec::new(),
+            warnings: Vec::new(),
+            source_column_count: 3,
+        };
+        assert_eq!(
+            super::ordinal_placement(&table, 3),
+            Some(vec![Some(0), None, Some(1)])
+        );
+        // A different width is drift, not a skipped column.
+        assert_eq!(super::ordinal_placement(&table, 4), None);
+        assert_eq!(super::ordinal_placement(&table, 2), None);
+        // A store probed before ordinals were recorded says nothing.
+        let mut unknown = table.clone();
+        unknown.source_column_count = 0;
+        assert_eq!(super::ordinal_placement(&unknown, 3), None);
+        // Two columns on one position is corruption, refused.
+        let mut clashing = table;
+        clashing.columns[1].ordinal = 1;
+        assert_eq!(super::ordinal_placement(&clashing, 3), None);
     }
 
     fn column(data_type: &str, column_type: &str) -> SourceColumn {
@@ -616,6 +751,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            ordinal: 0,
         }
     }
 

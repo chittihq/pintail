@@ -254,6 +254,7 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
             foreign_keys: Vec::new(),
             secondary_indexes: Vec::new(),
             warnings: Vec::new(),
+            source_column_count: 0,
         },
         if_not_exists: create.if_not_exists,
     })

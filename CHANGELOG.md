@@ -14,9 +14,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writes them, so every row event was one column wider than the schema,
   every event failed, and the automatic resync recopied the table with the
   same schema every five minutes. The column now stays in the schema (and
-  replicates, and appears in `SHOW CREATE TABLE`); `MariaDB`, which does
-  leave virtual columns out of its binary log, keeps the old behaviour with
-  a clearer warning. A virtual column joining a schema mid-stream is
+  replicates, and appears in `SHOW CREATE TABLE`) on `MySQL` 5.7 and 8,
+  under FULL and MINIMAL metadata alike. `MariaDB` leaves the value out of
+  UPDATE after-images, so there the column is skipped with a warning that
+  says so; the probe now records every column's source position and the
+  decoder places image values by it, so a skipped column no longer makes
+  every wider image undecodable under MINIMAL metadata. A virtual column
+  joining a schema mid-stream - through a logged ALTER or a missed one - is
   recopied rather than evolved in place, so existing rows carry its values.
 - A snapshot resumed after a restart advances past the chunks its journal
   already holds instead of re-reading them from the source, which on a
@@ -34,6 +38,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   marks every other table error: the table is flagged for resync, the run
   copies the rest, and the handoff proceeds with a `snapshot.partial`
   event naming what was skipped.
+- A `MariaDB` stream no longer risks a corrupted binlog file name at every
+  connection. The artificial rotate event that opens a stream carries the
+  requested position rather than zero, so it was taken for a real rotation,
+  and its unstripped checksum bytes became part of the file name whenever
+  they happened to be printable. The artificial flag now decides.
 - Every snapshot table logs its start and end at info level, with the
   chunks it skipped on resume; replication errors carry their full cause
   chain, so a metadata-file failure names the OS error behind it.

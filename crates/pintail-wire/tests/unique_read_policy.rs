@@ -42,6 +42,7 @@ fn column(id: u32, name: &str, data_type: DataType) -> SourceColumn {
         auto_increment: id == 1,
         default_value: None,
         default_generated: false,
+        ordinal: 0,
     }
 }
 
@@ -66,6 +67,7 @@ fn source_table(requires_reconciliation: bool) -> SourceTable {
         foreign_keys: Vec::new(),
         secondary_indexes: Vec::new(),
         warnings: Vec::new(),
+        source_column_count: 0,
     }
 }
 

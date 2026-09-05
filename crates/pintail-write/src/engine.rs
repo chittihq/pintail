@@ -339,6 +339,7 @@ fn local_source_table(
         foreign_keys: Vec::new(),
         secondary_indexes: Vec::new(),
         warnings: Vec::new(),
+        source_column_count: 0,
     }
 }
 

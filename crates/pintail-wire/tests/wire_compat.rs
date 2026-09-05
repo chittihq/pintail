@@ -1245,6 +1245,7 @@ fn source_table() -> SourceTable {
                 auto_increment: true,
                 default_value: None,
                 default_generated: false,
+                ordinal: 0,
             },
             SourceColumn {
                 id: 2,
@@ -1261,6 +1262,7 @@ fn source_table() -> SourceTable {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                ordinal: 0,
             },
         ],
         key: SourceKey {
@@ -1273,9 +1275,11 @@ fn source_table() -> SourceTable {
         foreign_keys: Vec::new(),
         secondary_indexes: Vec::new(),
         warnings: Vec::new(),
+        source_column_count: 0,
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn type_table() -> SourceTable {
     let definitions = [
         (
@@ -1336,6 +1340,7 @@ fn type_table() -> SourceTable {
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        ordinal: 0,
     }];
     columns.extend(definitions.into_iter().enumerate().map(
         |(index, (name, mysql_data_type, mysql_column_type, pintail_type, nullable))| {
@@ -1356,6 +1361,7 @@ fn type_table() -> SourceTable {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                ordinal: 0,
             }
         },
     ));
@@ -1375,6 +1381,7 @@ fn type_table() -> SourceTable {
         foreign_keys: Vec::new(),
         secondary_indexes: Vec::new(),
         warnings: Vec::new(),
+        source_column_count: 0,
     }
 }
 

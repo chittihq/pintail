@@ -1161,21 +1161,21 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
     let result = finite_catch_up(&pool, &metadata_path, &report, targets)
         .await
         .unwrap_or_else(|error| panic!("{} CDC: {error}", variant.label));
-    assert!(
-        MetaStore::open(&metadata_path)
-            .expect("compatibility metadata state")
-            .tables_needing_resync(DATABASE_ID)
-            .expect("compatibility table state")
-            .is_empty(),
-        "{}",
-        variant.label
-    );
+    let flagged = MetaStore::open(&metadata_path)
+        .expect("compatibility metadata state")
+        .tables(DATABASE_ID)
+        .expect("compatibility table state")
+        .into_iter()
+        .filter(|table| table.state == "needs_resync")
+        .map(|table| format!("{}: {}", table.name, table.last_error.unwrap_or_default()))
+        .collect::<Vec<_>>();
+    assert!(flagged.is_empty(), "{} flagged {flagged:?}", variant.label);
     assert!(dlq_errors(&metadata_path).is_empty(), "{}", variant.label);
     assert_eq!(result.checkpoint.kind, "filepos", "{}", variant.label);
     assert_eq!(result.mutations, 9, "{}", variant.label);
     assert_compatibility_rows(variant.label, &result.targets);
-    let logs_virtual = !variant.label.starts_with("mariadb");
-    assert_virtual_column_rows(variant.label, &report, &result.targets, logs_virtual);
+    let maintains_virtual = !variant.label.starts_with("mariadb");
+    assert_virtual_column_rows(variant.label, &report, &result.targets, maintains_virtual);
     assert_virtual_column_added_mid_stream_is_recopied(
         variant.label,
         &mysql,
@@ -1183,7 +1183,7 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
         &metadata_path,
         workspace.path(),
         result.targets,
-        logs_virtual,
+        maintains_virtual,
     )
     .await;
     pool.disconnect()
@@ -1191,14 +1191,15 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
         .expect("disconnect compatibility pool");
 }
 
-/// `MySQL` writes a `VIRTUAL` generated column into its row images, so the
-/// column replicates like any other; `MariaDB` leaves it out of the binary
-/// log, so the probe skips it and the schema is the physical one.
+/// `MySQL` writes a `VIRTUAL` generated column into every row image, so the
+/// column replicates like any other. `MariaDB` leaves its value out of UPDATE
+/// after-images, so the probe skips it and records its position; the wider
+/// images it does write decode by ordinal around the gap.
 fn assert_virtual_column_rows(
     label: &str,
     report: &ProbeReport,
     targets: &[CdcTarget],
-    logs_virtual: bool,
+    maintains_virtual: bool,
 ) {
     let probed = report
         .tables
@@ -1208,11 +1209,31 @@ fn assert_virtual_column_rows(
     let target = cdc_target(targets, "compat_generated");
     let rows = target.store().snapshot().scan().expect("generated scan");
     assert_eq!(rows.len(), 2, "{label}");
-    if logs_virtual {
+    assert_eq!(
+        probed.source_column_count, 3,
+        "{label} records the source layout, skipped columns included"
+    );
+    if maintains_virtual {
         assert_eq!(probed.columns.len(), 3, "{label} keeps the virtual column");
-        assert!(probed.warnings.is_empty(), "{label}: {:?}", probed.warnings);
-        // The snapshot row (id 1, then updated) and the streamed insert
-        // both carry the computed value at the column's own ordinal.
+        assert!(
+            probed
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("virtual generated")),
+            "{label}: {:?}",
+            probed.warnings
+        );
+        assert_eq!(
+            probed
+                .columns
+                .iter()
+                .map(|column| column.ordinal)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3],
+            "{label}"
+        );
+        // The snapshot row (id 1, then updated) and the streamed insert both
+        // carry the computed value at the column's own ordinal.
         for row in &rows {
             let Value::Utf8(value) = &row.values()[1] else {
                 panic!("{label}: value is text");
@@ -1234,17 +1255,33 @@ fn assert_virtual_column_rows(
             "{label}: {:?}",
             probed.warnings
         );
+        assert_eq!(
+            probed
+                .columns
+                .iter()
+                .map(|column| column.ordinal)
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "{label}"
+        );
         for row in &rows {
             assert_eq!(row.values().len(), 2, "{label}");
         }
+        assert_eq!(
+            rows[0].values()[1],
+            Value::Utf8("updated".to_owned()),
+            "{label}"
+        );
     }
 }
 
 /// A `VIRTUAL` column added to a live table cannot evolve in place - the
 /// rows already copied would read NULL where the source computes values -
 /// so the stream quarantines the table, and the recopy that follows carries
-/// the values for every row. Where the server does not log the column, the
-/// ALTER changes nothing the stream can see and the table stays live.
+/// the values for every row. Where the server cannot keep the column current
+/// the probe skips it, the wider images decode around it, and the table
+/// stays live.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn assert_virtual_column_added_mid_stream_is_recopied(
     label: &str,
     mysql: &MysqlContainer,
@@ -1252,7 +1289,7 @@ async fn assert_virtual_column_added_mid_stream_is_recopied(
     metadata_path: &Path,
     workspace: &Path,
     targets: Vec<CdcTarget>,
-    logs_virtual: bool,
+    maintains_virtual: bool,
 ) {
     mysql
         .query_batch(
@@ -1269,22 +1306,33 @@ async fn assert_virtual_column_added_mid_stream_is_recopied(
         .unwrap_or_else(|error| panic!("{label} CDC after ALTER: {error}"));
     let metadata = MetaStore::open(metadata_path).expect("metadata");
     let flagged = metadata
-        .tables_needing_resync(DATABASE_ID)
-        .expect("flagged tables");
-    if !logs_virtual {
+        .tables(DATABASE_ID)
+        .expect("tables")
+        .into_iter()
+        .filter(|table| table.state == "needs_resync")
+        .map(|table| (table.name, table.last_error.unwrap_or_default()))
+        .collect::<Vec<_>>();
+    if !maintains_virtual {
         assert!(flagged.is_empty(), "{label}: {flagged:?}");
-        let rows = cdc_target(&result.targets, "compat_generated")
-            .store()
-            .snapshot()
-            .scan()
-            .expect("generated scan");
-        assert_eq!(rows.len(), 3, "{label}: the insert streamed through");
+        let target = cdc_target(&result.targets, "compat_generated");
+        assert_eq!(target.source().source_column_count, 4, "{label}");
+        let rows = target.store().snapshot().scan().expect("generated scan");
+        assert_eq!(
+            rows.len(),
+            3,
+            "{label}: the insert streamed through the wider image"
+        );
+        assert!(rows.iter().all(|row| row.values().len() == 2), "{label}");
         return;
     }
-    assert_eq!(
-        flagged.into_iter().collect::<Vec<_>>(),
-        vec!["compat_generated".to_owned()],
-        "{label}: the table is recopied, not evolved in place"
+    assert_eq!(flagged.len(), 1, "{label}: {flagged:?}");
+    assert_eq!(flagged[0].0, "compat_generated", "{label}");
+    assert!(
+        flagged[0]
+            .1
+            .contains("virtual generated column value_len joined the schema"),
+        "{label}: the table is recopied for the right reason, not a parse failure: {}",
+        flagged[0].1
     );
     assert_eq!(
         cdc_target(&result.targets, "compat_generated")

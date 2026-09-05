@@ -123,6 +123,11 @@ pub struct SourceTable {
     pub secondary_indexes: Vec<SourceSecondaryIndex>,
     /// Table-specific mapping warnings.
     pub warnings: Vec<String>,
+    /// How many columns the source table declares, skipped ones included:
+    /// the width of a row image written against this layout. Zero when
+    /// unknown.
+    #[serde(default)]
+    pub source_column_count: u32,
 }
 
 /// One `REFERENTIAL_CONSTRAINTS` row: constraint name, delete rule, update
@@ -274,6 +279,12 @@ pub struct SourceColumn {
     /// Whether `EXTRA` identifies the default as an evaluated expression.
     #[serde(default)]
     pub default_generated: bool,
+    /// 1-based position of the column in the source table, as the source
+    /// lays its row images out; zero when unknown (a store probed before
+    /// this was recorded). Stable column IDs survive renames and adds, so
+    /// they cannot serve as positions.
+    #[serde(default)]
+    pub ordinal: u32,
 }
 
 impl SourceColumn {
@@ -771,12 +782,13 @@ async fn probe_table(
             ));
         }
     }
+    let source_column_count = u32::try_from(raw_columns.len()).unwrap_or(u32::MAX);
     for raw in raw_columns {
         let (generated, generated_stored) = generated_flags(&raw.generation_expression, &raw.extra);
-        if generated && !generated_stored && !logs_virtual_generated_columns(flavor) {
+        if generated && !generated_stored && !maintains_virtual_generated_columns(flavor) {
             warnings.push(format!(
-                "skipping virtual generated column {} because this server leaves it out of \
-                 row binlog images",
+                "skipping virtual generated column {}: this server leaves its value out of \
+                 UPDATE row images, so the replica could not keep it current",
                 raw.name
             ));
             continue;
@@ -818,6 +830,7 @@ async fn probe_table(
             auto_increment,
             default_value: raw.default_value,
             default_generated,
+            ordinal: raw.ordinal,
         });
     }
     if columns.is_empty() {
@@ -842,6 +855,7 @@ async fn probe_table(
         foreign_keys,
         secondary_indexes: secondary,
         warnings,
+        source_column_count,
     })
 }
 
@@ -931,16 +945,17 @@ fn derive_capabilities(
     }
 }
 
-/// Whether this server writes `VIRTUAL GENERATED` columns into row images.
+/// Whether a `VIRTUAL` generated column can be kept current from the row
+/// images this server writes.
 ///
-/// `MySQL` does: a FULL row image carries the computed value in the column's
-/// ordinal slot, so the column has to stay in the schema or every row image
-/// is one column wider than the schema it decodes against - and under
-/// MINIMAL metadata nothing names the extra column, so the table was flagged
-/// for a resync that could never converge (the recopied schema was still one
-/// column short). `MariaDB` leaves virtual columns out of the binary log, so
-/// there the column is skipped and the schema stays the physical one.
-const fn logs_virtual_generated_columns(flavor: SourceFlavor) -> bool {
+/// `MySQL` (5.7 and 8, under FULL and MINIMAL metadata alike) writes the
+/// computed value into every image, so the column replicates like any other.
+/// `MariaDB` 11 writes it into INSERT images but not the after-image of an
+/// UPDATE - the compatibility matrix read NULL where the source had the new
+/// value - so there the column is skipped: its source ordinal is still
+/// recorded, and the decoder places image values by ordinal, so the wider
+/// image decodes exactly rather than tripping the MINIMAL placement puzzle.
+const fn maintains_virtual_generated_columns(flavor: SourceFlavor) -> bool {
     matches!(flavor, SourceFlavor::Mysql)
 }
 
@@ -1146,6 +1161,7 @@ pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, Prob
         auto_increment: false,
         default_value: None,
         default_generated: false,
+        ordinal: raw.ordinal,
     })
 }
 
@@ -1479,6 +1495,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            ordinal: 0,
         };
         assert!(column.virtual_generated());
         column.extra = String::new();
@@ -1486,8 +1503,10 @@ mod tests {
         assert!(column.virtual_generated());
         column.generated_stored = true;
         assert!(!column.virtual_generated());
-        assert!(super::logs_virtual_generated_columns(SourceFlavor::Mysql));
-        assert!(!super::logs_virtual_generated_columns(
+        assert!(super::maintains_virtual_generated_columns(
+            SourceFlavor::Mysql
+        ));
+        assert!(!super::maintains_virtual_generated_columns(
             SourceFlavor::MariaDb
         ));
     }
@@ -1550,6 +1569,7 @@ mod tests {
                     auto_increment: true,
                     default_value: None,
                     default_generated: false,
+                    ordinal: 0,
                 },
                 SourceColumn {
                     id: 2,
@@ -1566,6 +1586,7 @@ mod tests {
                     auto_increment: false,
                     default_value: None,
                     default_generated: false,
+                    ordinal: 0,
                 },
             ],
             key: SourceKey {
@@ -1578,6 +1599,7 @@ mod tests {
             foreign_keys: Vec::new(),
             secondary_indexes: Vec::new(),
             warnings: Vec::new(),
+            source_column_count: 0,
         };
         let schema = table.table_schema().expect("table schema");
         assert!(!schema.columns()[0].is_nullable());

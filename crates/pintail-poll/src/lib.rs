@@ -2076,6 +2076,7 @@ mod tests {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                ordinal: 0,
             }],
             key: SourceKey {
                 mode: KeyMode::AppendRowId,
@@ -2087,6 +2088,7 @@ mod tests {
             foreign_keys: Vec::new(),
             secondary_indexes: Vec::new(),
             warnings: Vec::new(),
+            source_column_count: 0,
         }
     }
 

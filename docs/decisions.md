@@ -1032,8 +1032,15 @@ the source for them again. And one table failing to copy flags that table and
 lets the run finish, because a job that fails on one table and marks every
 other one error is the outage, not the repair.
 
-The virtual column joins the schema for `MySQL` sources and stays out for
-`MariaDB`, which is the one server that leaves it out of the binary log; a
-decoder that meets a physical-width image on a schema with virtual columns
-reads the physical columns positionally rather than misaligning everything
-after the first one.
+Which servers keep the column was settled by the compatibility matrix rather
+than by documentation: a virtual column on `MySQL` 5.7, `MySQL` 8 under FULL
+and MINIMAL metadata, and `MariaDB` 11, updated and inserted mid-stream on
+each. `MySQL` carries the computed value in every image. `MariaDB` writes it
+into INSERT images but reads NULL after an UPDATE, so a replica cannot keep it
+current and the probe skips it there. That skip is exactly the shape that
+looped in production - a schema narrower than the row image, under metadata
+that names nothing - so the probe now records each column's source position
+and the declared column count, and the decoder places image values by
+position, ignoring positions the schema skips. Each image is also read by
+its own column bitmap, since `MariaDB` omits the virtual column from some
+images and not others within one stream.

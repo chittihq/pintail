@@ -24,7 +24,7 @@ use futures_util::StreamExt as _;
 use mysql_async::{
     BinlogStream, BinlogStreamRequest, Error as MysqlError, Pool,
     binlog::{
-        RowsEventFlags,
+        EventFlags, RowsEventFlags,
         events::{EventData, RowsEventData},
         row::BinlogRow,
     },
@@ -42,7 +42,7 @@ use thiserror::Error;
 
 use crate::{
     ddl::{AlterKind, DdlAction, parse_ddl},
-    decoder::{RowAlignment, UnknownColumn, decode_row, insert_key, physical_key},
+    decoder::{RowAlignment, UnknownColumn, decode_row, image_ordinals, insert_key, physical_key},
     gtid::MysqlGtidSet,
 };
 
@@ -482,7 +482,17 @@ async fn run_cdc_inner(
                     pending.ordinal = 0;
                 }
                 EventData::RotateEvent(rotate) => {
-                    if !rotate.is_fake() {
+                    // The artificial rotate that opens a stream is not a
+                    // rotation. MySQL sends it with position zero; MariaDB
+                    // sends it with the requested position, and before the
+                    // format description arrives its checksum bytes are still
+                    // on the name - printable ones became part of the file
+                    // name. The header flag names it on both servers.
+                    let artificial = event
+                        .header()
+                        .flags()
+                        .contains(EventFlags::LOG_EVENT_ARTIFICIAL_F);
+                    if !rotate.is_fake() && !artificial {
                         position.file = sanitize_binlog_filename(&rotate.name())?;
                         position.pos = rotate.position();
                     }
@@ -1789,6 +1799,17 @@ fn decode_rows_event(
     maximum_bytes: usize,
 ) -> Result<bool, CdcError> {
     let mut failed = false;
+    let columns = usize::try_from(rows_event.num_columns()).unwrap_or(usize::MAX);
+    let before_present = rows_event
+        .columns_before_image()
+        .map_or_else(Vec::new, |bits| {
+            image_ordinals(bits.iter().map(|bit| *bit), columns)
+        });
+    let after_present = rows_event
+        .columns_after_image()
+        .map_or_else(Vec::new, |bits| {
+            image_ordinals(bits.iter().map(|bit| *bit), columns)
+        });
     for (row_index, row) in rows_event.rows(table_map).enumerate() {
         let row = match row {
             Ok(row) => row,
@@ -1815,6 +1836,7 @@ fn decode_rows_event(
             alignment,
             target_index,
             row,
+            (&before_present, &after_present),
             position,
             event_position,
             pending,
@@ -1864,6 +1886,7 @@ fn decode_row_pair(
     alignment: &RowAlignment,
     target_index: usize,
     (before, after): (Option<BinlogRow>, Option<BinlogRow>),
+    (before_present, after_present): (&[usize], &[usize]),
     position: &StreamPosition,
     event_position: u64,
     pending: &mut PendingTransaction,
@@ -1871,7 +1894,7 @@ fn decode_row_pair(
 ) -> Result<(), CdcError> {
     match (before, after) {
         (None, Some(after)) => {
-            let values = decode_row(source, after, alignment)?;
+            let values = decode_row(source, after, alignment, after_present)?;
             let version = position.version(event_position, pending.ordinal)?;
             let key = insert_key(source, &values, version)?;
             push_mutations(
@@ -1891,7 +1914,7 @@ fn decode_row_pair(
                     source.name
                 )));
             }
-            let values = decode_row(source, before, alignment)?;
+            let values = decode_row(source, before, alignment, before_present)?;
             let key = physical_key(source, &values)?;
             push_mutations(
                 pending,
@@ -1915,8 +1938,8 @@ fn decode_row_pair(
                     source.name
                 )));
             }
-            let before_values = decode_row(source, before, alignment)?;
-            let after_values = decode_row(source, after, alignment)?;
+            let before_values = decode_row(source, before, alignment, before_present)?;
+            let after_values = decode_row(source, after, alignment, after_present)?;
             let before_key = physical_key(source, &before_values)?;
             let after_key = physical_key(source, &after_values)?;
             let mut mutations = Vec::with_capacity(2);
@@ -2435,6 +2458,7 @@ mod tests {
             auto_increment: false,
             default_value: None,
             default_generated: false,
+            ordinal: 0,
         });
 
         let store = TableStore::open(
@@ -2505,6 +2529,7 @@ mod tests {
                 auto_increment: false,
                 default_value: None,
                 default_generated: false,
+                ordinal: 0,
             }],
             key: SourceKey {
                 mode,
@@ -2520,6 +2545,7 @@ mod tests {
             foreign_keys: Vec::new(),
             secondary_indexes: Vec::new(),
             warnings: Vec::new(),
+            source_column_count: 0,
         }
     }
 
