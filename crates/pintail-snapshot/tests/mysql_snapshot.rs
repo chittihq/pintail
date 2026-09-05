@@ -995,7 +995,9 @@ fn assert_type_mapping(report: &pintail_probe::ProbeReport) {
     assert_eq!(types["datetime_value"], DataType::DateTime64 { fsp: 6 });
     assert_eq!(types["time_value"], DataType::Time64 { fsp: 6 });
     assert_eq!(types["json_value"], DataType::Json);
-    assert!(!types.contains_key("virtual_value"));
+    // MySQL writes a VIRTUAL generated column into its row images, so the
+    // probe keeps it and the snapshot copies its computed value.
+    assert_eq!(types["virtual_value"], DataType::Int64);
     assert!(types.contains_key("stored_value"));
 }
 
@@ -1006,6 +1008,24 @@ fn assert_type_values(targets: &[SnapshotTarget]) {
         .expect("type target");
     let rows = target.store().snapshot().scan().expect("type scan");
     assert_eq!(rows.len(), 2);
+    let columns = target
+        .source()
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| (column.name.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    for row in &rows {
+        let Value::Int64(base) = row.values()[columns["i64_signed"]] else {
+            panic!("i64_signed is a signed integer: {:?}", row.values());
+        };
+        assert_eq!(
+            row.values()[columns["virtual_value"]],
+            Value::Int64(base + 2),
+            "the virtual column's computed value is copied: {:?}",
+            row.values()
+        );
+    }
     let columns = target
         .source()
         .columns
