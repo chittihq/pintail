@@ -127,3 +127,22 @@ serialized and uses only containers created by this repository's harnesses.
   passed: the final runner correctly reports **PASS (SUBSET)** for its
   benchmark/acceptance stage list. The known upstream binlog panic remains
   reproducible as documented above; unrestricted binlog fuzzing is not green.
+
+
+## Review follow-up — 2026-09-06
+
+1. [x] State the tiny-database admission restriction and the known binlog
+   decoder panic in limitations; narrow the changelog claim.
+2. [ ] Add a cooldown after watchdog cancellation and test sustained pressure.
+3. [ ] Link the fixed MySQL oracle's executed SQL and passing results into the
+   completeness ledger with reproducible run and corpus provenance.
+4. [ ] Compare pruning enabled/disabled on multiple persisted segments and
+   add EXISTS/IN and inner-join permutation rewrites.
+5. [ ] Run one complete rc validation profile on the corrected tree and bank
+   both E2E legs and the oracle evidence. No tag is requested.
+
+The instruction gate remains four small, in-process workloads; its recorded
+PGO result remains a training-set measurement. Expanding it to large scans and
+multi-segment workloads requires new baselines and is separate performance
+work, not covered by those figures. The pruning tests below add correctness
+coverage without changing what the instruction evidence claims.

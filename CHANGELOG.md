@@ -9,8 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Query admission reserves up to two slots for simple queries over small,
-  revalidated cached replicas, while preserving the configured total limit.
-  General queries cannot consume the reserve.
+  revalidated cached replicas whose entire database has at most 1,024 physical
+  rows and 4 MiB of stamped files, while preserving the configured total limit.
+  Larger replicas use the general pool, which cannot consume the reserve.
 
 - An independent auditor command runs the benchmark from an isolated clean
   checkout with fresh MySQL timings and portable provenance artifacts.
