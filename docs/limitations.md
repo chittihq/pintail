@@ -247,7 +247,9 @@ stays readable as a list of things to fix.
   `Float32` uses the 64-bit float carrier, and decimal/temporal/JSON values use
   canonical UTF-8.
 - `DECIMAL` precision above 38 maps to text with a probe warning. ENUM and SET
-  snapshot values are textual. Virtual generated columns are skipped.
+  snapshot values are textual. Virtual generated columns replicate from
+  `MySQL`, which writes them into row images; `MariaDB` leaves them out of the
+  binary log, so there they are skipped with a probe warning.
 - Spatial columns are retained as binary WKB without MySQL's four-byte SRID
   prefix, but there is no spatial logical type, index, or query function. They
   export as bytes and cannot be used for spatial predicates.

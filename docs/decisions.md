@@ -1008,3 +1008,32 @@ recorded as a limitation; the streaming answer - a collision set kept by the
 poll cycle that already computes it, filtered during the scan - is the next
 step if a polled table outgrows its ceiling.
 
+### A restart repairs what it interrupted, and nothing else
+
+Found in the field (2026-09-05): a one-table resync, interrupted by a restart,
+came back as a snapshot of every table in the database. The walk set every
+table it finished to pending, held the database's job slot so no binlog
+applied for the duration, re-read the whole source to skip chunks it already
+held, and failed on a live table it had no business touching - which failed
+the job and marked every table error. The trigger underneath was a `VIRTUAL`
+generated column the probe had dropped: `MySQL` writes those into row images,
+so the table's events were one column wider than its schema and the automatic
+resync recopied it, with the same schema, every five minutes.
+
+Four rules replace the guesswork. The table state describes the walk, not the
+copy, so a `copy_complete` marker follows the copy itself: set when a copy or
+resync reaches its end, cleared when one begins or the table is flagged. On
+boot, a database that already handed off hands every marked table straight
+back to its live state, quarantines only the unmarked table that was mid-copy,
+and resumes it as the one-table resync it was; a snapshot asked of such a
+database copies only unmarked tables and leaves the rest live. A resumed
+table advances past its journaled chunks by their upper keys and never asks
+the source for them again. And one table failing to copy flags that table and
+lets the run finish, because a job that fails on one table and marks every
+other one error is the outage, not the repair.
+
+The virtual column joins the schema for `MySQL` sources and stays out for
+`MariaDB`, which is the one server that leaves it out of the binary log; a
+decoder that meets a physical-width image on a schema with virtual columns
+reads the physical columns positionally rather than misaligning everything
+after the first one.

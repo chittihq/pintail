@@ -734,6 +734,12 @@ async function phaseSeed() {
     -- default is utf8mb4_0900_ai_ci, so without a column like this the gate
     -- never exercises a second collation at all.
     legacy_label VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
+    -- MySQL writes VIRTUAL generated columns into row images. Under MINIMAL
+    -- metadata that makes every row event one column wider than a schema
+    -- that dropped the column, which quarantines the table on every event
+    -- and resyncs it every five minutes; the corpus reads
+    -- this column back on every phase so that shape stays covered.
+    email_domain VARCHAR(96) GENERATED ALWAYS AS (SUBSTRING_INDEX(email, '@', -1)) VIRTUAL,
     created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
   ) DEFAULT CHARACTER SET utf8mb4`)
   await sql(`CREATE TABLE orders (
@@ -1944,6 +1950,145 @@ async function phaseRestartDuringSnapshot() {
       'restart-during-snapshot:no table is left quarantined',
       stuck.length === 0 ? 'PASS' : 'FAIL',
       stuck.map((table) => `${table.name}:${table.state}`).join(', ') || undefined,
+    )
+  } finally {
+    if (created) await api(`/api/databases/${created}`, { method: 'DELETE' }).catch(() => undefined)
+    await sql(`DROP DATABASE IF EXISTS ${schema}`)
+  }
+}
+
+/// A restart in the middle of a one-table resync on a streaming database.
+///
+/// The interrupted table must come back as the same one-table repair, and
+/// nothing else may move: the other table stays streaming throughout, no
+/// whole-database snapshot runs, and the stream keeps applying. A restart
+/// once resumed such a resync as a snapshot of every table - all of them
+/// pending, CDC paused, the whole source re-read - and then failed on a
+/// table that had never needed work.
+async function phaseRestartDuringResync() {
+  const phase = 'restart-during-resync'
+  const host = await dockerHost()
+  const mysqlPort = await publishedPort(mysqlName, 3306)
+  const schema = `resync_restart_${nonce}`
+  const ROWS = 200_000
+
+  await sql(`CREATE DATABASE ${schema}`)
+  await sql(`CREATE TABLE ${schema}.seed (n INT PRIMARY KEY)`)
+  await sql(
+    `INSERT INTO ${schema}.seed VALUES ${Array.from({ length: 100 }, (_, n) => `(${n})`).join(',')}`,
+  )
+  await sql(`CREATE TABLE ${schema}.big (id INT PRIMARY KEY, payload VARCHAR(64) NOT NULL)`)
+  await sql(
+    `INSERT INTO ${schema}.big SELECT a.n * 10000 + b.n * 100 + c.n, CONCAT(REPEAT('x', 40), b.n) ` +
+      `FROM ${schema}.seed a, ${schema}.seed b, ${schema}.seed c WHERE a.n < 20`,
+  )
+  await sql(`CREATE TABLE ${schema}.small (id INT PRIMARY KEY, label VARCHAR(16) NOT NULL)`)
+  await sql(`INSERT INTO ${schema}.small VALUES (1, 'one'), (2, 'two')`)
+
+  let created = ''
+  try {
+    created = (
+      await api<{ id: string }>('/api/databases', {
+        method: 'POST',
+        body: {
+          name: schema,
+          dsn: `mysql://pintail:pintail@${dsnHost(host)}:${mysqlPort}/${schema}`,
+          mode: 'cdc',
+        },
+      })
+    ).id
+    await reprobe(created)
+    await api(`/api/databases/${created}/snapshot`, { method: 'POST', body: { force: false } })
+    const streaming = await waitUntil(async () => {
+      const status = await api<{ state: string }>(`/api/databases/${created}/snapshot/status`)
+      return status.state === 'streaming'
+    }, 240_000)
+    if (!streaming) {
+      record(phase, 'restart-during-resync:the source replicates first', 'FAIL', await replicationDiagnostics(created))
+      return
+    }
+    const tableStates = async () =>
+      Object.fromEntries(
+        (await api<TableSummary[]>(`/api/tables?db=${created}`)).map((table) => [table.name, table.state]),
+      ) as Record<string, string>
+
+    // Hold `big` under a WRITE lock so the resync's copy cannot finish, then
+    // start the one-table resync and kill the process with it in flight.
+    const locker = await waitForMysql(host, mysqlPort)
+    let smallMoved: string | undefined
+    try {
+      await locker.query(`LOCK TABLES ${schema}.big WRITE`)
+      await api(`/api/databases/${created}/tables/big/resync`, { method: 'POST' })
+      const midCopy = await waitUntil(async () => (await tableStates()).big === 'snapshotting', 60_000)
+      if (!midCopy) {
+        record(phase, 'restart-during-resync:interrupts a resync in flight', 'FAIL', 'big never reported snapshotting')
+        return
+      }
+      const during = await tableStates()
+      if (during.small !== 'streaming') smallMoved = `during the resync: ${during.small}`
+      log('SIGKILLing pintail mid-resync')
+      pintailProcess!.kill(9)
+      await pintailProcess!.exited
+      record(phase, 'restart-during-resync:interrupts a resync in flight', 'PASS')
+    } finally {
+      await locker.query('UNLOCK TABLES').catch(() => undefined)
+      await locker.end().catch(() => undefined)
+    }
+
+    // A row written while the process is down: the stream must apply it
+    // after the restart, which it cannot if a database-wide job holds the
+    // slot.
+    await sql(`INSERT INTO ${schema}.small VALUES (3, 'three')`)
+    await startPintail()
+
+    // Watch the other table for the whole repair: it must never leave
+    // streaming, which a whole-database walk would have made it do.
+    const repaired = await waitUntil(async () => {
+      const states = await tableStates()
+      if (states.small !== 'streaming' && smallMoved === undefined) smallMoved = `after the restart: ${states.small}`
+      return states.big === 'streaming'
+    }, 240_000, 500)
+    record(
+      phase,
+      'restart-during-resync:the interrupted table comes back on its own',
+      repaired ? 'PASS' : 'FAIL',
+      repaired ? undefined : await replicationDiagnostics(created),
+    )
+    record(
+      phase,
+      'restart-during-resync:the other table never leaves streaming',
+      smallMoved === undefined ? 'PASS' : 'FAIL',
+      smallMoved,
+    )
+    const runs = await api<Array<{ kind: string; table: string | null; started_at: string }>>(
+      `/api/activity?db=${created}&limit=200`,
+    )
+    const wholeDatabase = runs.filter((run) => run.kind === 'snapshot').length
+    record(
+      phase,
+      'restart-during-resync:no whole-database snapshot ran for a one-table repair',
+      wholeDatabase <= 1 ? 'PASS' : 'FAIL',
+      `${wholeDatabase} snapshot run(s) recorded; the initial copy is the only one allowed`,
+    )
+    const caughtUp = await waitUntil(async () => {
+      const count = await api<{ count: number }>(`/api/tables/small/count?db=${created}`)
+      return count.count === 3
+    }, 120_000)
+    record(
+      phase,
+      'restart-during-resync:the stream keeps applying while the table is repaired',
+      caughtUp ? 'PASS' : 'FAIL',
+      caughtUp ? undefined : `small has ${(await api<{ count: number }>(`/api/tables/small/count?db=${created}`).catch(() => ({ count: -1 }))).count} rows, source has 3`,
+    )
+    const complete = await waitUntil(async () => {
+      const count = await api<{ count: number }>(`/api/tables/big/count?db=${created}`)
+      return count.count === ROWS
+    }, 240_000)
+    record(
+      phase,
+      'restart-during-resync:every row of the repaired table arrives',
+      complete ? 'PASS' : 'FAIL',
+      `big: ${(await api<{ count: number }>(`/api/tables/big/count?db=${created}`).catch(() => ({ count: -1 }))).count} of ${ROWS}`,
     )
   } finally {
     if (created) await api(`/api/databases/${created}`, { method: 'DELETE' }).catch(() => undefined)
@@ -4120,6 +4265,7 @@ async function main() {
     ['drop-table-recreate', phaseDropTableRecreate],
     ['drop-table-polling', phaseDropTablePolling],
     ['restart-during-snapshot', phaseRestartDuringSnapshot],
+    ['restart-during-resync', phaseRestartDuringResync],
     ['memory-pressure', phaseMemoryPressure],
     ['reconcile-memory', phaseReconcileMemory],
     ['drop-database', phaseDropDatabase],

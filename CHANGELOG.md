@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `MySQL` table with a `VIRTUAL` generated column no longer loops through
+  quarantine and resync under `binlog_row_metadata=MINIMAL`. The probe
+  dropped such columns on the belief that row images omit them; `MySQL`
+  writes them, so every row event was one column wider than the schema,
+  every event failed, and the automatic resync recopied the table with the
+  same schema every five minutes. The column now stays in the schema (and
+  replicates, and appears in `SHOW CREATE TABLE`); `MariaDB`, which does
+  leave virtual columns out of its binary log, keeps the old behaviour with
+  a clearer warning. A virtual column joining a schema mid-stream is
+  recopied rather than evolved in place, so existing rows carry its values.
+- A snapshot resumed after a restart advances past the chunks its journal
+  already holds instead of re-reading them from the source, which on a
+  large replica re-read the whole source before reaching the one table that
+  needed copying.
+- A restart during a table resync no longer turns into a whole-database
+  snapshot. Tables keep a copy-complete marker independent of the walk
+  state; on boot, fully copied tables a restart left pending, mid-walk or
+  in error go straight back to streaming, the interrupted table resumes as
+  a one-table resync, and a database whose job failed on one table leaves
+  its error state. A snapshot on a database that already replicates copies
+  only tables without a complete copy and leaves the rest live.
+- One table failing to copy no longer fails the whole snapshot job and
+  marks every other table error: the table is flagged for resync, the run
+  copies the rest, and the handoff proceeds with a `snapshot.partial`
+  event naming what was skipped.
+- Every snapshot table logs its start and end at info level, with the
+  chunks it skipped on resume; replication errors carry their full cause
+  chain, so a metadata-file failure names the OS error behind it.
+
 ## [0.1.2-rc2] - 2026-09-05
 
 ### Fixed
