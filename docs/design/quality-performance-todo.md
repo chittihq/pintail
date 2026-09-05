@@ -1,8 +1,8 @@
 # Quality and performance implementation todo
 
 Requested 2026-09-05. Work proceeds in this order, with one commit per
-reviewable slice. Local tests and clippy cover each slice; one complete
-development validation runs after implementation. Remote benchmark work is
+reviewable slice. Local tests and clippy cover each slice; one final
+full validation runs after implementation. Remote benchmark work is
 serialized and uses only containers created by this repository's harnesses.
 
 1. [x] **Partition and rewrite tests.** Exercise the real in-process
@@ -79,7 +79,7 @@ serialized and uses only containers created by this repository's harnesses.
   Docker PGO image built successfully and its server binary passed startup
   (`--help`) validation on the remote Docker host.
 
-- Item 6: 163 banked passing cases link 78 function names to historical
+- Item 6: 163 banked passing cases link 77 function names to historical
   differential evidence. Two evidence tests, strict TypeScript checking and
   offline regeneration consistency pass. Remaining names retain separate
   implementation-only, missing, unassessed or out-of-scope coverage.
@@ -87,3 +87,9 @@ serialized and uses only containers created by this repository's harnesses.
   resources, rejects reused evidence, and exports reports with provenance.
   Strict TypeScript checking and remote Docker prerequisite checks pass.
   Full benchmark numbers have not been remeasured for this kit.
+
+- Item 8: strict clippy and all SQL/store/wire tests pass. Contention tests
+  prove reserved capacity and total bounds; a real replica test proves cold
+  and stale rejection and physical-row accounting after writes. Two review
+  findings in items 6/7 were fixed with regression tests: CAST type names no
+  longer count as calls, and ignored smoke reports are exported correctly.

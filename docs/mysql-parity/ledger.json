@@ -50,8 +50,8 @@
     "operators": 47,
     "features": 87,
     "functionCoverage": {
-      "differential-tested": 78,
-      "implementation-only": 91,
+      "differential-tested": 77,
+      "implementation-only": 92,
       "missing": 21,
       "out-of-scope": 185,
       "unassessed": 92
@@ -1387,10 +1387,8 @@
           "mechanism": "grammar-token"
         }
       ],
-      "coverage": "differential-tested",
-      "differentialEvidence": [
-        "bi tableau: explicit cast ladder"
-      ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1403,7 +1401,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:735"
       ],
-      "verification": "historical-differential-cases",
+      "verification": "not-run",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },

@@ -261,7 +261,6 @@
         "CAST",
         "COALESCE",
         "CONV",
-        "DECIMAL",
         "MD5",
         "SUBSTR",
         "SUM"
@@ -940,9 +939,7 @@
       "sqlSha256": "fd0a1d75cfec30a20cb89ab10e394bbd86419284f2991dec50db0a16abf2d892",
       "functions": [
         "CAST",
-        "CHAR",
-        "CONVERT",
-        "DECIMAL"
+        "CONVERT"
       ],
       "phases": [
         "activity-history",

@@ -1,7 +1,9 @@
 #!/usr/bin/env bun
-import { closeSync, openSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, openSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+
+import { copyFreshReports } from './auditor-artifacts.ts'
 
 const root = resolve(import.meta.dir, '..')
 const args = process.argv.slice(2)
@@ -53,15 +55,7 @@ try {
     code = await child.exited
   } finally { closeSync(log) }
   const suffix = smoke ? '-smoke' : ''
-  for (const file of [`results${suffix}.json`, `results${suffix}.md`, 'mysql-baseline.json']) {
-    const path = join(checkout, 'benchmark', file)
-    // A failed run may leave the checkout's old tracked results in place.
-    if (existsSync(path)) {
-      const changed = await run(['git', 'diff', '--numstat', '--', `benchmark/${file}`], checkout)
-      const untracked = await run(['git', 'ls-files', '--others', '--exclude-standard', '--', `benchmark/${file}`], checkout)
-      if (changed || untracked) cpSync(path, join(output, file))
-    }
-  }
+  copyFreshReports(checkout, output, smoke)
   if (code !== 0) throw new Error(`Benchmark failed (${code}); see private-run.log`)
   if (!existsSync(join(output, `results${suffix}.json`))) throw new Error('Benchmark produced no new report')
   provenance.status = 'PASS'
