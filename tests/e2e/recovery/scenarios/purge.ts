@@ -12,12 +12,13 @@ export async function purgeWhileDown(ctx: Context) {
   const retained = await ctx.rows('SHOW BINARY LOGS')
   ctx.check('purge:required-file-is-gone', !retained.some(row => row[0] === old.binlog_file))
 }
-export function partialIsNotHealthy(ctx: Context, label: string) {
+export function partialIsNotHealthy(ctx: Context, label: string, scope: 'database' | 'table' = 'database') {
   const state = ctx.durable(label)
   const incomplete = new Set(state.snapshot_chunks.filter(c => c.status !== 'completed').map(c => c.table_name))
   for (const table of state.tables) if (!table.copy_complete) incomplete.add(table.name)
   ctx.check(`partial-copy:not-healthy:${label}`, state.tables.every(t => !incomplete.has(t.name) || !['streaming','polling'].includes(t.state)))
-  if (incomplete.size) ctx.check(`partial-database:not-healthy:${label}`, !['streaming','polling'].includes(state.databases[0]?.state))
+  // A one-table repair leaves the database live for its other tables.
+  if (incomplete.size && scope === 'database') ctx.check(`partial-database:not-healthy:${label}`, !['streaming','polling'].includes(state.databases[0]?.state))
 }
 async function recover(ctx: Context, faults: string[]) {
   await purgeWhileDown(ctx)

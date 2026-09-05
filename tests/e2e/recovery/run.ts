@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { createReadStream, mkdirSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Source, repository, runScenario, type Check, type Scenario } from './harness'
@@ -28,15 +29,21 @@ const started = Date.now()
 const binary = process.env.PINTAIL_RECOVERY_BINARY ?? join(repository, 'target/debug/pintail')
 let completed = 0
 const head = (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout
+const dirty = !!(await command(['git', 'status', '--porcelain'], { quiet: true })).stdout.trim()
 const rust = (await command([join(homedir(), '.cargo/bin/rustc'), '--version'], { quiet: true })).stdout
 let sourceVersion = 'unavailable'
+let binaryHash = 'unavailable'
 try {
+  if (process.env.PINTAIL_RECOVERY_BINARY && !patterns.length) throw new Error('A full recovery ledger requires a checkout build; PINTAIL_RECOVERY_BINARY is only allowed with --only')
   if (!process.env.PINTAIL_RECOVERY_BINARY) {
     const build = Bun.spawn([join(homedir(), '.cargo/bin/cargo'), 'build', '-p', 'pintail', '--features', 'failpoints'], {
       cwd: repository, env: { ...process.env, CARGO_TARGET_DIR: join(repository, 'target') }, stdout: 'inherit', stderr: 'inherit',
     })
     if (await build.exited !== 0) throw new Error('recovery binary build failed')
   }
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(binary)) hash.update(chunk)
+  binaryHash = hash.digest('hex')
   await source.start()
   const [version] = await source.root.query({sql:'SELECT VERSION() AS version',timeout:15_000})
   sourceVersion = (version as Array<{version:string}>)[0].version
@@ -56,6 +63,7 @@ try {
   const sanitize = (text: string) => (source.host ? text.replaceAll(source.host, '<source>') : text).replaceAll(source.name, '<source-container>').replaceAll('|', '\\|').replaceAll('\n', ' ')
   const ledger = [`# Recovery suite — ${new Date().toISOString()}`, '', `Verdict: **${passed ? patterns.length ? 'PASS (SUBSET)' : 'PASS' : 'FAIL'}**`, '',
     `HEAD: ${head}; ${rust}; Bun ${Bun.version}.`,
+    `Working tree: ${dirty ? 'dirty' : 'clean'}. Binary: ${process.env.PINTAIL_RECOVERY_BINARY ? 'supplied for subset' : 'built from checkout'}; SHA-256: ${binaryHash}.`,
     `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${Number(process.env.PINTAIL_RECOVERY_SEED ?? 953)}.`,
     `Checks: ${checks.filter(r=>r.status==='PASS').length} PASS, ${checks.filter(r=>r.status==='WARN').length} WARN, ${checks.filter(r=>r.status==='FAIL').length} FAIL.`,
     `Scenarios: ${completed}/${requested.length} requested; ${scenarios.length} registered. Duration: ${((Date.now()-started)/60000).toFixed(1)} minutes.`, '',
