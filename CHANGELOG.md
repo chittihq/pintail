@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A push/PR instruction-count gate checks four answer-verified queries.
+- Docker builds support opt-in PGO with `PINTAIL_PGO=1`. On the four-query
+  training workload, PGO reduced instructions a further 16.83% after tuning
+  the release profile; this is not a server-wide latency measurement.
+- Release builds now use Thin LTO and one codegen unit, reducing instructions
+  by 5.91% on that workload while retaining portable CPU settings and unwinding.
+
 - Local predicate-partition and equivalent-query checks run in push CI.
 - Fuzz targets exercise wire messages, binlog event decoding and stored
   records; malformed stored collection counts are rejected before allocation.

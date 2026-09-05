@@ -21,7 +21,7 @@ serialized and uses only containers created by this repository's harnesses.
 4. [x] **Instruction-count gate.** Add a deterministic in-process workload
    and Linux instruction-count comparison with explicit baseline provenance,
    thresholds and a CI job. Keep correctness checks and timed benchmarks.
-5. [ ] **Release profile, then PGO.** Enable explicit release optimization
+5. [x] **Release profile, then PGO.** Enable explicit release optimization
    settings first. Add reproducible profile generation/use with a representative
    training workload, measure against the instruction baseline, and keep PGO
    opt-in unless evidence establishes a benefit. Do not claim an unmeasured gain.
@@ -75,5 +75,6 @@ serialized and uses only containers created by this repository's harnesses.
 - Item 5 measurement: the explicit release profile reduced total instructions
   by 5.91%; opt-in PGO reduced them a further 16.83% on the four-query training
   workload. Every query improved, and independent comparison runs passed.
-  Original, tuned and PGO artifacts are banked separately. Production Docker
-  PGO build validation is still pending before this item is checked complete.
+  Original, tuned and PGO artifacts are banked separately. The full production
+  Docker PGO image built successfully and its server binary passed startup
+  (`--help`) validation on the remote Docker host.

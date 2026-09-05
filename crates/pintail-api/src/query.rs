@@ -336,11 +336,17 @@ async fn execute_query(
     let engine = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
         .with_memory_limit(state.query_memory_limit());
     let (database_id, sql) = (database_id.to_owned(), sql.to_owned());
-    let output =
-        tokio::task::spawn_blocking(move || engine.execute(&database_id, &sql, MAX_RESPONSE_ROWS))
-            .await
-            .map_err(|error| ApiError::internal(format!("query worker failed: {error}")))?
-            .map_err(query_error)?;
+    let output = tokio::task::spawn_blocking(move || {
+        // Nested executions belong to this HTTP query for both victim
+        // selection and cancellation, just as they do on the wire path.
+        pintail_exec::with_execution_cancellation(
+            pintail_exec::ExecutionCancellation::new(),
+            || engine.execute(&database_id, &sql, MAX_RESPONSE_ROWS),
+        )
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("query worker failed: {error}")))?
+    .map_err(query_error)?;
     state.record_query(
         output.stats.duration_ms,
         u64::try_from(output.stats.rows).unwrap_or(u64::MAX),
