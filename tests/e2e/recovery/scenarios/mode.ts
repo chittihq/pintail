@@ -24,7 +24,7 @@ async function handoff(ctx: Context, failpoint = '') {
   await ctx.start()
 }
 
-/** supervisor.rs: polling checkpoints cannot resume CDC; handoff takes a fresh snapshot. */
+/** crates/pintail-api/src/supervisor.rs:197: polling checkpoints cannot resume CDC; handoff takes a fresh snapshot. */
 export const modeScenarios: Scenario[] = [
   { slug: 'mode-cdc-poll-cdc', area: 'mode', promise: 'crates/pintail-api/src/supervisor.rs: polling handoff', run: async ctx => {
     await handoff(ctx)
