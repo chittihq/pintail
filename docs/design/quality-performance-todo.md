@@ -95,3 +95,13 @@ serialized and uses only containers created by this repository's harnesses.
   and stale rejection and physical-row accounting after writes. Two review
   findings in items 6/7 were fixed with regression tests: CAST type names no
   longer count as calls, and ignored smoke reports are exported correctly.
+
+- Final validation: formatting, workspace clippy, dashboard types, all 849
+  executed workspace tests, the 1,081-case fixed plus 400-query generated MySQL
+  oracle, and both MySQL E2E legs passed. Each E2E leg banked 4,913 PASS,
+  zero FAIL and the existing 56 documented-gap warnings. The recovery
+  prerequisite tests exposed a detached-compaction shutdown race. A related
+  regression proved that pending output could also resurrect rows after reset.
+  Both are fixed; all store feature-enabled tests and strict clippy pass, and
+  the original stress case passed 30 consecutive repetitions. Recovery and
+  the remaining gates are being resumed on the corrected storage code.

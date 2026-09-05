@@ -6,7 +6,7 @@ MySQL source: **8.4.11**, branch **8.4**, commit [99960bf74fa9](https://github.c
 
 467 distinct callable names; 47 operator/construct rows. Aliases count as separate names; overloads are not separate rows. Source-only entries and internal helpers remain visible. No row is certified by this static audit.
 
-Differential evidence: 163 passing corpus cases, measured 2026-09-05T09:57:49.829Z, bank [a9bc52fd5181](https://github.com/chittihq/pintail/commit/a9bc52fd5181e3318b4649903ef8a6c004f42755). Tested means at least one linked case, not all overloads or edge cases.
+Differential evidence: 163 passing corpus cases, measured 2026-09-05T17:23:23.600Z, bank [8a0443cc2faa](https://github.com/chittihq/pintail/commit/8a0443cc2faa916140ae2dfa1b96fc628f770481). Tested means at least one linked case, not all overloads or edge cases.
 
 | Coverage | Callable names |
 |---|---:|

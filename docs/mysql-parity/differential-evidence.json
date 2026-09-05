@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "commit": "a9bc52fd5181e3318b4649903ef8a6c004f42755",
-  "measuredAt": "2026-09-05T09:57:49.829Z",
+  "commit": "8a0443cc2faa916140ae2dfa1b96fc628f770481",
+  "measuredAt": "2026-09-05T17:23:23.600Z",
   "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-  "ledgerSha256": "8f52bf2565a59e6692618a9d450c03c8a551185992ac9f141d9f3034c277beb7",
+  "ledgerSha256": "f4e7ae40b13881f41f545b76471d76db8fe0f0d9998ebb6d433d7882e2b6b049",
   "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab",
   "cases": [
     {
