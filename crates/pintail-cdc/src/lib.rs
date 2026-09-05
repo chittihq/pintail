@@ -846,6 +846,10 @@ impl AutoResnapshotContext<'_> {
         if !self.enabled || *attempted {
             return Err(error);
         }
+        pintail_log::log_info!(
+            "cdc.resnapshot db={} rebuilding after unavailable source position: {error}",
+            self.database_id
+        );
         let owned_targets = std::mem::take(targets);
         *targets = resnapshot_targets(
             self.pool,
