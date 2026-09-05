@@ -209,7 +209,7 @@ fn upgrading_a_store_backfills_the_marker_from_the_old_states() {
     drop(connection);
 
     let upgraded = MetaStore::open(&path).expect("upgrade");
-    assert_eq!(upgraded.schema_version().expect("version"), 20);
+    assert_eq!(upgraded.schema_version().expect("version"), 21);
     let marked = upgraded
         .tables("db-1")
         .expect("tables")
@@ -341,5 +341,124 @@ fn only_an_errored_database_leaves_its_error_state() {
     assert!(
         store.clear_database_error("db-1", "paused", now).is_err(),
         "only a replication mode names a live state"
+    );
+}
+
+#[test]
+fn interrupted_keyless_copy_retains_retry_intent_until_completion() {
+    let (directory, store) = store_with_database();
+    store
+        .upsert_snapshot_table("db-1", "audit", Some("[]"), Some("[]"))
+        .unwrap();
+    assert!(store.table_copy_pending("db-1", "audit").unwrap());
+    store.complete_snapshot_table("db-1", "audit").unwrap();
+    store
+        .mark_table_needs_resync("db-1", "audit", "keyless update")
+        .unwrap();
+    assert!(
+        !store
+            .tables_needing_auto_resync("db-1")
+            .unwrap()
+            .contains("audit")
+    );
+
+    store.begin_table_resnapshot("db-1", "audit").unwrap();
+    store
+        .mark_table_needs_resync("db-1", "audit", "connection closed")
+        .unwrap();
+    drop(store);
+    let store = MetaStore::open(&directory.path().join("pintail-meta.db")).unwrap();
+    assert!(store.table_copy_pending("db-1", "audit").unwrap());
+    assert!(
+        store
+            .tables_needing_auto_resync("db-1")
+            .unwrap()
+            .contains("audit")
+    );
+    store.begin_table_resnapshot("db-1", "audit").unwrap();
+    store
+        .mark_table_needs_resync("db-1", "audit", "connection still unavailable")
+        .unwrap();
+    assert!(store.table_copy_pending("db-1", "audit").unwrap());
+
+    store
+        .finish_table_resnapshot("db-1", "audit", "streaming")
+        .unwrap();
+    assert!(!store.table_copy_pending("db-1", "audit").unwrap());
+    store
+        .mark_table_needs_resync("db-1", "audit", "another keyless update")
+        .unwrap();
+    assert!(
+        !store
+            .tables_needing_auto_resync("db-1")
+            .unwrap()
+            .contains("audit")
+    );
+
+    store
+        .begin_resnapshot("db-1", "2026-09-05T01:00:00Z")
+        .unwrap();
+    assert!(store.table_copy_pending("db-1", "audit").unwrap());
+    store.complete_snapshot_table("db-1", "audit").unwrap();
+    assert!(!store.table_copy_pending("db-1", "audit").unwrap());
+}
+
+#[test]
+fn version_twenty_upgrade_preserves_only_active_copy_intent() {
+    let (directory, store) = store_with_database();
+    for name in ["copying", "quarantined", "ready"] {
+        store
+            .upsert_snapshot_table("db-1", name, Some("[]"), Some("[]"))
+            .unwrap();
+    }
+    store
+        .mark_table_needs_resync("db-1", "quarantined", "keyless update")
+        .unwrap();
+    store.complete_snapshot_table("db-1", "ready").unwrap();
+    drop(store);
+    let path = directory.path().join("pintail-meta.db");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("ALTER TABLE tables DROP COLUMN copy_pending; PRAGMA user_version=20;")
+        .unwrap();
+    drop(connection);
+    let store = MetaStore::open(&path).unwrap();
+    assert_eq!(store.schema_version().unwrap(), 21);
+    assert!(store.table_copy_pending("db-1", "copying").unwrap());
+    assert!(!store.table_copy_pending("db-1", "quarantined").unwrap());
+    assert!(!store.table_copy_pending("db-1", "ready").unwrap());
+}
+
+#[test]
+fn failed_handoff_rearms_copy_but_absent_source_retires_it() {
+    let (_directory, store) = store_with_database();
+    store
+        .upsert_snapshot_table("db-1", "audit", Some("[]"), Some("[]"))
+        .unwrap();
+    store.complete_snapshot_table("db-1", "audit").unwrap();
+    assert!(!store.table_copy_pending("db-1", "audit").unwrap());
+    store
+        .fail_table_copy("db-1", "audit", "source commit failed", true)
+        .unwrap();
+    assert!(store.table_copy_pending("db-1", "audit").unwrap());
+    assert!(
+        store
+            .tables_needing_auto_resync("db-1")
+            .unwrap()
+            .contains("audit")
+    );
+    store
+        .fail_table_copy("db-1", "audit", "source table absent", false)
+        .unwrap();
+    assert!(!store.table_copy_pending("db-1", "audit").unwrap());
+    assert!(
+        !store
+            .tables_needing_auto_resync("db-1")
+            .unwrap()
+            .contains("audit")
+    );
+    assert_eq!(
+        table_state(&store, "audit"),
+        ("needs_resync".to_owned(), false)
     );
 }

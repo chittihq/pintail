@@ -1069,3 +1069,22 @@ The cost is a source probe at reconciliation cadence and a full projected
 row scan for cursor tables at that cadence. This path currently materializes
 source rows and the replica's current rows in memory. The default interval
 remains unchanged; the suite uses five seconds and observes completed passes.
+
+
+### An interrupted copy retains its authorization to finish
+
+The source-outage recovery test (2026-09-05) found CDC reconnecting at the
+position captured by a failed resnapshot while a reset table remained empty.
+The failed internal snapshot now flags unfinished tables immediately, making
+them unavailable for ordinary CDC until the existing repair path recopies them.
+
+Readiness and pending work are separate facts. `copy_complete` says whether
+a baseline is valid; metadata migration 21 adds `copy_pending` to remember
+that a table or database resnapshot has actually begun. Entering copy work sets it, successful table completion clears it, and
+a failed handoff re-arms it atomically. Errors retain that intent across
+restarts. Names absent from the latest successful probe are excluded from
+automatic scheduling so an orphan cannot hold up other pending copies. This permits an interrupted keyless copy to resume under the default
+quarantine policy without authorizing repair of later ambiguous keyless
+mutations. Those still require their configured policy after the copy finishes.
+Pending copies take priority over new drift repairs and retry at supervisor
+cadence; completed copies that later drift retain the existing cooldown.

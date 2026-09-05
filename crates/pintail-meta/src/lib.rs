@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 20;
+const CURRENT_SCHEMA_VERSION: u32 = 21;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -479,13 +479,15 @@ impl MetaStore {
         self.connection
             .execute(
                 "INSERT INTO tables (\
-                   db_id, name, state, pk_json, sort_key_json, schema_version\
-                 ) VALUES (?1, ?2, 'snapshotting', ?3, ?4, 1) \
+                   db_id, name, state, pk_json, sort_key_json, schema_version, copy_pending\
+                 ) VALUES (?1, ?2, 'snapshotting', ?3, ?4, 1, 1) \
                  ON CONFLICT(db_id, name) DO UPDATE SET \
                    state = CASE \
                      WHEN tables.state IN ('streaming', 'polling') THEN tables.state \
                      ELSE 'snapshotting' \
                    END, \
+                   copy_pending = CASE WHEN tables.state IN ('streaming', 'polling') \
+                     THEN tables.copy_pending ELSE 1 END, \
                    pk_json = excluded.pk_json, \
                    sort_key_json = excluded.sort_key_json",
                 (database_id, table_name, pk_json, sort_key_json),
@@ -1046,7 +1048,7 @@ impl MetaStore {
         let changed = transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
-                   last_error = NULL, copy_complete = 0 \
+                   last_error = NULL, copy_complete = 0, copy_pending = 1 \
                  WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name),
             )
@@ -1075,7 +1077,7 @@ impl MetaStore {
         let changed = self
             .connection
             .execute(
-                "UPDATE tables SET state = ?3, last_error = NULL, copy_complete = 1 \
+                "UPDATE tables SET state = ?3, last_error = NULL, copy_complete = 1, copy_pending = 0 \
                  WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name, state),
             )
@@ -1108,13 +1110,10 @@ impl MetaStore {
             .context("failed to decode resnapshot tables")
     }
 
-    /// The quarantined tables the supervisor may repair on its own: keyed
-    /// tables only. KEYLESS tables are excluded UNCONDITIONALLY - the
-    /// `keyless_policy` column is deliberately not consulted here. Under
-    /// `quarantine` the operator explicitly chose manual remediation, and
-    /// an automatic recopy would erase exactly the signal that policy
-    /// exists to preserve; under every other policy the keyless machinery
-    /// owns the table's lifecycle, and this query stays out of it.
+    /// The quarantined tables the supervisor may repair: keyed tables and
+    /// copies already started but not finished. Keyless mutation quarantine
+    /// still needs its configured policy; resuming an interrupted copy does
+    /// not require a new policy decision.
     ///
     /// # Errors
     ///
@@ -1125,7 +1124,7 @@ impl MetaStore {
             .prepare(
                 "SELECT name FROM tables \
                  WHERE db_id = ?1 AND state = 'needs_resync' \
-                   AND pk_json IS NOT NULL AND pk_json != '[]' \
+                   AND ((pk_json IS NOT NULL AND pk_json != '[]') OR copy_pending = 1) \
                  ORDER BY name",
             )
             .context("failed to prepare auto-resync table query")?;
@@ -1134,6 +1133,40 @@ impl MetaStore {
             .context("failed to query auto-resync tables")?
             .collect::<rusqlite::Result<BTreeSet<_>>>()
             .context("failed to decode auto-resync tables")
+    }
+
+    /// Whether a previously started table copy still needs to finish.
+    ///
+    /// # Errors
+    /// Returns an error if the table cannot be read.
+    pub fn table_copy_pending(&self, database_id: &str, table_name: &str) -> Result<bool> {
+        self.connection
+            .query_row(
+                "SELECT copy_pending FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                (database_id, table_name),
+                |row| row.get(0),
+            )
+            .context("failed to read pending table copy")
+    }
+
+    /// Records a failed copy, retaining retry intent unless a successful
+    /// source probe established that the table no longer exists.
+    ///
+    /// # Errors
+    /// Returns an error if the table cannot be updated.
+    pub fn fail_table_copy(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        error: &str,
+        retry: bool,
+    ) -> Result<()> {
+        self.connection.execute(
+            "UPDATE tables SET state = 'needs_resync', last_error = ?3, copy_complete = 0, copy_pending = ?4 \
+             WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+            (database_id, table_name, error, retry),
+        ).context("failed to record interrupted table copy")?;
+        Ok(())
     }
 
     /// Drops every dead-letter row for one table. A completed resnapshot
@@ -1304,7 +1337,7 @@ impl MetaStore {
         transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
-                   last_error = NULL, copy_complete = 0 \
+                   last_error = NULL, copy_complete = 0, copy_pending = 1 \
                  WHERE db_id = ?1 AND state != 'excluded'",
                 [database_id],
             )
@@ -1497,7 +1530,7 @@ impl MetaStore {
     pub fn complete_snapshot_table(&self, database_id: &str, table_name: &str) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE tables SET state = 'pending', last_error = NULL, copy_complete = 1 \
+                "UPDATE tables SET state = 'pending', last_error = NULL, copy_complete = 1, copy_pending = 0 \
                  WHERE db_id = ?1 AND name = ?2",
                 (database_id, table_name),
             )
@@ -1820,7 +1853,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 20 {
         migration_v20(connection.transaction()?)?;
     }
+    if found < 21 {
+        migration_v21(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v21(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/021_copy_pending.sql"))
+        .context("failed to apply metadata migration 21")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 21")
 }
 
 fn migration_v20(transaction: Transaction<'_>) -> Result<()> {

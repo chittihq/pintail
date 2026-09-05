@@ -961,6 +961,10 @@ fn auto_resync_repairs_keyed_tables_and_leaves_keyless_to_policy() {
     metadata
         .upsert_snapshot_table("db-1", "keyless_log", Some("[]"), Some("[]"))
         .unwrap();
+    metadata.complete_snapshot_table("db-1", "orders").unwrap();
+    metadata
+        .complete_snapshot_table("db-1", "keyless_log")
+        .unwrap();
     metadata
         .mark_table_needs_resync("db-1", "orders", "drift")
         .unwrap();

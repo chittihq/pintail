@@ -140,6 +140,39 @@ fn auto_resync_cooldown() -> &'static Mutex<HashMap<(String, String), Instant>> 
     COOLDOWN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn auto_resync_candidate(
+    metadata: &pintail_meta::MetaStore,
+    database: &DatabaseRecord,
+) -> Option<(String, bool)> {
+    let database_id = &database.id;
+    let mut quarantined = metadata.tables_needing_auto_resync(database_id).ok()?;
+    // A successful probe may retire an old name after RENAME/DROP. Keep
+    // its visible quarantine record, but do not let it monopolize repairs.
+    if let Some(report) = database
+        .probe_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<ProbeReport>(json).ok())
+    {
+        quarantined.retain(|name| {
+            report
+                .tables
+                .iter()
+                .any(|table| table.name.eq_ignore_ascii_case(name))
+        });
+    }
+    let pending = quarantined
+        .iter()
+        .find(|name| {
+            metadata
+                .table_copy_pending(database_id, name)
+                .unwrap_or(false)
+        })
+        .cloned();
+    let copy_pending = pending.is_some();
+    let table_name = pending.or_else(|| quarantined.into_iter().next())?;
+    Some((table_name, copy_pending))
+}
+
 /// Recopies the first quarantined table of `database_id`, exactly as the
 /// operator resync endpoint would - same job claim, same fence, same
 /// completion bookkeeping - but driven by the supervisor, so a table that
@@ -151,13 +184,10 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     let Ok(metadata) = state.metadata() else {
         return;
     };
-    let Ok(quarantined) = metadata.tables_needing_auto_resync(database_id) else {
-        return;
-    };
-    let Some(table_name) = quarantined.into_iter().next() else {
-        return;
-    };
     let Ok(Some(database)) = metadata.database(database_id) else {
+        return;
+    };
+    let Some((table_name, copy_pending)) = auto_resync_candidate(&metadata, &database) else {
         return;
     };
     if database.mode == "paused" {
@@ -172,7 +202,9 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         // process-lifetime and must not grow monotonically.
         cooldown.retain(|_, stamped| stamped.elapsed() < Duration::from_secs(300));
         let key = (database_id.to_owned(), table_name.clone());
-        if cooldown.contains_key(&key) {
+        // A failed copy is unfinished work, not repeated source drift.
+        // Resume it at supervisor cadence, including under keyless quarantine.
+        if !copy_pending && cooldown.contains_key(&key) {
             return;
         }
     }
@@ -472,7 +504,22 @@ fn finish_table_resnapshot(
                 // Back to needs_resync, not to streaming: the store was
                 // emptied before the copy, so a failed resnapshot leaves the
                 // table incomplete and it must not be read as current.
-                let _ = metadata.mark_table_needs_resync(database_id, table_name, &error);
+                let retry = metadata
+                    .database(database_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|database| database.probe_json)
+                    .and_then(|json| serde_json::from_str::<ProbeReport>(&json).ok())
+                    .is_none_or(|report| {
+                        report
+                            .tables
+                            .iter()
+                            .any(|table| table.name.eq_ignore_ascii_case(table_name))
+                    });
+                // A worker can fail after publishing its last chunk but
+                // before its source transaction/fence completes. Re-arm
+                // intent even if complete_snapshot_table cleared it.
+                let _ = metadata.fail_table_copy(database_id, table_name, &error, retry);
             }
             state.publish(ApiEvent {
                 kind: "resnapshot.error".to_owned(),
