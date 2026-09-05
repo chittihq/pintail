@@ -1118,3 +1118,10 @@ level 3 before this change; the new optimization choices are LTO and codegen
 unit count. The instruction workload supplies before/after evidence instead
 of assuming a percentage gain. Profile-guided optimization remains opt-in
 until that evidence supports enabling it for a published build.
+
+The production Docker compiler is aligned to rustc 1.97.1, the pinned Linux
+instruction-measurement compiler. `PINTAIL_PGO=1` selects instrument/train/merge/
+rebuild during the Docker build; the default is 0. Profiling tools and training
+data never enter the runtime image. The four-query executor training workload
+has an independent result oracle and produces a separate PGO binary; it is not
+representative evidence for replication, networking or all SQL workloads.

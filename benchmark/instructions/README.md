@@ -34,3 +34,28 @@ or cache/IO behavior. Hash-table iteration can introduce small instruction
 variation; the explicit threshold allows that. Keep the full timed benchmark
 for published speed claims. See the [Callgrind manual](https://valgrind.org/docs/manual/cl-manual.html)
 for collection-boundary behavior.
+
+## Release settings and PGO
+
+`release-linux.json` measures the explicit Thin-LTO/single-codegen-unit profile:
+5.91% fewer total instructions than the original release settings across these
+four queries, with no per-query regression. This is instruction evidence for
+this workload, not a claim about overall server latency.
+
+Build the instruction image with `--build-arg PINTAIL_PGO=1` to train and measure
+PGO. Compare its result against `release-linux.json` to isolate PGO from the
+release-profile change. The production Dockerfile accepts the same opt-in
+argument and uses the same rustc 1.97.1 compiler. Default images use the explicit
+release profile without PGO.
+
+For a local build, install `rustup component add llvm-tools-preview`, then run
+`CARGO_TARGET_DIR=target bash scripts/pgo-build.sh server` (or `workload` for only
+the measured executable). Outputs go under `target/pgo/`. Training runs all four
+answer-checked queries three times. Profile generation and use employ the same
+compiler, target and flags; an explicit target keeps host build scripts out of
+the profile. Only temporary profiling data is removed. See the
+[rustc PGO guide](https://doc.rust-lang.org/rustc/profile-guided-optimization.html).
+
+The workload exercises the shared executor, not authentication, snapshot, CDC,
+polling or every SQL family. That coverage limit is why PGO remains opt-in even
+when these instruction comparisons improve.

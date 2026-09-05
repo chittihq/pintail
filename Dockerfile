@@ -13,7 +13,7 @@ RUN bun run generate
 # a layer that any source edit invalidates, so every image rebuilt the whole
 # dependency graph from scratch. cargo-chef is a build-time tool only; nothing
 # it produces is linked into the binary.
-FROM rust:1.94-bookworm AS chef
+FROM rust:1.97.1-bookworm AS chef
 RUN cargo install cargo-chef --locked --version ^0.1
 WORKDIR /source
 
@@ -24,6 +24,7 @@ COPY tests/sqllogic ./tests/sqllogic
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+ARG PINTAIL_PGO=0
 COPY --from=planner /source/recipe.json recipe.json
 # Rebuilds only when Cargo.lock changes.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
@@ -32,6 +33,7 @@ RUN --mount=type=cache,target=/source/target,sharing=locked \
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY tests/sqllogic ./tests/sqllogic
+COPY scripts/pgo-build.sh ./scripts/pgo-build.sh
 COPY --from=dashboard /source/packages/dashboard/.output/public \
     ./packages/dashboard/.output/public
 ENV PINTAIL_DASHBOARD_PREBUILT=1
@@ -41,8 +43,14 @@ ENV PINTAIL_DASHBOARD_PREBUILT=1
 # inside the same RUN because cache mounts do not persist into the layer.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    cargo build --locked --release --package pintail \
-    && cp /source/target/release/pintail /usr/local/bin/pintail-built
+    if [ "$PINTAIL_PGO" = 1 ]; then \
+      rustup component add llvm-tools-preview \
+      && bash scripts/pgo-build.sh server \
+      && cp /source/target/pgo/pintail /usr/local/bin/pintail-built; \
+    elif [ "$PINTAIL_PGO" = 0 ]; then \
+      cargo build --locked --release --package pintail \
+      && cp /source/target/release/pintail /usr/local/bin/pintail-built; \
+    else echo 'PINTAIL_PGO must be 0 or 1' >&2; exit 2; fi
 
 FROM debian:bookworm-slim
 
