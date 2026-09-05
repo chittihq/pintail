@@ -172,11 +172,7 @@ fn seed(mode: &str, requires_reconciliation: bool, collision: bool) -> Replica {
     )
     .expect("open table");
     store
-        .ingest(
-            (1..=ROWS)
-                .map(|id| row(id, &format!("m{id}"), 1))
-                .collect(),
-        )
+        .ingest((1..=ROWS).map(|id| row(id, &format!("m{id}"), 1)).collect())
         .expect("ingest");
     if collision {
         store
@@ -210,7 +206,10 @@ fn a_cdc_table_with_a_secondary_unique_key_streams_under_the_ceiling() {
         Ok(Value::UInt64(40))
     );
     assert_eq!(
-        scalar(&engine, "SELECT COUNT(*) FROM reports WHERE template = 'template_07'"),
+        scalar(
+            &engine,
+            "SELECT COUNT(*) FROM reports WHERE template = 'template_07'"
+        ),
         Ok(Value::UInt64(1500))
     );
 }
@@ -220,7 +219,10 @@ fn a_polling_table_still_hides_the_older_side_of_a_collision() {
     let replica = seed("polling", false, true);
     let roomy = replica.engine(None);
     assert_eq!(
-        scalar(&roomy, "SELECT COUNT(*) FROM reports WHERE message_id = 'm1'"),
+        scalar(
+            &roomy,
+            "SELECT COUNT(*) FROM reports WHERE message_id = 'm1'"
+        ),
         Ok(Value::UInt64(1)),
         "the reused message id resolves to its newer row"
     );
@@ -235,7 +237,10 @@ fn a_cdc_table_flagged_for_reconciliation_keeps_the_policy() {
     let replica = seed("cdc", true, true);
     let roomy = replica.engine(None);
     assert_eq!(
-        scalar(&roomy, "SELECT COUNT(*) FROM reports WHERE message_id = 'm1'"),
+        scalar(
+            &roomy,
+            "SELECT COUNT(*) FROM reports WHERE message_id = 'm1'"
+        ),
         Ok(Value::UInt64(1))
     );
 }

@@ -1998,6 +1998,21 @@ async function phaseMemoryPressure() {
     `INSERT INTO ${schema}.big SELECT a.n * 10000 + b.n * 100 + c.n, c.n, CONCAT(REPEAT('x', 40), b.n) ` +
       `FROM ${schema}.seed a, ${schema}.seed b, ${schema}.seed c WHERE a.n < 20`,
   )
+  // A secondary UNIQUE key once sent every scan of the table through the
+  // read policy that hides unique-value collisions, which holds the whole
+  // projection in memory: at 400k rows that is more than twice the 32 MB
+  // ceiling below, and a one-row COUNT failed with the memory limit. A CDC
+  // table cannot hold such a collision, so it has to stream instead.
+  await sql(
+    `CREATE TABLE ${schema}.reports (id INT PRIMARY KEY, message_id VARCHAR(40) NOT NULL, ` +
+      `template VARCHAR(64) NOT NULL, UNIQUE KEY reports_message (message_id))`,
+  )
+  await sql(
+    `INSERT INTO ${schema}.reports SELECT id, CONCAT('m', id), CONCAT(REPEAT('t', 40), id % 40) FROM ${schema}.big`,
+  )
+  await sql(
+    `INSERT INTO ${schema}.reports SELECT id + 1000000, CONCAT('n', id), CONCAT(REPEAT('t', 40), id % 40) FROM ${schema}.big`,
+  )
 
   const stopPintail = async () => {
     try {
@@ -2079,6 +2094,29 @@ async function phaseMemoryPressure() {
       } finally {
         await connection?.end().catch(() => undefined)
       }
+    }
+    // Quiet, before the storm: the unique-keyed table answers under the
+    // ceiling, and answers what the source answers.
+    {
+      const unique = 'SELECT COUNT(DISTINCT template) FROM reports WHERE template IS NOT NULL'
+      let answer = ''
+      let connection: mysql.Connection | undefined
+      try {
+        connection = await wire()
+        const [rows] = await connection.query<mysql.RowDataPacket[]>({ sql: unique, rowsAsArray: true })
+        answer = String((rows[0] as unknown[])[0])
+      } catch (error) {
+        answer = `error: ${String(error)}`
+      } finally {
+        await connection?.end().catch(() => undefined)
+      }
+      const expected = String((await mysqlRows(unique.replace('FROM reports', `FROM ${schema}.reports`)))[0]![0])
+      record(
+        phase,
+        'memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling',
+        answer === expected ? 'PASS' : 'FAIL',
+        `pintail ${answer}, source ${expected}`,
+      )
     }
     // A sort that cannot fit 32 MB, an aggregate over every row, and a
     // scan-only count: three different paths to the ceiling.
