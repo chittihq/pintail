@@ -185,6 +185,9 @@ async function provision(): Promise<string> {
 interface Sample {
   phase: string
   detail: string
+  /// Highest reading while the phase was being built up and settling.
+  peakMb: number
+  /// The reading once the phase had sat still for five seconds.
   rssMb: number
 }
 
@@ -192,13 +195,24 @@ async function main() {
   const binary = await buildPintail()
   await startPintail(binary)
   const samples: Sample[] = []
+  // Polled continuously rather than read once per phase: a reading taken
+  // after a phase settles misses what the phase cost while it was being
+  // built, and the allocator's decay then hands part of one phase's growth
+  // to the next reading. The peak is what the ceilings are sized against;
+  // the resting value is what an idle server pays for what it holds.
+  let peakMb = 0
+  const poller = setInterval(() => {
+    residentMb().then((reading) => {
+      peakMb = Math.max(peakMb, reading)
+    }).catch(() => {})
+  }, 200)
   const sample = async (phase: string, detail: string) => {
-    // Let the allocator's background purge and the accept loop settle so a
-    // reading is the phase's resting state rather than its wake.
-    await Bun.sleep(2_000)
+    await Bun.sleep(5_000)
     const rssMb = await residentMb()
-    samples.push({ phase, detail, rssMb })
-    log(`${phase}: ${detail} — RSS ${rssMb.toFixed(0)} MB`)
+    const peak = Math.max(peakMb, rssMb)
+    samples.push({ phase, detail, peakMb: peak, rssMb })
+    log(`${phase}: ${detail} — RSS ${rssMb.toFixed(0)} MB (peak ${peak.toFixed(0)} MB)`)
+    peakMb = rssMb
   }
   const connections: mysql.Connection[] = []
   try {
@@ -240,6 +254,7 @@ async function main() {
     log('ending every connection')
     for (const connection of connections.splice(0)) await connection.end()
     await sample('released', 'every connection ended')
+    clearInterval(poller)
 
     const now = new Date().toISOString()
     const baseline = samples[0]!.rssMb
@@ -251,20 +266,22 @@ async function main() {
       `Idle connections: ${IDLE}. Preparing sessions: ${PREPARING} × ${STATEMENTS} statements.`,
       'Every session authenticates against a local database; no query runs.',
       '',
-      '| phase | detail | RSS MB | over baseline MB |',
-      '|---|---|---:|---:|',
+      '| phase | detail | peak RSS MB | resting RSS MB | resting over baseline MB |',
+      '|---|---|---:|---:|---:|',
       ...samples.map(
         (entry) =>
-          `| ${entry.phase} | ${entry.detail} | ${entry.rssMb.toFixed(0)} | ${(entry.rssMb - baseline).toFixed(0)} |`,
+          `| ${entry.phase} | ${entry.detail} | ${entry.peakMb.toFixed(0)} | ${entry.rssMb.toFixed(0)} | ${(entry.rssMb - baseline).toFixed(0)} |`,
       ),
       '',
       perSession(samples),
       '',
-      'Per-session and per-statement costs are the differences between phases',
-      'divided by the counts; they are what the connection and prepared-statement',
-      'ceilings (`--wire-max-connections`, `--wire-max-prepared-statements`) are',
-      'sized against. "released" says what the process gives back: a resting RSS',
-      'well above baseline after every session ended would be a leak.',
+      'Per-session and per-statement costs are the peak-over-previous-phase',
+      'differences divided by the counts; they are what the connection and',
+      'prepared-statement ceilings (`--wire-max-connections`,',
+      '`--wire-max-prepared-statements`) are sized against. Peak is the reading',
+      'while a phase was being built; resting is after it sat still for five',
+      'seconds. "released" says what the process gives back: a resting RSS well',
+      'above baseline after every session ended would be a leak.',
       '',
     ]
     writeFileSync(join(import.meta.dir, 'results-sessions.md'), lines.join('\n'))
@@ -282,11 +299,12 @@ async function main() {
 }
 
 function perSession(samples: Sample[]): string {
-  const by = Object.fromEntries(samples.map((entry) => [entry.phase, entry.rssMb]))
-  const perConnectionKb = ((by.idle! - by.baseline!) * 1024) / IDLE
-  const perStatementKb = ((by.prepared! - by.idle!) * 1024) / (PREPARING * STATEMENTS)
+  const peak = Object.fromEntries(samples.map((entry) => [entry.phase, entry.peakMb]))
+  const rest = Object.fromEntries(samples.map((entry) => [entry.phase, entry.rssMb]))
+  const perConnectionKb = (Math.max(0, peak.idle! - rest.baseline!) * 1024) / IDLE
+  const perStatementKb = (Math.max(0, peak.prepared! - rest.idle!) * 1024) / (PREPARING * STATEMENTS)
   return [
-    `Per idle connection: ${perConnectionKb.toFixed(1)} KB.`,
+    `Per idle connection: ${perConnectionKb.toFixed(1)} KB (peak while opening).`,
     `Per prepared statement: ${perStatementKb.toFixed(2)} KB.`,
     `At the default ceilings (1000 connections, 1024 statements each), a client that`,
     `fills both holds at most ${((perConnectionKb * 1000 + perStatementKb * 1000 * 1024) / 1024).toFixed(0)} MB`,

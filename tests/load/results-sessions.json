@@ -1,0 +1,38 @@
+{
+  "measuredAt": "2026-09-05T04:37:51.352Z",
+  "idle": 1000,
+  "preparing": 50,
+  "statements": 1024,
+  "samples": [
+    {
+      "phase": "baseline",
+      "detail": "server provisioned, no sessions",
+      "peakMb": 25.234375,
+      "rssMb": 17.671875
+    },
+    {
+      "phase": "idle",
+      "detail": "1000 authenticated connections, no statements",
+      "peakMb": 23.90625,
+      "rssMb": 17.3125
+    },
+    {
+      "phase": "prepared",
+      "detail": "50 sessions × 1024 prepared statements (51200 total)",
+      "peakMb": 24.84375,
+      "rssMb": 21.15625
+    },
+    {
+      "phase": "closed",
+      "detail": "statements closed, connections still open",
+      "peakMb": 26.921875,
+      "rssMb": 25.4375
+    },
+    {
+      "phase": "released",
+      "detail": "every connection ended",
+      "peakMb": 33.859375,
+      "rssMb": 24.890625
+    }
+  ]
+}

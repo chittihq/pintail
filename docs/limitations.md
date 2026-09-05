@@ -166,9 +166,19 @@ stays readable as a list of things to fix.
   backpressure rather than unbounded queueing. The bound is what keeps
   tail latency flat under load; the cost is that median latency rises
   once the queue engages, because admitted queries may wait for a slot.
-  Measured in `tests/load/results.md`. Connections themselves are still
-  accepted without limit, so a client that only holds sessions open is
-  not bounded by this.
+  Measured in `tests/load/results.md`.
+- Connections and prepared statements are bounded separately from query
+  execution (`--wire-max-connections`, default 1000; per session
+  `--wire-max-prepared-statements`, default 1024, plus 16 MiB of retained
+  statement text), refusing with `MySQL` 1040 and 1461. The ceilings are
+  a count and a byte figure, not a memory reservation: session state is
+  still outside the query memory budget. What that costs is measured in
+  `tests/load/results-sessions.md` - 1000 idle authenticated connections
+  moved resident memory by under 7 MB at peak, and 51,200 held prepared
+  statements by about 4 MB resting, so at the default ceilings a client
+  that fills both holds well under 200 MB of session state before its
+  first query. Measured on macOS/arm64 without the container's jemalloc
+  purge settings; a Linux reading is expected to be lower, not higher.
 - The process-wide memory budget (`--total-query-memory-limit-bytes`)
   defaults to three quarters of host memory, and to unbounded when host
   memory cannot be read rather than guessing a ceiling. It
@@ -177,7 +187,11 @@ stays readable as a list of things to fix.
   degrades a query to disk before failing it. Only reservations tracked by
   `MemoryTracker` are charged: batch decode buffers and per-connection
   session state are outside it, so the budget bounds operator memory rather
-  than the whole process resident set.
+  than the whole process resident set. The encoded, wire-ready copy of a
+  result set - built after the tracker is released - is held to the
+  per-query ceiling as a byte bound, not charged to the process budget;
+  a result whose encoded form alone exceeds `--query-memory-limit-bytes`
+  is refused as a memory-limit error.
 
 - Text keys, numeric/string coercions, out-of-range signedness conversions,
   synthetic append-row IDs, undeclared mappings and composite keys remain

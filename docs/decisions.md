@@ -967,3 +967,22 @@ local table joined against a replicated one - are DEFERRED rather than
 refused. The wire builds a single-database catalog per query today, so they
 do not work; nothing in this design forecloses them, and a later phase may
 add them if local databases turn out to be worth joining.
+
+### Result sets are encoded in memory and bounded, not streamed
+
+Considered for the hardening pass that added the connection and
+prepared-statement ceilings (2026-09-05): the wire server builds a second,
+wire-ready copy of every result after execution has released the query's
+memory tracker, and streaming rows to the socket as they are encoded would
+remove that copy. Refused, on the measurement rather than on principle.
+Session state at the default ceilings is tens of megabytes
+(`tests/load/results-sessions.md`), and the encoded copy is already bounded
+by the 10,000-row result cap; it is now also held to the per-query memory
+ceiling. Streaming would trade that bounded copy for an unbounded hold: the
+socket write moves inside the execution window, so a slow client reading a
+large result keeps the query's admission permit and its memory for the
+length of the read, converting its network into occupied engine capacity -
+the very thing admission exists to prevent - and it would also change the
+error contract mid-result, since `MySQL` cannot raise an error after the
+first row without breaking the stream. Revisit only if a measurement shows
+encoding, not execution, as the dominant term in a real workload.
