@@ -11,6 +11,27 @@ import type {
   Workspace,
 } from '@/types/pintail'
 
+/// One filesystem's capacity. `used + available` is normally less than
+/// `total`: filesystems reserve a slice for the superuser.
+export type StorageVolume = {
+  mount: string
+  total_bytes: number
+  used_bytes: number
+  available_bytes: number
+}
+
+export type NodeStorage = {
+  data_dir: string
+  /** True when the data directory has a filesystem of its own, which is the
+   *  case where its free space answers a different question from the
+   *  system's. */
+  separate_mount: boolean
+  /** Null when the volume could not be measured — never zero, which would
+   *  read as a full disk. */
+  data: StorageVolume | null
+  system: StorageVolume | null
+}
+
 export type NodeStatus = {
   status: string
   version: string
@@ -37,6 +58,7 @@ export function useControlPlane() {
   const session = useState<Session | null>('cp-session', () => null)
   const workspaces = useState<Workspace[]>('cp-workspaces', () => [])
   const nodeStatus = useState<NodeStatus | null>('cp-node-status', () => null)
+  const nodeStorage = useState<NodeStorage | null>('cp-node-storage', () => null)
   const databases = useState<DatabaseRecord[]>('cp-databases', () => [])
   const statuses = useState<Record<string, DatabaseStatus>>('cp-statuses', () => ({}))
   const activity = useState<ActivityRecord[]>('cp-activity', () => [])
@@ -88,15 +110,20 @@ export function useControlPlane() {
     loading.value = true
     error.value = ''
     try {
-      const [databaseRows, activityRows, dlqRows] = await Promise.all([
+      // allSettled for storage alone: a node whose `df` is unavailable must
+      // still render its databases, and the card renders "unknown" from the
+      // null rather than pretending the disk is full.
+      const [databaseRows, activityRows, dlqRows, storage] = await Promise.all([
         request<DatabaseRecord[]>('/databases'),
         request<ActivityRecord[]>('/activity?limit=200'),
         request<DlqRecord[]>('/dlq?limit=100'),
+        request<NodeStorage>('/storage').catch(() => null),
       ])
       if (epoch !== sessionEpoch.value) return
       databases.value = databaseRows
       activity.value = activityRows
       deadLetters.value = dlqRows
+      nodeStorage.value = storage
       await refreshStatuses()
     } catch (failure) {
       if (epoch !== sessionEpoch.value) return
@@ -585,6 +612,7 @@ export function useControlPlane() {
     session,
     workspaces,
     nodeStatus,
+    nodeStorage,
     databases,
     statuses,
     activity,

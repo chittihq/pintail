@@ -29,7 +29,10 @@ export function formatBytes(value: number) {
   if (value < 1_024) return `${value} B`
   if (value < 1_048_576) return `${(value / 1_024).toFixed(1)} KiB`
   if (value < 1_073_741_824) return `${(value / 1_048_576).toFixed(1)} MiB`
-  return `${(value / 1_073_741_824).toFixed(1)} GiB`
+  // TiB matters once whole volumes are being rendered rather than table
+  // files: a 4TB disk read as "3725.3 GiB".
+  if (value < 1_099_511_627_776) return `${(value / 1_073_741_824).toFixed(1)} GiB`
+  return `${(value / 1_099_511_627_776).toFixed(2)} TiB`
 }
 
 export function formatDate(value: string | null) {

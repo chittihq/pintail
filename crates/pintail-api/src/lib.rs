@@ -36,6 +36,7 @@ pub(crate) fn startup_milliseconds() -> u64 {
 mod query;
 mod snapshot;
 mod state;
+mod storage;
 mod supervisor;
 mod workspaces;
 
@@ -301,6 +302,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         )
         .route("/events", get(sse))
         .route("/vitals", get(crate::vitals::stream))
+        .route("/storage", get(crate::storage::storage))
         .route("/wire/certificate", get(crate::wire_certificate::download))
         .route(
             "/settings/wire-tls",

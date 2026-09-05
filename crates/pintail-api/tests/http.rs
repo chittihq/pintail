@@ -946,3 +946,65 @@ async fn query_and_table_routes_read_the_same_mirrored_snapshot() {
         .unwrap();
     assert_eq!(json_response(count).await, serde_json::json!({"count": 2}));
 }
+
+#[tokio::test]
+async fn storage_reports_both_volumes_and_refuses_an_anonymous_caller() {
+    let data = tempfile::tempdir().expect("API data directory");
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let authorization = format!("Bearer {}", setup_admin(&app).await);
+
+    // Free space and a mount layout describe the host: the endpoint sits
+    // behind authentication, unlike /status.
+    let anonymous = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/storage")
+                .body(Body::empty())
+                .expect("anonymous storage request"),
+        )
+        .await
+        .expect("anonymous storage response");
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/storage")
+                .header(header::AUTHORIZATION, authorization)
+                .body(Body::empty())
+                .expect("storage request"),
+        )
+        .await
+        .expect("storage response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let storage = json_response(response).await;
+    assert_eq!(storage["data_dir"], data.path().display().to_string());
+    // The system volume always exists; the data directory's is measurable
+    // because the temporary directory does. Both carry a real size, which
+    // is what tells an unmeasured volume (null) from a full one (zero).
+    assert!(storage["system"]["total_bytes"].as_u64().unwrap_or(0) > 0);
+    assert!(storage["data"]["total_bytes"].as_u64().unwrap_or(0) > 0);
+    assert!(
+        storage["data"]["mount"]
+            .as_str()
+            .is_some_and(|mount| !mount.is_empty())
+    );
+    // A temporary directory is on the machine's own store, so the two
+    // readings describe one volume - whatever the mount points are called.
+    // (On macOS they are called `/` and `/System/Volumes/Data`, two
+    // firmlinked halves of one APFS container, whose free space even drifts
+    // between the two readings. That must not make them two disks.)
+    assert_eq!(
+        storage["data"]["total_bytes"],
+        storage["system"]["total_bytes"]
+    );
+    assert_eq!(
+        storage["separate_mount"], false,
+        "one store seen under two mount points is not a second volume"
+    );
+    assert_eq!(
+        storage["data"]["total_bytes"],
+        storage["system"]["total_bytes"]
+    );
+}

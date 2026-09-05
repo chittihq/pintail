@@ -1100,6 +1100,23 @@ async function main() {
     await page!.getByRole('cell', { name: DATABASE }).first().waitFor({ timeout: 20_000 })
   })
 
+  await check('the overview reports the disk behind the data directory', async () => {
+    await page!.goto(`${pintailUrl}/`)
+    await page!.getByRole('heading', { name: 'Operations at a glance' }).waitFor()
+    // The card must carry a MEASURED volume. "Capacity unavailable" is what
+    // renders when /api/storage answers nothing, and a check that only
+    // looked for the word "Storage" would pass against it.
+    await page!.getByText(/^Free of .+ on .+$/).first().waitFor({ timeout: 20_000 })
+    await page!.getByText(/^\d+% used$/).first().waitFor({ timeout: 20_000 })
+    // Whichever volume leads, the card also accounts for the other figure:
+    // the system's totals when the data directory has its own filesystem,
+    // and the data directory itself when they share one.
+    await page!
+      .getByText(/^(System volume: .+ free of .+|Data directory .+)$/)
+      .first()
+      .waitFor({ timeout: 20_000 })
+  })
+
   await check('settings reports the session, endpoint and operations surface', async () => {
     await page!.goto(`${pintailUrl}/settings`)
     await page!.getByRole('heading', { name: 'Settings' }).waitFor()

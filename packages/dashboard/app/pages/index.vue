@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Activity, AlertTriangle, ChevronRight, Database, HardDrive, RefreshCw, Server, Radio } from '@lucide/vue'
-import { dotToneClass, formatDate, formatNumber, modeOf, stateTone } from '@/lib/format'
+import { dotToneClass, formatBytes, formatDate, formatNumber, modeOf, stateTone } from '@/lib/format'
 import type { VitalsSample } from '@/composables/useVitals'
 
-const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, alertCount, loading, loadControlPlane } = useControlPlane()
+const { databases, statuses, activity, deadLetters, totalRows, activeMirrors, alertCount, loading, loadControlPlane, nodeStorage } = useControlPlane()
 
 // One sample per second, for as long as this page is open. The stream is
 // stopped on unmount so a backgrounded tab is not held open against the server.
@@ -18,6 +18,51 @@ function gigabytes(bytes: number) {
 const memoryCaption = computed(() => {
   const limit = samples.value.at(-1)?.memory_limit_bytes
   return limit ? `of ${gigabytes(limit).toFixed(1)} GB limit` : 'no container limit'
+})
+
+// The card leads with the volume the data directory is on, always: that is
+// what fills up and stops replication, and its used figure is the one that
+// describes this node. The system volume follows on the second line when it
+// is a different store. Leading with the system volume instead would have
+// called a 91%-full macOS disk 3% used, because the sealed system volume
+// counts only itself.
+const storageVolume = computed(() => nodeStorage.value?.data ?? nodeStorage.value?.system ?? null)
+
+/// Used share of the leading volume, as `df` computes its Capacity column:
+/// against used + available rather than the raw total, so this figure and
+/// the one an operator sees in a terminal agree. Null when unmeasurable -
+/// which must not render as 0% free space.
+const storageUsedPercent = computed(() => {
+  const volume = storageVolume.value
+  const occupied = (volume?.used_bytes ?? 0) + (volume?.available_bytes ?? 0)
+  if (!volume || occupied === 0) return null
+  return Math.round((volume.used_bytes / occupied) * 100)
+})
+
+const storageTone = computed(() => {
+  const used = storageUsedPercent.value
+  if (used === null) return 'tone-neutral'
+  if (used >= 90) return 'tone-negative'
+  if (used >= 75) return 'tone-warning'
+  return 'tone-positive'
+})
+
+const storageCaption = computed(() => {
+  const volume = storageVolume.value
+  if (!volume) return 'Capacity unavailable'
+  return `Free of ${formatBytes(volume.total_bytes)} on ${volume.mount}`
+})
+
+/// The second line carries whichever figure the first one is not: the
+/// system's totals when the data directory is on its own volume, and
+/// otherwise the path that volume is holding.
+const storageDetail = computed(() => {
+  const storage = nodeStorage.value
+  if (!storage) return 'This node did not report its filesystems'
+  if (storage.separate_mount && storage.system) {
+    return `System volume: ${formatBytes(storage.system.available_bytes)} free of ${formatBytes(storage.system.total_bytes)}`
+  }
+  return `Data directory ${storage.data_dir}`
 })
 </script>
 
@@ -116,15 +161,15 @@ const memoryCaption = computed(() => {
         </Card>
         <Card class="@container/card">
           <CardHeader>
-            <CardDescription>Storage engine</CardDescription>
-            <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">v1</CardTitle>
-            <CardAction>
-              <Badge variant="outline" class="tone-positive">Live</Badge>
+            <CardDescription>Storage</CardDescription>
+            <CardTitle class="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">{{ storageVolume ? formatBytes(storageVolume.available_bytes) : '—' }}</CardTitle>
+            <CardAction v-if="storageUsedPercent !== null">
+              <Badge variant="outline" :class="storageTone">{{ storageUsedPercent }}% used</Badge>
             </CardAction>
           </CardHeader>
           <CardFooter class="flex-col items-start gap-1.5 text-sm">
-            <div class="font-medium">Checksummed columnar blocks</div>
-            <div class="text-muted-foreground">Bounded size-tier compaction</div>
+            <div class="font-medium">{{ storageCaption }}</div>
+            <div class="text-muted-foreground truncate" :title="storageDetail">{{ storageDetail }}</div>
           </CardFooter>
         </Card>
       </div>
