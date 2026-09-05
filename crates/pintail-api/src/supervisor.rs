@@ -511,6 +511,47 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
             result
         }
         "polling" => {
+            let reconcile = reconciliation_due(database, &records);
+            if reconcile {
+                // Polling has no DDL stream. A projection that still names
+                // only the old columns can keep succeeding forever after an
+                // ADD COLUMN, silently hiding the drift from row checksums.
+                // Probe at reconciliation cadence and hand changed shapes to
+                // the same repair policy used for other quarantined tables.
+                let refreshed = pintail_probe::probe(&pool, &database.name)
+                    .await
+                    .map_err(display)?;
+                let changed = targets
+                    .iter()
+                    .filter(|target| {
+                        let previous = target.source();
+                        refreshed
+                            .tables
+                            .iter()
+                            .find(|source| source.name.eq_ignore_ascii_case(&previous.name))
+                            .is_some_and(|source| {
+                                !pintail_probe::stabilize_source_table(previous, source.clone())
+                                    .is_ok_and(|source| source.columns == previous.columns)
+                            })
+                    })
+                    .map(|target| target.source().name.clone())
+                    .collect::<Vec<_>>();
+                if !changed.is_empty() {
+                    let metadata = state.metadata().map_err(display)?;
+                    let reason = "polling source schema changed; resnapshot required";
+                    for name in &changed {
+                        metadata
+                            .mark_table_needs_resync(&database.id, name, reason)
+                            .map_err(display)?;
+                    }
+                    state.publish(ApiEvent::database(
+                        "replication.schema-drift",
+                        &database.id,
+                        format!("{reason}: {}", changed.join(", ")),
+                    ));
+                    return Err(format!("{reason}: {}", changed.join(", ")));
+                }
+            }
             // A tracked table can vanish from the source between probes (DROP
             // or RENAME that CDC has no handler for). Polling validates every
             // target against the probe report, so one ghost record would fail
@@ -566,7 +607,7 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 &report,
                 poll_targets,
                 PollOptions {
-                    reconcile: reconciliation_due(database, &records),
+                    reconcile,
                     cursor_overrides,
                     soft_delete_columns,
                     ..PollOptions::default()
