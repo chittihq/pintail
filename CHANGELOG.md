@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A local (writable) database refuses `BEGIN`, `START TRANSACTION`,
+  `COMMIT`, `ROLLBACK`, `SAVEPOINT` and `SET autocommit=0` with MySQL
+  error 1149 instead of accepting them as compatibility no-ops. The
+  no-op told a client that a `ROLLBACK` had undone an `INSERT` whose row
+  was durably stored - a wrong answer the client had no way to detect.
+  Every statement on a local database is still its own autocommit
+  transaction until explicit transactions land. Replicated databases are
+  unchanged: they write nothing, so the no-op that lets drivers and BI
+  tools open a transaction before a `SELECT` claims nothing false.
+
 ## [0.1.2-rc1] - 2026-09-04
 
 A candidate for the `GROUP BY` refusal that took a customer's analytics

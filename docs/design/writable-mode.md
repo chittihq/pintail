@@ -117,7 +117,11 @@ predicate through the existing executor and applying in bounded chunks.
 `LAST_INSERT_ID()` (AUTO_INCREMENT allocates from the same persisted
 counter mechanism as commit versions). `BEGIN`/`COMMIT`/`ROLLBACK` become
 real session state for local databases; they stay compatibility no-ops
-for replicated ones.
+for replicated ones. Until phase 4 lands they are *refused* on a local
+database (error 1149), along with `SAVEPOINT` and `SET autocommit=0`: a
+no-op `ROLLBACK` on a database that accepts writes tells a client its
+insert was discarded when the row is durably stored, and no client can
+detect that.
 
 ## Backup and restore
 

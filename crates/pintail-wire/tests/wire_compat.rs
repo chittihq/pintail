@@ -1484,3 +1484,176 @@ async fn a_saturated_server_refuses_queries_instead_of_queueing_them() {
         .expect("wire server task")
         .expect("wire server");
 }
+
+/// Seeds one LOCAL (writable) database and one replicated database in the
+/// same control plane, each with its own wire key, so a single server can be
+/// asked the same question about both.
+fn seed_local_and_replicated(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
+    let metadata = MetaStore::open(metadata_path).expect("metadata");
+    metadata
+        .create_local_database("db-local", "scratch", "2026-09-05T00:00:00Z")
+        .expect("local database");
+    metadata
+        .upsert_database("db-1", "analytics", b"unused", "2026-09-05T00:00:00Z")
+        .expect("replicated database");
+    // Distinct secrets: a key's sha256 is unique across the control plane.
+    for (id, database, secret) in [
+        ("key-local", "db-local", b"pk_wire_local_".as_slice()),
+        ("key-replica", "db-1", b"pk_wire_replica".as_slice()),
+    ] {
+        let sha256 = Sha256::digest(secret);
+        let native = Sha1::digest(Sha1::digest(secret));
+        let caching_sha2 = Sha256::digest(Sha256::digest(secret));
+        metadata
+            .create_api_key(&NewApiKey {
+                id,
+                database_id: database,
+                name: "wire gate",
+                sha256: &sha256,
+                mysql_native_password_hash: Some(&native),
+                caching_sha2_password_hash: Some(&caching_sha2),
+                scopes_json: r#"["query","read"]"#,
+                expires_at: None,
+                now: "2026-09-05T00:00:01Z",
+            })
+            .expect("wire key");
+    }
+    drop(metadata);
+    std::fs::create_dir_all(data_dir.join("databases").join("db-local").join("tables"))
+        .expect("local table root");
+    pintail_write::LocalDatabase::new(data_dir, metadata_path, "db-local")
+        .recover()
+        .expect("publish the empty local catalog");
+}
+
+/// Every way a client can ask a local database for atomicity across
+/// statements, and the write that outlives the `ROLLBACK` it sends after.
+async fn assert_local_refuses_transactions(local: &mut mysql_async::Conn) {
+    for sql in [
+        "BEGIN",
+        "START TRANSACTION",
+        "COMMIT",
+        "ROLLBACK",
+        "SET autocommit = 0",
+        "SET SESSION autocommit=0",
+    ] {
+        let error = local
+            .query_drop(sql)
+            .await
+            .expect_err("a guarantee Pintail cannot keep must not answer OK");
+        let message = error.to_string();
+        assert!(
+            message.contains("autocommit transaction"),
+            "{sql} must say why it is refused, got: {message}"
+        );
+        // 1149: a valid statement that is unsupported here. A client
+        // retrying on a syntax error would loop forever instead.
+        assert!(
+            matches!(&error, mysql_async::Error::Server(server) if server.code == 1149),
+            "{sql} must carry MySQL's unsupported-statement code, got: {error}"
+        );
+    }
+
+    // What the refusal protects: the insert is autocommitted, and no
+    // ROLLBACK the client can send will take it back.
+    local
+        .query_drop("CREATE TABLE probe (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))")
+        .await
+        .expect("create table");
+    local
+        .query_drop("INSERT INTO probe (id) VALUES (1)")
+        .await
+        .expect("insert");
+    let _ = local
+        .query_drop("ROLLBACK")
+        .await
+        .expect_err("the rollback is still refused");
+    let surviving: Option<i64> = local
+        .query_first("SELECT COUNT(*) FROM probe")
+        .await
+        .expect("count");
+    assert_eq!(surviving, Some(1), "the insert was committed by itself");
+
+    // Autocommit stays settable to what it already is, and the isolation
+    // level a driver announces describes an autocommitted statement fine.
+    for sql in [
+        "SET autocommit = 1",
+        "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+    ] {
+        local
+            .query_drop(sql)
+            .await
+            .expect("accepted session command");
+    }
+}
+
+/// The reproduction this closes: over the wire, `BEGIN` / `INSERT` /
+/// `ROLLBACK` each returned OK on a local database and the row was still
+/// there afterwards, so a client had every reason to believe its insert had
+/// been undone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_local_database_refuses_transactions_a_replica_still_accepts() {
+    let _serial = wire_serial();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_local_and_replicated(data.path(), &metadata_path);
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server_metadata = metadata_path.clone();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until(listener, data_dir, server_metadata, async {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    let connect = |user: &str, secret: &str| {
+        let dsn = format!("mysql://{user}:{secret}@{address}/{user}");
+        Pool::new(
+            OptsBuilder::from_opts(Opts::from_url(&dsn).expect("wire DSN")).pool_opts(
+                PoolOpts::default().with_constraints(
+                    PoolConstraints::new(1, 1).expect("single-connection test pool"),
+                ),
+            ),
+        )
+    };
+
+    let local_pool = connect("scratch", "pk_wire_local_");
+    let mut local = local_pool.get_conn().await.expect("local wire client");
+    assert_local_refuses_transactions(&mut local).await;
+
+    // A replicated database writes nothing, so the compatibility no-op that
+    // lets drivers and BI tools open a transaction before a SELECT stays.
+    let replica_pool = connect("analytics", "pk_wire_replica");
+    let mut replica = replica_pool
+        .get_conn()
+        .await
+        .expect("replicated wire client");
+    for sql in [
+        "BEGIN",
+        "START TRANSACTION",
+        "COMMIT",
+        "ROLLBACK",
+        "SET autocommit = 0",
+    ] {
+        replica
+            .query_drop(sql)
+            .await
+            .expect("read-only sessions keep the compatibility no-op");
+    }
+
+    drop(local);
+    drop(replica);
+    local_pool.disconnect().await.expect("close local pool");
+    replica_pool.disconnect().await.expect("close replica pool");
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}

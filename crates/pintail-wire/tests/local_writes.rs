@@ -167,6 +167,64 @@ fn a_replicated_database_still_refuses_every_write() {
     }
 }
 
+/// The insert must survive the rollback that follows it, and the rollback
+/// must say so. A no-op `ROLLBACK` returning OK is what let a client believe
+/// a committed row had been discarded.
+#[test]
+fn a_local_database_refuses_transaction_control_rather_than_pretending() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE ledger (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create table");
+
+    for sql in [
+        "BEGIN",
+        "START TRANSACTION",
+        "COMMIT",
+        "ROLLBACK",
+        "SAVEPOINT before_insert",
+        "RELEASE SAVEPOINT before_insert",
+    ] {
+        let error = run(&fixture, sql).expect_err("refused");
+        let message = error.to_string();
+        assert!(
+            message.contains("explicit transactions are not supported"),
+            "{sql} must be refused as unsupported, got {message}"
+        );
+        assert!(
+            !message.contains("read-only"),
+            "{sql} must not report a writable database as read-only, got {message}"
+        );
+    }
+
+    // The write inside the refused transaction is still exactly what it
+    // always was: autocommitted and durable.
+    run(&fixture, "INSERT INTO ledger (id) VALUES (1)").expect("insert");
+    let _ = run(&fixture, "ROLLBACK").expect_err("refused");
+    let rows = run(&fixture, "SELECT id FROM ledger").expect("select");
+    assert_eq!(rows.rows.len(), 1, "the row was committed by the INSERT");
+}
+
+#[test]
+fn a_replicated_database_keeps_the_read_only_answer_for_transaction_control() {
+    let directory = tempfile::tempdir().expect("temporary data directory");
+    let data_dir = directory.path().to_path_buf();
+    let metadata_path = data_dir.join("pintail-meta.db");
+    let metadata = MetaStore::open(&metadata_path).expect("metadata");
+    metadata
+        .upsert_database("db-1", "shop", b"secret", "2026-08-24T00:00:00Z")
+        .expect("replicated database");
+    drop(metadata);
+    let engine = ReplicaEngine::new(&data_dir, &metadata_path);
+
+    // Nothing can be written there, so the refusal a client already handles
+    // is still the accurate one.
+    let error = engine.execute("db-1", "ROLLBACK", 10).expect_err("refused");
+    assert!(error.to_string().contains("read-only"), "{error}");
+}
+
 #[test]
 fn a_write_against_a_missing_database_is_not_treated_as_writable() {
     let fixture = local_fixture();

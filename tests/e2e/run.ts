@@ -1506,6 +1506,51 @@ async function phaseLocalDatabase() {
     })
   }
 
+  // A local database autocommits every statement, so accepting transaction
+  // control as a no-op reported a ROLLBACK that undid nothing. 1149 is
+  // MySQL's "valid statement, unsupported here".
+  for (const sql of [
+    'BEGIN',
+    'START TRANSACTION',
+    'COMMIT',
+    'ROLLBACK',
+    'SET autocommit = 0',
+  ]) {
+    await check(`${sql} is refused on a local database`, async () => {
+      try {
+        await localWire!.query(sql)
+      } catch (error) {
+        const actual = (error as { errno?: number }).errno
+        if (actual !== 1149) throw new Error(`expected errno 1149, got ${actual}`)
+        return
+      }
+      throw new Error('a transaction guarantee Pintail cannot keep was accepted')
+    })
+  }
+
+  await check('the rows an autocommit committed survive a ROLLBACK', async () => {
+    // The reproduction, in order: the inserts above are already durable, so
+    // a ROLLBACK that answered OK would tell this client they were
+    // discarded while both rows are still readable.
+    try {
+      await localWire!.query('ROLLBACK')
+      throw new Error('ROLLBACK was accepted after a committed insert')
+    } catch (error) {
+      if ((error as { errno?: number }).errno !== 1149) throw error
+    }
+    const [rows] = await localWire!.query('SELECT COUNT(*) AS n FROM notes')
+    const n = (rows as Array<{ n: string }>)[0].n
+    if (n !== '2') throw new Error(`the committed rows read back as ${n}`)
+  })
+
+  await check('a replicated database keeps the transaction no-op', async () => {
+    // Nothing can be written there, so BEGIN promises nothing false and the
+    // drivers that open one before their first SELECT keep working.
+    for (const sql of ['BEGIN', 'COMMIT', 'ROLLBACK', 'SET autocommit = 0']) {
+      await pintailQuery(sql)
+    }
+  })
+
   await check('a refused write leaves the table unchanged', async () => {
     const [rows] = await localWire!.query('SELECT COUNT(*) AS n FROM notes')
     const n = (rows as Array<{ n: string }>)[0].n

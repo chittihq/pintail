@@ -505,9 +505,14 @@ but may be wrong.
 - `UPDATE` and `DELETE` are not implemented on a local database. Rows can
   be created and inserted, and a row that is wrong can only be corrected by
   recreating the table (issue #7, phase 3).
-- There are no explicit transactions: `BEGIN`/`COMMIT`/`ROLLBACK` remain
-  compatibility no-ops, so every statement is its own autocommit
-  transaction (phase 4).
+- There are no explicit transactions: every statement is its own autocommit
+  transaction (phase 4). `BEGIN`, `START TRANSACTION`, `COMMIT`, `ROLLBACK`,
+  `SAVEPOINT` and `SET autocommit=0` are refused on a local database
+  (MySQL error 1149) rather than accepted as no-ops - a no-op `ROLLBACK`
+  reported that a stored row had been discarded. A client that needs
+  atomicity across statements has no way to get it here. Replicated
+  databases still accept all of them: they write nothing, so the no-op
+  claims nothing false.
 - A keyless local table is append-only: rows live under a generated id,
   the same model the replica uses for a keyless source table, so a
   duplicate row is simply a second row and nothing can address one later.

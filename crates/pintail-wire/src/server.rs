@@ -26,6 +26,7 @@ use sha1::{Digest as _, Sha1};
 use sha2::{Digest as _, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::engine::{AUTOCOMMIT_REQUIRED, TRANSACTION_CONTROL_UNSUPPORTED};
 use crate::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
     ReplicaEngine, SqlRejection,
@@ -607,6 +608,12 @@ struct Authenticated {
     /// written at connect time already pins the session to it, and a log line
     /// is read by a human, who wants the name.
     key_name: String,
+    /// Whether the connection reached a LOCAL (writable) database. A
+    /// replicated database accepts no writes, so a transaction there can
+    /// promise nothing it fails to deliver; on a local one the same no-op
+    /// would tell a client its writes were transactional when each of them
+    /// autocommitted.
+    local: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -724,6 +731,7 @@ impl Backend {
             database_id: database.id,
             database_name: database.name,
             key_name: key.name,
+            local: database.kind == "local",
         });
         Ok(true)
     }
@@ -873,6 +881,23 @@ impl Backend {
         ))
     }
 
+    /// The rejection for a session command that would promise a transaction
+    /// guarantee this database does not have, or `None` when the command is
+    /// one the session may honor.
+    ///
+    /// Only LOCAL databases refuse. On a replicated database every statement
+    /// is a read, so `BEGIN`/`COMMIT`/`ROLLBACK` and `autocommit=0` claim
+    /// nothing that could turn out false, and the drivers and BI tools that
+    /// open a transaction before their first `SELECT` keep working.
+    fn transaction_guarantee_rejection(&self, sql: &str) -> Option<&'static str> {
+        // An unauthenticated connection reaches no database and can write
+        // nothing, so it has no guarantee to break.
+        if !self.authenticated().is_ok_and(|current| current.local) {
+            return None;
+        }
+        unsupported_transaction_guarantee(sql)
+    }
+
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
     // One arm per session command; splitting hides the correspondence.
@@ -987,7 +1012,9 @@ impl Backend {
                 Ok(())
             }
             // Everything else keeps the accepted-no-op compatibility
-            // behavior (autocommit, isolation levels, probes).
+            // behavior (isolation levels, probes, and autocommit on a
+            // replicated database - a local one refuses it before reaching
+            // here, see `unsupported_transaction_guarantee`).
             _ => Ok(()),
         }
     }
@@ -1099,6 +1126,9 @@ impl Handler for Backend {
             );
         };
         if is_session_command(sql) {
+            if let Some(rejection) = self.transaction_guarantee_rejection(sql) {
+                return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
+            }
             return match self.apply_session_command(sql) {
                 Ok(()) => Response::Ok(OkPacket::default(), String::new()),
                 Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
@@ -1809,6 +1839,14 @@ fn error_kind(error: &QueryError) -> ErrorKind {
         QueryError::Invalid(message) if message.contains("read-only") => {
             ErrorKind::ErOptionPreventsStatement
         }
+        // 1149 is MySQL's "valid statement, not supported here": the
+        // statement parsed, and a prepared BEGIN must not read as a syntax
+        // error the client could think it wrote wrong.
+        QueryError::Invalid(message)
+            if message == TRANSACTION_CONTROL_UNSUPPORTED || message == AUTOCOMMIT_REQUIRED =>
+        {
+            ErrorKind::ErSyntaxError
+        }
         QueryError::Invalid(_) => ErrorKind::ErParseError,
         QueryError::Rejected { rejection, .. } => match rejection {
             SqlRejection::UnknownDatabase => ErrorKind::ErBadDbError,
@@ -2006,8 +2044,78 @@ fn apply_kill_command(rest: &str) -> Result<(), String> {
     }
 }
 
+/// Whether one session command asks for a transaction guarantee Pintail
+/// cannot keep, and the message saying so.
+///
+/// Transaction control and `autocommit=0` are the two ways a client asks for
+/// atomicity across statements. Pintail's write path is autocommit-only
+/// (`docs/design/writable-mode.md`, phase 4), so honoring either as a no-op
+/// lets a client believe a `ROLLBACK` undid an `INSERT` that is durably
+/// stored. Refusing is the honest answer until the transaction phase lands.
+///
+/// `SET TRANSACTION ISOLATION LEVEL` stays accepted: it names how a
+/// transaction would see other writers, not whether one exists, and every
+/// isolation level describes an autocommitted statement correctly.
+fn unsupported_transaction_guarantee(sql: &str) -> Option<&'static str> {
+    let command = normalized_command(sql);
+    let starts_with_word = |word: &str| {
+        command == word
+            || command
+                .strip_prefix(word)
+                .is_some_and(|rest| rest.starts_with(' '))
+    };
+    if ["begin", "start transaction", "commit", "rollback"]
+        .iter()
+        .any(|word| starts_with_word(word))
+    {
+        return Some(TRANSACTION_CONTROL_UNSUPPORTED);
+    }
+    // A SET may carry several assignments; MySQL applies every one of them,
+    // so autocommit anywhere in the list counts.
+    command
+        .strip_prefix("set ")?
+        .split(',')
+        .filter_map(|assignment| {
+            let (name, value) = assignment.split_once('=')?;
+            // GLOBAL included: Pintail keeps no such global, so accepting it
+            // would promise every later session a mode none of them have.
+            let name = name
+                .trim()
+                .trim_start_matches("session ")
+                .trim_start_matches("local ")
+                .trim_start_matches("global ")
+                .trim_start_matches("@@session.")
+                .trim_start_matches("@@local.")
+                .trim_start_matches("@@global.")
+                .trim_start_matches("@@")
+                .trim();
+            (name == "autocommit").then(|| value.trim().trim_matches(['\'', '"']))
+        })
+        // Only turning it OFF is a false promise; autocommit=1 is what every
+        // statement already does.
+        .find(|value| matches!(*value, "0" | "off" | "false"))
+        .map(|_| AUTOCOMMIT_REQUIRED)
+}
+
+/// One statement lowercased, unterminated and with its whitespace runs
+/// collapsed, so `START   TRANSACTION;` and `start transaction` compare
+/// alike.
+fn normalized_command(sql: &str) -> String {
+    let mut command = String::with_capacity(sql.len());
+    for word in sql.trim().trim_end_matches(';').split_whitespace() {
+        if !command.is_empty() {
+            command.push(' ');
+        }
+        command.push_str(&word.to_ascii_lowercase());
+    }
+    command
+}
+
 fn is_session_command(sql: &str) -> bool {
-    let command = sql.trim_start().to_ascii_lowercase();
+    // Normalized rather than merely lowercased, so `START   TRANSACTION` is
+    // classified as the same command as `start transaction` - and therefore
+    // reaches the same rejection on a local database.
+    let command = normalized_command(sql);
     [
         "set ",
         "begin",
@@ -2301,6 +2409,7 @@ fn verify_wire_key_at(
             database_id: database.id,
             database_name: database.name,
             key_name: key.name,
+            local: database.kind == "local",
         }));
     }
     metadata
@@ -2339,11 +2448,83 @@ fn verify_wire_key_at(
         database_id: database.id,
         database_name: database.name,
         key_name: key.name,
+        local: database.kind == "local",
     }))
 }
 #[cfg(test)]
 mod tests {
     use super::{QueryError, SqlRejection, error_kind};
+
+    #[test]
+    fn a_local_session_refuses_the_transaction_guarantees_it_cannot_keep() {
+        use super::{
+            AUTOCOMMIT_REQUIRED, TRANSACTION_CONTROL_UNSUPPORTED, is_session_command,
+            unsupported_transaction_guarantee as rejected,
+        };
+
+        for command in [
+            "BEGIN",
+            "begin;",
+            "START TRANSACTION",
+            "start   transaction read only",
+            "COMMIT",
+            "commit and chain;",
+            "ROLLBACK",
+            "ROLLBACK TO SAVEPOINT s1",
+        ] {
+            assert_eq!(
+                rejected(command),
+                Some(TRANSACTION_CONTROL_UNSUPPORTED),
+                "{command} promises atomicity across statements"
+            );
+            // Every one of them must still reach the rejection: the server
+            // consults it only for statements it treats as session commands.
+            assert!(
+                is_session_command(command),
+                "{command} is a session command"
+            );
+        }
+
+        for command in [
+            "SET autocommit=0",
+            "set autocommit = 0;",
+            "SET @@session.autocommit = OFF",
+            "SET SESSION autocommit=false",
+            "SET autocommit=0, time_zone='+00:00'",
+        ] {
+            assert_eq!(
+                rejected(command),
+                Some(AUTOCOMMIT_REQUIRED),
+                "{command} asks for a transaction that spans statements"
+            );
+        }
+
+        // Accepted: these describe an autocommitted statement correctly, and
+        // refusing them would break clients that write nothing.
+        for command in [
+            "SET autocommit=1",
+            "SET autocommit = ON",
+            "SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+            "SET NAMES utf8mb4",
+            "SET time_zone = '+00:00'",
+            "SELECT 1",
+            // Substring matches must not be mistaken for the command.
+            "SELECT * FROM begin_events",
+            "SET committed_at = 1",
+        ] {
+            assert_eq!(rejected(command), None, "{command} promises nothing false");
+        }
+    }
+
+    #[test]
+    fn a_refused_transaction_guarantee_is_not_reported_as_a_syntax_mistake() {
+        use super::{AUTOCOMMIT_REQUIRED, TRANSACTION_CONTROL_UNSUPPORTED};
+
+        for message in [TRANSACTION_CONTROL_UNSUPPORTED, AUTOCOMMIT_REQUIRED] {
+            let kind = error_kind(&QueryError::Invalid(message.to_owned()));
+            assert_eq!(kind.code(), 1149, "{message}");
+        }
+    }
 
     #[test]
     fn rejections_map_to_mysql_errno_and_sqlstate() {

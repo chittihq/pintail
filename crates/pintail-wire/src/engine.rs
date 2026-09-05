@@ -39,6 +39,19 @@ pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 /// Default result row ceiling for HTTP and wire clients.
 pub const DEFAULT_MAX_ROWS: usize = 10_000;
 
+/// Refusal for transaction control on a local database.
+///
+/// A local database autocommits every statement
+/// (`docs/design/writable-mode.md`, phase 4). Accepting `BEGIN` ... `ROLLBACK`
+/// as a no-op therefore reports that a write was undone when it is durably
+/// stored, which is worse than refusing: a client cannot detect it.
+pub(crate) const TRANSACTION_CONTROL_UNSUPPORTED: &str = "explicit transactions are not supported on a local database: every statement is its own \
+     autocommit transaction";
+/// Refusal for `SET autocommit=0` on a local database - the other way a
+/// client asks for atomicity across statements.
+pub(crate) const AUTOCOMMIT_REQUIRED: &str = "autocommit cannot be disabled on a local database: every statement is its own autocommit \
+     transaction";
+
 /// A query output field in `MySQL` presentation order.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)] // independent per-column wire facts
@@ -422,6 +435,9 @@ impl ReplicaEngine {
         if matches!(statement, Statement::CreateTable(_) | Statement::Insert(_)) {
             return self.execute_write(database_id, &statement, started);
         }
+        if is_transaction_control(&statement) {
+            return Err(self.transaction_control_rejection(database_id));
+        }
         let replica = self.load_replica_cached(database_id)?;
         let catalog = build_catalog(&replica)?;
         let mut provider = build_provider(&replica)?;
@@ -469,6 +485,21 @@ impl ReplicaEngine {
             _ => Err(QueryError::Invalid(
                 "Pintail's query surfaces are read-only".to_owned(),
             )),
+        }
+    }
+
+    /// Why transaction control is refused here: a local database has no
+    /// transactions to control, and a replicated one has nothing to write
+    /// inside them. The two answers differ because the reasons do, and a
+    /// client reading "read-only" on a database it can write into would go
+    /// looking for the wrong problem.
+    fn transaction_control_rejection(&self, database_id: &str) -> QueryError {
+        let local = MetaStore::open(&self.metadata_path)
+            .and_then(|metadata| metadata.is_local_database(database_id));
+        match local {
+            Ok(true) => QueryError::Invalid(TRANSACTION_CONTROL_UNSUPPORTED.to_owned()),
+            Ok(false) => QueryError::Invalid("Pintail's query surfaces are read-only".to_owned()),
+            Err(error) => QueryError::Internal(error.to_string()),
         }
     }
 
@@ -763,6 +794,22 @@ impl ReplicaEngine {
             opened,
         ))
     }
+}
+
+/// Statements whose only purpose is a multi-statement transaction boundary.
+///
+/// `SET TRANSACTION ISOLATION LEVEL` is deliberately absent: it describes how
+/// a transaction would observe other writers, which an autocommitted
+/// statement satisfies under every level, so accepting it promises nothing.
+fn is_transaction_control(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::StartTransaction { .. }
+            | Statement::Commit { .. }
+            | Statement::Rollback { .. }
+            | Statement::Savepoint { .. }
+            | Statement::ReleaseSavepoint { .. }
+    )
 }
 
 fn collect_rows(
