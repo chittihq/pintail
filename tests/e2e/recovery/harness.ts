@@ -180,7 +180,7 @@ export class Context {
     this.stderr = ''
     this.startIndex++
     const env = { ...process.env, PINTAIL_FAILPOINT: failpoint, PINTAIL_SUPERVISOR_INTERVAL_MS: '250',
-      PINTAIL_SNAPSHOT_WORKERS: '1', PINTAIL_LOG_LEVEL: 'debug' }
+      PINTAIL_SNAPSHOT_WORKERS: '1', PINTAIL_LOG: 'debug' }
     this.process = Bun.spawn([this.binary, '--data-dir', this.dataDir, '--http-bind', `127.0.0.1:${this.httpPort}`,
       '--wire-bind', `127.0.0.1:${this.wirePort}`], { cwd: repository, stdout: 'pipe', stderr: 'pipe', env })
     const capture = async (stream: ReadableStream<Uint8Array>, kind: string) => {
