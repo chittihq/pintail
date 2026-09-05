@@ -357,6 +357,160 @@ async fn a_resumed_snapshot_does_not_reread_the_chunks_it_already_holds() {
     pool.disconnect().await.expect("disconnect source pool");
 }
 
+/// A keyless table pages by offset: its journal carries no cursor, so a
+/// resume skips its completed pages by number and asks the source only for
+/// the page after the last one.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_resumed_keyless_table_skips_its_completed_pages() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-05T00:00:00Z",
+        )
+        .expect("register database");
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "append_table")
+        .expect("keyless table")
+        .clone();
+    assert_eq!(source.key.mode, KeyMode::AppendRowId);
+    let directory = workspace.path().join("append_table");
+    let options = SnapshotOptions {
+        workers: 1,
+        chunk_rows: 1,
+        ..SnapshotOptions::default()
+    };
+    let first = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        options.clone(),
+    )
+    .await
+    .expect("first copy");
+    assert_eq!(first.tables[0].chunks, 3);
+    drop(first);
+    let before = source_selects(&pool).await;
+    let resumed = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        options,
+    )
+    .await
+    .expect("resume over a complete journal");
+    let selects = source_selects(&pool).await - before;
+    assert_eq!(resumed.tables[0].rows, 3);
+    assert!(selects <= 4, "a keyless resume issued {selects} SELECTs");
+    pool.disconnect().await.expect("disconnect source pool");
+}
+
+/// A run that pauses on its own chunk budget stops as a run: the table it
+/// was copying is not flagged as a failure, because nothing about the table
+/// failed, and the next run continues it from the journal.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_paused_run_flags_no_table() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-05T00:00:00Z",
+        )
+        .expect("register database");
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "resume_rows")
+        .expect("resume table")
+        .clone();
+    let directory = workspace.path().join("resume_rows");
+    let paused = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        SnapshotOptions {
+            workers: 1,
+            chunk_rows: 1_000,
+            max_new_chunks: Some(5),
+            ..SnapshotOptions::default()
+        },
+    )
+    .await;
+    assert!(
+        matches!(
+            paused,
+            Err(pintail_snapshot::SnapshotError::Paused {
+                completed_chunks: 5
+            })
+        ),
+        "a budgeted run pauses as a run: {:?}",
+        paused.as_ref().err().map(ToString::to_string)
+    );
+    let metadata = MetaStore::open(&metadata_path).expect("metadata");
+    assert!(
+        metadata
+            .tables_needing_resync(DATABASE_ID)
+            .expect("flagged")
+            .is_empty(),
+        "a pause is not a table failure"
+    );
+    assert_eq!(
+        metadata
+            .completed_snapshot_chunks(DATABASE_ID, "resume_rows")
+            .expect("journal")
+            .len(),
+        5
+    );
+    let finished = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        SnapshotOptions {
+            workers: 1,
+            chunk_rows: 1_000,
+            ..SnapshotOptions::default()
+        },
+    )
+    .await
+    .expect("the next run continues from the journal");
+    assert_eq!(finished.tables[0].chunks, 100);
+    assert_eq!(finished.tables[0].rows, RESUME_ROWS);
+    assert!(finished.failed.is_empty());
+    pool.disconnect().await.expect("disconnect source pool");
+}
+
 /// One table that cannot be copied is flagged for a resync; the others
 /// complete and the run reports the failure instead of becoming one.
 #[tokio::test(flavor = "multi_thread")]

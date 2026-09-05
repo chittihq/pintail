@@ -227,3 +227,119 @@ fn upgrading_a_store_backfills_the_marker_from_the_old_states() {
         ]
     );
 }
+
+#[test]
+fn a_restore_leaves_quarantined_and_excluded_tables_alone() {
+    let (_directory, mut store) = store_with_database();
+    for name in ["gone", "held", "live"] {
+        store
+            .upsert_snapshot_table("db-1", name, Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("register");
+        store
+            .complete_snapshot_table("db-1", name)
+            .expect("copy completes");
+    }
+    store
+        .mark_table_needs_resync("db-1", "held", "row image wider than the schema")
+        .expect("quarantine");
+    store
+        .mark_table_orphaned("db-1", "gone", "DROP TABLE gone", "2026-09-05T00:00:00Z")
+        .expect("exclude");
+    assert_eq!(
+        store
+            .restore_complete_tables("db-1", "streaming")
+            .expect("restore"),
+        vec!["live".to_owned()]
+    );
+    assert_eq!(
+        table_state(&store, "held"),
+        ("needs_resync".to_owned(), false)
+    );
+    assert_eq!(table_state(&store, "gone").0, "excluded");
+    assert_eq!(
+        store
+            .tables_without_complete_copy("db-1")
+            .expect("incomplete")
+            .into_iter()
+            .collect::<Vec<_>>(),
+        vec!["held".to_owned()],
+        "an excluded table is never something to copy"
+    );
+    let _ = &mut store;
+}
+
+#[test]
+fn a_failed_job_hands_its_incomplete_table_to_the_automatic_resync() {
+    let (_directory, mut store) = store_with_database();
+    let now = "2026-09-05T00:00:00Z";
+    for name in ["done", "half"] {
+        store
+            .upsert_snapshot_table("db-1", name, Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("register");
+    }
+    store
+        .complete_snapshot_table("db-1", "done")
+        .expect("copy completes");
+    store
+        .fail_database_job("db-1", "the copy of half failed", now)
+        .expect("job fails");
+    assert_eq!(table_state(&store, "half"), ("error".to_owned(), false));
+    assert_eq!(table_state(&store, "done"), ("error".to_owned(), true));
+    assert_eq!(
+        store
+            .flag_incomplete_errors_for_resync("db-1")
+            .expect("flag"),
+        vec!["half".to_owned()]
+    );
+    assert_eq!(
+        table_state(&store, "half"),
+        ("needs_resync".to_owned(), false)
+    );
+    assert_eq!(
+        table_state(&store, "done"),
+        ("error".to_owned(), true),
+        "a complete table is the restore's, not the resync's"
+    );
+    assert!(
+        store
+            .flag_incomplete_errors_for_resync("db-1")
+            .expect("flag again")
+            .is_empty()
+    );
+    let _ = &mut store;
+}
+
+#[test]
+fn only_an_errored_database_leaves_its_error_state() {
+    let (_directory, store) = store_with_database();
+    let now = "2026-09-05T00:00:00Z";
+    store
+        .update_database_probe("db-1", "{}", "cdc", now)
+        .expect("probe");
+    assert!(
+        !store
+            .clear_database_error("db-1", "cdc", now)
+            .expect("clear"),
+        "a database that is not in error is left as it is"
+    );
+    store
+        .fail_database_job("db-1", "boom", now)
+        .expect("job fails");
+    assert_eq!(
+        store.database("db-1").expect("query").expect("row").state,
+        "error"
+    );
+    assert!(
+        store
+            .clear_database_error("db-1", "cdc", now)
+            .expect("clear")
+    );
+    assert_eq!(
+        store.database("db-1").expect("query").expect("row").state,
+        "streaming"
+    );
+    assert!(
+        store.clear_database_error("db-1", "paused", now).is_err(),
+        "only a replication mode names a live state"
+    );
+}

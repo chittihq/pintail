@@ -1172,11 +1172,181 @@ async fn run_compatibility_variant(variant: &CompatibilityVariant) {
     );
     assert!(dlq_errors(&metadata_path).is_empty(), "{}", variant.label);
     assert_eq!(result.checkpoint.kind, "filepos", "{}", variant.label);
-    assert_eq!(result.mutations, 6, "{}", variant.label);
+    assert_eq!(result.mutations, 9, "{}", variant.label);
     assert_compatibility_rows(variant.label, &result.targets);
+    let logs_virtual = !variant.label.starts_with("mariadb");
+    assert_virtual_column_rows(variant.label, &report, &result.targets, logs_virtual);
+    assert_virtual_column_added_mid_stream_is_recopied(
+        variant.label,
+        &mysql,
+        &pool,
+        &metadata_path,
+        workspace.path(),
+        result.targets,
+        logs_virtual,
+    )
+    .await;
     pool.disconnect()
         .await
         .expect("disconnect compatibility pool");
+}
+
+/// `MySQL` writes a `VIRTUAL` generated column into its row images, so the
+/// column replicates like any other; `MariaDB` leaves it out of the binary
+/// log, so the probe skips it and the schema is the physical one.
+fn assert_virtual_column_rows(
+    label: &str,
+    report: &ProbeReport,
+    targets: &[CdcTarget],
+    logs_virtual: bool,
+) {
+    let probed = report
+        .tables
+        .iter()
+        .find(|table| table.name == "compat_generated")
+        .expect("probed generated table");
+    let target = cdc_target(targets, "compat_generated");
+    let rows = target.store().snapshot().scan().expect("generated scan");
+    assert_eq!(rows.len(), 2, "{label}");
+    if logs_virtual {
+        assert_eq!(probed.columns.len(), 3, "{label} keeps the virtual column");
+        assert!(probed.warnings.is_empty(), "{label}: {:?}", probed.warnings);
+        // The snapshot row (id 1, then updated) and the streamed insert
+        // both carry the computed value at the column's own ordinal.
+        for row in &rows {
+            let Value::Utf8(value) = &row.values()[1] else {
+                panic!("{label}: value is text");
+            };
+            assert_eq!(
+                row.values()[2],
+                Value::Utf8(value.to_uppercase()),
+                "{label} row {:?}",
+                row.values()
+            );
+        }
+    } else {
+        assert_eq!(probed.columns.len(), 2, "{label} skips the virtual column");
+        assert!(
+            probed
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("virtual generated column value_upper")),
+            "{label}: {:?}",
+            probed.warnings
+        );
+        for row in &rows {
+            assert_eq!(row.values().len(), 2, "{label}");
+        }
+    }
+}
+
+/// A `VIRTUAL` column added to a live table cannot evolve in place - the
+/// rows already copied would read NULL where the source computes values -
+/// so the stream quarantines the table, and the recopy that follows carries
+/// the values for every row. Where the server does not log the column, the
+/// ALTER changes nothing the stream can see and the table stays live.
+async fn assert_virtual_column_added_mid_stream_is_recopied(
+    label: &str,
+    mysql: &MysqlContainer,
+    pool: &Pool,
+    metadata_path: &Path,
+    workspace: &Path,
+    targets: Vec<CdcTarget>,
+    logs_virtual: bool,
+) {
+    mysql
+        .query_batch(
+            "ALTER TABLE compat_generated \
+               ADD COLUMN value_len INT GENERATED ALWAYS AS (CHAR_LENGTH(value)) VIRTUAL;\
+             INSERT INTO compat_generated (id, value) VALUES (4,'late');",
+        )
+        .unwrap_or_else(|error| panic!("{label} mid-stream ALTER: {error}"));
+    let report = probe(pool, "app")
+        .await
+        .unwrap_or_else(|error| panic!("{label} re-probe: {error}"));
+    let result = finite_catch_up(pool, metadata_path, &report, targets)
+        .await
+        .unwrap_or_else(|error| panic!("{label} CDC after ALTER: {error}"));
+    let metadata = MetaStore::open(metadata_path).expect("metadata");
+    let flagged = metadata
+        .tables_needing_resync(DATABASE_ID)
+        .expect("flagged tables");
+    if !logs_virtual {
+        assert!(flagged.is_empty(), "{label}: {flagged:?}");
+        let rows = cdc_target(&result.targets, "compat_generated")
+            .store()
+            .snapshot()
+            .scan()
+            .expect("generated scan");
+        assert_eq!(rows.len(), 3, "{label}: the insert streamed through");
+        return;
+    }
+    assert_eq!(
+        flagged.into_iter().collect::<Vec<_>>(),
+        vec!["compat_generated".to_owned()],
+        "{label}: the table is recopied, not evolved in place"
+    );
+    assert_eq!(
+        cdc_target(&result.targets, "compat_generated")
+            .source()
+            .columns
+            .len(),
+        3,
+        "{label}: the live schema did not adopt the column"
+    );
+    // The recopy the automatic resync would run: the refreshed schema, a
+    // fresh store, one table's snapshot, then the stream again.
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "compat_generated")
+        .expect("refreshed generated table")
+        .clone();
+    assert_eq!(source.columns.len(), 4, "{label}");
+    let directory = workspace.join("compat_generated-recopy");
+    let store = TableStore::open(
+        &directory,
+        source.table_schema().expect("refreshed schema"),
+        StoreOptions::default(),
+    )
+    .expect("recopy store");
+    metadata
+        .begin_table_resnapshot(DATABASE_ID, "compat_generated")
+        .expect("resync begins");
+    let snapshot = run_snapshot(
+        pool,
+        metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source, store).expect("recopy target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("{label} recopy: {error}"));
+    metadata
+        .finish_table_resnapshot(DATABASE_ID, "compat_generated", "streaming")
+        .expect("resync finishes");
+    let rows = snapshot.targets[0]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("recopied scan");
+    assert_eq!(rows.len(), 3, "{label}");
+    for row in &rows {
+        let Value::Utf8(value) = &row.values()[1] else {
+            panic!("{label}: value is text");
+        };
+        assert_eq!(
+            row.values()[2],
+            Value::Utf8(value.to_uppercase()),
+            "{label}"
+        );
+        assert_eq!(
+            row.values()[3],
+            Value::Int64(i64::try_from(value.chars().count()).expect("length")),
+            "{label}: every row carries the new column's value"
+        );
+    }
 }
 
 fn dlq_errors(metadata_path: &Path) -> Vec<String> {
@@ -1746,7 +1916,13 @@ fn compatibility_schema() -> &'static str {
         0,0,0,0,0);\
      CREATE TABLE myisam_events (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64)) \
        ENGINE=MyISAM DEFAULT CHARACTER SET utf8mb4;\
-     INSERT INTO myisam_events VALUES (1,'before');"
+     INSERT INTO myisam_events VALUES (1,'before');\
+     CREATE TABLE compat_generated (\
+       id BIGINT UNSIGNED PRIMARY KEY,\
+       value VARCHAR(64),\
+       value_upper VARCHAR(64) GENERATED ALWAYS AS (UPPER(value)) VIRTUAL\
+     ) DEFAULT CHARACTER SET utf8mb4;\
+     INSERT INTO compat_generated (id, value) VALUES (1,'before'),(2,'delete');"
 }
 
 fn compatibility_mutations() -> &'static str {
@@ -1762,7 +1938,10 @@ fn compatibility_mutations() -> &'static str {
      COMMIT;\
      INSERT INTO myisam_events VALUES (2,'temporary');\
      UPDATE myisam_events SET value='updated' WHERE id=1;\
-     DELETE FROM myisam_events WHERE id=2;"
+     DELETE FROM myisam_events WHERE id=2;\
+     UPDATE compat_generated SET value='updated' WHERE id=1;\
+     DELETE FROM compat_generated WHERE id=2;\
+     INSERT INTO compat_generated (id, value) VALUES (3,'inserted');"
 }
 
 fn source_schema() -> &'static str {

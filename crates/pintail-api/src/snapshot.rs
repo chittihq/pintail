@@ -933,3 +933,80 @@ fn display(error: impl std::fmt::Display) -> String {
     // create private metadata database" arrives with the OS error behind it.
     format!("{error:#}")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{fence_table_after_copy, summarize_names};
+    use pintail_meta::MetaStore;
+    use pintail_snapshot::SnapshotPosition;
+
+    fn fence(metadata: &MetaStore) -> Option<String> {
+        metadata
+            .setting(&pintail_cdc::snapshot_fence_key("db-1", "orders"))
+            .expect("setting")
+    }
+
+    #[test]
+    fn a_copied_table_is_fenced_at_the_position_its_copy_reflects() {
+        let directory = tempfile::tempdir().expect("metadata directory");
+        let metadata = MetaStore::open(&directory.path().join("pintail-meta.db")).expect("open");
+        fence_table_after_copy(
+            &metadata,
+            "db-1",
+            "Orders",
+            &SnapshotPosition::FilePosition {
+                file: "mysql-bin.000012".to_owned(),
+                position: 4_096,
+            },
+            true,
+        )
+        .expect("fenced");
+        assert_eq!(fence(&metadata).as_deref(), Some("mysql-bin.000012:4096"));
+        fence_table_after_copy(
+            &metadata,
+            "db-1",
+            "orders",
+            &SnapshotPosition::Gtid {
+                set: "aaaa:1-9".to_owned(),
+                file: Some("mysql-bin.000013".to_owned()),
+                position: Some(8),
+            },
+            true,
+        )
+        .expect("fenced again");
+        assert_eq!(fence(&metadata).as_deref(), Some("mysql-bin.000013:8"));
+    }
+
+    #[test]
+    fn a_cdc_copy_without_a_position_is_refused_and_a_polling_copy_is_not() {
+        let directory = tempfile::tempdir().expect("metadata directory");
+        let metadata = MetaStore::open(&directory.path().join("pintail-meta.db")).expect("open");
+        let unplaced = SnapshotPosition::Gtid {
+            set: "aaaa:1-9".to_owned(),
+            file: None,
+            position: None,
+        };
+        let refused = fence_table_after_copy(&metadata, "db-1", "orders", &unplaced, true)
+            .expect_err("a CDC table cannot be fenced without a position");
+        assert!(refused.contains("cannot be fenced"), "{refused}");
+        fence_table_after_copy(
+            &metadata,
+            "db-1",
+            "orders",
+            &SnapshotPosition::Unavailable,
+            false,
+        )
+        .expect("a polling database has no stream to fence against");
+        assert_eq!(fence(&metadata), None);
+    }
+
+    #[test]
+    fn long_name_lists_are_summarized() {
+        assert_eq!(summarize_names(["a", "b"].into_iter()), "a, b");
+        let many = (0..15).map(|index| format!("t{index}")).collect::<Vec<_>>();
+        assert_eq!(
+            summarize_names(many.iter().map(String::as_str)),
+            "t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11 and 3 more"
+        );
+    }
+}

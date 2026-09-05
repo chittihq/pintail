@@ -873,6 +873,23 @@ async function phaseDdl() {
   )
   await sql(`ALTER TABLE customers DROP COLUMN latin_note`)
   await sql(`UPDATE customers SET balance = balance + 1 WHERE id = 1`)
+  // A VIRTUAL generated column added to a live table cannot evolve in
+  // place: every row already copied would read NULL where the source
+  // computes a value. The stream quarantines the table and the automatic
+  // resync recopies it, values included; the convergence check at the end
+  // of the phase then compares every row of it against the source.
+  await sql(`ALTER TABLE customers ADD COLUMN name_upper VARCHAR(64) GENERATED ALWAYS AS (UPPER(name)) VIRTUAL`)
+  await sql(`INSERT INTO customers (name, email) VALUES ('Virtual Vic', 'vic@example.com')`)
+  const recopied = await waitUntil(async () => {
+    const summary = await tableSummary('customers')
+    return summary?.state === 'streaming' && (await replicaCount('customers')) === (await sourceCount('customers'))
+  }, 180_000)
+  record(
+    'ddl',
+    'a virtual column added mid-stream is recopied with its values',
+    recopied ? 'PASS' : 'FAIL',
+    recopied ? undefined : `customers: ${JSON.stringify(await tableSummary('customers'))}`,
+  )
   // CREATE TABLE mid-stream: the replica must pick it up automatically.
   // route (GEOMETRY) and services (SET) exist because real data found
   // both types broken while the gate stayed green: sakila's address lost

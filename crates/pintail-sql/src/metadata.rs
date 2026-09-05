@@ -2867,6 +2867,24 @@ mod tests {
             ddl.contains("GENERATED ALWAYS AS (lower(`name`)) STORED"),
             "{ddl}"
         );
+        let mut virtual_facts = facts.clone();
+        virtual_facts.columns[1].generated_stored = false;
+        virtual_facts.columns[1].generation_expression = "upper(`name`)".to_owned();
+        virtual_facts.columns[1].extra = "VIRTUAL GENERATED".to_owned();
+        let create = execute_metadata(
+            &parse_statement("SHOW CREATE TABLE Analytics.Events").expect("parse"),
+            &catalog,
+            None,
+            &virtual_facts,
+        )
+        .expect("show virtual column");
+        let Value::Utf8(ddl) = &create.rows[0][1] else {
+            panic!("DDL cell must be text");
+        };
+        assert!(
+            ddl.contains("GENERATED ALWAYS AS (upper(`name`)) VIRTUAL"),
+            "{ddl}"
+        );
         let generated = execute_metadata(
             &parse_statement(
                 "SELECT generation_expression FROM information_schema.columns \

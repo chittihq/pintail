@@ -12,6 +12,7 @@ use axum::{
 };
 use http_body_util::BodyExt as _;
 use mysql_async::{Opts, Pool, prelude::Queryable as _};
+use pintail_meta::MetaStore;
 use serde_json::{Value, json};
 use tokio::{net::TcpListener, sync::oneshot};
 use tower::ServiceExt as _;
@@ -338,6 +339,202 @@ async fn wizard_snapshot_query_reconcile_and_resync_happy_path() {
         json!([[2, "touchdown"], [3, "orbit"], [4, "return"]]),
     )
     .await;
+}
+
+/// A snapshot asked of a database that already replicates copies only the
+/// tables whose copy never reached its end - the shape a restart leaves -
+/// and keeps every other table live; asked again with nothing to copy, it
+/// completes without touching the source.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn a_snapshot_on_a_live_database_copies_only_the_incomplete_table() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER IF NOT EXISTS 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'pintail'@'%';\
+             CREATE TABLE events (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, \
+               name VARCHAR(255) NULL) ENGINE=InnoDB;\
+             CREATE TABLE notes (id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY, \
+               body VARCHAR(255) NULL) ENGINE=InnoDB;\
+             INSERT INTO events (name) VALUES ('launch'), ('land');\
+             INSERT INTO notes (body) VALUES ('first');",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+
+    let data = tempfile::tempdir().expect("API data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    let state = pintail_api::ApiState::new(
+        data.path(),
+        &metadata_path,
+        b"test-jwt-secret-with-enough-entropy",
+        &"42".repeat(32),
+    )
+    .expect("configured API state");
+    let app = pintail_api::router_with_state(state);
+    let setup = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/auth/setup",
+            None,
+            Some(json!({"email": "admin@example.com", "password": "correct horse battery"})),
+        )
+        .await,
+    )
+    .await;
+    let authorization = format!("Bearer {}", setup["token"].as_str().expect("setup token"));
+    let created = json_response(
+        request(
+            &app,
+            Method::POST,
+            "/api/databases",
+            Some(&authorization),
+            Some(json!({"name": "analytics", "dsn": mysql.dsn(), "mode": "polling"})),
+        )
+        .await,
+    )
+    .await;
+    let database_id = created["id"].as_str().expect("database ID").to_owned();
+    assert_eq!(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/databases/{database_id}/probe"),
+            Some(&authorization),
+            None,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    let snapshot = json_response(
+        request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/snapshot"),
+            Some(&authorization),
+            Some(json!({"force": false})),
+        )
+        .await,
+    )
+    .await;
+    let run = snapshot["run_id"]
+        .as_str()
+        .expect("snapshot run")
+        .to_owned();
+    wait_for_run(&app, &authorization, &database_id, &run, "completed").await;
+    wait_for_database_state(data.path(), &database_id, "polling").await;
+
+    // The shape a restart leaves: one table's copy begun and never finished,
+    // with the source moving on meanwhile.
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .begin_table_resnapshot(&database_id, "notes")
+        .expect("an interrupted copy");
+    mysql
+        .query_batch("INSERT INTO notes (body) VALUES ('second');")
+        .unwrap_or_else(|error| panic!("{error}"));
+    let partial = json_response(
+        request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/snapshot"),
+            Some(&authorization),
+            Some(json!({"force": false})),
+        )
+        .await,
+    )
+    .await;
+    let partial_run = partial["run_id"].as_str().expect("partial run").to_owned();
+    wait_for_run(
+        &app,
+        &authorization,
+        &database_id,
+        &partial_run,
+        "completed",
+    )
+    .await;
+    let activity = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/activity?db={database_id}&limit=100"),
+            Some(&authorization),
+            None,
+        )
+        .await,
+    )
+    .await;
+    let partial_rows = activity
+        .as_array()
+        .expect("activity")
+        .iter()
+        .find(|entry| entry["id"] == partial_run)
+        .expect("partial run entry")["rows"]
+        .as_u64()
+        .expect("rows");
+    assert_eq!(
+        partial_rows, 2,
+        "only notes was copied, and with the new row"
+    );
+    let tables = MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .tables(&database_id)
+        .expect("tables")
+        .into_iter()
+        .map(|table| (table.name, table.state, table.copy_complete))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        tables,
+        vec![
+            ("events".to_owned(), "polling".to_owned(), true),
+            ("notes".to_owned(), "polling".to_owned(), true),
+        ]
+    );
+
+    // Nothing left to copy: the run completes with no rows and no source read.
+    let nothing = json_response(
+        request(
+            &app,
+            Method::POST,
+            &format!("/api/databases/{database_id}/snapshot"),
+            Some(&authorization),
+            Some(json!({"force": false})),
+        )
+        .await,
+    )
+    .await;
+    let nothing_run = nothing["run_id"].as_str().expect("run").to_owned();
+    wait_for_run(
+        &app,
+        &authorization,
+        &database_id,
+        &nothing_run,
+        "completed",
+    )
+    .await;
+    let activity = json_response(
+        request(
+            &app,
+            Method::GET,
+            &format!("/api/activity?db={database_id}&limit=100"),
+            Some(&authorization),
+            None,
+        )
+        .await,
+    )
+    .await;
+    let nothing_rows = activity
+        .as_array()
+        .expect("activity")
+        .iter()
+        .find(|entry| entry["id"] == nothing_run)
+        .expect("run entry")["rows"]
+        .as_u64()
+        .expect("rows");
+    assert_eq!(nothing_rows, 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
