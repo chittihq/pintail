@@ -162,6 +162,18 @@ pub struct Cli {
     #[arg(long)]
     pub wire_idle_timeout_seconds: Option<u64>,
 
+    /// Wire connections accepted at once, authenticated or not. Beyond
+    /// this a client is answered with `MySQL`'s "Too many connections"
+    /// (1040) and closed. Zero disables the bound.
+    #[arg(long)]
+    pub wire_max_connections: Option<usize>,
+
+    /// Prepared statements one wire session may hold open at once. Beyond
+    /// this a PREPARE is refused with `MySQL`'s 1461. Zero disables the
+    /// bound.
+    #[arg(long)]
+    pub wire_max_prepared_statements: Option<usize>,
+
     /// Hard byte ceiling for each HTTP or `MySQL` wire query.
     #[arg(long)]
     pub query_memory_limit_bytes: Option<usize>,
@@ -198,6 +210,8 @@ pub struct AppConfig {
     http_bind: SocketAddr,
     wire_bind: SocketAddr,
     wire_idle_timeout_seconds: u64,
+    wire_max_connections: usize,
+    wire_max_prepared_statements: usize,
     query_memory_limit_bytes: usize,
     max_concurrent_queries: usize,
     total_query_memory_limit_bytes: usize,
@@ -324,6 +338,36 @@ impl AppConfig {
         if wire_idle_timeout_seconds == 0 {
             bail!("wire idle timeout must be greater than zero");
         }
+        let environment_wire_max_connections = environment
+            .get(&OsString::from("PINTAIL_WIRE_MAX_CONNECTIONS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_WIRE_MAX_CONNECTIONS must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_WIRE_MAX_CONNECTIONS must be a non-negative integer")
+            })
+            .transpose()?;
+        let wire_max_connections = cli
+            .wire_max_connections
+            .or(environment_wire_max_connections)
+            .or(file.wire.max_connections)
+            .unwrap_or(pintail_wire::DEFAULT_MAX_CONNECTIONS);
+        let environment_wire_max_prepared = environment
+            .get(&OsString::from("PINTAIL_WIRE_MAX_PREPARED_STATEMENTS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_WIRE_MAX_PREPARED_STATEMENTS must be valid UTF-8")?
+                    .parse()
+                    .context("PINTAIL_WIRE_MAX_PREPARED_STATEMENTS must be a non-negative integer")
+            })
+            .transpose()?;
+        let wire_max_prepared_statements = cli
+            .wire_max_prepared_statements
+            .or(environment_wire_max_prepared)
+            .or(file.wire.max_prepared_statements)
+            .unwrap_or(pintail_wire::DEFAULT_MAX_PREPARED_STATEMENTS);
         let environment_query_memory_limit = environment
             .get(&OsString::from("PINTAIL_QUERY_MEMORY_LIMIT_BYTES"))
             .map(|value| {
@@ -459,6 +503,8 @@ impl AppConfig {
             http_bind,
             wire_bind,
             wire_idle_timeout_seconds,
+            wire_max_connections,
+            wire_max_prepared_statements,
             query_memory_limit_bytes,
             max_concurrent_queries,
             total_query_memory_limit_bytes,
@@ -512,6 +558,19 @@ impl AppConfig {
     #[must_use]
     pub const fn wire_idle_timeout(&self) -> Duration {
         Duration::from_secs(self.wire_idle_timeout_seconds)
+    }
+
+    /// The connection and prepared-statement bounds the wire listener
+    /// enforces. The statement-text byte ceiling is not configurable: it
+    /// exists to stop the count bound being defeated by statement size, and
+    /// no workload has asked for a different one.
+    #[must_use]
+    pub fn wire_limits(&self) -> pintail_wire::WireLimits {
+        pintail_wire::WireLimits {
+            max_connections: self.wire_max_connections,
+            max_prepared_statements: self.wire_max_prepared_statements,
+            ..pintail_wire::WireLimits::default()
+        }
     }
 
     /// Hard byte ceiling for one HTTP or `MySQL` wire query.
@@ -571,6 +630,8 @@ struct FileHttpConfig {
 struct FileWireConfig {
     bind: Option<SocketAddr>,
     idle_timeout_seconds: Option<u64>,
+    max_connections: Option<usize>,
+    max_prepared_statements: Option<usize>,
     tls_certificate: Option<PathBuf>,
     tls_key: Option<PathBuf>,
     require_tls: Option<bool>,
@@ -631,6 +692,8 @@ mod tests {
             http_bind: None,
             wire_bind: None,
             wire_idle_timeout_seconds: None,
+            wire_max_connections: None,
+            wire_max_prepared_statements: None,
             query_memory_limit_bytes: None,
             max_concurrent_queries: None,
             total_query_memory_limit_bytes: None,
@@ -736,6 +799,24 @@ mod tests {
         )
         .expect_err("zero timeout");
         assert!(error.to_string().contains("greater than zero"));
+    }
+
+    #[test]
+    fn wire_limits_default_to_mysqls_and_accept_zero_as_unbounded() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        assert_eq!(default.wire_limits().max_connections, 1000);
+        assert_eq!(default.wire_limits().max_prepared_statements, 1024);
+
+        let configured = AppConfig::load_from(
+            &cli(),
+            [
+                ("PINTAIL_WIRE_MAX_CONNECTIONS".into(), "0".into()),
+                ("PINTAIL_WIRE_MAX_PREPARED_STATEMENTS".into(), "16".into()),
+            ],
+        )
+        .expect("environment config");
+        assert_eq!(configured.wire_limits().max_connections, 0, "zero disables");
+        assert_eq!(configured.wire_limits().max_prepared_statements, 16);
     }
 
     #[test]

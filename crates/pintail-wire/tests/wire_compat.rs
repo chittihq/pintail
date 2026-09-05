@@ -1657,3 +1657,183 @@ async fn a_local_database_refuses_transactions_a_replica_still_accepts() {
         .expect("wire server task")
         .expect("wire server");
 }
+
+/// A listener with explicit bounds, over the local-plus-replicated seed.
+async fn serve_with_limits(
+    data: &tempfile::TempDir,
+    limits: pintail_wire::WireLimits,
+) -> (
+    std::net::SocketAddr,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<std::io::Result<()>>,
+) {
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_local_and_replicated(data.path(), &metadata_path);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_configured(
+            listener,
+            data_dir,
+            metadata_path,
+            pintail_wire::WireOptions {
+                query_memory_limit: pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+                tls: None,
+                idle_timeout: Duration::from_secs(30),
+                limits,
+            },
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+    (address, shutdown_tx, server)
+}
+
+/// The connection ceiling counts from accept, not from authentication: a
+/// client that connects and never logs in holds a slot too, which is
+/// exactly the client an unbounded listener could not defend against.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_connection_ceiling_refuses_with_1040_and_frees_on_close() {
+    use tokio::io::AsyncReadExt as _;
+    let _serial = wire_serial();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let (address, shutdown_tx, server) = serve_with_limits(
+        &data,
+        pintail_wire::WireLimits {
+            max_connections: 2,
+            ..pintail_wire::WireLimits::default()
+        },
+    )
+    .await;
+    let before = pintail_wire::wire_metrics();
+
+    // Two raw sockets that read the greeting and then sit there, unauthenticated.
+    let mut held = Vec::new();
+    for _ in 0..2 {
+        let mut socket = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("connect under the ceiling");
+        let mut greeting = [0u8; 4];
+        socket
+            .read_exact(&mut greeting)
+            .await
+            .expect("a greeting proves the slot was granted");
+        held.push(socket);
+    }
+
+    let dsn = format!("mysql://analytics:pk_wire_replica@{address}/analytics");
+    let refused = mysql_async::Conn::new(Opts::from_url(&dsn).expect("wire DSN"))
+        .await
+        .expect_err("the third connection is over the ceiling");
+    assert!(
+        matches!(&refused, mysql_async::Error::Server(server) if server.code == 1040),
+        "a refusal must be MySQL's own 'Too many connections', got: {refused}"
+    );
+    let during = pintail_wire::wire_metrics();
+    assert_eq!(during.connections_refused, before.connections_refused + 1);
+    assert_eq!(during.connections_active, before.connections_active + 2);
+    assert_eq!(during.connections_limit, 2);
+
+    // Closing one held socket frees its slot once the server notices.
+    drop(held.pop());
+    let mut admitted = None;
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        if let Ok(connection) =
+            mysql_async::Conn::new(Opts::from_url(&dsn).expect("wire DSN")).await
+        {
+            admitted = Some(connection);
+            break;
+        }
+    }
+    let mut admitted = admitted.expect("a freed slot admits the next client");
+    admitted
+        .ping()
+        .await
+        .expect("an admitted client is fully served");
+    admitted.disconnect().await.ok();
+    drop(held);
+
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}
+
+/// Both prepared-statement bounds, and that closing a statement gives its
+/// allowance back - the case a driver's statement cache relies on.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_prepared_statement_ceilings_refuse_with_1461_and_free_on_close() {
+    use mysql_async::prelude::Queryable as _;
+    let _serial = wire_serial();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let (address, shutdown_tx, server) = serve_with_limits(
+        &data,
+        pintail_wire::WireLimits {
+            max_prepared_statements: 2,
+            max_prepared_statement_bytes: 64,
+            ..pintail_wire::WireLimits::default()
+        },
+    )
+    .await;
+    let before = pintail_wire::wire_metrics().prepared_statements_refused;
+    // The local database: PREPARE previews the statement against a loaded
+    // replica, and the seeded replicated one has never been probed.
+    let dsn = format!("mysql://scratch:pk_wire_local_@{address}/scratch");
+    let mut connection = mysql_async::Conn::new(Opts::from_url(&dsn).expect("wire DSN"))
+        .await
+        .expect("wire client");
+    connection
+        .query_drop("CREATE TABLE probe (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))")
+        .await
+        .expect("a table, so the catalog has something to load");
+
+    // Distinct texts: the client caches by SQL and would not send a
+    // second PREPARE for a repeat.
+    let first = connection.prep("SELECT 1").await.expect("first statement");
+    let _second = connection.prep("SELECT 2").await.expect("second statement");
+    let refused = connection
+        .prep("SELECT 3")
+        .await
+        .expect_err("the third statement is over the count ceiling");
+    assert!(
+        matches!(&refused, mysql_async::Error::Server(server) if server.code == 1461),
+        "a refusal must be MySQL's own max_prepared_stmt_count error, got: {refused}"
+    );
+
+    // Closing one gives the slot back.
+    connection.close(first).await.expect("close");
+    let _third = connection.prep("SELECT 3").await.expect("a freed slot");
+
+    // The byte ceiling applies even under the count: 64 bytes of text
+    // across the session, and this one statement is longer than that.
+    let wide = format!("SELECT {}", "1 + ".repeat(40).trim_end_matches(" + "));
+    assert!(wide.len() > 64);
+    let refused = connection
+        .prep(wide.as_str())
+        .await
+        .expect_err("statement text over the byte ceiling");
+    assert!(
+        matches!(&refused, mysql_async::Error::Server(server) if server.code == 1461),
+        "got: {refused}"
+    );
+    assert_eq!(
+        pintail_wire::wire_metrics().prepared_statements_refused,
+        before + 2,
+        "both refusals were counted"
+    );
+
+    connection.disconnect().await.ok();
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}

@@ -258,6 +258,8 @@ pub enum ErrorKind {
     ErDupEntry = 1062,
     /// 1048: a `NOT NULL` column received no value.
     ErBadNullError = 1048,
+    /// 1461: the session holds as many prepared statements as it may.
+    ErMaxPreparedStmtCountReached = 1461,
 }
 
 impl ErrorKind {
@@ -277,7 +279,8 @@ impl ErrorKind {
             | Self::ErParseError
             | Self::ErSyntaxError
             | Self::ErOptionPreventsStatement
-            | Self::ErWrongFieldWithGroup => b"42000",
+            | Self::ErWrongFieldWithGroup
+            | Self::ErMaxPreparedStmtCountReached => b"42000",
             Self::ErNoSuchTable => b"42S02",
             Self::ErTableExistsError => b"42S01",
             Self::ErBadFieldError => b"42S22",
@@ -346,5 +349,10 @@ mod tests {
         assert_eq!(ErrorKind::ErDbaccessDeniedError.code(), 1044);
         assert_eq!(ErrorKind::ErWrongArguments.code(), 1210);
         assert_eq!(ErrorKind::ErUnknownStmtHandler.code(), 1243);
+        assert_eq!(ErrorKind::ErMaxPreparedStmtCountReached.code(), 1461);
+        assert_eq!(
+            ErrorKind::ErMaxPreparedStmtCountReached.sql_state(),
+            b"42000"
+        );
     }
 }

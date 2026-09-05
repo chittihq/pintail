@@ -15,9 +15,10 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
     BinaryValue, CapabilityFlags, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch,
-    ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PreparedStatement, Response,
-    ResultSet, SCRAMBLE_SIZE, WatchOutcome, decode_execute_parameters, encode_binary_datetime,
-    encode_binary_int, encode_binary_time, packet::put_length_encoded_bytes,
+    ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PacketWriter, PreparedStatement,
+    Response, ResultSet, SCRAMBLE_SIZE, WatchOutcome, decode_execute_parameters,
+    encode_binary_datetime, encode_binary_int, encode_binary_time, encode_error,
+    packet::put_length_encoded_bytes,
 };
 use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
@@ -27,6 +28,10 @@ use sha2::{Digest as _, Sha256};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::engine::{AUTOCOMMIT_REQUIRED, TRANSACTION_CONTROL_UNSUPPORTED};
+use crate::limits::{
+    ActiveConnection, WireLimits, record_connection_limit, record_connection_refused,
+    record_prepared_refused,
+};
 use crate::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
     ReplicaEngine, SqlRejection,
@@ -166,7 +171,12 @@ pub async fn serve(
     let metadata_path = metadata_path.into();
     loop {
         let (stream, ()) = accept_recovering(&listener).await;
-        let mut backend = Backend::new(&data_dir, &metadata_path, DEFAULT_QUERY_MEMORY_LIMIT);
+        let mut backend = Backend::new(
+            &data_dir,
+            &metadata_path,
+            DEFAULT_QUERY_MEMORY_LIMIT,
+            WireLimits::default(),
+        );
         backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
         tokio::spawn(async move {
             let _ = serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await;
@@ -295,18 +305,87 @@ pub async fn serve_until_with_options<F>(
 where
     F: Future<Output = ()>,
 {
+    serve_until_configured(
+        listener,
+        data_dir,
+        metadata_path,
+        WireOptions {
+            query_memory_limit,
+            tls,
+            idle_timeout,
+            limits: WireLimits::default(),
+        },
+        shutdown,
+    )
+    .await
+}
+
+/// Everything a wire listener is configured with, beyond where it listens.
+#[derive(Clone)]
+pub struct WireOptions {
+    /// Hard byte ceiling for one query.
+    pub query_memory_limit: usize,
+    /// TLS to offer, or require, on the listener.
+    pub tls: Option<WireTls>,
+    /// How long an authenticated connection may sit idle.
+    pub idle_timeout: Duration,
+    /// Connection and prepared-statement bounds.
+    pub limits: WireLimits,
+}
+
+/// Serves clients with every listener option, including the connection and
+/// prepared-statement bounds, until the shutdown signal resolves.
+///
+/// # Errors
+///
+/// Returns an error when the listener cannot accept another connection.
+pub async fn serve_until_configured<F>(
+    listener: TcpListener,
+    data_dir: impl Into<PathBuf>,
+    metadata_path: impl Into<PathBuf>,
+    options: WireOptions,
+    shutdown: F,
+) -> io::Result<()>
+where
+    F: Future<Output = ()>,
+{
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
+    // One permit per connection, held from accept until the connection's
+    // task ends, so an unauthenticated or idle session counts the same as a
+    // busy one - both hold a task, a session and an engine handle.
+    let connections = (options.limits.max_connections > 0)
+        .then(|| std::sync::Arc::new(tokio::sync::Semaphore::new(options.limits.max_connections)));
+    record_connection_limit(options.limits.max_connections);
     tokio::pin!(shutdown);
     loop {
         tokio::select! {
             biased;
             () = &mut shutdown => return Ok(()),
             (stream, ()) = accept_recovering(&listener) => {
-                let mut backend = Backend::new(&data_dir, &metadata_path, query_memory_limit);
+                let mut permit = None;
+                if let Some(semaphore) = &connections {
+                    let Ok(granted) = std::sync::Arc::clone(semaphore).try_acquire_owned() else {
+                        record_connection_refused();
+                        tokio::spawn(refuse_connection(stream));
+                        continue;
+                    };
+                    permit = Some(granted);
+                }
+                let active = ActiveConnection::register();
+                let mut backend = Backend::new(
+                    &data_dir,
+                    &metadata_path,
+                    options.query_memory_limit,
+                    options.limits,
+                );
                 backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
-                let tls = tls.clone();
+                let tls = options.tls.clone();
+                let idle_timeout = options.idle_timeout;
                 tokio::spawn(async move {
+                    // Both released with the task, whatever ends it.
+                    let _permit = permit;
+                    let _active = active;
                     if let Err(error) = serve_connection(stream, backend, tls, idle_timeout).await {
                         log_connection_end(&error);
                     }
@@ -314,6 +393,23 @@ where
             }
         }
     }
+}
+
+/// Answers a connection beyond the ceiling the way `MySQL` does: an ERR
+/// packet in place of the greeting, then close. Drivers surface it as error
+/// 1040, which pools already treat as "back off and retry", and which is
+/// distinguishable from a dead server in a way a silently dropped socket is
+/// not.
+async fn refuse_connection(stream: TcpStream) {
+    let (_reader, writer) = stream.into_split();
+    let mut writer = PacketWriter::new(writer);
+    let payload = encode_error(ErrorKind::ErConCountError, "Too many connections");
+    // Bounded: a peer that never reads must not hold this task either.
+    let _ = within(Duration::from_secs(5), async {
+        writer.write_payload(&payload).await?;
+        writer.flush().await
+    })
+    .await;
 }
 
 /// Watches a duplicated handle to the same socket for a disconnected peer.
@@ -640,9 +736,16 @@ struct Backend {
     authentication: Mutex<Option<Authenticated>>,
     session: Mutex<Session>,
     prepared: BTreeMap<u32, Prepared>,
+    /// Statement text held by `prepared`, so the byte ceiling is a counter
+    /// rather than a walk of the map on every PREPARE.
+    prepared_bytes: usize,
     next_statement_id: u32,
     connection_id: u32,
     salt: [u8; 20],
+    /// The per-query ceiling, which also bounds the encoded copy of a
+    /// result: that copy is built after execution, outside the tracker.
+    query_memory_limit: usize,
+    limits: WireLimits,
 }
 
 /// What a query line needs, captured before the statement moves into the
@@ -674,7 +777,12 @@ impl Drop for CancelExecutionOnDrop {
 }
 
 impl Backend {
-    fn new(data_dir: &Path, metadata_path: &Path, query_memory_limit: usize) -> Self {
+    fn new(
+        data_dir: &Path,
+        metadata_path: &Path,
+        query_memory_limit: usize,
+        limits: WireLimits,
+    ) -> Self {
         Self {
             metadata_path: metadata_path.to_path_buf(),
             client_ip: None,
@@ -683,10 +791,34 @@ impl Backend {
             authentication: Mutex::new(None),
             session: Mutex::new(Session::default()),
             prepared: BTreeMap::new(),
+            prepared_bytes: 0,
             next_statement_id: 1,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             salt: random_salt(),
+            query_memory_limit,
+            limits,
         }
+    }
+
+    /// Why one more prepared statement cannot be held, or `None` when it
+    /// can. Checked before the statement is parsed or previewed: a refused
+    /// PREPARE must cost the server nothing, or the ceiling bounds memory
+    /// while leaving CPU open.
+    fn prepared_statement_refusal(&self, sql_bytes: usize) -> Option<String> {
+        let count = self.limits.max_prepared_statements;
+        if count > 0 && self.prepared.len() >= count {
+            return Some(format!(
+                "Can't create more than max_prepared_stmt_count statements (current value: {count})"
+            ));
+        }
+        let bytes = self.limits.max_prepared_statement_bytes;
+        if bytes > 0 && self.prepared_bytes.saturating_add(sql_bytes) > bytes {
+            return Some(format!(
+                "Can't create more prepared statements: this session's statement text would \
+                 exceed {bytes} bytes; close statements it no longer uses"
+            ));
+        }
+        None
     }
 
     fn authenticated(&self) -> io::Result<Authenticated> {
@@ -756,6 +888,7 @@ impl Backend {
     fn reset_session_state(&mut self) -> io::Result<()> {
         *self.session.lock().map_err(io_other)? = Session::default();
         self.prepared.clear();
+        self.prepared_bytes = 0;
         self.next_statement_id = 1;
         Ok(())
     }
@@ -1146,6 +1279,7 @@ impl Handler for Backend {
             &charset,
             negotiated,
             false,
+            self.query_memory_limit,
         )
     }
 
@@ -1156,6 +1290,10 @@ impl Handler for Backend {
                 "statement is not valid UTF-8".to_owned(),
             )
         })?;
+        if let Some(refusal) = self.prepared_statement_refusal(sql.len()) {
+            record_prepared_refused();
+            return Err((ErrorKind::ErMaxPreparedStmtCountReached, refusal));
+        }
         let parameters = placeholder_count(sql);
         let preview = substitute_parameters(sql, &placeholder_preview_literals(sql))
             .map_err(|error| (ErrorKind::ErParseError, error))?;
@@ -1164,6 +1302,7 @@ impl Handler for Backend {
             .map_err(|error| (error_kind(&error), error.to_string()))?;
         let statement_id = self.next_statement_id;
         self.next_statement_id = self.next_statement_id.wrapping_add(1).max(1);
+        self.prepared_bytes = self.prepared_bytes.saturating_add(sql.len());
         self.prepared.insert(
             statement_id,
             Prepared {
@@ -1253,6 +1392,7 @@ impl Handler for Backend {
             &charset,
             negotiated,
             true,
+            self.query_memory_limit,
         )
     }
 
@@ -1263,7 +1403,9 @@ impl Handler for Backend {
     }
 
     async fn close_statement(&mut self, statement: u32) {
-        self.prepared.remove(&statement);
+        if let Some(closed) = self.prepared.remove(&statement) {
+            self.prepared_bytes = self.prepared_bytes.saturating_sub(closed.sql.len());
+        }
     }
 
     async fn reset_statement(&mut self, statement: u32) -> bool {
@@ -1329,12 +1471,21 @@ impl Handler for Backend {
 /// Builds the response for one completed query, in whichever protocol the
 /// command that asked for it uses: text for `COM_QUERY`, binary for
 /// `COM_STMT_EXECUTE`.
+/// Converts an executed query into wire packets.
+///
+/// The rows are encoded into a second, wire-ready copy of the result here,
+/// after execution has released the query's memory tracker. `encoded_limit`
+/// keeps that copy inside the same ceiling: a result whose encoded form
+/// alone exceeds the per-query limit is refused with the error the tracker
+/// would have raised, rather than being the one allocation the ceiling
+/// never saw. Zero disables the bound.
 fn query_output_to_response(
     result: Result<QueryOutput, QueryError>,
     group_concat_max_len: usize,
     charset: &str,
     negotiated: u16,
     binary: bool,
+    encoded_limit: usize,
 ) -> Response {
     let output = match result {
         Ok(output) => output,
@@ -1359,6 +1510,7 @@ fn query_output_to_response(
         .map(|field| mysql_column(field, group_concat_max_len, charset, negotiated))
         .collect::<Vec<_>>();
     let mut rows = Vec::with_capacity(output.rows.len());
+    let mut encoded_bytes = 0usize;
     for row in &output.rows {
         let mut encoded = Vec::with_capacity(row.len());
         for (field, value) in output.fields.iter().zip(row) {
@@ -1372,6 +1524,18 @@ fn query_output_to_response(
             } else {
                 text_column_value(value)
             };
+            encoded_bytes = encoded_bytes.saturating_add(
+                cell.as_ref().map_or(0, Vec::len) + std::mem::size_of::<Option<Vec<u8>>>(),
+            );
+            if encoded_limit > 0 && encoded_bytes > encoded_limit {
+                return Response::Error(
+                    ErrorKind::ErUnknownError,
+                    format!(
+                        "query memory limit exceeded: the encoded result set alone is over \
+                         {encoded_limit} bytes; narrow the projection or add a LIMIT"
+                    ),
+                );
+            }
             encoded.push(cell);
         }
         rows.push(encoded);

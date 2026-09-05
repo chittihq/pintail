@@ -8,7 +8,7 @@ use pintail::{
 };
 use pintail_api::{ApiState, router_with_state, spawn_supervisor};
 use pintail_meta::MetaStore;
-use pintail_wire::{load_wire_tls, serve_until_with_options};
+use pintail_wire::{WireOptions, load_wire_tls, serve_until_configured};
 use tokio::net::TcpListener;
 
 // glibc malloc keeps what a thread frees inside that thread's own arena, and
@@ -116,13 +116,16 @@ async fn main() -> Result<()> {
         let _ = http_shutdown.recv().await;
     });
     let wire_tls = resolve_wire_tls(&config, &metadata)?;
-    let wire = serve_until_with_options(
+    let wire = serve_until_configured(
         wire_listener,
         config.data_dir(),
         &metadata_path,
-        config.query_memory_limit_bytes(),
-        wire_tls,
-        config.wire_idle_timeout(),
+        WireOptions {
+            query_memory_limit: config.query_memory_limit_bytes(),
+            tls: wire_tls,
+            idle_timeout: config.wire_idle_timeout(),
+            limits: config.wire_limits(),
+        },
         async move {
             let _ = wire_shutdown.recv().await;
         },

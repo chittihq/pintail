@@ -9,6 +9,12 @@ bind = "127.0.0.1:8080"
 bind = "127.0.0.1:3306"
 # Close authenticated connections after 15 minutes without a command.
 idle_timeout_seconds = 900
+# Connections accepted at once, authenticated or not; beyond this a client
+# gets MySQL's "Too many connections" (1040). Zero disables the bound.
+max_connections = 1000
+# Prepared statements one session may hold open; beyond this a PREPARE is
+# refused with MySQL's 1461. Zero disables the bound.
+max_prepared_statements = 1024
 
 [query]
 # Hard memory ceiling shared by HTTP and MySQL wire queries (64 MiB).

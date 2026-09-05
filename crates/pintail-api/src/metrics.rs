@@ -109,6 +109,35 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
         "Resident memory reported by the host process table.",
         process_resident_bytes(),
     );
+    // The wire bounds: what a client can hold open without running a
+    // query. Refusals are counters because a pool that keeps hitting the
+    // ceiling is the thing to alert on; the active gauge against its limit
+    // is what says how close a quiet server is to that.
+    let wire = pintail_wire::wire_metrics();
+    gauge(
+        &mut output,
+        "pintail_wire_connections_active",
+        "MySQL wire connections currently holding a slot, authenticated or not.",
+        wire.connections_active,
+    );
+    gauge(
+        &mut output,
+        "pintail_wire_connections_limit",
+        "Configured wire connection ceiling; zero when unbounded.",
+        wire.connections_limit,
+    );
+    counter(
+        &mut output,
+        "pintail_wire_connections_refused_total",
+        "Wire connections refused at the connection ceiling (MySQL error 1040).",
+        wire.connections_refused,
+    );
+    counter(
+        &mut output,
+        "pintail_wire_prepared_statements_refused_total",
+        "PREPAREs refused at a session's prepared-statement ceiling (MySQL error 1461).",
+        wire.prepared_statements_refused,
+    );
 
     output.push_str(
         "# HELP pintail_database_state Database state as a one-hot labeled gauge.\n\

@@ -2,6 +2,7 @@
 
 mod admission;
 mod engine;
+mod limits;
 mod observe;
 mod replica_cache;
 mod server;
@@ -16,9 +17,13 @@ pub use engine::{
 };
 pub mod managed_tls;
 
+pub use limits::{
+    DEFAULT_MAX_CONNECTIONS, DEFAULT_MAX_PREPARED_STATEMENT_BYTES, DEFAULT_MAX_PREPARED_STATEMENTS,
+    WireLimits, WireMetrics, wire_metrics,
+};
 pub use server::{
-    DEFAULT_WIRE_IDLE_TIMEOUT, WireTls, load_wire_tls, serve, serve_until,
-    serve_until_with_memory_limit, serve_until_with_options,
+    DEFAULT_WIRE_IDLE_TIMEOUT, WireOptions, WireTls, load_wire_tls, serve, serve_until,
+    serve_until_configured, serve_until_with_memory_limit, serve_until_with_options,
 };
 
 pub use engine::replica_cache_stats;

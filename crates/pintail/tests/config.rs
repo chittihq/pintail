@@ -31,6 +31,8 @@ fn cli_and_environment_override_the_toml_configuration() {
         http_bind: None,
         wire_bind: None,
         wire_idle_timeout_seconds: None,
+        wire_max_connections: None,
+        wire_max_prepared_statements: None,
         query_memory_limit_bytes: Some(268_435_456),
         max_concurrent_queries: None,
         total_query_memory_limit_bytes: None,

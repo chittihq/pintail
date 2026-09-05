@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The wire listener bounds what a client can hold open without running a
+  query. `--wire-max-connections` (default 1000, MySQL's own) counts every
+  accepted connection, authenticated or not, and answers the one beyond it
+  with MySQL's "Too many connections" (1040) in place of the greeting.
+  `--wire-max-prepared-statements` (default 1024 per session, plus a
+  16 MiB ceiling on retained statement text) refuses the PREPARE beyond it
+  with MySQL's 1461, before the statement is parsed. Both are also
+  settable as `PINTAIL_WIRE_MAX_CONNECTIONS` /
+  `PINTAIL_WIRE_MAX_PREPARED_STATEMENTS` and under `[wire]` in the config
+  file; zero disables a bound. `/metrics` gains
+  `pintail_wire_connections_active`, `pintail_wire_connections_limit`,
+  `pintail_wire_connections_refused_total` and
+  `pintail_wire_prepared_statements_refused_total`.
+- The encoded, wire-ready copy of a result set - built after execution
+  releases the query's memory tracker - is now held to the same per-query
+  ceiling, so a result whose encoded form alone exceeds the limit is
+  refused as a memory-limit error rather than being the one allocation
+  the ceiling never saw.
+
 ### Fixed
 
 - A local (writable) database refuses `BEGIN`, `START TRANSACTION`,
