@@ -1180,7 +1180,14 @@ async fn poll_table(
     let sync = match strategy {
         PollStrategy::Cursor => {
             let cursor = cursor.as_ref().expect("cursor strategy");
-            let previous_cursor = previous_cursor(previous.as_ref(), cursor)?;
+            // The inclusive boundary only sees rows whose cursor has kept
+            // pace. Reconciliation must also repair unchanged or backdated
+            // cursor values, using the same value/soft-delete comparison.
+            let previous_cursor = if reconcile_requested {
+                None
+            } else {
+                previous_cursor(previous.as_ref(), cursor)?
+            };
             let (ingested, soft_tombstones) = sync_cursor_rows(
                 connection,
                 source_database,

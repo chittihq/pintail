@@ -1044,3 +1044,28 @@ and the declared column count, and the decoder places image values by
 position, ignoring positions the schema skips. Each image is also read by
 its own column bitmap, since `MariaDB` omits the virtual column from some
 images and not others within one stream.
+
+
+### Polling reconciliation repairs values as well as missing keys
+
+The recovery suite (2026-09-05) exposed two blind spots. An ADD COLUMN
+between polling passes left the stored projection valid but incomplete, so
+row checksums never saw the new column. A cursor that stayed unchanged or
+moved backwards left updated values below the inclusive boundary forever;
+the scheduled missing-key sweep could not repair them.
+
+At scheduled reconciliation, the supervisor now probes the source schema,
+stabilizes column identities against the previous schema, and flags changed
+column layouts for the existing table resnapshot policy. Quarantined tables
+are excluded from polling so an unrepaired keyless table under the default
+policy cannot block healthy tables. The polling engine
+also reads all cursor-table values during reconciliation, using the existing
+no-op and soft-delete handling, before removing missing keys. Ordinary cursor
+passes retain the inclusive boundary. This extends GOAL §9's delete-only
+reconciler: exact eventual convergence requires repairing values even when
+an application does not maintain its cursor monotonically.
+
+The cost is a source probe at reconciliation cadence and a full projected
+row scan for cursor tables at that cadence. This path currently materializes
+source rows and the replica's current rows in memory. The default interval
+remains unchanged; the suite uses five seconds and observes completed passes.

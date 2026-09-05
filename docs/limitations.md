@@ -331,13 +331,16 @@ stays readable as a list of things to fix.
 ## DDL and polling
 
 - Polling cannot reproduce intermediate states that exist entirely between
-  cycles. Hard deletes on cursor tables remain visible until a scheduled key
-  reconciliation, except when a secondary-UNIQUE collision triggers immediate
-  targeted repair.
+  cycles. Hard deletes and updates below the saved cursor can remain stale
+  until scheduled reconciliation; a secondary-UNIQUE collision can trigger
+  earlier targeted repair.
 - Count/MAX tokens are diagnostic only, so Pintail still performs an inclusive
   cursor-boundary read, aggregate-chunk comparison, or append-generation check
   when the token is unchanged — at the cost of source-side check queries on
   every scheduled sync.
+- Cursor reconciliation materializes the full projected source rows and current
+  replica rows in memory. Large cursor tables therefore need memory proportional
+  to their row data during a full reconciliation.
 - Source-key reconciliation materializes the full source and replica keysets in
   memory, so very large tables need memory proportional to their key inventory
   until a bloom-assisted or partitioned anti-join is implemented.
