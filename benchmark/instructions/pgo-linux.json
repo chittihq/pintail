@@ -1,39 +1,39 @@
 {
   "schema": 1,
-  "head": "887ba199d0ecc52c322fe3fb703d12e22daeefc9",
-  "label": "release-thin-lto",
+  "head": "c3909cc4aeb8ff213af67059f21f8010b0f98b64",
+  "label": "release-pgo",
   "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6",
   "valgrind": "valgrind-3.19.0",
   "architecture": "x86_64",
   "threads": 1,
   "workload_sha256": "1e253b6a8f807e8c93c373f1d1de69e891bf69db8a6a8f80eec838d3f8470e40",
-  "binary_sha256": "58c3bc0a67436e340ce3f483c1871fbfd4c3bc319120f282443114fa6a26292c",
+  "binary_sha256": "e32b5a80dd2aa5feda39c2f8efdda454eebcc951db1c25d300713f9138f1a174",
   "instructions": {
-    "filter": 7714110,
-    "aggregate": 2567165,
-    "join": 38089600,
-    "sort": 8604493
+    "filter": 6757606,
+    "aggregate": 2264887,
+    "join": 30963701,
+    "sort": 7402562
   },
   "samples": {
     "filter": [
-      7714110,
-      7714110,
-      7714110
+      6757606,
+      6757606,
+      6757606
     ],
     "aggregate": [
-      2567064,
-      2567270,
-      2567165
+      2264887,
+      2264887,
+      2264887
     ],
     "join": [
-      38090707,
-      38089600,
-      38087593
+      30962944,
+      30963701,
+      30964944
     ],
     "sort": [
-      8604493,
-      8604493,
-      8604493
+      7402562,
+      7402562,
+      7402562
     ]
   },
   "verdict": "RECORDED"

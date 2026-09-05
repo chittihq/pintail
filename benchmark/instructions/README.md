@@ -59,3 +59,10 @@ the profile. Only temporary profiling data is removed. See the
 The workload exercises the shared executor, not authentication, snapshot, CDC,
 polling or every SQL family. That coverage limit is why PGO remains opt-in even
 when these instruction comparisons improve.
+
+`pgo-linux.json` records a further 16.83% reduction in total instructions versus
+`release-linux.json`, with all four query comparisons passing. These are
+same-toolchain Linux measurements of the training workload, so they establish
+an in-workload benefit rather than out-of-sample generalization. The active
+`baseline-linux.json` now uses the tuned non-PGO release counts; the original
+pre-tuning counts remain in `baseline-original-linux.json`.

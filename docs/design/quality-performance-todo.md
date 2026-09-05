@@ -71,3 +71,9 @@ serialized and uses only containers created by this repository's harnesses.
   release settings explicit and measures them; no automatic speedup is assumed.
 - The parity inventory already exists under `docs/mysql-parity/`; its upstream
   snapshot and generated ledger remain tracked by the owner's prior decision.
+
+- Item 5 measurement: the explicit release profile reduced total instructions
+  by 5.91%; opt-in PGO reduced them a further 16.83% on the four-query training
+  workload. Every query improved, and independent comparison runs passed.
+  Original, tuned and PGO artifacts are banked separately. Production Docker
+  PGO build validation is still pending before this item is checked complete.
