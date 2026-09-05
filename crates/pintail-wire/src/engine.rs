@@ -1155,13 +1155,33 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
             .filter(|key| !key.is_empty())
             .filter(|key| *key != storage_key)
             .collect::<Vec<_>>();
-        if !unique_keys.is_empty() {
+        if !unique_keys.is_empty() && unique_collisions_possible(&replica.database, &target.source)
+        {
             provider
                 .enable_unique_visibility_policy(database_id, table_id(index)?, unique_keys)
                 .map_err(|error| QueryError::Internal(error.to_string()))?;
         }
     }
     Ok(provider)
+}
+
+/// Whether two live rows of this table can share a secondary UNIQUE value.
+///
+/// The read policy that hides the lower-versioned side of such a collision
+/// has to see every projected row to find one, so the scan behind it holds
+/// the whole projection in memory, bounded by the query budget. That is
+/// affordable only where a collision can arise at all: polling, where a hard
+/// delete stays visible until reconciliation and the source may reuse the
+/// unique value first, and CDC tables flagged for periodic reconciliation.
+/// A native CDC table replays the delete before the reinsert, so it streams;
+/// applying the policy there made a one-row COUNT over a large mirrored
+/// table fail with the query memory limit.
+fn unique_collisions_possible(database: &DatabaseRecord, source: &SourceTable) -> bool {
+    let mode = database
+        .effective_mode
+        .as_deref()
+        .unwrap_or(database.mode.as_str());
+    mode != "cdc" || source.requires_reconciliation
 }
 
 fn provider_stats(provider: &SnapshotScanProvider<'_>, table_count: usize) -> QueryStats {

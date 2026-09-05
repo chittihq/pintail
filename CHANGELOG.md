@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A table with a secondary UNIQUE key on a natively replicated (CDC)
+  database no longer fails large scans with the query memory limit. The
+  read policy that hides the older side of a unique-value collision has to
+  hold the table's whole projection in memory to find one, and the wire
+  engine applied it to every table with such a key; a one-row `COUNT` over
+  a large mirrored table then failed on the row that no longer fit. The
+  policy now applies only where a collision can exist - polling databases,
+  and CDC tables flagged for periodic reconciliation - and every other
+  table streams its scan as before.
+
 ### Changed
 
 - A correlated subquery on the dependent path - the shapes the binder

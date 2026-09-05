@@ -986,3 +986,25 @@ the very thing admission exists to prevent - and it would also change the
 error contract mid-result, since `MySQL` cannot raise an error after the
 first row without breaking the stream. Revisit only if a measurement shows
 encoding, not execution, as the dominant term in a real workload.
+
+### The secondary-UNIQUE read policy applies only where a collision can exist
+
+Found in production (2026-09-05): a one-row `COUNT(DISTINCT)` over a large
+CDC-mirrored table failed with the query memory limit, refused on a 184-byte
+reservation with the ceiling filled to within 46 bytes. The table carried a
+secondary UNIQUE key, and the wire engine enabled the unique read policy for
+every such table. That policy hides the lower-versioned side of a unique-value
+collision, which it can only find by seeing every projected row, so the scan
+behind it materializes the whole projection under the query ceiling - the
+memory pattern is the projection growing row by row until one no longer fits.
+
+The policy exists for polling: a hard delete stays visible until the next
+reconciliation, and the source may reuse the unique value in a new row before
+then. Native CDC replays the delete before the reinsert, so the collision it
+guards against cannot arise there. The engine now enables the policy only for
+polling databases and for CDC tables flagged `requires_reconciliation`; every
+other table streams. The materializing fallback stays for those tables and is
+recorded as a limitation; the streaming answer - a collision set kept by the
+poll cycle that already computes it, filtered during the scan - is the next
+step if a polled table outgrows its ceiling.
+

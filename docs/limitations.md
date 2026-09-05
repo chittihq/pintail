@@ -357,8 +357,11 @@ stays readable as a list of things to fix.
 - Tables without a stable source key use append-generation replacement, so
   individual UPDATE or DELETE identities and intermediate history are
   unknowable.
-- The optional secondary-UNIQUE read policy inherits the collation
-  approximation above.
+- The secondary-UNIQUE read policy (polling databases, and CDC tables
+  flagged for periodic reconciliation) holds a table's whole projected scan
+  in memory, bounded by the query memory ceiling, to find the collisions it
+  hides; a table whose projection exceeds that ceiling cannot be queried
+  under it. The policy also inherits the collation approximation above.
 - ALTER handling evolves in place for pure ADD/DROP COLUMN, pure column
   RENAME (verified mid-stream: stable column IDs carry across, rows before
   and after the rename stay intact with no resync), storage-compatible
