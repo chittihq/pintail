@@ -8,8 +8,9 @@ import { baseline } from './scenarios/baseline'
 
 import { modeScenarios } from './scenarios/mode'
 import { cdcScenarios } from './scenarios/cdc'
+import { purgeScenarios } from './scenarios/purge'
 
-const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios]
+const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios]
 const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
 const patterns = arg?.split(',').filter(Boolean) ?? []

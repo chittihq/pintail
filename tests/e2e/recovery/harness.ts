@@ -287,6 +287,7 @@ export class Context {
       for (const table of ['checkpoints', 'tables', 'poll_states', 'poll_chunk_states', 'snapshot_chunks', 'sync_runs']) {
         result[table] = database.query(`SELECT * FROM ${table} WHERE db_id=?`).all(this.databaseId)
       }
+      result.databases = database.query('SELECT id,state,mode FROM databases WHERE id=?').all(this.databaseId)
       writeFileSync(join(this.artifactDir, `durable-${label}.json`), JSON.stringify(result, null, 2))
       this.check(`durable-before-restart:${label}`, true, JSON.stringify({ checkpoints: result.checkpoints, tables: result.tables.map(t => ({ name: t.name, state: t.state })) }))
       return result
