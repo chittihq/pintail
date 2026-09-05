@@ -137,6 +137,26 @@ fn embed_by_type(image: &[ColumnType], schema: &[ColumnType]) -> Option<Vec<usiz
     Some(placement)
 }
 
+/// Placement for a row image exactly as wide as the table's physical columns
+/// when the schema also keeps `VIRTUAL GENERATED` ones.
+///
+/// `MySQL` writes those columns into its row images, so a healthy stream is
+/// positional and never reaches this. A server that leaves them out produces
+/// an image one column narrower per virtual column; reading it positionally
+/// over the physical columns alone is the only exact placement, and the
+/// virtual columns decode as absent (NULL) rather than misaligning every
+/// column after the first one.
+fn physical_placement(table: &SourceTable, image_columns: usize) -> Option<Vec<Option<usize>>> {
+    let physical = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, column)| !column.virtual_generated())
+        .map(|(index, _)| Some(index))
+        .collect::<Vec<_>>();
+    (physical.len() != table.columns.len() && physical.len() == image_columns).then_some(physical)
+}
+
 impl RowAlignment {
     /// Works out how `table_map`'s row images map onto `table`.
     ///
@@ -150,6 +170,9 @@ impl RowAlignment {
         let image_columns = usize::try_from(table_map.columns_count()).unwrap_or(usize::MAX);
         if image_columns == table.columns.len() {
             return Ok(Self::Positional);
+        }
+        if let Some(image_to_schema) = physical_placement(table, image_columns) {
+            return Ok(Self::ByName { image_to_schema });
         }
         let metadata = OptionalMetaExtractor::new(table_map.iter_optional_meta())
             .map_err(|error| CdcError::Decode(format!("{}: {error}", table.name)))?;
@@ -539,6 +562,43 @@ mod tests {
     use mysql_async::consts::ColumnType;
     use pintail_probe::SourceColumn;
     use pintail_types::DataType;
+
+    #[test]
+    fn an_image_without_the_virtual_columns_reads_the_physical_ones_in_order() {
+        let mut virtual_column = column("varchar", "varchar(64)");
+        virtual_column.name = "contact_clean".to_owned();
+        virtual_column.extra = "VIRTUAL GENERATED".to_owned();
+        let mut id = column("bigint", "bigint");
+        id.name = "id".to_owned();
+        let mut contact = column("varchar", "varchar(64)");
+        contact.name = "contact".to_owned();
+        let table = pintail_probe::SourceTable {
+            name: "contacts".to_owned(),
+            engine: None,
+            estimated_rows: None,
+            rows_are_exact: false,
+            columns: vec![id, virtual_column, contact],
+            key: pintail_probe::SourceKey {
+                mode: pintail_types::KeyMode::Primary,
+                index_name: None,
+                columns: vec!["id".to_owned()],
+            },
+            unique_keys: Vec::new(),
+            requires_reconciliation: false,
+            foreign_keys: Vec::new(),
+            secondary_indexes: Vec::new(),
+            warnings: Vec::new(),
+        };
+        // MySQL logs the virtual column: a full-width image is positional.
+        assert_eq!(super::physical_placement(&table, 3), None);
+        // A server that omits it: the two physical columns, in order.
+        assert_eq!(
+            super::physical_placement(&table, 2),
+            Some(vec![Some(0), Some(2)])
+        );
+        // Anything else is a real drift and goes to the name/type placement.
+        assert_eq!(super::physical_placement(&table, 4), None);
+    }
 
     fn column(data_type: &str, column_type: &str) -> SourceColumn {
         SourceColumn {

@@ -1693,6 +1693,25 @@ async fn adopt_drifted_schema(
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
     let source = pintail_probe::stabilize_source_table(&target.source, source)?;
+    // A virtual generated column joining the schema cannot evolve in place:
+    // the rows already copied would read NULL where the source computes a
+    // value for every one of them. Declining leaves the event to the
+    // quarantine path, and the resync that follows copies the column's
+    // values with the refreshed schema.
+    if let Some(added) = source.columns.iter().find(|column| {
+        column.virtual_generated()
+            && !target
+                .source
+                .columns
+                .iter()
+                .any(|previous| previous.name.eq_ignore_ascii_case(&column.name))
+    }) {
+        return Err(format!(
+            "virtual generated column {} joined the schema; the rows already copied need its \
+             computed values, so the table is recopied instead of evolved in place",
+            added.name
+        ));
+    }
     // Only adopt a schema that actually explains the row in hand. A probe the
     // row still cannot be placed against means the drift is something else - a
     // rename, a table swapped underneath - and guessing would silently corrupt

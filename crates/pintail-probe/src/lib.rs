@@ -276,6 +276,17 @@ pub struct SourceColumn {
     pub default_generated: bool,
 }
 
+impl SourceColumn {
+    /// Whether the column is `GENERATED ALWAYS AS (...) VIRTUAL`: computed on
+    /// read at the source, never stored there, but present in `MySQL` row
+    /// images and in every `SELECT` the copy issues.
+    #[must_use]
+    pub fn virtual_generated(&self) -> bool {
+        let (generated, stored) = generated_flags(&self.generation_expression, &self.extra);
+        generated && !stored && !self.generated_stored
+    }
+}
+
 /// Physical key selected from source indexes.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SourceKey {
@@ -562,6 +573,7 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
             engine,
             counted.or(estimated_rows),
             counted.is_some(),
+            flavor,
         )
         .await?;
         pintail_log::log_debug!(
@@ -599,6 +611,7 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 async fn probe_table(
     connection: &mut mysql_async::Conn,
     database: &str,
@@ -606,6 +619,7 @@ async fn probe_table(
     engine: Option<String>,
     estimated_rows: Option<u64>,
     rows_are_exact: bool,
+    flavor: SourceFlavor,
 ) -> Result<SourceTable, ProbeError> {
     type IndexRow = (String, u8, u32, Option<String>, Option<u64>);
     let column_rows: Vec<mysql_async::Row> = connection
@@ -759,9 +773,10 @@ async fn probe_table(
     }
     for raw in raw_columns {
         let (generated, generated_stored) = generated_flags(&raw.generation_expression, &raw.extra);
-        if generated && !generated_stored {
+        if generated && !generated_stored && !logs_virtual_generated_columns(flavor) {
             warnings.push(format!(
-                "skipping virtual generated column {} because it is absent from row binlog images",
+                "skipping virtual generated column {} because this server leaves it out of \
+                 row binlog images",
                 raw.name
             ));
             continue;
@@ -916,11 +931,22 @@ fn derive_capabilities(
     }
 }
 
+/// Whether this server writes `VIRTUAL GENERATED` columns into row images.
+///
+/// `MySQL` does: a FULL row image carries the computed value in the column's
+/// ordinal slot, so the column has to stay in the schema or every row image
+/// is one column wider than the schema it decodes against - and under
+/// MINIMAL metadata nothing names the extra column, so the table was flagged
+/// for a resync that could never converge (the recopied schema was still one
+/// column short). `MariaDB` leaves virtual columns out of the binary log, so
+/// there the column is skipped and the schema stays the physical one.
+const fn logs_virtual_generated_columns(flavor: SourceFlavor) -> bool {
+    matches!(flavor, SourceFlavor::Mysql)
+}
+
 /// `(generated, stored)`: `MySQL` 8 reports `DEFAULT CURRENT_TIMESTAMP` columns
 /// as `EXTRA='DEFAULT_GENERATED'`; those are ordinary stored columns and must
-/// not be confused with `VIRTUAL GENERATED` / `STORED GENERATED` expressions,
-/// which are the only ones absent from (virtual) or derivable in (stored)
-/// row binlog images.
+/// not be confused with `VIRTUAL GENERATED` / `STORED GENERATED` expressions.
 fn generated_flags(generation_expression: &str, extra: &str) -> (bool, bool) {
     let extra = extra.to_ascii_lowercase();
     let generated = !generation_expression.is_empty()
@@ -1434,6 +1460,36 @@ mod tests {
         assert!(invisible_fk_rule("CASCADE"));
         assert!(invisible_fk_rule("set null"));
         assert!(!invisible_fk_rule("RESTRICT"));
+    }
+
+    #[test]
+    fn virtual_generated_columns_are_named_by_extra_or_expression() {
+        let mut column = SourceColumn {
+            id: 7,
+            name: "contact_clean".to_owned(),
+            mysql_data_type: "varchar".to_owned(),
+            mysql_column_type: "varchar(64)".to_owned(),
+            pintail_type: pintail_types::DataType::Utf8,
+            nullable: true,
+            character_set: None,
+            collation: None,
+            generated_stored: false,
+            generation_expression: String::new(),
+            extra: "VIRTUAL GENERATED".to_owned(),
+            auto_increment: false,
+            default_value: None,
+            default_generated: false,
+        };
+        assert!(column.virtual_generated());
+        column.extra = String::new();
+        column.generation_expression = "regexp_replace(`contact`,'[^0-9]','')".to_owned();
+        assert!(column.virtual_generated());
+        column.generated_stored = true;
+        assert!(!column.virtual_generated());
+        assert!(super::logs_virtual_generated_columns(SourceFlavor::Mysql));
+        assert!(!super::logs_virtual_generated_columns(
+            SourceFlavor::MariaDb
+        ));
     }
 
     #[test]

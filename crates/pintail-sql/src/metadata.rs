@@ -1153,11 +1153,16 @@ fn show_create_table(
             ddl.push_str(" NOT NULL");
         }
         if let Some(fact) = fact {
-            if fact.generated_stored && !fact.generation_expression.is_empty() {
+            if !fact.generation_expression.is_empty() {
                 let _ = write!(
                     ddl,
-                    " GENERATED ALWAYS AS ({}) STORED",
-                    fact.generation_expression
+                    " GENERATED ALWAYS AS ({}) {}",
+                    fact.generation_expression,
+                    if fact.generated_stored {
+                        "STORED"
+                    } else {
+                        "VIRTUAL"
+                    }
                 );
             } else if let Some(default) = &fact.default_value {
                 if fact.default_generated {
