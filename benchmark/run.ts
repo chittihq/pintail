@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { createServer } from 'node:net'
 import mysql from 'mysql2/promise'
 import { benchmarkQueries } from './queries'
+import { waitForPublishedEndpoint } from './reconnect'
 import { pintailSpecificMinimumRegressions, type ComparableReport } from './evidence'
 
 type CommandResult = { stdout: string; stderr: string }
@@ -139,6 +140,8 @@ let baselineProvenance: string | undefined
 let runVolumeCreated = false
 let dockerHostName = ''
 let engineFingerprint = ''
+// Shared by both timing tracks and concurrency, including after a restart.
+let clickhouseUrl = ''
 
 const hostFingerprint = () => createHash('sha256').update(dockerHostName).digest('hex')
 
@@ -180,26 +183,33 @@ function log(message: string) {
 
 async function command(
   args: string[],
-  options: { cwd?: string; stdin?: string; quiet?: boolean } = {},
+  options: { cwd?: string; stdin?: string; quiet?: boolean; signal?: AbortSignal } = {},
 ): Promise<CommandResult> {
+  options.signal?.throwIfAborted()
   const child = Bun.spawn(args, {
     cwd: options.cwd ?? repository,
     stdin: options.stdin === undefined ? 'ignore' : new Blob([options.stdin]),
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const [stdout, stderr, status] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ])
-  if (status !== 0) {
-    throw new Error(
-      `${args.join(' ')} failed with ${status}\n${stdout.trim()}\n${stderr.trim()}`,
-    )
+  const abort = () => child.kill('SIGKILL')
+  options.signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const [stdout, stderr, status] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    if (status !== 0) {
+      throw new Error(
+        `${args.join(' ')} failed with ${status}\n${stdout.trim()}\n${stderr.trim()}`,
+      )
+    }
+    if (!options.quiet && stderr.trim()) console.error(stderr.trim())
+    return { stdout: stdout.trim(), stderr: stderr.trim() }
+  } finally {
+    options.signal?.removeEventListener('abort', abort)
   }
-  if (!options.quiet && stderr.trim()) console.error(stderr.trim())
-  return { stdout: stdout.trim(), stderr: stderr.trim() }
 }
 
 async function docker(...args: string[]) {
@@ -240,8 +250,8 @@ function urlHost(host: string): string {
   return bare.includes(':') ? `[${bare}]` : bare
 }
 
-async function publishedPort(name: string, containerPort: number): Promise<number> {
-  const output = (await docker('port', name, `${containerPort}/tcp`)).stdout
+async function publishedPort(name: string, containerPort: number, signal?: AbortSignal): Promise<number> {
+  const output = (await command(['docker', 'port', name, `${containerPort}/tcp`], { quiet: true, signal })).stdout
   const match = output.split('\n')[0]?.match(/:(\d+)$/)
   if (!match) throw new Error(`Docker did not publish ${name}:${containerPort}`)
   return Number(match[1])
@@ -804,7 +814,6 @@ async function measureConcurrency(
 
 async function runQueries(
   connection: mysql.Connection,
-  clickhouseUrl: string,
   pintailUrl: string,
   token: string,
   databaseId: string,
@@ -851,19 +860,20 @@ async function runQueries(
       // needs time to come back. Poll readiness before the second attempt,
       // and capture the tail so the crash is diagnosable from the log.
       log(`  ClickHouse connection dropped (${error}); waiting for the server to return`)
-      await docker('logs', '--tail', '20', clickhouseName)
-        .then((tail) => log(`  clickhouse container tail:\n${tail}`))
+      await command(['docker', 'logs', '--tail', '20', clickhouseName], { quiet: true, signal: AbortSignal.timeout(5_000) })
+        .then((tail) => log(`  clickhouse container tail:\n${tail.stdout}\n${tail.stderr}`))
         .catch(() => {})
-      const deadline = Date.now() + 90_000
-      while (Date.now() < deadline) {
-        try {
-          const ping = await fetch(`${clickhouseUrl}/ping`, { signal: AbortSignal.timeout(2_000) })
-          if (ping.ok) break
-        } catch {
-          // still down
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2_000))
-      }
+      await command(['docker', 'inspect', '--format', '{{json .State}} restartCount={{.RestartCount}}', clickhouseName], { quiet: true, signal: AbortSignal.timeout(5_000) })
+        .then((state) => log(`  clickhouse container state: ${state.stdout}`))
+        .catch(() => {})
+      clickhouseUrl = await waitForPublishedEndpoint(
+        clickhouseUrl,
+        (signal) => publishedPort(clickhouseName, 8123, signal),
+        async (url, signal) => {
+          const ping = await fetch(`${url}/ping`, { signal: AbortSignal.any([signal, AbortSignal.timeout(2_000)]) })
+          return ping.ok
+        },
+      )
       return attempt()
     }
   }
@@ -1391,7 +1401,7 @@ async function main() {
   const host = await dockerHost()
   let mysqlPort = await publishedPort(mysqlName, 3306)
   const clickhousePort = await publishedPort(clickhouseName, 8123)
-  const clickhouseUrl = `http://${urlHost(host)}:${clickhousePort}`
+  clickhouseUrl = `http://${urlHost(host)}:${clickhousePort}`
   mysqlConnection = await waitForMysql(host, mysqlPort)
   await waitForClickhouse(clickhouseUrl)
   if (haveSeedVolume) {
@@ -1501,7 +1511,6 @@ async function main() {
   await verifyCounts(clickhouseUrl, pintailUrl, setup.token, databaseId)
   const results = await runQueries(
     mysqlConnection,
-    clickhouseUrl,
     pintailUrl,
     setup.token,
     databaseId,
@@ -1548,7 +1557,6 @@ async function main() {
     await waitForHttp(engineUrl)
     engineResults = await runQueries(
       mysqlConnection,
-      clickhouseUrl,
       engineUrl,
       setup.token,
       databaseId,

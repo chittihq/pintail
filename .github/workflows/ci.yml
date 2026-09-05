@@ -36,6 +36,6 @@ jobs:
         env:
           PINTAIL_DASHBOARD_PREBUILT: "1"
       - name: Differential coverage evidence checks
-        run: bun test scripts/differential-coverage.test.ts scripts/auditor-artifacts.test.ts
+        run: bun test scripts/differential-coverage.test.ts scripts/auditor-artifacts.test.ts benchmark/reconnect.test.ts
       - name: Local parser corpus (known upstream binlog reproducer is explicitly ignored)
         run: cargo test --manifest-path fuzz/Cargo.toml --locked

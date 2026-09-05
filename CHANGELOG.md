@@ -38,6 +38,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Benchmark retries refresh ClickHouse's published port after container
+  restarts and retain readable crash diagnostics in the private run log.
+
 - Closing a table now waits for background compaction before releasing its
   writer lock, preventing reopen cleanup from racing temporary segment writes.
   Resnapshot also discards pending compaction results so old rows cannot be
