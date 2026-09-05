@@ -103,5 +103,9 @@ serialized and uses only containers created by this repository's harnesses.
   prerequisite tests exposed a detached-compaction shutdown race. A related
   regression proved that pending output could also resurrect rows after reset.
   Both are fixed; all store feature-enabled tests and strict clippy pass, and
-  the original stress case passed 30 consecutive repetitions. Recovery and
-  the remaining gates are being resumed on the corrected storage code.
+  the original stress case passed 30 consecutive repetitions. On the corrected
+  storage code, recovery passed all 38 scenarios (692 PASS, three existing
+  warnings, zero FAIL), and the browser gate passed. The benchmark then stopped
+  when ClickHouse restarted and its published port changed; its retry still
+  used the old endpoint. Benchmark reconnect handling and the remaining
+  benchmark/acceptance checks are being completed.
