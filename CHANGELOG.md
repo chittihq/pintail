@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc2] - 2026-09-05
+
 ### Fixed
 
 - A table with a secondary UNIQUE key on a natively replicated (CDC)
@@ -17,6 +19,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   policy now applies only where a collision can exist - polling databases,
   and CDC tables flagged for periodic reconciliation - and every other
   table streams its scan as before.
+- A local (writable) database refuses `BEGIN`, `START TRANSACTION`,
+  `COMMIT`, `ROLLBACK`, `SAVEPOINT` and `SET autocommit=0` with MySQL
+  error 1149 instead of accepting them as compatibility no-ops. The
+  no-op told a client that a `ROLLBACK` had undone an `INSERT` whose row
+  was durably stored - a wrong answer the client had no way to detect.
+  Every statement on a local database is still its own autocommit
+  transaction until explicit transactions land. Replicated databases are
+  unchanged: they write nothing, so the no-op that lets drivers and BI
+  tools open a transaction before a `SELECT` claims nothing false.
 
 ### Changed
 
@@ -33,6 +44,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run. Measured 18-200× on scalar and `EXISTS` shapes at a thousand
   distinct keys over twenty thousand rows, 21-1600× on correlated `IN`
   (`benchmark/evidence/dependent-subquery-memo.md`).
+- `bun run scripts/validate.ts` runs explicit profiles: `development`
+  (fmt, typecheck, unit), `rc` (plus oracle, e2e, e2e-mysql80, browser)
+  and `stable` (plus bench and accept). Every run writes its own report
+  directory recording HEAD, toolchain, requested and skipped stages, and
+  a `--stages=` subset reports `PASS (SUBSET)` with the skipped stages
+  named; `validate-out/latest` and `latest-complete` point at the newest
+  run and the newest complete one.
 
 ### Added
 
@@ -54,18 +72,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   ceiling, so a result whose encoded form alone exceeds the limit is
   refused as a memory-limit error rather than being the one allocation
   the ceiling never saw.
-
-### Fixed
-
-- A local (writable) database refuses `BEGIN`, `START TRANSACTION`,
-  `COMMIT`, `ROLLBACK`, `SAVEPOINT` and `SET autocommit=0` with MySQL
-  error 1149 instead of accepting them as compatibility no-ops. The
-  no-op told a client that a `ROLLBACK` had undone an `INSERT` whose row
-  was durably stored - a wrong answer the client had no way to detect.
-  Every statement on a local database is still its own autocommit
-  transaction until explicit transactions land. Replicated databases are
-  unchanged: they write nothing, so the no-op that lets drivers and BI
-  tools open a transaction before a `SELECT` claims nothing false.
+- The overview's "Storage engine" card is now disk usage: the volume
+  behind the data directory, and the system volume alongside it when the
+  data directory is mounted elsewhere. Backed by `GET /api/storage`.
 
 ## [0.1.2-rc1] - 2026-09-04
 
