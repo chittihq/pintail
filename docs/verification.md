@@ -151,15 +151,43 @@ See the [`M9 release report`](docs/milestones/M9.md) for the recorded outcome.
 Current compatibility boundaries are recorded in
 [`docs/limitations.md`](docs/limitations.md).
 
-Locally, `bun run scripts/validate.ts` drives the full sequence as one
+Locally, `bun run scripts/validate.ts` drives the sequence as one
 detached process — preflighting the shared Docker host (reachability,
 free disk, leftover harness containers), running stages strictly in
-order (fmt+clippy, unit, oracle, e2e, browser, benchmark, acceptance), retrying
-once on transient container-init races, aborting on host-level failures
-like a full disk, and capturing crashed-container logs before harness
-cleanup. Progress streams to `validate-out/validate-status.log`; the
-verdict lands in `validate-out/validate-report.md`. Use
-`--stages=fmt,unit,oracle` for the fast loop.
+order, retrying once on transient container-init races, aborting on
+host-level failures like a full disk, and capturing crashed-container
+logs before harness cleanup.
+
+Which stages run is a **profile**, and a profile is the policy a run
+claims to satisfy:
+
+| profile | stages | claims |
+|---|---|---|
+| `development` | fmt, typecheck, unit | it compiles, lints, typechecks, and passes its unit tests |
+| `rc` | + oracle, e2e, e2e-mysql80, browser | every correctness gate passed, on both MySQL majors the release covers |
+| `stable` | + bench, accept | the same, with the measured evidence regenerated |
+
+`--profile rc` is the release-candidate gate; the bare command is
+`--profile stable`. `--stages=…` still runs any subset, but a subset
+reports itself as one: its verdict is `PASS (SUBSET)` and its report
+names every stage that did not run, so a green `--stages=oracle` can
+never be mistaken for a gate.
+
+Two stages sit outside every profile. `freshness`
+(`benchmark/check-evidence-freshness.ts`) asks whether the *banked*
+evidence describes HEAD, so it can only pass after a run's artifacts are
+committed — `scripts/release-chain.sh` runs it in the closing
+`--stages=fmt,freshness,accept` pass, on the banked tree, and that pass
+is the stable release's evidence gate. `soak` and `memsoak` are opt-in
+by cost.
+
+Each run writes its own directory under `validate-out/runs/`, recording
+HEAD, the toolchain versions, the requested stages and the ones that did
+not run. `validate-out/latest` points at the newest run,
+`validate-out/latest-complete` at the newest one that finished a whole
+profile, and `validate-out/validate-report.md` is a stub naming both.
+Progress streams to the run's `status.log` and to
+`validate-out/validate-status.log`.
 
 CI runs these gates automatically on GitHub-hosted runners with no external
 infrastructure: `.github/workflows/e2e.yml` gives every push and pull

@@ -6,9 +6,13 @@
 # extra hour per release candidate.
 #
 # Ordering constraints this script encodes:
-# - fmt is ABSENT from the heavy pass: its evidence-freshness gate compares
-#   banked evidence against code commits, which can only pass AFTER this
-#   run's artifacts are committed.
+# - The heavy pass runs the `stable` PROFILE, which is the policy written
+#   down in scripts/validate.ts. Its report says so, and only a run that
+#   completes a whole profile is recorded as a complete gate.
+# - freshness is ABSENT from the heavy pass and runs in the closing one: it
+#   compares banked evidence against code commits, which can only pass
+#   AFTER this run's artifacts are committed. It is the stable gate, and
+#   this ordering is the only one in which it can be both honest and green.
 # - TPC-H runs before banking so its results join the same bank set; the
 #   validate harness has no tpch stage of its own.
 # - accept re-runs at the end on the clean banked tree - the release
@@ -22,7 +26,7 @@ trap '[ "$ok" = 1 ] || echo "RELEASE-CHAIN-FAIL"' EXIT
 cd "$(dirname "$0")/.."
 label="${RELEASE_LABEL:+ for $RELEASE_LABEL}"
 
-bun run scripts/validate.ts --stages=unit,oracle,e2e,e2e-mysql80,browser,bench,accept
+bun run scripts/validate.ts --profile stable
 bun run benchmark/run-tpch.ts
 bun run benchmark/render-readme-table.ts
 
@@ -66,7 +70,7 @@ if [ -n "$(git status --porcelain)" ]; then
   exit 1
 fi
 
-bun run scripts/validate.ts --stages=fmt,accept
+bun run scripts/validate.ts --stages=fmt,freshness,accept
 # the confirming accept rewrites its ledgers once more; the banked copies
 # from the same chain are the evidence of record
 git_retry git checkout -- .

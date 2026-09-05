@@ -5,23 +5,45 @@
 /// benchmark, hung stages, crashed containers cleaned up before their logs
 /// were read).
 ///
-/// Usage:  bun run scripts/validate.ts [--stages fmt,unit,oracle,e2e,browser,bench,accept]
+/// Usage:  bun run scripts/validate.ts [--profile development|rc|stable]
+///         bun run scripts/validate.ts [--stages fmt,unit,oracle,...]
 ///
-/// Progress is streamed to stdout and mirrored into validate-status.log
-/// (one line per transition — poll this file, not the process), with the
-/// final verdict in validate-report.md. Exit code 0 only when every
-/// requested stage passes.
+/// A profile names the policy a run is claiming to satisfy (see PROFILES).
+/// `--stages` still runs any subset, and a subset can never report a
+/// complete gate: its verdict is PASS (SUBSET) and its report names every
+/// stage that did not run. This matters because the two are easy to
+/// confuse after the fact - a `--stages=oracle` run used to overwrite the
+/// one report path with a PASS, erasing the full run that had just failed.
+///
+/// Each run writes its own directory under validate-out/runs/, so no run
+/// overwrites another. validate-out/latest points at the newest run and
+/// validate-out/latest-complete at the newest one that satisfied a whole
+/// profile; validate-out/validate-report.md is a stub naming both.
+/// Progress is streamed to stdout, to the run's own status.log, and to
+/// validate-out/validate-status.log (one line per transition — poll a file,
+/// not the process). Exit code 0 only when every requested stage passes.
 
-import { spawn } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import {
+  appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync,
+  symlinkSync, writeFileSync,
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const repository = resolve(import.meta.dir, '..')
 const reportDir = join(repository, 'validate-out')
+/// Kept for whoever is already tailing them: the newest run mirrors its
+/// progress here, and the report path became a stub pointing at the run
+/// directories rather than a file every subset run overwrites.
 const statusPath = join(reportDir, 'validate-status.log')
 const reportPath = join(reportDir, 'validate-report.md')
 const lockPath = join(reportDir, 'validate.lock')
+const runsDir = join(reportDir, 'runs')
+/// How many run directories to keep. The newest complete run is never
+/// pruned, whatever its age - it is the only record of the last time a
+/// whole profile passed.
+const RUNS_RETAINED = 20
 const cargoBinary = process.env.CARGO ?? join(homedir(), '.cargo', 'bin', 'cargo')
 
 /// Container name prefixes this repository's harnesses create. Cleanup
@@ -49,7 +71,13 @@ const TRANSIENT_SIGNATURES = [
   /Can't connect to local MySQL server through socket/,
   /Connection lost: The server closed the connection/i,
   /did not become ready/i,
-  /ECONNRESET|ECONNREFUSED|EPIPE/,
+  // ETIMEDOUT included: a connect that timed out never reached the product.
+  // One ORM-compat connection over the shared link timed out and the run
+  // was reported as a product failure with 4,724 checks green behind it,
+  // which is the opposite of what the classifier is for. The stage still
+  // has to pass on the retry - this changes which failures are retried,
+  // not which ones count.
+  /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT/,
 ]
 
 /// Signatures that mean the shared host itself is unhealthy; abort the run
@@ -91,14 +119,45 @@ const STAGES: Stage[] = [
       // describing a run that cannot be identified - which is how they drifted
       // to advertising 152ms where the artifact recorded 10ms.
       '"$CARGO" fmt --all --check && "$CARGO" clippy --workspace --all-targets -- -D warnings' +
-        ' && bun run benchmark/render-readme-table.ts --check' +
-        // The table check catches evidence nobody regenerated the README
-        // against. It does not catch evidence nobody regenerated at all: a
-        // result file committed before the code it measures looks identical to
-        // a current one, which is how the TPC-H results came to record a pass
-        // produced two days before the rule they exercise was rewritten.
-        ' && bun run benchmark/check-evidence-freshness.ts',
+        ' && bun run benchmark/render-readme-table.ts --check',
     ],
+  },
+  {
+    // The evidence-freshness gate, deliberately its OWN stage rather than
+    // part of fmt.
+    //
+    // It asks whether the BANKED evidence describes HEAD, so it can only
+    // pass after a run's artifacts are committed - which is why the release
+    // chain runs it in the closing pass, on the banked tree. Inside a run
+    // that is still producing evidence the question is circular: the gate
+    // fails, the stage that would refresh the evidence never runs, and the
+    // failure is indistinguishable from a real staleness. As the first
+    // stage of the generic command it also failed every release candidate
+    // by design - an rc keeps the previous stable's bench evidence.
+    //
+    // Never in a profile. `--stages=fmt,freshness,accept` is the closing
+    // proof; see scripts/release-chain.sh.
+    name: 'freshness',
+    remote: false,
+    timeoutMinutes: 5,
+    command: ['bun', 'run', 'benchmark/check-evidence-freshness.ts'],
+  },
+  {
+    // The dashboard's types. CI runs this on every push
+    // (.github/workflows/ci.yml), and it was the one CI check the local
+    // gate could not reproduce - so a Vue change could pass every profile
+    // here and fail on the runner.
+    name: 'typecheck',
+    remote: false,
+    timeoutMinutes: 20,
+    // Nuxt prepares its generated types before checking, silently, on a
+    // cold .nuxt directory.
+    stallMinutes: 15,
+    // The same two commands CI runs, in the same order: the frozen install
+    // is what makes a fresh checkout typecheck the dependency set the lock
+    // file pins rather than whatever happens to be on disk.
+    command: ['bash', '-c', 'bun install --frozen-lockfile && bun run typecheck'],
+    cwd: join(repository, 'packages', 'dashboard'),
   },
   {
     name: 'unit',
@@ -220,10 +279,86 @@ const STAGES: Stage[] = [
   },
 ]
 
+interface Profile {
+  /// Stages this profile runs, in declared order.
+  stages: string[]
+  /// What passing it entitles the runner to claim.
+  claim: string
+  /// Anything a reader of the report must know that the stage list does not
+  /// say - notably which gates are deliberately absent.
+  caveats: string[]
+}
+
+/// The owner's release policy, written down. A run says which of these it
+/// is claiming; anything else is a subset and reports itself as one.
+///
+/// The lists are cumulative on purpose: rc is development plus the
+/// differential gates, stable is rc plus the measured ones. A profile that
+/// dropped a cheaper check would let a heavier gate pass over something the
+/// fast loop had already caught.
+const PROFILES: Record<string, Profile> = {
+  /// The end-of-todo local gate: everything that needs no Docker host, so
+  /// it can run beside other work and on a laptop with no link up.
+  development: {
+    stages: ['fmt', 'typecheck', 'unit'],
+    claim: 'the code compiles, lints, typechecks and passes its unit tests',
+    caveats: [
+      'No differential gate: nothing here compares Pintail against MySQL.',
+      'No measured evidence: benchmark and acceptance numbers are untouched.',
+    ],
+  },
+  /// The release-candidate gate. Bench evidence deliberately stays at the
+  /// previous stable's bank, so the freshness gate is absent by design
+  /// rather than by omission.
+  rc: {
+    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser'],
+    claim: 'every correctness gate passed, on both MySQL majors the release claims to cover',
+    caveats: [
+      'Benchmark evidence is NOT regenerated: an rc ships the previous',
+      'stable release\'s numbers, so the freshness gate is not part of this',
+      'profile. Bank tests/e2e/results.md and results-mysql80.md on PASS.',
+    ],
+  },
+  /// The full release gate. Run by scripts/release-chain.sh, which banks
+  /// the evidence this profile produces and then proves freshness and
+  /// acceptance on the banked tree - the one order in which the freshness
+  /// gate can pass.
+  stable: {
+    stages: [
+      'fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80',
+      'browser', 'bench', 'accept',
+    ],
+    claim: 'every correctness gate passed and the measured evidence was regenerated',
+    caveats: [
+      'This profile PRODUCES the evidence; it does not date it. The banked',
+      'evidence is proven current by the closing pass',
+      '`--stages=fmt,freshness,accept`, which scripts/release-chain.sh runs',
+      'after committing the artifacts. A stable release is not gated until',
+      'that pass is green too.',
+    ],
+  },
+}
+
+/// Stages that belong to no profile, and why - so a report can say
+/// "absent by design" instead of leaving a reader to wonder whether the
+/// gate forgot them.
+const UNPROFILED: Record<string, string> = {
+  freshness: 'runs after banking, in the release chain\'s closing pass',
+  soak: 'opt-in: hours, by design',
+  memsoak: 'opt-in: hours, by design',
+}
+
+/// The active run's own directory. Set once main() has resolved which
+/// profile is running; until then progress goes to the shared paths only.
+let runDir = reportDir
+
 function status(line: string) {
   const stamped = `${new Date().toISOString()} ${line}`
   console.log(stamped)
   appendFileSync(statusPath, `${stamped}\n`)
+  // The run's own copy travels with its stage logs, so a report read months
+  // later still has the progress that produced it.
+  if (runDir !== reportDir) appendFileSync(join(runDir, 'status.log'), `${stamped}\n`)
 }
 
 async function run(
@@ -495,7 +630,7 @@ async function captureContainerEvidence(stage: string) {
     const name = line.split('\t')[0]
     const logs = await docker(['logs', '--tail', '40', name])
     appendFileSync(
-      join(reportDir, `${stage}-containers.log`),
+      join(runDir, `${stage}-containers.log`),
       `== ${line}\n${logs.output}\n`,
     )
   }
@@ -507,11 +642,168 @@ function classify(output: string): 'transient' | 'host' | 'product' {
   return 'product'
 }
 
+/// Repoints one of the two stable names (`latest`, `latest-complete`) at a
+/// run directory. A relative symlink, so the whole validate-out tree can be
+/// copied or archived without the pointers going dangling.
+function pointAt(name: string, runName: string) {
+  const link = join(reportDir, name)
+  rmSync(link, { force: true, recursive: false })
+  try {
+    symlinkSync(join('runs', runName), link)
+  } catch {
+    // A filesystem without symlinks (or a Windows checkout without the
+    // privilege) still gets the pointer, as a file naming the run.
+    writeFileSync(link, `runs/${runName}\n`)
+  }
+}
+
+/// The run a pointer names, or undefined when it has never been set.
+function pointedAt(name: string): string | undefined {
+  const link = join(reportDir, name)
+  // Symlink first, then the plain-file fallback pointAt writes where
+  // symlinks are unavailable.
+  try {
+    return readlinkSync(link).replace(/^runs\//, '') || undefined
+  } catch {
+    /* not a symlink */
+  }
+  try {
+    return readFileSync(link, 'utf8').trim().replace(/^runs\//, '') || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/// Keeps the run directory from growing without bound, while never
+/// removing the newest complete run - that one is the record of the last
+/// time a whole profile passed, and it must survive any number of subset
+/// runs after it.
+function pruneOldRuns() {
+  if (!existsSync(runsDir)) return
+  const keep = new Set([pointedAt('latest'), pointedAt('latest-complete')])
+  const names = readdirSync(runsDir).sort()
+  for (const name of names.slice(0, Math.max(0, names.length - RUNS_RETAINED))) {
+    if (keep.has(name)) continue
+    rmSync(join(runsDir, name), { recursive: true, force: true })
+  }
+}
+
+/// The legacy report path, now a stub rather than a report.
+///
+/// It used to hold whichever run finished last, which is how a
+/// `--stages=oracle` PASS came to stand where a full run's FAIL had been.
+/// Naming both pointers instead means the file can only ever tell the
+/// truth: here is the newest run, and here is the newest one that actually
+/// completed a profile.
+function writeStub(verdict: string, runName: string, matched: string | undefined) {
+  const completeRun = pointedAt('latest-complete')
+  writeFileSync(
+    reportPath,
+    [
+      '# Validation reports',
+      '',
+      'Every run writes its own directory, so this file is a pointer rather',
+      'than a report. Read the linked report.md for a verdict.',
+      '',
+      `- Latest run: \`runs/${runName}/report.md\` — ${verdict}`
+        + ` (${matched ? `profile ${matched}` : 'ad-hoc stage list'})`,
+      completeRun
+        ? `- Latest COMPLETE run: \`runs/${completeRun}/report.md\``
+        : '- Latest COMPLETE run: none recorded — no run here has finished a whole profile',
+      '',
+      'Profiles: ' + Object.keys(PROFILES).join(', ')
+        + '. A subset run is never a gate, however green it is.',
+      '',
+    ].join('\n'),
+  )
+}
+
+/// One flag, in either `--flag=value` or `--flag value` form.
+function flag(name: string): string | undefined {
+  const inline = process.argv.find((arg) => arg.startsWith(`--${name}=`))
+  if (inline) return inline.slice(name.length + 3)
+  const index = process.argv.indexOf(`--${name}`)
+  return index >= 0 ? process.argv[index + 1] : undefined
+}
+
+/// The versions that decide what the stages actually compiled and ran.
+/// Recorded in the report because a gate result is a claim about a
+/// toolchain as much as about the code: the same commit passes under one
+/// rustc and fails under another, and a report that does not say which was
+/// used cannot be re-derived.
+///
+/// Nothing about the Docker host is recorded here - the report is written
+/// into the repository's working tree, and infrastructure identity does not
+/// belong in it.
+function toolchainVersions(): string[] {
+  const probes: Array<[string, string[]]> = [
+    ['rustc', [cargoBinary.replace(/cargo$/, 'rustc'), '--version']],
+    ['cargo', [cargoBinary, '--version']],
+    ['bun', ['bun', '--version']],
+  ]
+  return probes.map(([name, command]) => {
+    const probed = spawnSync(command[0]!, command.slice(1), { encoding: 'utf8' })
+    const line = (probed.stdout ?? '').trim().split('\n')[0]
+    return `${name} ${line && probed.status === 0 ? line.replace(/^\w+\s/, '') : 'unknown'}`
+  })
+}
+
+/// HEAD as the report must name it: the commit the verdict is about, and
+/// whether anything was uncommitted while it ran.
+function headDescription(): string {
+  const revision = spawnSync('git', ['rev-parse', '--short', 'HEAD'], {
+    cwd: repository,
+    encoding: 'utf8',
+  })
+  const subject = spawnSync('git', ['log', '-1', '--format=%s'], {
+    cwd: repository,
+    encoding: 'utf8',
+  })
+  const porcelain = spawnSync('git', ['--no-optional-locks', 'status', '--porcelain'], {
+    cwd: repository,
+    encoding: 'utf8',
+  })
+  if (revision.status !== 0) return 'unknown (not a git checkout)'
+  const dirty = (porcelain.stdout ?? '').split('\n').filter((line) => line.trim()).length
+  const tree = dirty === 0 ? 'clean tree' : `${dirty} uncommitted path(s) at launch`
+  return `${revision.stdout.trim()} ${(subject.stdout ?? '').trim()} — ${tree}`
+}
+
 async function main() {
-  const requested = (process.argv.find((arg) => arg.startsWith('--stages='))?.slice(9) ??
-    process.env.VALIDATE_STAGES ?? 'fmt,unit,oracle,e2e,browser,bench,accept')
+  const profileName = flag('profile') ?? process.env.VALIDATE_PROFILE
+  const stageList = flag('stages') ?? process.env.VALIDATE_STAGES
+  if (profileName && stageList) {
+    console.error('pass --profile or --stages, not both: they name different claims')
+    process.exit(2)
+  }
+  if (profileName && !PROFILES[profileName]) {
+    console.error(
+      `unknown profile ${profileName}; known profiles: ${Object.keys(PROFILES).join(', ')}`,
+    )
+    process.exit(2)
+  }
+  // The bare command still means the full gate, as it always has - it is
+  // the stable profile by name now, so the report can say so.
+  const profile = stageList ? undefined : PROFILES[profileName ?? 'stable']!
+  const claimed = stageList ? undefined : (profileName ?? 'stable')
+  const requested = (stageList ?? profile!.stages.join(','))
     .split(',')
     .map((stage) => stage.trim())
+    .filter((stage) => stage.length > 0)
+  // An explicit --stages list that happens to BE a profile is that profile:
+  // the release chain and the docs both spell runs out stage by stage, and
+  // a run should not report itself as a subset for saying the same thing
+  // the long way.
+  const matched = claimed
+    ?? Object.entries(PROFILES).find(
+      ([, candidate]) =>
+        candidate.stages.length === requested.length
+        && candidate.stages.every((stage) => requested.includes(stage)),
+    )?.[0]
+  if (requested.length === 0) {
+    console.error('no stages requested; pass --profile or a non-empty --stages')
+    process.exit(2)
+  }
   mkdirSync(reportDir, { recursive: true })
   // A killed run leaves its lock behind, and every later run then refuses
   // to start until someone clears it by hand — which reads as "still
@@ -540,6 +832,22 @@ async function main() {
   }
   writeFileSync(lockPath, `${process.pid} ${new Date().toISOString()}\n`)
   writeFileSync(statusPath, '')
+  // One directory per run, named for when it ran and what it claimed. No
+  // run overwrites another's evidence, which is the whole point: a subset
+  // run used to replace the report of the full run that had just failed.
+  const startedAt = new Date()
+  const runName = `${startedAt.toISOString().replace(/[:.]/g, '-')}-${matched ?? 'ad-hoc'}`
+  runDir = join(runsDir, runName)
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(join(runDir, 'status.log'), '')
+  pointAt('latest', runName)
+  const head = headDescription()
+  const toolchain = toolchainVersions()
+  status(
+    `run ${runName}: ${matched ? `profile ${matched}` : 'ad-hoc stage list'} `
+      + `[${requested.join(', ')}] at ${head}`,
+  )
+  status(`toolchain: ${toolchain.join(', ')}`)
   /// The benchmark refuses a dirty tree, and earlier stages rewrite result
   /// ledgers. Rather than committing a receipt to the product branch for
   /// every gate — which made roughly one commit in eight a scoreboard entry
@@ -666,7 +974,7 @@ async function main() {
       )
       if (prebuild.code !== 0) {
         status('ABORT: release prebuild failed')
-        writeFileSync(join(reportDir, 'prebuild.log'), prebuild.output)
+        writeFileSync(join(runDir, 'prebuild.log'), prebuild.output)
         process.exit(2)
       }
       const binary = join(repository, 'target', 'release', 'pintail')
@@ -717,7 +1025,7 @@ async function main() {
             remote: stage.remote,
             label: stage.name,
           })
-          writeFileSync(join(reportDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
+          writeFileSync(join(runDir, `${stage.name}-attempt${attempt}.log`), outcome.output)
           if (outcome.stalled) {
             // Distinct from a timeout: the stage was not slow, it stopped
             // making progress. Two hangs in one session looked like this —
@@ -761,7 +1069,9 @@ async function main() {
     // takes them off the critical path. PINTAIL_VALIDATE_OVERLAP=0 restores
     // the strictly sequential order.
     const overlap = process.env.PINTAIL_VALIDATE_OVERLAP !== '0'
-    const localNames = ['fmt', 'unit']
+    // Everything that needs no Docker host. They run as one serial chain
+    // beside the remote sequence, which takes them off the critical path.
+    const localNames = STAGES.filter((stage) => !stage.remote).map((stage) => stage.name)
     const localStages = overlap
       ? groups.flat().filter((stage) => localNames.includes(stage.name))
       : []
@@ -820,21 +1130,64 @@ async function main() {
   }
 
   const allPassed = results.length > 0 && results.every((result) => result.verdict === 'PASS')
-  const lines = [
+  // A run that did not finish its own stage list passed nothing, whatever
+  // the rows say: an abort leaves the later stages unrun.
+  const ran = results.map((result) => result.name)
+  const missed = requested.filter((stage) => !ran.includes(stage))
+  // "Complete" is a claim about policy, not about the number of stages: a
+  // run is complete when it ran a whole named profile. Everything else is a
+  // subset, including a green one, and must not read as a gate.
+  const complete = allPassed && matched !== undefined && missed.length === 0
+  const claimedProfile = matched ? PROFILES[matched] : undefined
+  const verdict = allPassed ? (complete ? 'PASS' : 'PASS (SUBSET)') : 'FAIL'
+  const notRun = STAGES.map((stage) => stage.name)
+    .filter((name) => !requested.includes(name))
+    .map((name) => (UNPROFILED[name] ? `${name} (${UNPROFILED[name]})` : name))
+  const lines: Array<string | null> = [
     `# Validation report — ${new Date().toISOString()}`,
     '',
-    `Verdict: **${allPassed ? 'PASS' : 'FAIL'}**`,
+    `Verdict: **${verdict}**`,
+    matched
+      ? `Profile: **${matched}**${complete ? ' — complete' : ' — did NOT complete'}`
+      : 'Profile: **none** — an ad-hoc stage list, which no policy accepts as a gate',
+    claimedProfile ? `Claim when complete: ${claimedProfile.claim}` : null,
+    `HEAD: ${head}`,
+    `Toolchain: ${toolchain.join(', ')}`,
+    `Requested stages: ${requested.join(', ')}`,
+    `Stages not requested: ${notRun.length > 0 ? notRun.join(', ') : 'none'}`,
+    missed.length > 0 ? `Requested but never ran: ${missed.join(', ')}` : null,
     '',
     '| stage | verdict | minutes | note |',
     '|---|---|---|---|',
     ...results.map((result) =>
       `| ${result.name} | ${result.verdict} | ${result.minutes.toFixed(1)} | ${result.note} |`),
     '',
+    ...(claimedProfile
+      ? ['## What this profile does not cover', '', ...claimedProfile.caveats, '']
+      : []),
+    // Said only where it can mislead: a run that passed everything it was
+    // asked for, without being asked for a whole policy. A FAIL needs no
+    // such warning, and a complete profile has earned the opposite.
+    ...(allPassed && !complete
+      ? [
+        '## Not a gate',
+        '',
+        `This run passed the ${requested.length} stage(s) it was given, which is not`,
+        'the same as passing a gate. A release decision needs a complete profile:',
+        '`--profile rc` for a candidate, `scripts/release-chain.sh` for a stable',
+        'release. The last complete run is linked from validate-out/latest-complete.',
+        '',
+      ]
+      : []),
     'Per-stage logs sit next to this report; crashed-container logs are',
     'captured as <stage>-containers.log before harness cleanup removes them.',
-  ]
-  writeFileSync(reportPath, lines.join('\n'))
-  status(`DONE: ${allPassed ? 'PASS' : 'FAIL'} — report at ${reportPath}`)
+  ].filter((line): line is string => line !== null)
+  const runReport = join(runDir, 'report.md')
+  writeFileSync(runReport, `${lines.join('\n')}\n`)
+  if (complete) pointAt('latest-complete', runName)
+  pruneOldRuns()
+  writeStub(verdict, runName, matched)
+  status(`DONE: ${verdict} — report at ${runReport}`)
   process.exit(allPassed ? 0 : 1)
 }
 
