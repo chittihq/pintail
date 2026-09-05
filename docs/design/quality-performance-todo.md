@@ -79,10 +79,11 @@ serialized and uses only containers created by this repository's harnesses.
   Docker PGO image built successfully and its server binary passed startup
   (`--help`) validation on the remote Docker host.
 
-- Item 6: 163 banked passing cases link 77 function names to historical
-  differential evidence. Two evidence tests, strict TypeScript checking and
-  offline regeneration consistency pass. Remaining names retain separate
-  implementation-only, missing, unassessed or out-of-scope coverage.
+- Item 6: 163 banked passing E2E cases and 1,081 fixed oracle cases now link
+  159 function names to differential evidence. Evidence tests, strict
+  TypeScript checking and offline regeneration consistency pass. Remaining
+  names retain separate implementation-only, missing, unassessed or
+  out-of-scope coverage.
 - Item 7: the auditor command creates an isolated checkout and unique owned
   resources, rejects reused evidence, and exports reports with provenance.
   Strict TypeScript checks and an actual 20,000-order remote smoke run pass,
@@ -96,8 +97,8 @@ serialized and uses only containers created by this repository's harnesses.
   findings in items 6/7 were fixed with regression tests: CAST type names no
   longer count as calls, and ignored smoke reports are exported correctly.
 
-- Final validation: formatting, workspace clippy, dashboard types, all 849
-  executed workspace tests, the 1,081-case fixed plus 400-query generated MySQL
+- Initial implementation validation: formatting, workspace clippy, dashboard
+  types, all 849 executed workspace tests, the 1,081-case fixed plus 400-query generated MySQL
   oracle, and both MySQL E2E legs passed. Each E2E leg banked 4,913 PASS,
   zero FAIL and the existing 56 documented-gap warnings. The recovery
   prerequisite tests exposed a detached-compaction shutdown race. A related
@@ -121,10 +122,10 @@ serialized and uses only containers created by this repository's harnesses.
   label was corrected to match the raw data: 15 measurements after two
   warmups; no timings were changed.
 
-- All eight implementation items are complete. Validation completed across
-  the initial full-profile attempt and targeted resumes after fixing the
+- All eight implementation items are complete. Initial validation completed
+  across the initial full-profile attempt and targeted resumes after fixing the
   defects it exposed. This is not a claim that one full-profile invocation
-  passed: the final runner correctly reports **PASS (SUBSET)** for its
+  passed: that runner correctly reported **PASS (SUBSET)** for its
   benchmark/acceptance stage list. The known upstream binlog panic remains
   reproducible as documented above; unrestricted binlog fuzzing is not green.
 
@@ -138,8 +139,32 @@ serialized and uses only containers created by this repository's harnesses.
    completeness ledger with reproducible run and corpus provenance.
 4. [x] Compare pruning enabled/disabled on multiple persisted segments and
    add EXISTS/IN and inner-join permutation rewrites.
-5. [ ] Run one complete rc validation profile on the corrected tree and bank
+5. [x] Run one complete rc validation profile on the corrected tree and bank
    both E2E legs and the oracle evidence. No tag is requested.
+
+The complete rc profile **passed** in one invocation at clean source commit
+`5c295ec2629fdd16887242b9790695a494304df7`, from
+2026-09-05T21:02:14Z to 2026-09-05T21:24:07Z (about 22 minutes):
+`bun run scripts/validate.ts --profile rc`. The E2E and oracle artifacts are
+banked together in `01d689e`; the completeness ledger links that bank.
+
+| Stage | Result |
+|---|---|
+| Formatting and workspace clippy | PASS |
+| TypeScript | PASS |
+| Workspace unit tests | 856 passed, 25 skipped |
+| MySQL oracle | 1,081 fixed cases and 400 generated queries passed |
+| MySQL 8.4 E2E | 4,912 passed, zero failed, 57 warnings, 37 skipped |
+| MySQL 8.0 E2E | 4,912 passed, zero failed, 57 warnings, 37 skipped |
+| Browser | 18 auth and 25 browser checks passed, zero failed |
+
+Both E2E legs observed the documented polling-drop stall; the subsequent
+explicit re-probe recovery passed. Rust checks, test harnesses, and browser
+Chromium/Pintail processes ran on the Mac; MySQL and object-storage service
+containers used the remote Docker host. No
+matching E2E, oracle or browser containers remained after cleanup. This rc
+run does not renew benchmark or recovery evidence and is not a stable gate.
+No tag or push was performed.
 
 The instruction gate remains four small, in-process workloads; its recorded
 PGO result remains a training-set measurement. Expanding it to large scans and
@@ -167,8 +192,7 @@ reducing implementation-only names from 92 to 10.
 MySQL 8.0 then stopped on a valid HTTP 409 when the restart-during-resync test
 raced a replication cycle for its job slot. The harness now uses its bounded
 409 retry and releases the source WRITE lock between attempts, so the running
-cycle can finish. This attempt is not claimed as a profile PASS; a complete
-rc run is being repeated after the harness correction.
+cycle can finish. This attempt is not claimed as a profile PASS.
 
 
 The next rc attempt at `ae0329b` passed both E2E legs, including every
@@ -176,5 +200,6 @@ restart-during-resync assertion, but the browser gate exposed another harness
 race. Its Reset check accepted a queued toast plus the old streaming badge as
 completion, allowing the next Resync check to overlap the pending Reset. The
 Reset check now waits for actual acceptance and reloads the resulting state
-before waiting for completion. A focused browser check precedes the next
-complete rc attempt. Neither failed profile is described as PASS.
+before waiting for completion. A focused browser check passed, followed by
+the complete rc PASS recorded above. Neither failed profile is described as
+PASS.
