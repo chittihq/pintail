@@ -734,40 +734,211 @@ fn restore_tables_after_restart(state: &ApiState, metadata: &MetaStore) {
         } else {
             "streaming"
         };
-        match metadata.restore_complete_tables(&database.id, table_state) {
-            Ok(restored) if !restored.is_empty() => {
-                let cleared = metadata
-                    .clear_database_error(&database.id, mode, &Utc::now().to_rfc3339())
-                    .unwrap_or(false);
+        let restored = match metadata.restore_complete_tables(&database.id, table_state) {
+            Ok(restored) => restored,
+            Err(error) => {
                 state.publish(ApiEvent::database(
-                    "restart.restored",
+                    "supervisor.error",
                     &database.id,
-                    format!(
-                        "{} fully copied table(s) a restart left mid-walk are live again: {}{}",
-                        restored.len(),
-                        crate::snapshot::summarize_names(restored.iter().map(String::as_str)),
-                        if cleared {
-                            "; the database is out of its error state"
-                        } else {
-                            ""
-                        }
-                    ),
+                    format!("restart table restore failed: {error:#}"),
                 ));
+                continue;
             }
-            Ok(_) => {}
-            Err(error) => state.publish(ApiEvent::database(
-                "supervisor.error",
-                &database.id,
-                format!("restart table restore failed: {error:#}"),
-            )),
+        };
+        // A table a failed job marked error without a complete copy is the
+        // automatic resync's to repair, and it only looks at needs_resync.
+        let flagged = metadata
+            .flag_incomplete_errors_for_resync(&database.id)
+            .unwrap_or_default();
+        if restored.is_empty() && flagged.is_empty() {
+            continue;
         }
+        let cleared = metadata
+            .clear_database_error(&database.id, mode, &Utc::now().to_rfc3339())
+            .unwrap_or(false);
+        state.publish(ApiEvent::database(
+            "restart.restored",
+            &database.id,
+            format!(
+                "{} fully copied table(s) a restart left mid-walk are live again: {}{}{}",
+                restored.len(),
+                crate::snapshot::summarize_names(restored.iter().map(String::as_str)),
+                if flagged.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "; {} incomplete table(s) flagged for resync: {}",
+                        flagged.len(),
+                        crate::snapshot::summarize_names(flagged.iter().map(String::as_str))
+                    )
+                },
+                if cleared {
+                    "; the database is out of its error state"
+                } else {
+                    ""
+                }
+            ),
+        ));
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eligible;
-    use pintail_meta::DatabaseRecord;
+    use super::{eligible, restore_tables_after_restart};
+    use pintail_meta::{DatabaseRecord, MetaStore};
+
+    /// The state a failed whole-database job leaves behind: the database
+    /// and every table in error, the copies on disk untouched. Boot must
+    /// put the complete tables back, hand the incomplete one to the
+    /// automatic resync, leave a quarantined table quarantined, and lift
+    /// the database out of error - all from the copy marker.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn boot_restores_complete_tables_and_flags_the_incomplete_one() {
+        let directory = tempfile::tempdir().expect("data directory");
+        let metadata_path = directory.path().join("pintail-meta.db");
+        let state = crate::ApiState::new(
+            directory.path(),
+            &metadata_path,
+            b"test-jwt-secret-with-enough-entropy",
+            &"42".repeat(32),
+        )
+        .expect("api state");
+        let now = "2026-09-05T00:00:00Z";
+        let mut metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("db-1", "shop", b"secret", now)
+            .expect("database");
+        metadata
+            .update_database_probe("db-1", "{}", "cdc", now)
+            .expect("probe");
+        for name in ["orders", "payments", "users", "audit"] {
+            metadata
+                .upsert_snapshot_table("db-1", name, Some("[\"id\"]"), Some("[\"id\"]"))
+                .expect("register");
+        }
+        for name in ["orders", "users", "audit"] {
+            metadata
+                .complete_snapshot_table("db-1", name)
+                .expect("complete");
+        }
+        metadata
+            .set_database_replication_state("db-1", "cdc", now)
+            .expect("handoff");
+        metadata
+            .insert_snapshot_checkpoint_if_absent(
+                "db-1",
+                "filepos",
+                None,
+                Some("mysql-bin.000007"),
+                Some(4),
+                now,
+            )
+            .expect("checkpoint");
+        // audit was quarantined by the stream; payments was mid-copy when
+        // the job failed and took every other table down with it.
+        metadata
+            .mark_table_needs_resync("db-1", "audit", "row image wider than the schema")
+            .expect("quarantine");
+        metadata
+            .begin_table_resnapshot("db-1", "payments")
+            .expect("resync begins");
+        metadata
+            .fail_database_job("db-1", "the copy of payments failed", now)
+            .expect("job fails");
+        let states = |metadata: &MetaStore| {
+            metadata
+                .tables("db-1")
+                .expect("tables")
+                .into_iter()
+                .map(|table| (table.name, table.state))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            states(&metadata),
+            vec![
+                ("audit".to_owned(), "needs_resync".to_owned()),
+                ("orders".to_owned(), "error".to_owned()),
+                ("payments".to_owned(), "error".to_owned()),
+                ("users".to_owned(), "error".to_owned()),
+            ]
+        );
+        assert_eq!(
+            metadata
+                .database("db-1")
+                .expect("query")
+                .expect("row")
+                .state,
+            "error"
+        );
+
+        restore_tables_after_restart(&state, &metadata);
+
+        assert_eq!(
+            states(&metadata),
+            vec![
+                ("audit".to_owned(), "needs_resync".to_owned()),
+                ("orders".to_owned(), "streaming".to_owned()),
+                ("payments".to_owned(), "needs_resync".to_owned()),
+                ("users".to_owned(), "streaming".to_owned()),
+            ]
+        );
+        assert_eq!(
+            metadata
+                .database("db-1")
+                .expect("query")
+                .expect("row")
+                .state,
+            "streaming"
+        );
+        assert_eq!(
+            metadata
+                .tables_without_complete_copy("db-1")
+                .expect("incomplete")
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec!["audit".to_owned(), "payments".to_owned()]
+        );
+        // Boot is idempotent: a second restart changes nothing.
+        restore_tables_after_restart(&state, &metadata);
+        assert_eq!(states(&metadata).len(), 4);
+        let _ = &mut metadata;
+    }
+
+    /// A database that never handed off has no live state to restore to:
+    /// its interrupted first snapshot resumes as a snapshot, untouched here.
+    #[test]
+    fn boot_leaves_a_database_without_a_checkpoint_alone() {
+        let directory = tempfile::tempdir().expect("data directory");
+        let metadata_path = directory.path().join("pintail-meta.db");
+        let state = crate::ApiState::new(
+            directory.path(),
+            &metadata_path,
+            b"test-jwt-secret-with-enough-entropy",
+            &"42".repeat(32),
+        )
+        .expect("api state");
+        let now = "2026-09-05T00:00:00Z";
+        let metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("db-1", "shop", b"secret", now)
+            .expect("database");
+        metadata
+            .update_database_probe("db-1", "{}", "cdc", now)
+            .expect("probe");
+        metadata
+            .upsert_snapshot_table("db-1", "orders", Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("register");
+        metadata
+            .complete_snapshot_table("db-1", "orders")
+            .expect("complete");
+        restore_tables_after_restart(&state, &metadata);
+        assert_eq!(
+            metadata.tables("db-1").expect("tables")[0].state,
+            "pending",
+            "pending is what the snapshot's own handoff will flip"
+        );
+    }
 
     /// A database that IS eligible, so each test below changes exactly one
     /// thing and the assertion names the cause.

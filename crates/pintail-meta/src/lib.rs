@@ -1582,6 +1582,47 @@ impl MetaStore {
         Ok(restored)
     }
 
+    /// Flags every table whose copy never reached its end but sits in
+    /// `error` - a job that failed marked it so - for the automatic resync,
+    /// which only looks at `needs_resync`. Returns the tables it flagged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the update fails.
+    pub fn flag_incomplete_errors_for_resync(&self, database_id: &str) -> Result<Vec<String>> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin incomplete-table flagging")?;
+        let flagged = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT name FROM tables \
+                     WHERE db_id = ?1 AND copy_complete = 0 AND state = 'error' ORDER BY name",
+                )
+                .context("failed to prepare incomplete-table query")?;
+            statement
+                .query_map([database_id], |row| row.get::<_, String>(0))
+                .context("failed to query incomplete tables")?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("failed to decode incomplete tables")?
+        };
+        for name in &flagged {
+            transaction
+                .execute(
+                    "UPDATE tables SET state = 'needs_resync', \
+                       last_error = COALESCE(last_error, 'the copy did not complete before a restart') \
+                     WHERE db_id = ?1 AND name = ?2",
+                    (database_id, name),
+                )
+                .with_context(|| format!("failed to flag {database_id}.{name} for resync"))?;
+        }
+        transaction
+            .commit()
+            .context("failed to commit incomplete-table flagging")?;
+        Ok(flagged)
+    }
+
     /// Lifts a database out of `error` after its tables were restored, back
     /// to the state its effective mode implies. Touches no table row: the
     /// tables the restore left alone are the ones that still need work.

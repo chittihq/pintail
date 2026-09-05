@@ -26,8 +26,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   snapshot. Tables keep a copy-complete marker independent of the walk
   state; on boot, fully copied tables a restart left pending, mid-walk or
   in error go straight back to streaming, the interrupted table resumes as
-  a one-table resync, and a database whose job failed on one table leaves
-  its error state. A snapshot on a database that already replicates copies
+  a one-table resync, a table a failed job left in error without a complete
+  copy is handed to the automatic resync, and the database leaves its error
+  state. A snapshot on a database that already replicates copies
   only tables without a complete copy and leaves the rest live.
 - One table failing to copy no longer fails the whole snapshot job and
   marks every other table error: the table is flagged for resync, the run

@@ -992,6 +992,18 @@ async fn apply_ddl_actions(
                             continue;
                         }
                     };
+                if let Some(reason) = virtual_column_joined(&targets[index].source, &source) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {reason}"),
+                        Some(&source),
+                    )?;
+                    continue;
+                }
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
                 if let Err(error) = targets[index].store.evolve_schema(schema) {
@@ -1678,6 +1690,29 @@ async fn heal_schema_drift(
     }
 }
 
+/// A `VIRTUAL` generated column joining a schema cannot evolve in place: the
+/// rows already copied would read NULL where the source computes a value
+/// for every one of them. Returns the reason the table has to be recopied.
+fn virtual_column_joined(previous: &SourceTable, refreshed: &SourceTable) -> Option<String> {
+    refreshed
+        .columns
+        .iter()
+        .find(|column| {
+            column.virtual_generated()
+                && !previous
+                    .columns
+                    .iter()
+                    .any(|known| known.name.eq_ignore_ascii_case(&column.name))
+        })
+        .map(|added| {
+            format!(
+                "virtual generated column {} joined the schema; the rows already copied need \
+                 its computed values, so the table is recopied instead of evolved in place",
+                added.name
+            )
+        })
+}
+
 async fn adopt_drifted_schema(
     pool: &Pool,
     database: &str,
@@ -1693,24 +1728,10 @@ async fn adopt_drifted_schema(
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
     let source = pintail_probe::stabilize_source_table(&target.source, source)?;
-    // A virtual generated column joining the schema cannot evolve in place:
-    // the rows already copied would read NULL where the source computes a
-    // value for every one of them. Declining leaves the event to the
-    // quarantine path, and the resync that follows copies the column's
-    // values with the refreshed schema.
-    if let Some(added) = source.columns.iter().find(|column| {
-        column.virtual_generated()
-            && !target
-                .source
-                .columns
-                .iter()
-                .any(|previous| previous.name.eq_ignore_ascii_case(&column.name))
-    }) {
-        return Err(format!(
-            "virtual generated column {} joined the schema; the rows already copied need its \
-             computed values, so the table is recopied instead of evolved in place",
-            added.name
-        ));
+    // Declining leaves the event to the quarantine path, and the resync
+    // that follows copies the column's values with the refreshed schema.
+    if let Some(reason) = virtual_column_joined(&target.source, &source) {
+        return Err(reason);
     }
     // Only adopt a schema that actually explains the row in hand. A probe the
     // row still cannot be placed against means the drift is something else - a
