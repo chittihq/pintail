@@ -17,6 +17,7 @@ pub use batch::{
     SelectedRows, SelectionMask,
 };
 pub use execution::compare_collated_text;
+pub use execution::dependent_subquery_executions;
 pub use execution::{
     BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, ExecutionCancellation,
     MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,

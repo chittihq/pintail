@@ -892,13 +892,12 @@ impl<'catalog> Binder<'catalog> {
         tables: &mut Vec<BoundTable>,
         ctes: &[BoundCte],
     ) -> Result<(), BindError> {
-        let unsupported = || {
-            eprintln!(
-                "DECORR-EXISTS bail {}",
-                std::backtrace::Backtrace::force_capture()
-            );
-            BindError::UnsupportedSubquery(subquery.to_string())
-        };
+        // Not a failure: an IN that cannot decorrelate falls back to the
+        // dependent path. (A forced backtrace used to be printed here on
+        // every such bind - one per outer row on that path - which put a
+        // stack walk into the server's stderr and into the cost of every
+        // correlated IN the rewrite could not take.)
+        let unsupported = || BindError::UnsupportedSubquery(subquery.to_string());
         let SetExpr::Select(inner) = subquery.body.as_ref() else {
             return Err(unsupported());
         };

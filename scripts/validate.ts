@@ -78,6 +78,10 @@ const TRANSIENT_SIGNATURES = [
   // has to pass on the retry - this changes which failures are retried,
   // not which ones count.
   /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT/,
+  // mysql2's wording for the source link having dropped underneath the
+  // harness. The e2e suite's own query helper already retries on it; the
+  // gate classified the same drop as a product failure.
+  /connection is in closed state/i,
 ]
 
 /// Signatures that mean the shared host itself is unhealthy; abort the run

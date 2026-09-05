@@ -2564,6 +2564,19 @@ fn dependent_subquery_memory_limit(
     Ok(memory.remaining().saturating_sub(outer_bytes))
 }
 
+/// Inner executions run by the dependent (per-outer-row) subquery path since
+/// process start. A measurement hook: the ratio benchmark reads it to prove
+/// which shapes take this path and how many times, which a wall-clock
+/// reading alone cannot separate from planning cost.
+static DEPENDENT_SUBQUERY_EXECUTIONS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+/// How many times the dependent subquery path has executed an inner query.
+#[must_use]
+pub fn dependent_subquery_executions() -> u64 {
+    DEPENDENT_SUBQUERY_EXECUTIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 fn materialize_subquery(
     query: pintail_sql::BoundQuery,
     provider: &dyn ScanProvider,
@@ -2572,6 +2585,7 @@ fn materialize_subquery(
     maximum_rows: Option<usize>,
     collation: Collation,
 ) -> Result<Vec<Value>, ExecError> {
+    DEPENDENT_SUBQUERY_EXECUTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let logical = Optimizer::optimize(LogicalPlanner::plan(query));
     let physical = PhysicalPlanner::plan(logical, collation)?;
     if physical.output_fields().len() != 1 {
