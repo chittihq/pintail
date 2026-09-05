@@ -57,6 +57,11 @@ rollback, and repeats the comparison after another restart.
 
 For one scenario: `bun run recovery/run.ts --only mode-handoff-abort`.
 `--only 'cdc-*,poll-*'` selects a union; `--list` lists matching contracts.
+The runner stops after the first failing scenario by default. Add
+`--keep-going` to finish the selected scenarios and collect their failures in
+one ledger. Any failure still produces a FAIL verdict and a nonzero exit;
+source setup or scenario teardown failures still stop the run, so a process
+that failed to stop cannot overlap the next scenario.
 Subset results go to `results-recovery-partial.md` and cannot overwrite the
 full `results-recovery.md` ledger. Process logs, events and metadata captured
 while Pintail is down remain private under `validate-out/recovery/`. The ledger

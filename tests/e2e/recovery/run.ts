@@ -21,6 +21,7 @@ const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
 if ((process.argv.includes('--only') || process.argv.some(a=>a.startsWith('--only='))) && !arg?.trim()) throw new Error('--only requires a scenario pattern')
 const patterns = arg?.split(',').map(p=>p.trim()).filter(Boolean) ?? []
+const keepGoing = process.argv.includes('--keep-going')
 const requested = scenarios.filter(s => selected(s.slug, patterns))
 if (!requested.length) throw new Error('no recovery scenarios match --only')
 if (process.argv.includes('--list')) { console.log(requested.map(s => `${s.slug}\t${s.promise}`).join('\n')); process.exit(0) }
@@ -56,7 +57,11 @@ try {
     checks.push({ scenario: scenario.slug, area: scenario.area, check: 'contract', status: 'PASS', detail: scenario.promise }, ...results); completed++
     const failed = results.some(r => r.status === 'FAIL')
     console.log(`recovery: ${scenario.slug} ${failed ? 'FAIL' : results.some(r=>r.status==='WARN') ? 'PASS (documented WARN)' : 'PASS'}`)
-    if (failed) { for (const result of results.filter(r => r.status === 'FAIL')) console.error(source.host ? result.detail?.replaceAll(source.host, '<source>') : result.detail); break }
+    if (failed) {
+      for (const result of results.filter(r => r.status === 'FAIL')) console.error(source.host ? result.detail?.replaceAll(source.host, '<source>') : result.detail)
+      // A failed teardown can leave the previous process running.
+      if (!keepGoing || results.some(r => r.status === 'FAIL' && r.check === 'teardown')) break
+    }
   }
 } catch (error) {
   checks.push({ scenario: 'harness', area: 'baseline', check: 'run', status: 'FAIL', detail: String(error) })
@@ -70,6 +75,7 @@ try {
     `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${Number(process.env.PINTAIL_RECOVERY_SEED ?? 953)}.`,
     `Checks: ${checks.filter(r=>r.status==='PASS').length} PASS, ${checks.filter(r=>r.status==='WARN').length} WARN, ${checks.filter(r=>r.status==='FAIL').length} FAIL.`,
     `Scenarios: ${completed}/${requested.length} requested; ${scenarios.length} registered. Duration: ${((Date.now()-started)/60000).toFixed(1)} minutes.`, '',
+    `Failure policy: ${keepGoing ? 'continue after scenario failures (--keep-going); stop on source setup or teardown failure' : 'stop after the first scenario failure'}.`, '',
     '| scenario | check | status | detail |', '|---|---|---|---|', ...checks.map(r => `| ${r.scenario} | ${r.check} | ${r.status} | ${ledgerDetail(r.status, sanitize(r.detail ?? ''))} |`), ''].join('\n')
   const filename = patterns.length ? 'results-recovery-partial.md' : 'results-recovery.md'
   writeFileSync(join(repository, 'tests/e2e', filename), ledger)
