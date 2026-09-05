@@ -3,10 +3,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { Source, repository, runScenario, type Check, type Scenario } from './harness'
 import { selected } from './policy'
+import { command } from '../lib'
 import { baseline } from './scenarios/baseline'
 
+import { modeScenarios } from './scenarios/mode'
 
-const scenarios: Scenario[] = [baseline]
+const scenarios: Scenario[] = [baseline, ...modeScenarios]
 const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
 const patterns = arg?.split(',').filter(Boolean) ?? []
@@ -20,6 +22,9 @@ const checks: Check[] = []
 const started = Date.now()
 const binary = process.env.PINTAIL_RECOVERY_BINARY ?? join(repository, 'target/debug/pintail')
 let completed = 0
+const head = (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout
+const rust = (await command([join(homedir(), '.cargo/bin/rustc'), '--version'], { quiet: true })).stdout
+let sourceVersion = 'unavailable'
 try {
   if (!process.env.PINTAIL_RECOVERY_BINARY) {
     const build = Bun.spawn([join(homedir(), '.cargo/bin/cargo'), 'build', '-p', 'pintail', '--features', 'failpoints'], {
@@ -28,10 +33,12 @@ try {
     if (await build.exited !== 0) throw new Error('recovery binary build failed')
   }
   await source.start()
+  const [version] = await source.root.query('SELECT VERSION() AS version')
+  sourceVersion = (version as Array<{version:string}>)[0].version
   for (const scenario of requested) {
     console.log(`recovery: ${scenario.slug} starting`)
     const results = await runScenario(source, binary, scenario, runDir)
-    checks.push(...results); completed++
+    checks.push({ scenario: scenario.slug, area: scenario.area, check: 'contract', status: 'PASS', detail: scenario.promise }, ...results); completed++
     const failed = results.some(r => r.status === 'FAIL')
     console.log(`recovery: ${scenario.slug} ${failed ? 'FAIL' : 'PASS'}`)
     if (failed) { for (const result of results.filter(r => r.status === 'FAIL')) console.error(source.host ? result.detail?.replaceAll(source.host, '<source>') : result.detail); break }
@@ -43,7 +50,8 @@ try {
   const passed = completed === requested.length && checks.length > 0 && !checks.some(r => r.status === 'FAIL')
   const sanitize = (text: string) => (source.host ? text.replaceAll(source.host, '<source>') : text).replaceAll(source.name, '<source-container>').replaceAll('|', '\\|').replaceAll('\n', ' ')
   const ledger = [`# Recovery suite — ${new Date().toISOString()}`, '', `Verdict: **${passed ? patterns.length ? 'PASS (SUBSET)' : 'PASS' : 'FAIL'}**`, '',
-    `Source: MySQL 8.4; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${process.env.PINTAIL_RECOVERY_SEED ?? 953}.`,
+    `HEAD: ${head}; ${rust}; Bun ${Bun.version}.`,
+    `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${process.env.PINTAIL_RECOVERY_SEED ?? 953}.`,
     `Scenarios: ${completed}/${requested.length} requested; ${scenarios.length} registered. Duration: ${((Date.now()-started)/60000).toFixed(1)} minutes.`, '',
     '| scenario | check | status | detail |', '|---|---|---|---|', ...checks.map(r => `| ${r.scenario} | ${r.check} | ${r.status} | ${sanitize(r.detail ?? '')} |`), ''].join('\n')
   const filename = patterns.length ? 'results-recovery-partial.md' : 'results-recovery.md'

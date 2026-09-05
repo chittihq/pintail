@@ -58,8 +58,15 @@ export class Source {
     await this.root.query("CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail'; GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'pintail'@'%'")
   }
   async connect(schema?: string) {
-    return mysql.createConnection({ host: this.host, port: this.port, user: 'root', password: 'pintail-root', database: schema,
-      multipleStatements: true, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true, connectTimeout: 5_000 })
+    let connection: mysql.Connection | undefined
+    // Retry fixture connections only. Replication failures remain visible in
+    // the product's activity log and are never retried by an API wrapper.
+    await until('source fixture connection', async () => {
+      connection = await mysql.createConnection({ host: this.host, port: this.port, user: 'root', password: 'pintail-root', database: schema,
+        multipleStatements: true, supportBigNumbers: true, bigNumberStrings: true, dateStrings: true, connectTimeout: 5_000 })
+      return true
+    }, 30_000)
+    return connection!
   }
   async close() {
     this.root?.destroy()
@@ -267,6 +274,9 @@ export class Context {
       await until('process aborted', async () => !this.alive, 10_000)
       await this.stop()
       this.durable(`fault-${site}`)
+      const before = this.commits
+      await until('source commits during the crash window', async () => this.commits > before, 15_000)
+      this.check(`churn:during-crash:${site}`, true, `commits=${before}→${this.commits}`)
     }
   }
   durable(label: string): Record<string, any[]> {
