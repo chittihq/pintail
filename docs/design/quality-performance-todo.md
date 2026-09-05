@@ -29,7 +29,7 @@ serialized and uses only containers created by this repository's harnesses.
    inventory rather than duplicate it. Distinguish linked differential
    evidence, implementation-only coverage and missing functions; validate
    evidence references and generated output freshness.
-7. [ ] **Auditor benchmark kit.** Provide one documented command for a clean
+7. [x] **Auditor benchmark kit.** Provide one documented command for a clean
    machine to run the published workload, with dependencies checked, isolated
    owned resources, machine/toolchain provenance and portable output artifacts.
 8. [ ] **Two-tier admission.** Reserve bounded capacity for conservatively
@@ -78,3 +78,12 @@ serialized and uses only containers created by this repository's harnesses.
   Original, tuned and PGO artifacts are banked separately. The full production
   Docker PGO image built successfully and its server binary passed startup
   (`--help`) validation on the remote Docker host.
+
+- Item 6: 163 banked passing cases link 78 function names to historical
+  differential evidence. Two evidence tests, strict TypeScript checking and
+  offline regeneration consistency pass. Remaining names retain separate
+  implementation-only, missing, unassessed or out-of-scope coverage.
+- Item 7: the auditor command creates an isolated checkout and unique owned
+  resources, rejects reused evidence, and exports reports with provenance.
+  Strict TypeScript checking and remote Docker prerequisite checks pass.
+  Full benchmark numbers have not been remeasured for this kit.

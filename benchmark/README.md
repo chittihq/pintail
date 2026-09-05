@@ -93,3 +93,39 @@ Every container, network, temporary Pintail directory, and anonymous test
 artifact has a unique run identifier and is removed even when a query fails.
 The script resolves published ports through the active Docker context, so it
 works with the repository's remote-Docker setup as well as a local daemon.
+
+## Independent auditor kit
+
+On a clean Linux or macOS machine with Git, Bun and access to a Linux Docker
+Engine, clone this repository and run from its root:
+
+```sh
+bun run scripts/audit-benchmark.ts --output /absolute/path/to/new-audit
+```
+
+The Docker daemon needs at least 8 CPUs, 24 GiB RAM and enough free disk for
+three copies of the 20M-row workload plus build layers (allow 100 GiB). Use an
+otherwise idle dedicated host for publishable numbers. The cold MySQL work
+can take hours. Keep the machine awake until `AUDITOR-DONE` or failure.
+`--check` checks prerequisites without starting containers. `--smoke` runs
+20,000 orders with fewer samples to verify wiring; it cannot reproduce or
+support published performance claims. `--ref <commit-or-tag>` pins a revision
+that includes the auditor kit; the default is the checkout's HEAD.
+
+The command makes an isolated clean checkout, installs locked benchmark
+packages and runs the same queries, equal CPU/memory limits, correctness
+comparisons and timing methodology described above. It always measures fresh
+MySQL timings and creates a unique seed volume and Pintail image. Ordinary
+completion and errors remove those resources and the temporary checkout.
+Shared dependency images and Docker build cache remain reusable. A forced
+machine shutdown may require removing resources with that run's unique
+`pintail-m9-bench-...` prefix; never prune unrelated Docker resources.
+
+The new output directory contains raw samples and reports plus
+`provenance.json` with the source commit, machine capacity, architecture,
+kernel, tool versions and full/smoke status. The Dockerfile at that commit
+pins the Rust toolchain. `private-run.log` is troubleshooting output and can
+contain local infrastructure details: inspect it before sharing. Publish the
+JSON/Markdown reports and provenance; do not publish the private log blindly.
+A failed run retains available fresh artifacts with `status: FAIL`, never
+copies the checkout's historical reports as new evidence, and exits nonzero.

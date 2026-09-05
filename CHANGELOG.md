@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- An independent auditor command runs the benchmark from an isolated clean
+  checkout with fresh MySQL timings and portable provenance artifacts.
+
 - The MySQL function ledger now separates linked historical differential tests,
   implementation-only coverage and reviewed missing functions.
 

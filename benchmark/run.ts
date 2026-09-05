@@ -50,6 +50,8 @@ const batches = Math.max(1, Math.round(scale * 2000))
 const orderRows = batches * 10_000
 const fullGate = orderRows === 20_000_000
 const runId = `pintail-m9-bench-${process.pid}-${Date.now()}`
+const auditorRun = process.env.PINTAIL_BENCHMARK_AUDIT === '1'
+const pintailImage = auditorRun ? `${runId}:audit` : 'pintail-benchmark:latest'
 const mysqlName = `${runId}-mysql`
 const clickhouseName = `${runId}-clickhouse`
 const pintailName = `${runId}-pintail`
@@ -119,7 +121,7 @@ const benchmarkFingerprint = createHash('sha256')
   )
   .digest('hex')
 const sqlHash = (sql: string) => createHash('sha256').update(sql).digest('hex').slice(0, 16)
-const seedVolumeName = `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
+const seedVolumeName = auditorRun ? `${runId}-seed` : `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
 const runVolumeName = `${runId}-mysql-data`
 const pintailVolumeName = `${runId}-pintail-data`
 const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
@@ -141,7 +143,7 @@ let engineFingerprint = ''
 const hostFingerprint = () => createHash('sha256').update(dockerHostName).digest('hex')
 
 function loadMysqlBaseline(): MysqlBaseline | undefined {
-  if (!existsSync(baselinePath)) return undefined
+  if (auditorRun || !existsSync(baselinePath)) return undefined
   try {
     const parsed = JSON.parse(readFileSync(baselinePath, 'utf8')) as MysqlBaseline
     if (parsed.fingerprint !== benchmarkFingerprint) return undefined
@@ -929,7 +931,7 @@ async function runQueries(
                   method: 'POST',
                   token,
                   body: { db: databaseId, sql: variant.sql },
-                }),
+                }).then((response) => response.rows),
               )
             : measured(
                 () =>
@@ -937,7 +939,7 @@ async function runQueries(
                     method: 'POST',
                     token,
                     body: { db: databaseId, sql: query.sql },
-                  }),
+                  }).then((response) => response.rows),
                 warmups,
                 runs,
               ).then((run) => ({ values: [run.value], timing: run.timing })),
@@ -982,7 +984,7 @@ async function runQueries(
     const clickhouseFinalRun = measurements.clickhouseFinal.value
     resources.clickhouseFinal = measurements.clickhouseFinal.resources
     const pintailMatchesMysql = pintailRun.values.every(
-      (value, index) => canonicalRows(value.rows) === mysqlCanonicals[index],
+      (value, index) => canonicalRows(value) === mysqlCanonicals[index],
     )
     const clickhouseFinalMatchesMysql = clickhouseFinalRun.values.every(
       (value, index) => canonicalRows(value) === mysqlCanonicals[index],
@@ -1106,7 +1108,7 @@ function publishResults(
   }
   const resultPath = join(benchmarkDir, `results${suffix}.json`)
   let previousReport: ComparableReport | undefined
-  if (existsSync(resultPath)) {
+  if (!auditorRun && existsSync(resultPath)) {
     try {
       previousReport = JSON.parse(readFileSync(resultPath, 'utf8')) as ComparableReport
     } catch {
@@ -1298,6 +1300,10 @@ async function cleanup() {
     // whether the MySQL seed volume was.
     await docker('volume', 'rm', pintailVolumeName).catch(() => undefined)
   }
+  if (auditorRun) {
+    await docker('volume', 'rm', seedVolumeName).catch(() => undefined)
+    await docker('image', 'rm', pintailImage).catch(() => undefined)
+  }
   rmSync(dataDir, { recursive: true, force: true })
 }
 
@@ -1435,7 +1441,7 @@ async function main() {
   let dsn: string
   if (containerizedPintail) {
     log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
-    await docker('build', '--tag', 'pintail-benchmark:latest', repository)
+    await docker('build', '--tag', pintailImage, repository)
     await docker(
       'run',
       '--detach',
@@ -1454,7 +1460,7 @@ async function main() {
       ...engineLimits,
       '--env',
       `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
-      'pintail-benchmark:latest',
+      pintailImage,
     )
     const pintailPort = await publishedPort(pintailName, 8080)
     pintailUrl = `http://${urlHost(host)}:${pintailPort}`
@@ -1535,7 +1541,7 @@ async function main() {
       `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
       '--env',
       'PINTAIL_DISABLE_SETTLED_MEMO=1',
-      'pintail-benchmark:latest',
+      pintailImage,
     )
     const enginePort = await publishedPort(pintailName, 8080)
     const engineUrl = `http://${urlHost(host)}:${enginePort}`
