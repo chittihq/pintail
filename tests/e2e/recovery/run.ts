@@ -10,8 +10,9 @@ import { modeScenarios } from './scenarios/mode'
 import { cdcScenarios } from './scenarios/cdc'
 import { purgeScenarios } from './scenarios/purge'
 import { schemaScenarios } from './scenarios/schema'
+import { pollScenarios } from './scenarios/poll'
 
-const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios, ...schemaScenarios]
+const scenarios: Scenario[] = [baseline, ...modeScenarios, ...cdcScenarios, ...purgeScenarios, ...schemaScenarios, ...pollScenarios]
 const arg = process.argv.find(arg => arg.startsWith('--only='))?.slice(7)
   ?? (process.argv.includes('--only') ? process.argv[process.argv.indexOf('--only') + 1] : '')
 if ((process.argv.includes('--only') || process.argv.some(a=>a.startsWith('--only='))) && !arg?.trim()) throw new Error('--only requires a scenario pattern')
