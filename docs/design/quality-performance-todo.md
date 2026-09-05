@@ -25,7 +25,7 @@ serialized and uses only containers created by this repository's harnesses.
    settings first. Add reproducible profile generation/use with a representative
    training workload, measure against the instruction baseline, and keep PGO
    opt-in unless evidence establishes a benefit. Do not claim an unmeasured gain.
-6. [ ] **Completeness ledger.** Extend the existing source-backed parity
+6. [x] **Completeness ledger.** Extend the existing source-backed parity
    inventory rather than duplicate it. Distinguish linked differential
    evidence, implementation-only coverage and missing functions; validate
    evidence references and generated output freshness.

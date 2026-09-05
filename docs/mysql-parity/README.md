@@ -171,3 +171,23 @@ while the committed inventory preserves the extracted names and links.
 | [ledger.json](ledger.json) | Generated, machine-readable comparison for filtering and future automation |
 | [functions.md](functions.md), [features.md](features.md) | Generated review tables |
 | [mysql-source-ledger.ts](../../scripts/mysql-source-ledger.ts) | Offline generator and consistency check |
+
+## Differential coverage
+
+`functions.md` and `ledger.json` keep coverage separate from semantic review:
+`differential-tested` links at least one historical passing MySQL comparison;
+`implementation-only` has implementation evidence but no linked passing case;
+`missing` is a reviewed gap. `unassessed` and `out-of-scope` remain explicit.
+A tested name does not certify every overload, edge case or execution path.
+
+The committed `differential-evidence.json` pins the E2E bank commit, source
+version, measured time, ledger/corpus SHA-256, SQL hashes, case names and passing
+phases. Cases with WARN/FAIL or a documented gap are excluded. Skipped phases
+provide no evidence. Function names inside comments, strings and quoted
+identifiers do not count; bare keyword forms are conservatively unclassified.
+
+After banking a matching E2E run, refresh with
+`bun run scripts/refresh-differential-evidence.ts`, then regenerate with
+`bun run scripts/mysql-source-ledger.ts`. Refresh verifies both the ledger and
+query corpus against that immutable bank commit. Ordinary generation and
+`--check` validate hashes and case mappings offline and reject stale evidence.

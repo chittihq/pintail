@@ -6,6 +6,8 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { surface } from './function-surface.ts'
+import { differentialQueries } from '../tests/e2e/queries.ts'
+import { validateEvidence, type DifferentialEvidence } from './differential-coverage.ts'
 
 const root = resolve(import.meta.dir, '..')
 const dir = join(root, 'docs/mysql-parity')
@@ -116,6 +118,8 @@ const review: { functions: Record<string, Assessment>; operators: Record<string,
 const features: Feature[] = JSON.parse(read(join(dir, 'features.json')))
 const implementationPaths = ['crates/pintail-sql/src/binder/mod.rs', 'crates/pintail-sql/src/binder/function.rs', 'crates/pintail-sql/src/lib.rs', 'crates/pintail-wire/src/server.rs', 'crates/pintail-write/src/engine.rs']
 const implementation = implementationPaths.map((path) => ({ path, sha256: hash(read(join(root, path))) }))
+const differential: DifferentialEvidence = JSON.parse(read(join(dir, 'differential-evidence.json')))
+validateEvidence(differential, read(join(root, 'tests/e2e/results.md')), read(join(root, 'tests/e2e/queries.ts')), differentialQueries)
 const binder = surface()
 const sourceLocation = (name: string) => {
   for (const path of implementationPaths.slice(0, 2)) {
@@ -155,9 +159,11 @@ const entries = upstream.entries.map((entry) => {
   const location = arities.length ? sourceLocation(entry.name) : ''
   const status = curated.status ?? (entry.internal ? 'out-of-scope' : arities.length ? 'implemented-unverified' : 'unassessed')
   const note = curated.note ?? (entry.internal ? 'MySQL implementation detail; public SQL parity does not require this helper.' : arities.length ? 'Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.' : 'No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.')
-  return { ...entry, status, scope: curated.scope ?? (entry.internal ? 'internal' : 'triage'), priority: curated.priority ?? (entry.internal ? 'excluded' : 'P2'),
+  const differentialEvidence = entry.kind === 'function' ? differential.cases.filter((c) => c.functions.includes(entry.name)).map((c) => c.name) : []
+  const coverage = differentialEvidence.length ? 'differential-tested' : status === 'gap' ? 'missing' : arities.length || ['partial', 'implemented-unverified'].includes(status) ? 'implementation-only' : status === 'out-of-scope' ? 'out-of-scope' : 'unassessed'
+  return { ...entry, coverage, differentialEvidence, status, scope: curated.scope ?? (entry.internal ? 'internal' : 'triage'), priority: curated.priority ?? (entry.internal ? 'excluded' : 'P2'),
     pintailEvidence: curated.evidence ?? (location ? [location] : []), binderGuards: arities,
-    testOccurrences: occurrences(entry.name), verification: 'not-run', note,
+    testOccurrences: occurrences(entry.name), verification: differentialEvidence.length ? 'historical-differential-cases' : 'not-run', note,
     acceptance: curated.acceptance ?? review.acceptanceByCategory[entry.category] ?? review.defaultAcceptance }
 })
 const allowed = new Set(['implemented-unverified', 'partial', 'gap', 'unassessed', 'out-of-scope'])
@@ -176,9 +182,9 @@ for (const entry of [...entries, ...features]) {
   }
 }
 const tally = (items: { status: string }[]) => Object.fromEntries([...new Set(items.map((e) => e.status))].sort().map((s) => [s, items.filter((e) => e.status === s).length]))
-const ledger = { schemaVersion: 1, baseline: upstream.baseline, pintailImplementation: implementation,
-  verification: 'Static source/document review; no new MySQL differential run',
-  counts: { entries: entries.length, functions: entries.filter((e) => e.kind === 'function').length, operators: entries.filter((e) => e.kind === 'operator').length, features: features.length, functionStatus: tally(entries.filter((e) => e.kind === 'function')), featureStatus: tally(features) },
+const ledger = { schemaVersion: 2, differentialRun: { ...differential, cases: undefined }, baseline: upstream.baseline, pintailImplementation: implementation,
+  verification: 'Static review plus linked historical MySQL differential cases; no new run or full semantic certification',
+  counts: { entries: entries.length, functions: entries.filter((e) => e.kind === 'function').length, operators: entries.filter((e) => e.kind === 'operator').length, features: features.length, functionCoverage: tally(entries.filter((e) => e.kind === 'function').map((e) => ({ status: e.coverage }))), functionStatus: tally(entries.filter((e) => e.kind === 'function')), featureStatus: tally(features) },
   entries, features }
 const escape = (s: string) => s.replace(/\|/g, '&#124;').replace(/\n/g, ' ')
 const localLink = (ref: string) => {
@@ -190,10 +196,12 @@ const functionMarkdown = ['# MySQL function and operator comparison ledger', '',
   'Generated by `bun run scripts/mysql-source-ledger.ts`. Policy and verification contract: [README](README.md). Machine-readable details and binder guards: [ledger.json](ledger.json).', '',
   `MySQL source: **${upstream.baseline.sourceVersion}**, branch **${upstream.baseline.branch}**, commit [${upstream.baseline.commit.slice(0, 12)}](https://github.com/mysql/mysql-server/tree/${upstream.baseline.commit}). This is a development-branch snapshot, not a tagged release.`, '',
   `${ledger.counts.functions} distinct callable names; ${ledger.counts.operators} operator/construct rows. Aliases count as separate names; overloads are not separate rows. Source-only entries and internal helpers remain visible. No row is certified by this static audit.`, '',
+  `Differential evidence: ${differential.cases.length} passing corpus cases, measured ${differential.measuredAt}, bank [${differential.commit.slice(0, 12)}](https://github.com/chittihq/pintail/commit/${differential.commit}). Tested means at least one linked case, not all overloads or edge cases.`, '',
+  '| Coverage | Callable names |', '|---|---:|', ...Object.entries(ledger.counts.functionCoverage).map(([s, n]) => `| ${s} | ${n} |`), '',
   '| Status | Callable names |', '|---|---:|', ...Object.entries(ledger.counts.functionStatus).map(([s, n]) => `| ${s} | ${n} |`), '',
   ...['function', 'operator'].flatMap((kind) => [`## ${kind === 'function' ? 'Functions' : 'Operators and special constructs'}`, '',
-    '| Name | Family | Status / priority | MySQL evidence | Pintail evidence | Review / next check |', '|---|---|---|---|---|---|',
-    ...entries.filter((e) => e.kind === kind).map((e) => `| ${escape(e.name)} | ${e.category} | ${e.status} / ${e.priority} | ${[...e.source.map(upstreamLink), ...e.manual.map((url) => `[manual](${url})`)].join('; ') || 'Unresolved'} | ${e.pintailEvidence.map(localLink).join('; ') || 'Not located'} | ${escape(e.note)} |`), '']),
+    '| Name | Family | Coverage | Status / priority | MySQL evidence | Pintail evidence | Review / next check |', '|---|---|---|---|---|---|---|',
+    ...entries.filter((e) => e.kind === kind).map((e) => `| ${escape(e.name)} | ${e.category} | ${e.coverage}${e.differentialEvidence.length ? ` ([${e.differentialEvidence.length} cases](differential-evidence.json))` : ''} | ${e.status} / ${e.priority} | ${[...e.source.map(upstreamLink), ...e.manual.map((url) => `[manual](${url})`)].join('; ') || 'Unresolved'} | ${e.pintailEvidence.map(localLink).join('; ') || 'Not located'} | ${escape(e.note)} |`), '']),
 ].join('\n')
 const featureMarkdown = ['# MySQL feature comparison ledger', '',
   'Generated from [features.json](features.json). Scope and status meanings: [README](README.md). MySQL source links use the inventory commit. Entries describe external contracts, not a requirement to reproduce MySQL internals.', '',

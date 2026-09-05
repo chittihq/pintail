@@ -1303,3 +1303,7 @@ read as far worse than the engine is.
 | `YEAR_MONTH` | ✅ | ❌ | ❌ |
 | `ZEROFILL` | ✅ | ❌ | ❌ |
 | `ZONE` |  | ❌ | ❌ |
+
+The [function coverage ledger](docs/mysql-parity/functions.md) distinguishes linked
+MySQL differential cases from implementation-only names and reviewed gaps. A
+binder tick here does not establish semantic test coverage.

@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The MySQL function ledger now separates linked historical differential tests,
+  implementation-only coverage and reviewed missing functions.
+
 - A push/PR instruction-count gate checks four answer-verified queries.
 - Docker builds support opt-in PGO with `PINTAIL_PGO=1`. On the four-query
   training workload, PGO reduced instructions a further 16.83% after tuning

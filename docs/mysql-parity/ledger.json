@@ -1,5 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "differentialRun": {
+    "schemaVersion": 1,
+    "commit": "a9bc52fd5181e3318b4649903ef8a6c004f42755",
+    "measuredAt": "2026-09-05T09:57:49.829Z",
+    "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
+    "ledgerSha256": "8f52bf2565a59e6692618a9d450c03c8a551185992ac9f141d9f3034c277beb7",
+    "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab"
+  },
   "baseline": {
     "repository": "https://github.com/mysql/mysql-server",
     "branch": "8.4",
@@ -35,12 +43,19 @@
       "sha256": "b956e39a5f23d3adc0792514ed6a04ed00a54ca40d31bfc125b1b8a397c20511"
     }
   ],
-  "verification": "Static source/document review; no new MySQL differential run",
+  "verification": "Static review plus linked historical MySQL differential cases; no new run or full semantic certification",
   "counts": {
     "entries": 514,
     "functions": 467,
     "operators": 47,
     "features": 87,
+    "functionCoverage": {
+      "differential-tested": 78,
+      "implementation-only": 91,
+      "missing": 21,
+      "out-of-scope": 185,
+      "unassessed": 92
+    },
     "functionStatus": {
       "gap": 21,
       "implemented-unverified": 125,
@@ -77,6 +92,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -113,6 +130,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -146,6 +165,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -179,6 +200,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -213,6 +236,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -243,6 +268,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -273,6 +300,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: any_value reads a functionally dependent column"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -285,7 +316,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1491"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Pintail models this through aggregate binding; MySQL uses it to suppress grouping checks. Verify both grouped and ungrouped expressions and row selection.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -309,6 +340,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -345,6 +378,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -372,6 +407,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/replication-functions-async-failover.html#function_asynchronous-connection-failover-add-managed"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -398,6 +435,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/replication-functions-async-failover.html#function_asynchronous-connection-failover-add-source"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -424,6 +463,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/replication-functions-async-failover.html#function_asynchronous-connection-failover-delete-managed"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -450,6 +491,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/replication-functions-async-failover.html#function_asynchronous-connection-failover-delete-source"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -476,6 +519,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/replication-functions-async-failover.html#function_asynchronous-connection-failover-reset"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -510,6 +555,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -544,6 +591,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -577,6 +626,13 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: week-start grain with a rolling average",
+        "decimal column average beyond simple sum",
+        "group by with having",
+        "scalar subquery threshold"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -592,7 +648,7 @@
         "tests/sqllogic/tests/agg_spill.rs:74",
         "tests/sqllogic/tests/mysql_oracle.rs:608"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -616,6 +672,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -646,6 +704,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -683,6 +743,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -713,6 +775,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: bit aggregates over an unsigned flag column"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -725,7 +791,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1475"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -749,6 +815,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -779,6 +847,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -809,6 +879,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: bit aggregates over an unsigned flag column"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -821,7 +895,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1475"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -845,6 +919,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: bit aggregates over an unsigned flag column"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -857,7 +935,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1475"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -881,6 +959,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -913,6 +993,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -943,6 +1025,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -973,6 +1057,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1003,6 +1089,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1035,6 +1123,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1065,6 +1155,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1097,6 +1189,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1129,6 +1223,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1161,6 +1257,17 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: symmetric aggregate across a fanned-out join",
+        "bi tableau: explicit cast ladder",
+        "conditional decimal sum keeps the fraction",
+        "derived table status revenue share",
+        "json constructor preserves json versus text",
+        "looker symmetric key helpers",
+        "set op union distinct tiers and statuses",
+        "window share of total over grouped output"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -1174,7 +1281,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:186",
         "tests/sqllogic/tests/mysql_oracle.rs:939"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -1198,6 +1305,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -1237,6 +1346,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -1276,6 +1387,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: explicit cast ladder"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1288,7 +1403,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:735"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -1312,6 +1427,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "string functions and like"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1324,7 +1443,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1391"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -1348,6 +1467,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1384,6 +1505,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -1414,6 +1537,16 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "between and null-safe coalesce on balance",
+        "bi looker: symmetric aggregate across a fanned-out join",
+        "bi metabase: previous-period revenue window",
+        "coalesce and ifnull",
+        "order by a tree over several aggregates",
+        "order by an expression over an aggregate",
+        "residual comparison through coalesce on a nullable column"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1427,7 +1560,7 @@
         "crates/pintail-exec/tests/enum_ordinal.rs:199",
         "tests/sqllogic/tests/mysql_oracle.rs:523"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -1451,6 +1584,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -1481,6 +1616,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -1511,6 +1648,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -1541,6 +1680,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: trailing-space grouping under PAD semantics"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1553,7 +1696,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:507"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -1577,6 +1720,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1613,6 +1758,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -1643,6 +1790,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: symmetric aggregate across a fanned-out join",
+        "looker symmetric key helpers"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1655,7 +1807,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1584"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check exact versus approximate operands, boundary/overflow/domain cases, signedness, NULLs, dynamic arguments, warnings and result types."
     },
@@ -1679,6 +1831,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: explicit cast ladder"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -1690,7 +1846,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:511"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -1712,6 +1868,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1742,6 +1900,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -1774,6 +1934,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi metabase: month grain through convert_tz"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -1788,7 +1952,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1328"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -1812,6 +1976,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -1845,6 +2011,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -1880,6 +2048,71 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: a grouped foreign key reads the joined dimension",
+        "bi looker: a grouped self-join key reads the managers row",
+        "bi looker: any_value reads a functionally dependent column",
+        "bi looker: the grouped primary key determines the row",
+        "bi metabase: iso week bucketing",
+        "bi metabase: month grain through convert_tz",
+        "bi shared: extract year_month grouping",
+        "bi superset: quartile counts from ntile",
+        "case expression buckets",
+        "collation: distinct counts fold per column collation",
+        "collation: mixed grouping answers with per-key folds",
+        "collation: regrouping a mixed grouping stays exact",
+        "conditional decimal sum keeps the fraction",
+        "conformance: case-variant code grouping",
+        "conformance: date bucketing over the fact table",
+        "conformance: decimal aggregate spanning negatives and zero",
+        "conformance: mixed-collation double grouping",
+        "conformance: trailing-space grouping under PAD semantics",
+        "correlated scalar aggregate",
+        "date bucketing",
+        "decimal column average beyond simple sum",
+        "derived table",
+        "dim: enum status split",
+        "distinct count and min max",
+        "enum: a greater-than range compares as strings",
+        "enum: a less-than range compares as strings",
+        "enum: between compares as strings",
+        "enum: the empty member groups by its ordinal",
+        "enum: the empty member is selectable by text",
+        "event: daily grain per dimension code",
+        "fan-out join group concat line products",
+        "four aliases of one table joined in a chain",
+        "general_ci: equality folds ASCII case",
+        "general_ci: equality folds Latin-1 accents onto the base letter",
+        "general_ci: every supplementary character compares equal",
+        "general_ci: grouping partitions by collated equality",
+        "general_ci: joining on a collated column",
+        "general_ci: trailing spaces are insignificant (PAD SPACE)",
+        "geometry: null routes filter and count",
+        "group by with having",
+        "inner join with aggregation",
+        "join with a residual comparison between both inputs",
+        "json: distinct case variants survive a derived table",
+        "json: grouping by an extracted scalar",
+        "left join keeps rows whose only matches fail the residual",
+        "left join preserves unmatched rows",
+        "null handling",
+        "order by a tree over several aggregates",
+        "order by an expression over an aggregate",
+        "person: created-fact counts through a scalar subquery",
+        "regex: replace folds suffix classes before grouping",
+        "residual comparison through coalesce on a nullable column",
+        "right join preserves unmatched rows",
+        "set: grouped counts order by bitmask not text",
+        "set: grouping orders groups by bitmask",
+        "shipments: carrier value through the items bridge",
+        "staff: active split with id extremes",
+        "star: grouped rollup counts facts and events per dimension",
+        "temporal convert and date_format grain",
+        "temporal: month-end bucketing via last_day",
+        "temporal: year-month split grouping",
+        "window share of total over grouped output"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1895,7 +2128,7 @@
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:176",
         "crates/pintail-exec/tests/enum_empty_member.rs:128"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -1919,6 +2152,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -1956,6 +2191,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -1988,6 +2225,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2025,6 +2264,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -2058,6 +2299,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -2089,6 +2332,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -2127,6 +2372,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -2161,6 +2408,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -2191,6 +2440,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -2228,6 +2479,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "client",
       "priority": "P1",
@@ -2260,6 +2513,11 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: date bucketing over the fact table",
+        "event: daily grain per dimension code"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2272,7 +2530,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:794"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2296,6 +2554,11 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi metabase: previous-period revenue window",
+        "bi superset: week-start grain with a rolling average"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -2310,7 +2573,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:534"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2334,6 +2597,13 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi metabase: display formats for weekday, pretty date and clock",
+        "bi metabase: iso week bucketing",
+        "bi metabase: month grain through convert_tz",
+        "temporal convert and date_format grain"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2346,7 +2616,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:538"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2370,6 +2640,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: date_sub bound in the predicate"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -2384,7 +2658,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:535"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2408,6 +2682,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2444,6 +2720,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2481,6 +2759,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: quarter, weekday and name grains agree"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2493,7 +2775,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2562"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2517,6 +2799,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2553,6 +2837,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: quarter, weekday and name grains agree"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2565,7 +2853,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2548"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2589,6 +2877,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2625,6 +2915,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -2660,6 +2952,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -2693,6 +2987,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2729,6 +3025,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2765,6 +3063,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2801,6 +3101,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -2831,6 +3133,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: extract year_month grouping"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -2844,7 +3150,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:194",
         "tests/sqllogic/tests/mysql_oracle.rs:1165"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -2868,6 +3174,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -2898,6 +3206,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2934,6 +3244,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "set: find_in_set filters by membership"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -2946,7 +3260,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2641"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -2970,6 +3284,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: first and last value over an unbounded frame"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -2980,7 +3298,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1622"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -3004,6 +3322,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -3043,6 +3363,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -3082,6 +3404,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -3112,6 +3436,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -3142,6 +3468,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -3172,6 +3500,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -3208,6 +3538,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -3244,6 +3576,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -3281,6 +3615,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -3313,6 +3649,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -3345,6 +3683,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3377,6 +3717,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3407,6 +3749,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3439,6 +3783,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3469,6 +3815,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3499,6 +3847,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3529,6 +3879,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -3561,6 +3913,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -3591,6 +3945,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "session",
       "priority": "P2",
@@ -3624,6 +3980,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "counters: greatest and least across widths"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -3636,7 +3996,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2621"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -3660,6 +4020,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "group_concat single expression"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -3674,7 +4038,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:609"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Implemented with truncation warnings and session limit; derived/wrapped result metadata and JSON ORDER BY keys remain restricted.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -3692,6 +4056,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-member-actions.html#function_group-replication-disable-member-action"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3718,6 +4084,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-member-actions.html#function_group-replication-enable-member-action"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3744,6 +4112,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-communication-protocol.html#function_group-replication-get-communication-protocol"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3770,6 +4140,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-maximum-consensus.html#function_group-replication-get-write-concurrency"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3796,6 +4168,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-member-actions.html#function_group-replication-reset-member-actions"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3822,6 +4196,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-new-primary.html#function_group-replication-set-as-primary"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3848,6 +4224,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-communication-protocol.html#function_group-replication-set-communication-protocol"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3874,6 +4252,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-maximum-consensus.html#function_group-replication-set-write-concurrency"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3900,6 +4280,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-mode.html#function_group-replication-switch-to-multi-primary-mode"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3926,6 +4308,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/group-replication-functions-for-mode.html#function_group-replication-switch-to-single-primary-mode"
       ],
       "source": [],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "topology",
       "priority": "excluded",
@@ -3958,6 +4342,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -3986,6 +4372,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -4014,6 +4402,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -4044,6 +4434,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "geometry: hex round-trips the internal format"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4056,7 +4450,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1656"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -4080,6 +4474,11 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: maketime from extracted parts",
+        "temporal: sub-day grains on a microsecond timestamp"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4093,7 +4492,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1404"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -4117,6 +4516,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -4147,6 +4548,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -4184,6 +4587,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4220,6 +4625,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4257,6 +4664,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4292,6 +4701,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -4320,6 +4731,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -4350,6 +4763,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4386,6 +4801,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -4422,6 +4839,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4454,6 +4873,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4486,6 +4907,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4518,6 +4941,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4550,6 +4975,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4582,6 +5009,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4614,6 +5043,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4646,6 +5077,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4676,6 +5109,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4708,6 +5143,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4740,6 +5177,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4770,6 +5209,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4800,6 +5241,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4832,6 +5275,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4864,6 +5309,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4896,6 +5343,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4928,6 +5377,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4960,6 +5411,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -4992,6 +5445,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5024,6 +5479,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5056,6 +5513,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5088,6 +5547,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5118,6 +5579,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5148,6 +5611,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5178,6 +5643,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5208,6 +5675,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5238,6 +5707,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5268,6 +5739,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5298,6 +5771,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5328,6 +5803,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5358,6 +5835,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5388,6 +5867,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5418,6 +5899,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5448,6 +5931,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5478,6 +5963,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5508,6 +5995,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5538,6 +6027,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5570,6 +6061,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5600,6 +6093,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5632,6 +6127,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5662,6 +6159,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "session",
       "priority": "P2",
@@ -5693,6 +6192,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5721,6 +6222,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5749,6 +6252,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5777,6 +6282,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5807,6 +6314,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "session",
       "priority": "P2",
@@ -5840,6 +6349,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5868,6 +6379,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -5900,6 +6413,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -5930,6 +6445,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json constructor preserves json versus text"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -5944,7 +6463,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2162"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -5968,6 +6487,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6000,6 +6521,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6032,6 +6555,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json aggregate embeds documents"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6046,7 +6573,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1786"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -6070,6 +6597,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: json validity and typed path filter"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6082,7 +6613,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1547"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6106,6 +6637,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: contains_path over several paths at once",
+        "json: contains_path filters the documented rows"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6119,7 +6655,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:387",
         "tests/sqllogic/tests/mysql_oracle.rs:1109"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6143,6 +6679,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6180,6 +6718,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: json validity and typed path filter",
+        "json: merge_patch overlays and reads back"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6195,7 +6738,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:138",
         "tests/sqllogic/tests/mysql_oracle.rs:783"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6219,6 +6762,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6256,6 +6801,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: length and keys survive null documents"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6268,7 +6817,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1562"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6292,6 +6841,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: length and keys survive null documents"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6304,7 +6857,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1560"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6328,6 +6881,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6360,6 +6915,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: merge_patch overlays and reads back"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6373,7 +6932,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:435",
         "tests/sqllogic/tests/mysql_oracle.rs:1128"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6397,6 +6956,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6429,6 +6990,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json constructor preserves json versus text",
+        "json: object construction embeds an extracted scalar"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6443,7 +7009,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2157"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6467,6 +7033,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6505,6 +7073,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6542,6 +7112,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6579,6 +7151,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6616,6 +7190,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6653,6 +7229,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6690,6 +7268,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6722,6 +7302,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6754,6 +7336,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: search locates a literal value"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6766,7 +7352,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1765"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6790,6 +7376,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -6827,6 +7415,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "storage-specific",
       "priority": "P2",
@@ -6859,6 +7449,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "storage-specific",
       "priority": "P2",
@@ -6891,6 +7483,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -6925,6 +7519,12 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: json validity and typed path filter",
+        "json extract filter on customer meta",
+        "json: merge_patch overlays and reads back"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6939,7 +7539,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:901"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -6963,6 +7563,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: merge_patch overlays and reads back"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -6978,7 +7582,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:138",
         "tests/sqllogic/tests/mysql_oracle.rs:862"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -7002,6 +7606,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: json validity and typed path filter"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7014,7 +7622,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1568"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -7038,6 +7646,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "json: json_value reads a scalar with sql semantics"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -7053,7 +7665,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:403",
         "tests/sqllogic/tests/mysql_oracle.rs:1774"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -7077,6 +7689,12 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: lag and lead against a named window",
+        "event: lag over per-dimension timelines",
+        "window lag payment-shaped totals"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -7087,7 +7705,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1600"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -7111,6 +7729,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: month-end bucketing via last_day"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7123,7 +7745,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2562"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -7147,6 +7769,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7177,6 +7801,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: first and last value over an unbounded frame"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -7187,7 +7815,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1623"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -7211,6 +7839,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7247,6 +7877,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: lag and lead against a named window"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -7257,7 +7891,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1600"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -7281,6 +7915,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "counters: greatest and least across widths",
+        "order by a tree over several aggregates"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7293,7 +7932,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2621"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -7317,6 +7956,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7353,6 +7994,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "geometry: byte length includes the srid prefix"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7365,7 +8010,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1390"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -7387,6 +8032,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7415,6 +8062,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7445,6 +8094,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -7477,6 +8128,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7513,6 +8166,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7544,6 +8199,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -7578,6 +8235,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -7611,6 +8270,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7647,6 +8308,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7684,6 +8347,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7720,6 +8385,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7756,6 +8423,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7792,6 +8461,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -7829,6 +8500,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7859,6 +8532,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7889,6 +8564,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -7925,6 +8602,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: maketime from extracted parts"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -7939,7 +8620,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1590"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -7963,6 +8644,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -7993,6 +8676,13 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: decimal aggregate spanning negatives and zero",
+        "distinct count and min max",
+        "enum: min and max compare as strings",
+        "staff: active split with id extremes"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8008,7 +8698,7 @@
         "crates/pintail-exec/tests/join_group_fold_oracle_shape.rs:213",
         "crates/pintail-exec/tests/mixed_collation_grouping.rs:331"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -8032,6 +8722,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8064,6 +8756,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8096,6 +8790,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8128,6 +8824,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8160,6 +8858,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8192,6 +8892,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8224,6 +8926,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8256,6 +8960,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8288,6 +8994,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8320,6 +9028,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: symmetric aggregate across a fanned-out join",
+        "looker symmetric key helpers"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8333,7 +9046,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:479",
         "tests/sqllogic/tests/mysql_oracle.rs:1137"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
     },
@@ -8357,6 +9070,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -8387,6 +9102,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -8420,6 +9137,13 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: decimal aggregate spanning negatives and zero",
+        "distinct count and min max",
+        "enum: min and max compare as strings",
+        "staff: active split with id extremes"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8435,7 +9159,7 @@
         "crates/pintail-exec/tests/enum_ordinal.rs:216",
         "crates/pintail-exec/tests/join_group_fold_oracle_shape.rs:213"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -8459,6 +9183,11 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: maketime from extracted parts",
+        "temporal: sub-day grains on a microsecond timestamp"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8472,7 +9201,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1405"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -8496,6 +9225,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8532,6 +9263,11 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "date bucketing",
+        "temporal: year-month split grouping"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8545,7 +9281,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:537"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -8569,6 +9305,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: quarter, weekday and name grains agree"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8581,7 +9321,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2563"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -8605,6 +9345,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8637,6 +9379,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8669,6 +9413,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -8701,6 +9447,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -8731,6 +9479,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -8769,6 +9519,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -8801,6 +9553,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: quartile counts from ntile"
+      ],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -8811,7 +9567,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1616"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -8835,6 +9591,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8871,6 +9629,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8908,6 +9668,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -8938,6 +9700,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -8974,6 +9738,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -9006,6 +9772,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9036,6 +9804,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9066,6 +9836,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9100,6 +9872,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -9132,6 +9906,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -9164,6 +9940,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -9197,6 +9975,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9233,6 +10013,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9269,6 +10051,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9299,6 +10083,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9329,6 +10115,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: quarter, weekday and name grains agree"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9341,7 +10131,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2548"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -9365,6 +10155,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9395,6 +10187,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -9428,6 +10222,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9465,6 +10261,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9495,6 +10293,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9531,6 +10331,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "regular expression read transforms"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -9544,7 +10348,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2296"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
       "acceptance": "Compare ICU syntax/flags/positions/replacements, Unicode, binary rejection, invalid patterns and resource limits."
     },
@@ -9568,6 +10372,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "regular expression read transforms"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -9581,7 +10389,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1820"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
       "acceptance": "Compare ICU syntax/flags/positions/replacements, Unicode, binary rejection, invalid patterns and resource limits."
     },
@@ -9605,6 +10413,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "regex: replace folds suffix classes before grouping",
+        "regular expression read transforms"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -9618,7 +10431,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2296"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
       "acceptance": "Compare ICU syntax/flags/positions/replacements, Unicode, binary rejection, invalid patterns and resource limits."
     },
@@ -9642,6 +10455,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "regex: substr extracts the mail domain"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -9655,7 +10472,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2295"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
       "acceptance": "Compare ICU syntax/flags/positions/replacements, Unicode, binary rejection, invalid patterns and resource limits."
     },
@@ -9679,6 +10496,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "session",
       "priority": "P2",
@@ -9712,6 +10531,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "session",
       "priority": "P2",
@@ -9743,6 +10564,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "internal",
       "priority": "excluded",
@@ -9775,6 +10598,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -9812,6 +10637,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9848,6 +10675,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9884,6 +10713,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -9920,6 +10751,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -9950,6 +10783,32 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi metabase: month grain through convert_tz",
+        "bi metabase: previous-period revenue window",
+        "bi superset: running total over grouped revenue",
+        "bi superset: week-start grain with a rolling average",
+        "bi tableau: the stddev and variance family",
+        "computed decimal rounds negative digits half away from zero",
+        "conformance: date bucketing over the fact table",
+        "conformance: decimal aggregate spanning negatives and zero",
+        "conformance: mixed-collation double grouping",
+        "decimal column average beyond simple sum",
+        "derived table status revenue share",
+        "distinct count and min max",
+        "fan-out join group concat line products",
+        "group by with having",
+        "inner join with aggregation",
+        "multi-key join items to orders",
+        "non-recursive cte",
+        "order_items: product rollup without the orders table",
+        "shipments: carrier value through the items bridge",
+        "temporal convert and date_format grain",
+        "three-way join through items",
+        "window running total",
+        "window share of total over grouped output"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -9966,7 +10825,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:666",
         "tests/sqllogic/tests/mysql_oracle.rs:1745"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
       "acceptance": "Check exact versus approximate operands, boundary/overflow/domain cases, signedness, NULLs, dynamic arguments, warnings and result types."
     },
@@ -9990,6 +10849,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10020,6 +10881,12 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "enum: a window order walks the ordinal",
+        "window ranking per group",
+        "window share of total over grouped output"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10034,7 +10901,7 @@
         "crates/pintail-exec/tests/set_ordinal.rs:217",
         "tests/sqllogic/tests/mysql_oracle.rs:753"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types."
     },
@@ -10058,6 +10925,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -10095,6 +10964,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10125,6 +10996,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10160,6 +11033,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -10198,6 +11073,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10235,6 +11112,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10266,6 +11145,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10301,6 +11182,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10338,6 +11221,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10375,6 +11260,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10411,6 +11298,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -10446,6 +11335,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10478,6 +11369,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -10513,6 +11406,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -10543,6 +11438,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -10580,6 +11477,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -10616,6 +11515,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10649,6 +11550,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10681,6 +11584,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10714,6 +11619,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10747,6 +11654,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10780,6 +11689,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10812,6 +11723,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10844,6 +11757,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10876,6 +11791,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10908,6 +11825,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10940,6 +11859,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -10972,6 +11893,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11004,6 +11927,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11036,6 +11961,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11068,6 +11995,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11100,6 +12029,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11132,6 +12063,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11164,6 +12097,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11196,6 +12131,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11228,6 +12165,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11260,6 +12199,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11292,6 +12233,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11324,6 +12267,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11356,6 +12301,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11390,6 +12337,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11424,6 +12373,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11457,6 +12408,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11491,6 +12444,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11524,6 +12479,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11557,6 +12514,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11590,6 +12549,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11622,6 +12583,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11654,6 +12617,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11686,6 +12651,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11719,6 +12686,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11752,6 +12721,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11784,6 +12755,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11816,6 +12789,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11848,6 +12823,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11880,6 +12857,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11912,6 +12891,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11944,6 +12925,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -11976,6 +12959,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12008,6 +12993,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12040,6 +13027,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12072,6 +13061,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12104,6 +13095,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12137,6 +13130,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12170,6 +13165,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12202,6 +13199,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12234,6 +13233,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12267,6 +13268,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12300,6 +13303,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12332,6 +13337,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12364,6 +13371,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12396,6 +13405,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12429,6 +13440,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12462,6 +13475,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12495,6 +13510,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12528,6 +13545,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12561,6 +13580,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12594,6 +13615,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12627,6 +13650,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12660,6 +13685,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12693,6 +13720,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12726,6 +13755,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12759,6 +13790,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12792,6 +13825,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12824,6 +13859,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12857,6 +13894,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12890,6 +13929,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12922,6 +13963,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12954,6 +13997,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -12986,6 +14031,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13018,6 +14065,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13050,6 +14099,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13082,6 +14133,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13114,6 +14167,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13147,6 +14202,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13180,6 +14237,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13213,6 +14272,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13246,6 +14307,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13278,6 +14341,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13310,6 +14375,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13342,6 +14409,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13374,6 +14443,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13406,6 +14477,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13438,6 +14511,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13470,6 +14545,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13502,6 +14579,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13534,6 +14613,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13566,6 +14647,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13598,6 +14681,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13630,6 +14715,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "out-of-scope",
+      "differentialEvidence": [],
       "status": "out-of-scope",
       "scope": "spatial",
       "priority": "excluded",
@@ -13662,6 +14749,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -13692,6 +14781,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -13722,6 +14813,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -13758,6 +14851,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -13770,7 +14867,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1455"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -13794,6 +14891,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -13806,7 +14907,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1455"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -13830,6 +14931,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -13842,7 +14947,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1455"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -13866,6 +14971,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -13903,6 +15010,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -13933,6 +15042,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -13966,6 +15077,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: symmetric aggregate across a fanned-out join"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -13978,7 +15093,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:732"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -14002,6 +15117,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "looker symmetric key helpers"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14014,7 +15133,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:508"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -14038,6 +15157,11 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi shared: substring_index dimension cleanup",
+        "looker symmetric key helpers"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14050,7 +15174,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1576"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -14074,6 +15198,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14108,6 +15234,31 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi looker: symmetric aggregate across a fanned-out join",
+        "bi metabase: month grain through convert_tz",
+        "bi metabase: previous-period revenue window",
+        "bi superset: running total over grouped revenue",
+        "bi superset: week-start grain with a rolling average",
+        "conditional decimal sum keeps the fraction",
+        "conformance: date bucketing over the fact table",
+        "conformance: decimal aggregate spanning negatives and zero",
+        "conformance: mixed-collation double grouping",
+        "decimal column average beyond simple sum",
+        "derived table status revenue share",
+        "fan-out join group concat line products",
+        "inner join with aggregation",
+        "non-recursive cte",
+        "order by a tree over several aggregates",
+        "order by an aggregate absent from the select list",
+        "order_items: product rollup without the orders table",
+        "set: equality is literal, not member-normalized",
+        "shipments: carrier value through the items bridge",
+        "temporal convert and date_format grain",
+        "window running total",
+        "window share of total over grouped output"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -14123,9 +15274,9 @@
         "crates/pintail-exec/tests/constant_predicate_folds.rs:124",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:7",
         "crates/pintail-exec/tests/mixed_collation_grouping.rs:225",
-        "tests/sqllogic/tests/agg_spill.rs:74"
+        "crates/pintail-exec/tests/partition_rewrites.rs:188"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -14149,6 +15300,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14179,6 +15332,8 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14209,6 +15364,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -14242,6 +15399,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14278,6 +15437,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14308,6 +15469,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14344,6 +15507,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14378,6 +15543,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14408,6 +15575,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -14446,6 +15615,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "temporal: timestampdiff spans date and datetime operands"
+      ],
       "status": "partial",
       "scope": "analytics",
       "priority": "P0",
@@ -14460,7 +15633,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2748"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -14484,6 +15657,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14520,6 +15695,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14556,6 +15733,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14586,6 +15765,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: trailing-space grouping under PAD semantics"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14599,7 +15782,7 @@
         "crates/pintail-exec/tests/json_bin_collation.rs:190",
         "tests/sqllogic/tests/mysql_oracle.rs:349"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -14623,6 +15806,10 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "computed decimal rounds negative digits half away from zero"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14636,7 +15823,7 @@
         "crates/pintail-exec/tests/decimal_internal_digits.rs:150",
         "tests/sqllogic/tests/mysql_oracle.rs:1747"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check exact versus approximate operands, boundary/overflow/domain cases, signedness, NULLs, dynamic arguments, warnings and result types."
     },
@@ -14660,6 +15847,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14696,6 +15885,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14726,6 +15917,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14756,6 +15949,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14792,6 +15987,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14828,6 +16025,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14858,6 +16057,13 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "conformance: case-variant code grouping",
+        "conformance: mixed-collation double grouping",
+        "star: grouped rollup counts facts and events per dimension",
+        "string functions and like"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -14870,7 +16076,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:897"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
     },
@@ -14894,6 +16100,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14924,6 +16132,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14954,6 +16164,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -14984,6 +16196,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15014,6 +16228,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15050,6 +16266,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15080,6 +16298,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15110,6 +16330,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15140,6 +16362,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15170,6 +16394,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15182,7 +16410,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1456"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -15206,6 +16434,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15218,7 +16450,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1456"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -15242,6 +16474,10 @@
           "mechanism": "lexer-function"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi tableau: the stddev and variance family"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15254,7 +16490,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:1456"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata."
     },
@@ -15278,6 +16514,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "client",
       "priority": "P1",
@@ -15310,6 +16548,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15340,6 +16580,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15377,6 +16619,10 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "bi superset: week-start grain with a rolling average"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15389,7 +16635,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:2548"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -15413,6 +16659,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15449,6 +16697,8 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "triage",
       "priority": "P2",
@@ -15479,6 +16729,11 @@
           "mechanism": "grammar-token"
         }
       ],
+      "coverage": "differential-tested",
+      "differentialEvidence": [
+        "date bucketing",
+        "temporal: year-month split grouping"
+      ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
@@ -15492,7 +16747,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:537"
       ],
-      "verification": "not-run",
+      "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
       "acceptance": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions."
     },
@@ -15516,6 +16771,8 @@
           "mechanism": "native-registry"
         }
       ],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15546,6 +16803,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/fulltext-search.html#function_match"
       ],
       "source": [],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -15574,6 +16833,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html#operator_and"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -15601,6 +16862,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/assignment-operators.html#operator_assign-equal"
       ],
       "source": [],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -15628,6 +16891,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/assignment-operators.html#operator_assign-value"
       ],
       "source": [],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -15655,6 +16920,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_between"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -15682,6 +16949,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/cast-functions.html#operator_binary"
       ],
       "source": [],
+      "coverage": "unassessed",
+      "differentialEvidence": [],
       "status": "unassessed",
       "scope": "analytics",
       "priority": "P1",
@@ -15711,6 +16980,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_bitwise-and"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15738,6 +17009,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_bitwise-invert"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15765,6 +17038,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_bitwise-or"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15792,6 +17067,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_bitwise-xor"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15819,6 +17096,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/flow-control-functions.html#operator_case"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15846,6 +17125,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_div"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15873,6 +17154,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_divide"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -15900,6 +17183,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_equal"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -15927,6 +17212,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_equal-to"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -15954,6 +17241,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_exists"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -15981,6 +17270,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_greater-than"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16008,6 +17299,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_greater-than-or-equal"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16035,6 +17328,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_in"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16062,6 +17357,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_is"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16089,6 +17386,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_is-not"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16116,6 +17415,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_is-not-null"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16143,6 +17444,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_is-null"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16170,6 +17473,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/json-search-functions.html#operator_json-column-path"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16197,6 +17502,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/json-search-functions.html#operator_json-inline-path"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16224,6 +17531,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_left-shift"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16251,6 +17560,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_less-than"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16278,6 +17589,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_less-than-or-equal"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16305,6 +17618,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/string-comparison-functions.html#operator_like"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16332,6 +17647,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/json-search-functions.html#operator_member-of"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16359,6 +17676,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_minus"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16387,6 +17706,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_mod"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16415,6 +17736,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html#operator_not"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16442,6 +17765,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_not-between"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16470,6 +17795,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_not-equal"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16497,6 +17824,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_not-exists"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16524,6 +17853,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#operator_not-in"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16551,6 +17882,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/string-comparison-functions.html#operator_not-like"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16578,6 +17911,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/regexp.html#operator_not-regexp"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16606,6 +17941,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html#operator_or"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
@@ -16633,6 +17970,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_plus"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16661,6 +18000,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/regexp.html#operator_regexp"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16688,6 +18029,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/bit-functions.html#operator_right-shift"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16715,6 +18058,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/string-functions.html#operator_sounds-like"
       ],
       "source": [],
+      "coverage": "missing",
+      "differentialEvidence": [],
       "status": "gap",
       "scope": "analytics",
       "priority": "P1",
@@ -16742,6 +18087,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_times"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16769,6 +18116,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/arithmetic-functions.html#operator_unary-minus"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "partial",
       "scope": "analytics",
       "priority": "P1",
@@ -16796,6 +18145,8 @@
         "https://dev.mysql.com/doc/refman/8.4/en/logical-operators.html#operator_xor"
       ],
       "source": [],
+      "coverage": "implementation-only",
+      "differentialEvidence": [],
       "status": "implemented-unverified",
       "scope": "analytics",
       "priority": "P1",
