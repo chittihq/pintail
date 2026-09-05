@@ -17,7 +17,6 @@ pub use batch::{
     SelectedRows, SelectionMask,
 };
 pub use execution::compare_collated_text;
-pub use execution::dependent_subquery_executions;
 pub use execution::{
     BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, ExecutionCancellation,
     MAX_CROSS_JOIN_ROWS, MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,
@@ -26,6 +25,10 @@ pub use execution::{
 pub use execution::{
     MemoryBudget, MemoryScope, init_shared_memory_budget, set_session_cte_max_recursion_depth,
     set_session_group_concat_max_len, shared_memory_budget, take_session_group_concat_warnings,
+};
+pub use execution::{
+    dependent_memo_disabled, dependent_memo_hits, dependent_memo_misses,
+    dependent_subquery_executions,
 };
 pub use explain::{
     ExplainError, explain_analyze_statement, explain_analyze_statement_with_deadline,

@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- A correlated subquery on the dependent path - the shapes the binder
+  cannot rewrite into a join - now executes its inner query once per
+  distinct outer tuple instead of once per outer row. A statement-local
+  memo, keyed on the outer values substituted into the inner query and
+  charged to the query's memory ceiling, shares the answer across rows
+  that ask the same question; a refused charge drops the memo and the
+  query finishes exactly as before. Inner queries using `RAND()` or
+  `UUID()` are never memoized, NULL is its own key, text keys compare
+  bytewise (never a wrong hit under a case-insensitive collation), errors
+  are not cached, and `IF`/`COALESCE` branches not taken are still never
+  run. Measured 18-200× on scalar and `EXISTS` shapes at a thousand
+  distinct keys over twenty thousand rows, 21-1600× on correlated `IN`
+  (`benchmark/evidence/dependent-subquery-memo.md`).
+
 ### Added
 
 - The wire listener bounds what a client can hold open without running a

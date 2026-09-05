@@ -1396,6 +1396,10 @@ pub(super) fn execute_nested_loop_join(
         .map(|column| column.data_type)
         .collect::<Vec<_>>();
     let mut output = Vec::new();
+    // One memo for the whole join: the ON condition's subqueries are keyed
+    // by the (left, right) values they substitute, and a nested loop
+    // revisits the same right row once per left row.
+    let mut memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
     for left in left_rows {
         memory.check_interruption()?;
         let mut matches = 0_usize;
@@ -1409,15 +1413,16 @@ pub(super) fn execute_nested_loop_join(
             let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
             let batch = RecordBatch::new(1, vectors)?;
             let mut predicate = condition.clone();
-            resolve_dependent_expr_subqueries(
-                &mut predicate,
-                &batch,
-                0,
-                &columns,
+            let context = super::DependentRow {
+                batch: &batch,
+                row: 0,
+                columns: &columns,
                 provider,
                 memory,
                 collation,
-            )?;
+            };
+            memo.begin_row();
+            resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
             let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
             if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
                 continue;
@@ -1462,6 +1467,7 @@ pub(super) fn execute_nested_loop_join(
             BoundJoinKind::Cross => unreachable!("cross joins return above"),
         }
     }
+    super::record_dependent_memo(memo.finish(memory));
     Ok(output)
 }
 

@@ -6,13 +6,16 @@
 //! carry the same correlation values - a million orders over ten thousand
 //! customers - the same inner question is answered again and again.
 //!
-//! This is the measurement that decides whether that is worth fixing. An
-//! outer table of N rows carries D distinct correlation keys; the sweep
-//! varies N/D from 1 (every key distinct, nothing to share) to N (one key,
-//! everything shareable) while N stays fixed, so any change in cost is the
-//! repetition and nothing else. Inner executions are counted, not inferred:
-//! the counter proves each shape took the dependent path (a decorrelated
-//! shape would run zero) and ran exactly once per outer row.
+//! This is the measurement that decided it was worth fixing, and now the
+//! proof that the fix does what it claims. An outer table of N rows carries
+//! D distinct correlation keys; the sweep varies the repetition while N
+//! stays fixed, so any change in cost is the repetition and nothing else.
+//! Inner executions are counted, not inferred: before the dependent memo
+//! every shape ran its inner query once per outer row (banked in
+//! `benchmark/evidence/dependent-subquery-ratio.md`); with it, once per
+//! distinct key. The counter proves each shape took the dependent path (a
+//! decorrelated shape would run zero) and that the memo shared exactly
+//! what it should - no more, which would be a wrong hit, and no less.
 //!
 //! Sizes default small so the correctness assertions run in the unit gate.
 //! `PINTAIL_RATIO_ROWS=20000 cargo test --test dependent_subquery_ratio -- --nocapture`
@@ -233,10 +236,10 @@ fn every_correlated_shape_executes_its_inner_query_once_per_outer_row() {
             let (result_rows, executions, ms) = measure(&fixture, sql);
             assert!(result_rows > 0, "{name}: the query answered nothing");
             assert_eq!(
-                executions, rows,
-                "{name}: the dependent path runs the inner query exactly once per outer row - \
-                 {executions} executions for {rows} rows means the shape did not take it, or \
-                 shared work it does not share today"
+                executions, distinct,
+                "{name}: the dependent memo runs the inner query once per distinct outer tuple - \
+                 {executions} executions for {distinct} distinct keys over {rows} rows means \
+                 either a wrong hit (fewer) or a missed share (more)"
             );
             println!(
                 "| {name} | {distinct} | {ratio} | {executions} | {ms:.0} | {:.3} |",
@@ -244,14 +247,19 @@ fn every_correlated_shape_executes_its_inner_query_once_per_outer_row() {
             );
             per_ratio.push(ms);
         }
-        // The claim under test: cost is flat in the repetition because
-        // nothing is shared. If a later change shares work, this is where
-        // the single-key column must fall well below the least-repeated one.
+        // The claim under test: cost now falls with the repetition, because
+        // the memo shares every repeated tuple's answer. The single-key
+        // column executes once and must be well below the least-repeated one.
         let least_repeated = per_ratio[0];
         let one_key = per_ratio[3];
         println!(
             "| {name} | — | — | — | — | single-key cost is {:.0}% of the least-repeated column |",
             one_key / least_repeated * 100.0
+        );
+        assert!(
+            one_key < least_repeated,
+            "{name}: one key over {rows} rows must cost less than {} distinct keys",
+            distinct_keys[0].min(rows)
         );
     }
 }

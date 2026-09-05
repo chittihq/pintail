@@ -2,6 +2,7 @@ mod aggregate;
 mod budget;
 mod error;
 mod join;
+mod memo;
 mod sort;
 mod two_pass;
 mod window;
@@ -19,6 +20,7 @@ use join::{
     HashJoinState, build_hash_join_state, execute_nested_loop_join, next_hash_join_batch,
     normalized_collation_value,
 };
+use memo::DependentMemo;
 use sort::{
     DistinctRows, SetOpRows, SortedRows, build_distinct, build_set_operation, build_sort,
     compare_sort_values,
@@ -2229,44 +2231,49 @@ fn expression_has_subquery(expression: &BoundExpr) -> bool {
     }
 }
 
+/// Writes one outer row's values into `query` as literals, and records
+/// every value written, in visit order, into `key`. The walk is
+/// deterministic, so two rows that write the same values produce the same
+/// key - which is exactly the tuple the dependent memo shares results by.
 fn substitute_outer_query(
     query: &mut BoundQuery,
     batch: &RecordBatch,
     row: usize,
     columns: &[BoundColumn],
+    key: &mut Vec<Value>,
 ) -> Result<(), ExecError> {
     for projection in &mut query.projection {
-        substitute_outer_expr(&mut projection.expr, batch, row, columns)?;
+        substitute_outer_expr(&mut projection.expr, batch, row, columns, key)?;
     }
     if let Some(filter) = &mut query.filter {
-        substitute_outer_expr(filter, batch, row, columns)?;
+        substitute_outer_expr(filter, batch, row, columns, key)?;
     }
     for expression in &mut query.group_by {
-        substitute_outer_expr(expression, batch, row, columns)?;
+        substitute_outer_expr(expression, batch, row, columns, key)?;
     }
     for aggregate in &mut query.aggregates {
         if let Some(expression) = &mut aggregate.expr {
-            substitute_outer_expr(expression, batch, row, columns)?;
+            substitute_outer_expr(expression, batch, row, columns, key)?;
         }
         for (expression, _) in &mut aggregate.order_within {
-            substitute_outer_expr(expression, batch, row, columns)?;
+            substitute_outer_expr(expression, batch, row, columns, key)?;
         }
     }
     for window in &mut query.windows {
         match &mut window.function {
             WindowFunction::Aggregate(aggregate) => {
                 if let Some(expression) = &mut aggregate.expr {
-                    substitute_outer_expr(expression, batch, row, columns)?;
+                    substitute_outer_expr(expression, batch, row, columns, key)?;
                 }
             }
             WindowFunction::Offset { expr, default, .. } => {
-                substitute_outer_expr(expr, batch, row, columns)?;
+                substitute_outer_expr(expr, batch, row, columns, key)?;
                 if let Some(default) = default {
-                    substitute_outer_expr(default, batch, row, columns)?;
+                    substitute_outer_expr(default, batch, row, columns, key)?;
                 }
             }
             WindowFunction::Extreme { expr, .. } => {
-                substitute_outer_expr(expr, batch, row, columns)?;
+                substitute_outer_expr(expr, batch, row, columns, key)?;
             }
             WindowFunction::RowNumber
             | WindowFunction::Rank
@@ -2274,36 +2281,36 @@ fn substitute_outer_query(
             | WindowFunction::NTile(_) => {}
         }
         for expression in &mut window.partition_by {
-            substitute_outer_expr(expression, batch, row, columns)?;
+            substitute_outer_expr(expression, batch, row, columns, key)?;
         }
-        for key in &mut window.order_by {
-            substitute_outer_expr(&mut key.expr, batch, row, columns)?;
+        for order_key in &mut window.order_by {
+            substitute_outer_expr(&mut order_key.expr, batch, row, columns, key)?;
         }
     }
     if let Some(having) = &mut query.having {
-        substitute_outer_expr(having, batch, row, columns)?;
+        substitute_outer_expr(having, batch, row, columns, key)?;
     }
     for source in &mut query.from {
         if let Some(input) = &mut source.base.input {
-            substitute_outer_query(input, batch, row, columns)?;
+            substitute_outer_query(input, batch, row, columns, key)?;
         }
         for join in &mut source.joins {
             if let Some(input) = &mut join.table.input {
-                substitute_outer_query(input, batch, row, columns)?;
+                substitute_outer_query(input, batch, row, columns, key)?;
             }
             if let Some(condition) = &mut join.condition {
-                substitute_outer_expr(condition, batch, row, columns)?;
+                substitute_outer_expr(condition, batch, row, columns, key)?;
             }
         }
     }
     for branch in &mut query.union_all {
-        substitute_outer_query(branch, batch, row, columns)?;
+        substitute_outer_query(branch, batch, row, columns, key)?;
     }
     for (_, right) in &mut query.set_ops {
-        substitute_outer_query(right, batch, row, columns)?;
+        substitute_outer_query(right, batch, row, columns, key)?;
     }
     if let Some(recursive) = &mut query.recursive {
-        substitute_outer_query(&mut recursive.member, batch, row, columns)?;
+        substitute_outer_query(&mut recursive.member, batch, row, columns, key)?;
     }
     Ok(())
 }
@@ -2313,6 +2320,7 @@ fn substitute_outer_expr(
     batch: &RecordBatch,
     row: usize,
     columns: &[BoundColumn],
+    key: &mut Vec<Value>,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
         BoundExprKind::Column(column) if column.outer => {
@@ -2333,27 +2341,28 @@ fn substitute_outer_expr(
                         "dependent subquery outer row is outside its input",
                     ))?;
                 expression.nullable = matches!(value, Value::Null);
+                key.push(value.clone());
                 expression.kind = BoundExprKind::Literal(value);
             }
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            substitute_outer_expr(expr, batch, row, columns)?;
+            substitute_outer_expr(expr, batch, row, columns, key)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            substitute_outer_expr(left, batch, row, columns)?;
-            substitute_outer_expr(right, batch, row, columns)?;
+            substitute_outer_expr(left, batch, row, columns, key)?;
+            substitute_outer_expr(right, batch, row, columns, key)?;
         }
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
-                substitute_outer_expr(argument, batch, row, columns)?;
+                substitute_outer_expr(argument, batch, row, columns, key)?;
             }
         }
         BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
-            substitute_outer_query(query, batch, row, columns)?;
+            substitute_outer_query(query, batch, row, columns, key)?;
         }
         BoundExprKind::InSubquery { expr, query, .. } => {
-            substitute_outer_expr(expr, batch, row, columns)?;
-            substitute_outer_query(query, batch, row, columns)?;
+            substitute_outer_expr(expr, batch, row, columns, key)?;
+            substitute_outer_query(query, batch, row, columns, key)?;
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -2364,28 +2373,62 @@ fn substitute_outer_expr(
     Ok(())
 }
 
-fn resolve_dependent_expr_subqueries(
+/// The row context a dependent subquery resolves in. One struct rather
+/// than seven arguments now that the memo rides along with them.
+pub(super) struct DependentRow<'a> {
+    pub(super) batch: &'a RecordBatch,
+    pub(super) row: usize,
+    pub(super) columns: &'a [BoundColumn],
+    pub(super) provider: &'a dyn ScanProvider,
+    pub(super) memory: &'a MemoryTracker,
+    pub(super) collation: Collation,
+}
+
+/// Answers one subquery for the current row: from the memo when the
+/// substituted outer tuple has been seen, otherwise by executing it and
+/// recording the answer. `maximum_rows` is the same early stop the
+/// un-memoized path used, so a cached answer is exactly what a fresh one
+/// would have been.
+fn dependent_subquery_values(
+    query: &BoundQuery,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
+    maximum_rows: Option<usize>,
+) -> Result<Vec<Value>, ExecError> {
+    let slot = memo.next_slot();
+    let mut query = query.clone();
+    let mut key = Vec::new();
+    substitute_outer_query(
+        &mut query,
+        context.batch,
+        context.row,
+        context.columns,
+        &mut key,
+    )?;
+    if let Some(values) = memo.get(slot, &key) {
+        return Ok(values);
+    }
+    let values = materialize_subquery(
+        query,
+        context.provider,
+        dependent_subquery_memory_limit(context.memory, context.batch)?,
+        context.memory.deadline,
+        maximum_rows,
+        context.collation,
+    )?;
+    memo.insert(context.memory, slot, key, &values);
+    Ok(values)
+}
+
+pub(super) fn resolve_dependent_expr_subqueries(
     expression: &mut BoundExpr,
-    batch: &RecordBatch,
-    row: usize,
-    columns: &[BoundColumn],
-    provider: &dyn ScanProvider,
-    memory: &MemoryTracker,
-    collation: Collation,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
 ) -> Result<(), ExecError> {
-    memory.check_interruption()?;
+    context.memory.check_interruption()?;
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) => {
-            let mut query = (**query).clone();
-            substitute_outer_query(&mut query, batch, row, columns)?;
-            let values = materialize_subquery(
-                query,
-                provider,
-                dependent_subquery_memory_limit(memory, batch)?,
-                memory.deadline,
-                Some(2),
-                collation,
-            )?;
+            let values = dependent_subquery_values(query, context, memo, Some(2))?;
             let value = match values.as_slice() {
                 [] => Value::Null,
                 [value] => value.clone(),
@@ -2395,16 +2438,7 @@ fn resolve_dependent_expr_subqueries(
             expression.kind = BoundExprKind::Literal(value);
         }
         BoundExprKind::ExistsSubquery { query, negated } => {
-            let mut query = (**query).clone();
-            substitute_outer_query(&mut query, batch, row, columns)?;
-            let values = materialize_subquery(
-                query,
-                provider,
-                dependent_subquery_memory_limit(memory, batch)?,
-                memory.deadline,
-                Some(1),
-                collation,
-            )?;
+            let values = dependent_subquery_values(query, context, memo, Some(1))?;
             expression.kind = BoundExprKind::Literal(Value::Boolean(values.is_empty() == *negated));
             expression.nullable = false;
         }
@@ -2413,23 +2447,12 @@ fn resolve_dependent_expr_subqueries(
             query,
             negated,
         } => {
-            resolve_dependent_expr_subqueries(
-                expr, batch, row, columns, provider, memory, collation,
-            )?;
+            resolve_dependent_expr_subqueries(expr, context, memo)?;
             let projection_type = query
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let mut query = (**query).clone();
-            substitute_outer_query(&mut query, batch, row, columns)?;
-            let values = materialize_subquery(
-                query,
-                provider,
-                dependent_subquery_memory_limit(memory, batch)?,
-                memory.deadline,
-                None,
-                collation,
-            )?;
+            let values = dependent_subquery_values(query, context, memo, None)?;
             let mut args = Vec::with_capacity(values.len().saturating_add(1));
             args.push((**expr).clone());
             args.extend(values.into_iter().map(|value| BoundExpr {
@@ -2443,22 +2466,14 @@ fn resolve_dependent_expr_subqueries(
             };
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            resolve_dependent_expr_subqueries(
-                expr, batch, row, columns, provider, memory, collation,
-            )?;
+            resolve_dependent_expr_subqueries(expr, context, memo)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
-            resolve_dependent_expr_subqueries(
-                left, batch, row, columns, provider, memory, collation,
-            )?;
-            resolve_dependent_expr_subqueries(
-                right, batch, row, columns, provider, memory, collation,
-            )?;
+            resolve_dependent_expr_subqueries(left, context, memo)?;
+            resolve_dependent_expr_subqueries(right, context, memo)?;
         }
         BoundExprKind::Scalar { function, args } => {
-            resolve_dependent_scalar_args(
-                *function, args, batch, row, columns, provider, memory, collation,
-            )?;
+            resolve_dependent_scalar_args(*function, args, context, memo)?;
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -2469,73 +2484,54 @@ fn resolve_dependent_expr_subqueries(
     Ok(())
 }
 
-// The row context a dependent subquery needs: where it sits, what it can see,
-// and how text compares. Bundling them into a struct would move the same
-// values behind one more indirection.
-#[allow(clippy::too_many_arguments)]
+/// Short-circuiting functions resolve only the branch they take. The memo
+/// slot walk must still account for the skipped branch's subqueries, or
+/// the slots after it would name the wrong subquery on this row - so a
+/// skipped branch advances the cursor past its subqueries without
+/// executing or caching any of them.
 fn resolve_dependent_scalar_args(
     function: ScalarFunction,
     args: &mut [BoundExpr],
-    batch: &RecordBatch,
-    row: usize,
-    columns: &[BoundColumn],
-    provider: &dyn ScanProvider,
-    memory: &MemoryTracker,
-    collation: Collation,
+    context: &DependentRow<'_>,
+    memo: &mut DependentMemo,
 ) -> Result<(), ExecError> {
     match function {
         ScalarFunction::If if args.len() == 3 => {
-            resolve_dependent_expr_subqueries(
-                &mut args[0],
-                batch,
-                row,
-                columns,
-                provider,
-                memory,
-                collation,
-            )?;
-            let condition = evaluate_and_literalize(&mut args[0], batch, row, columns, collation)?;
+            resolve_dependent_expr_subqueries(&mut args[0], context, memo)?;
+            let condition = evaluate_and_literalize(&mut args[0], context)?;
             let selected = if predicate_truth(&condition)? { 1 } else { 2 };
             let skipped = if selected == 1 { 2 } else { 1 };
-            resolve_dependent_expr_subqueries(
-                &mut args[selected],
-                batch,
-                row,
-                columns,
-                provider,
-                memory,
-                collation,
-            )?;
+            if selected == 1 {
+                resolve_dependent_expr_subqueries(&mut args[1], context, memo)?;
+                memo.skip_subqueries_in(&args[2]);
+            } else {
+                memo.skip_subqueries_in(&args[1]);
+                resolve_dependent_expr_subqueries(&mut args[2], context, memo)?;
+            }
             args[skipped].nullable = true;
             args[skipped].kind = BoundExprKind::Literal(Value::Null);
         }
         ScalarFunction::Coalesce => {
-            for index in 0..args.len() {
-                resolve_dependent_expr_subqueries(
-                    &mut args[index],
-                    batch,
-                    row,
-                    columns,
-                    provider,
-                    memory,
-                    collation,
-                )?;
-                let value =
-                    evaluate_and_literalize(&mut args[index], batch, row, columns, collation)?;
+            let mut settled = None;
+            for (index, argument) in args.iter_mut().enumerate() {
+                resolve_dependent_expr_subqueries(argument, context, memo)?;
+                let value = evaluate_and_literalize(argument, context)?;
                 if !matches!(value, Value::Null) {
-                    for skipped in &mut args[index + 1..] {
-                        skipped.nullable = true;
-                        skipped.kind = BoundExprKind::Literal(Value::Null);
-                    }
+                    settled = Some(index);
                     break;
+                }
+            }
+            if let Some(index) = settled {
+                for skipped in &mut args[index + 1..] {
+                    memo.skip_subqueries_in(skipped);
+                    skipped.nullable = true;
+                    skipped.kind = BoundExprKind::Literal(Value::Null);
                 }
             }
         }
         _ => {
             for argument in args {
-                resolve_dependent_expr_subqueries(
-                    argument, batch, row, columns, provider, memory, collation,
-                )?;
+                resolve_dependent_expr_subqueries(argument, context, memo)?;
             }
         }
     }
@@ -2544,12 +2540,10 @@ fn resolve_dependent_scalar_args(
 
 fn evaluate_and_literalize(
     expression: &mut BoundExpr,
-    batch: &RecordBatch,
-    row: usize,
-    columns: &[BoundColumn],
-    collation: Collation,
+    context: &DependentRow<'_>,
 ) -> Result<Value, ExecError> {
-    let value = CompiledExpr::compile(expression, columns, collation)?.evaluate(batch, row)?;
+    let value = CompiledExpr::compile(expression, context.columns, context.collation)?
+        .evaluate(context.batch, context.row)?;
     expression.nullable = matches!(value, Value::Null);
     expression.kind = BoundExprKind::Literal(value.clone());
     Ok(value)
@@ -2575,6 +2569,41 @@ static DEPENDENT_SUBQUERY_EXECUTIONS: std::sync::atomic::AtomicU64 =
 #[must_use]
 pub fn dependent_subquery_executions() -> u64 {
     DEPENDENT_SUBQUERY_EXECUTIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static DEPENDENT_MEMO_HITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DEPENDENT_MEMO_MISSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DEPENDENT_MEMO_DISABLED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Inner executions the dependent memo answered from a previous row
+/// instead of running, since process start.
+#[must_use]
+pub fn dependent_memo_hits() -> u64 {
+    DEPENDENT_MEMO_HITS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Operators whose memo gave up - a refused memory charge or the entry
+/// cap - and finished un-memoized, since process start. A rising count
+/// means the ceiling, not the memo, is what is bounding those queries.
+#[must_use]
+pub fn dependent_memo_disabled() -> u64 {
+    DEPENDENT_MEMO_DISABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Memo lookups that found nothing and ran the inner query, since process
+/// start. Hits over hits plus misses is the share of inner executions the
+/// memo removed.
+#[must_use]
+pub fn dependent_memo_misses() -> u64 {
+    DEPENDENT_MEMO_MISSES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(super) fn record_dependent_memo(stats: memo::DependentMemoStats) {
+    DEPENDENT_MEMO_HITS.fetch_add(stats.hits, std::sync::atomic::Ordering::Relaxed);
+    DEPENDENT_MEMO_MISSES.fetch_add(stats.misses, std::sync::atomic::Ordering::Relaxed);
+    if stats.disabled {
+        DEPENDENT_MEMO_DISABLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 fn materialize_subquery(
@@ -3393,19 +3422,21 @@ fn build_operator(
                     .map(|column| column.data_type)
                     .collect::<Vec<_>>();
                 let mut rows = Vec::new();
+                let mut memo = DependentMemo::for_expressions(std::iter::once(&predicate));
                 while let Some(batch) = input.next_batch(memory)? {
                     let batch_bytes = batch.estimated_bytes();
                     for row in batch.selection().selected_rows() {
                         let mut expression = predicate.clone();
-                        resolve_dependent_expr_subqueries(
-                            &mut expression,
-                            &batch,
+                        let context = DependentRow {
+                            batch: &batch,
                             row,
-                            &columns,
+                            columns: &columns,
                             provider,
                             memory,
                             collation,
-                        )?;
+                        };
+                        memo.begin_row();
+                        resolve_dependent_expr_subqueries(&mut expression, &context, &mut memo)?;
                         let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
                         if !predicate_truth(&compiled.evaluate(&batch, row)?)? {
                             continue;
@@ -3417,6 +3448,7 @@ fn build_operator(
                         rows.push(values);
                     }
                 }
+                record_dependent_memo(memo.finish(memory));
                 return Ok((
                     PullOperator::Rows {
                         rows,
@@ -3563,20 +3595,28 @@ fn build_operator(
                     .map(|projection| projection.expr.data_type.unwrap_or(DataType::Utf8))
                     .collect::<Vec<_>>();
                 let mut rows = Vec::new();
+                let mut memo = DependentMemo::for_expressions(
+                    expressions.iter().map(|projection| &projection.expr),
+                );
                 while let Some(batch) = input.next_batch(memory)? {
                     let batch_bytes = batch.estimated_bytes();
                     for row in batch.selection().selected_rows() {
                         let mut values = Vec::with_capacity(expressions.len());
+                        let context = DependentRow {
+                            batch: &batch,
+                            row,
+                            columns: &columns,
+                            provider,
+                            memory,
+                            collation,
+                        };
+                        memo.begin_row();
                         for projection in &expressions {
                             let mut expression = projection.expr.clone();
                             resolve_dependent_expr_subqueries(
                                 &mut expression,
-                                &batch,
-                                row,
-                                &columns,
-                                provider,
-                                memory,
-                                collation,
+                                &context,
+                                &mut memo,
                             )?;
                             let compiled = CompiledExpr::compile(&expression, &columns, collation)?;
                             values.push(compiled.evaluate(&batch, row)?);
@@ -3587,6 +3627,7 @@ fn build_operator(
                         rows.push(values);
                     }
                 }
+                record_dependent_memo(memo.finish(memory));
                 return Ok((
                     PullOperator::Rows {
                         rows,

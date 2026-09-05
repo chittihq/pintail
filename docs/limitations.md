@@ -16,7 +16,14 @@ stays readable as a list of things to fix.
   table and every correlated conjunct is a comparison spanning the two scopes
   (equalities key the hash join; ranges ride the residual or nested loop).
   Other shapes fall back to bounded dependent execution where the engine
-  classifies them, and reject otherwise. Correlated `NOT IN` additionally
+  classifies them, and reject otherwise. On that path the inner query is
+  planned and executed once per DISTINCT outer tuple - a statement-local
+  memo shares the answer across outer rows that substitute the same values
+  - but each execution still plans the inner query from scratch, so a
+  correlated `IN` whose inner side holds a join pays roughly 20× the
+  per-execution cost of a scalar or `EXISTS` shape
+  (`benchmark/evidence/dependent-subquery-memo.md`). An inner query using
+  `RAND()` or `UUID()` is never memoized. Correlated `NOT IN` additionally
   requires both membership sides to be provably non-nullable: with a possible
   NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
   shapes reject.

@@ -1116,7 +1116,7 @@ fn joins_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan
 
 /// Whether an expression's value can differ between two evaluations of the same
 /// row, which makes it unsafe to move between a filter and a join key.
-fn is_volatile(expr: &BoundExpr) -> bool {
+pub(crate) fn is_volatile(expr: &BoundExpr) -> bool {
     match &expr.kind {
         BoundExprKind::Scalar { function, args } => {
             matches!(function, ScalarFunction::Rand | ScalarFunction::Uuid)
