@@ -1,0 +1,3011 @@
+{
+  "defaultAcceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution.",
+  "acceptanceByCategory": {
+    "date-and-time-functions": "Check all arities/units/directives, zero/invalid dates, negative and extended TIME, fractional precision, time zones/DST, statement stability and wrapped/direct wire metadata on both source versions.",
+    "aggregate-functions": "Check empty/all-NULL groups, DISTINCT, duplicate keys, overflow/scale, collation, ordering/truncation, spill and window legality; compare values, warnings and metadata.",
+    "window-function-descriptions": "Check peers/ties, empty and bounded frames, ROWS/RANGE defaults, named windows, NULL treatment, argument restrictions and partition/order types.",
+    "string-functions": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata.",
+    "mathematical-functions": "Check exact versus approximate operands, boundary/overflow/domain cases, signedness, NULLs, dynamic arguments, warnings and result types.",
+    "regexp": "Compare ICU syntax/flags/positions/replacements, Unicode, binary rejection, invalid patterns and resource limits."
+  },
+  "functions": {
+    "ASYNCHRONOUS_CONNECTION_FAILOVER_ADD_MANAGED": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "ASYNCHRONOUS_CONNECTION_FAILOVER_ADD_SOURCE": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "ASYNCHRONOUS_CONNECTION_FAILOVER_DELETE_MANAGED": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "ASYNCHRONOUS_CONNECTION_FAILOVER_DELETE_SOURCE": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "ASYNCHRONOUS_CONNECTION_FAILOVER_RESET": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GEOMCOLLECTION": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "GEOMETRYCOLLECTION": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "GET_LOCK": {
+      "status": "unassessed",
+      "note": "Connection-scoped advisory locking requires an explicit compatibility decision; no binder dispatch located.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs"
+      ],
+      "scope": "session",
+      "priority": "P2"
+    },
+    "GROUP_REPLICATION_DISABLE_MEMBER_ACTION": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_ENABLE_MEMBER_ACTION": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_GET_COMMUNICATION_PROTOCOL": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_GET_WRITE_CONCURRENCY": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_RESET_MEMBER_ACTIONS": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_SET_AS_PRIMARY": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_SET_COMMUNICATION_PROTOCOL": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_SET_WRITE_CONCURRENCY": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_SWITCH_TO_MULTI_PRIMARY_MODE": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "GROUP_REPLICATION_SWITCH_TO_SINGLE_PRIMARY_MODE": {
+      "status": "out-of-scope",
+      "note": "MySQL topology/module administration; Pintail is a single-node analytical mirror. Module registration and privileges are separate from native scalar dispatch.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "topology",
+      "priority": "excluded"
+    },
+    "IS_FREE_LOCK": {
+      "status": "unassessed",
+      "note": "Connection-scoped advisory locking requires an explicit compatibility decision; no binder dispatch located.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs"
+      ],
+      "scope": "session",
+      "priority": "P2"
+    },
+    "IS_USED_LOCK": {
+      "status": "unassessed",
+      "note": "Connection-scoped advisory locking requires an explicit compatibility decision; no binder dispatch located.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs"
+      ],
+      "scope": "session",
+      "priority": "P2"
+    },
+    "LINESTRING": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRCONTAINS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRCOVEREDBY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRCOVERS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRDISJOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBREQUALS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRINTERSECTS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBROVERLAPS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRTOUCHES": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MBRWITHIN": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MULTILINESTRING": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MULTIPOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "MULTIPOLYGON": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "POINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "POLYGON": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "RELEASE_ALL_LOCKS": {
+      "status": "unassessed",
+      "note": "Connection-scoped advisory locking requires an explicit compatibility decision; no binder dispatch located.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs"
+      ],
+      "scope": "session",
+      "priority": "P2"
+    },
+    "RELEASE_LOCK": {
+      "status": "unassessed",
+      "note": "Connection-scoped advisory locking requires an explicit compatibility decision; no binder dispatch located.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs"
+      ],
+      "scope": "session",
+      "priority": "P2"
+    },
+    "ST_AREA": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ASBINARY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ASGEOJSON": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ASTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ASWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ASWKT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_BUFFER": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_BUFFER_STRATEGY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_CENTROID": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_COLLECT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_CONTAINS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_CONVEXHULL": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_CROSSES": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_DIFFERENCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_DIMENSION": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_DISJOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_DISTANCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_DISTANCE_SPHERE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ENDPOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ENVELOPE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_EQUALS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_EXTERIORRING": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_FRECHETDISTANCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOHASH": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMCOLLFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMCOLLFROMTXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMCOLLFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYCOLLECTIONFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYCOLLECTIONFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYN": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMETRYTYPE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMFROMGEOJSON": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_GEOMFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_HAUSDORFFDISTANCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_INTERIORRINGN": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_INTERSECTION": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_INTERSECTS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ISCLOSED": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ISEMPTY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ISSIMPLE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_ISVALID": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LATFROMGEOHASH": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LATITUDE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINEFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINEFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINEINTERPOLATEPOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINEINTERPOLATEPOINTS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINESTRINGFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LINESTRINGFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LONGFROMGEOHASH": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_LONGITUDE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MAKEENVELOPE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MLINEFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MLINEFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MPOINTFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MPOINTFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MPOLYFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MPOLYFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTILINESTRINGFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTILINESTRINGFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTIPOINTFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTIPOINTFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTIPOLYGONFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_MULTIPOLYGONFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_NUMGEOMETRIES": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_NUMINTERIORRING": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_NUMINTERIORRINGS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_NUMPOINTS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_OVERLAPS": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POINTATDISTANCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POINTFROMGEOHASH": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POINTFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POINTFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POINTN": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POLYFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POLYFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POLYGONFROMTEXT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_POLYGONFROMWKB": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_SIMPLIFY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_SRID": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_STARTPOINT": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_SWAPXY": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_SYMDIFFERENCE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_TOUCHES": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_TRANSFORM": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_UNION": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_VALIDATE": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_WITHIN": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_X": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "ST_Y": {
+      "status": "out-of-scope",
+      "note": "Spatial querying is outside the current Pintail scope. Retaining a geometry column as WKB does not implement this function.",
+      "evidence": [
+        "docs/limitations.md"
+      ],
+      "scope": "spatial",
+      "priority": "excluded"
+    },
+    "GET_DD_COLUMN_PRIVILEGES": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_INDEX_SUB_PART_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_CREATE_OPTIONS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_SCHEMA_OPTIONS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_TABLESPACE_PRIVATE_DATA": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_INDEX_PRIVATE_DATA": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_DD_CHAR_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_DATABASE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_TABLE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_COLUMN": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_VIEW": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_TRIGGER": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_ROUTINE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_EVENT": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_USER": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAN_ACCESS_RESOURCE_GROUP": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CONVERT_CPU_ID_MASK": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "IS_VISIBLE_DD_OBJECT": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLE_ROWS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_AVG_ROW_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_DATA_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_MAX_DATA_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_INDEX_LENGTH": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_DATA_FREE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_AUTO_INCREMENT": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_CHECKSUM": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_UPDATE_TIME": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_CHECK_TIME": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_KEYS_DISABLED": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_INDEX_COLUMN_CARDINALITY": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_COMMENT_OR_ERROR": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_VIEW_WARNING_OR_ERROR": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_PARTITION_NODEGROUP": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_ID": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_TYPE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_LOGFILE_GROUP_NAME": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_LOGFILE_GROUP_NUMBER": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_FREE_EXTENTS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_TOTAL_EXTENTS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_EXTENT_SIZE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_INITIAL_SIZE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_MAXIMUM_SIZE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_AUTOEXTEND_SIZE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_VERSION": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_ROW_FORMAT": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_DATA_FREE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_STATUS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_TABLESPACE_EXTRA": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "GET_DD_PROPERTY_KEY_VALUE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "REMOVE_DD_PROPERTY_KEY": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CONVERT_INTERVAL_TO_USER_INTERVAL": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_DD_COLUMN_EXTRA": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_USERNAME": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_HOSTNAME": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_ENABLED_ROLE_JSON": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_GET_MANDATORY_ROLES_JSON": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_IS_MANDATORY_ROLE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_USE_TERMINOLOGY_PREVIOUS": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "INTERNAL_IS_ENABLED_ROLE": {
+      "status": "out-of-scope",
+      "note": "Registered with an internal MySQL factory; not a public SQL compatibility target.",
+      "evidence": [
+        "GOAL.md"
+      ],
+      "scope": "internal",
+      "priority": "excluded"
+    },
+    "CAST": {
+      "status": "partial",
+      "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "CONVERT": {
+      "status": "partial",
+      "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "EXTRACT": {
+      "status": "partial",
+      "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "LAG": {
+      "status": "implemented-unverified",
+      "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "LEAD": {
+      "status": "implemented-unverified",
+      "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "NTILE": {
+      "status": "implemented-unverified",
+      "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "FIRST_VALUE": {
+      "status": "implemented-unverified",
+      "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "LAST_VALUE": {
+      "status": "implemented-unverified",
+      "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CUME_DIST": {
+      "status": "gap",
+      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "PERCENT_RANK": {
+      "status": "gap",
+      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "NTH_VALUE": {
+      "status": "gap",
+      "note": "No dispatch in the window binder; the supported ranking/offset/extreme branches do not implement this MySQL window function.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs:41"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_TABLE": {
+      "status": "gap",
+      "note": "Relational JSON expansion has no supported table-factor binding path.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs:1607"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "DATABASE": {
+      "status": "partial",
+      "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
+      "evidence": [
+        "crates/pintail-wire/src/server.rs:2033"
+      ],
+      "scope": "client",
+      "priority": "P1"
+    },
+    "VERSION": {
+      "status": "partial",
+      "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
+      "evidence": [
+        "crates/pintail-wire/src/server.rs:2033"
+      ],
+      "scope": "client",
+      "priority": "P1"
+    },
+    "SOUNDEX": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "ACOS": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "ASIN": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "ATAN": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "ATAN2": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "COS": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "COT": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "SIN": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "TAN": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "DEGREES": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "RADIANS": {
+      "status": "gap",
+      "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:53"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_ARRAY_APPEND": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_ARRAY_INSERT": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_MERGE": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_MERGE_PRESERVE": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_SCHEMA_VALID": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_SCHEMA_VALIDATION_REPORT": {
+      "status": "gap",
+      "note": "MySQL registers this callable; Pintail scalar dispatch lacks it. Existing JSON modification support must not be generalized to the whole family.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "JSON_STORAGE_SIZE": {
+      "status": "unassessed",
+      "note": "These expose MySQL binary-JSON storage properties. Decide the external contract for Pintail before implementing them.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "storage-specific",
+      "priority": "P2"
+    },
+    "JSON_STORAGE_FREE": {
+      "status": "unassessed",
+      "note": "These expose MySQL binary-JSON storage properties. Decide the external contract for Pintail before implementing them.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "storage-specific",
+      "priority": "P2"
+    },
+    "REGEXP_LIKE": {
+      "status": "partial",
+      "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:86"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "REGEXP_INSTR": {
+      "status": "partial",
+      "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:86"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "REGEXP_SUBSTR": {
+      "status": "partial",
+      "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:86"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "REGEXP_REPLACE": {
+      "status": "partial",
+      "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:86"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "REPEAT": {
+      "status": "partial",
+      "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:165"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "SPACE": {
+      "status": "partial",
+      "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:165"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "LPAD": {
+      "status": "partial",
+      "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:165"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "RPAD": {
+      "status": "partial",
+      "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:165"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "FORMAT": {
+      "status": "partial",
+      "note": "Only the two-argument, en_US formatting form is implemented; locale argument is absent.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md:165"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "DATE_ADD": {
+      "status": "partial",
+      "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "DATE_SUB": {
+      "status": "partial",
+      "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "TIMESTAMPADD": {
+      "status": "partial",
+      "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "TIMESTAMPDIFF": {
+      "status": "partial",
+      "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "WEEK": {
+      "status": "partial",
+      "note": "WEEK mode is a literal 0..7; YEARWEEK has only one-argument dispatch. Check default_week_format and dynamic/explicit mode overloads.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "YEARWEEK": {
+      "status": "partial",
+      "note": "WEEK mode is a literal 0..7; YEARWEEK has only one-argument dispatch. Check default_week_format and dynamic/explicit mode overloads.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "NOW": {
+      "status": "partial",
+      "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CURTIME": {
+      "status": "partial",
+      "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CURRENT_TIME": {
+      "status": "partial",
+      "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "FROM_UNIXTIME": {
+      "status": "partial",
+      "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "STR_TO_DATE": {
+      "status": "partial",
+      "note": "Literal/dynamic formats have different rejection and metadata behavior. Time-only formats and week/year reconstruction remain documented gaps.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "ROUND": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "CEIL": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "CEILING": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "FLOOR": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "SUM": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "AVG": {
+      "status": "partial",
+      "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "IF": {
+      "status": "partial",
+      "note": "Conditional evaluation exists; a documented DECIMAL branch-scale rendering difference remains.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "SEC_TO_TIME": {
+      "status": "partial",
+      "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-wire/src/server.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "MAKETIME": {
+      "status": "partial",
+      "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-wire/src/server.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "CONVERT_TZ": {
+      "status": "partial",
+      "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-wire/src/server.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_UNQUOTE": {
+      "status": "partial",
+      "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-wire/src/server.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_TYPE": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_OBJECT": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_ARRAY": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_EXTRACT": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_VALUE": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_ARRAYAGG": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "JSON_OBJECTAGG": {
+      "status": "partial",
+      "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/function.rs",
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "GROUP_CONCAT": {
+      "status": "partial",
+      "note": "Implemented with truncation warnings and session limit; derived/wrapped result metadata and JSON ORDER BY keys remain restricted.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-wire/src/server.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P0"
+    },
+    "ANY_VALUE": {
+      "status": "implemented-unverified",
+      "note": "Pintail models this through aggregate binding; MySQL uses it to suppress grouping checks. Verify both grouped and ungrouped expressions and row selection.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs:3773"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "POSITION": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CURRENT_DATE": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "CURRENT_TIMESTAMP": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "LOCALTIME": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "LOCALTIMESTAMP": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "MID": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "ADDDATE": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "SUBDATE": {
+      "status": "unassessed",
+      "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "crates/pintail-sql/src/binder/function.rs"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    }
+  },
+  "operators": {
+    "operator:function_match": {
+      "status": "gap",
+      "note": "No matching full-text/SOUNDEX execution support has been established; inspect the unsupported expression path.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_and": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_assign-equal": {
+      "status": "unassessed",
+      "note": "Session SET handling is not general user-variable assignment. Test supported assignment contexts and side effects separately.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_assign-value": {
+      "status": "unassessed",
+      "note": "Session SET handling is not general user-variable assignment. Test supported assignment contexts and side effects separately.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_between": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_binary": {
+      "status": "unassessed",
+      "note": "The manual marks this syntax deprecated; verify parser reachability separately from CAST AS BINARY.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_bitwise-and": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_bitwise-invert": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_bitwise-or": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_bitwise-xor": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_case": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_div": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_divide": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_equal": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_equal-to": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_exists": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_greater-than": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_greater-than-or-equal": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_in": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_is": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_is-not": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_is-not-null": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_is-null": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_json-column-path": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_json-inline-path": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_left-shift": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_less-than": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_less-than-or-equal": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_like": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_member-of": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_minus": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_mod": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-between": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-equal": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-exists": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-in": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-like": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_not-regexp": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_or": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_plus": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_regexp": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_right-shift": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_sounds-like": {
+      "status": "gap",
+      "note": "No matching full-text/SOUNDEX execution support has been established; inspect the unsupported expression path.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_times": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_unary-minus": {
+      "status": "partial",
+      "note": "Implemented family has type, collation, numeric, regex or JSON restrictions. Compare both literal and column paths, including metadata and errors.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    },
+    "operator:operator_xor": {
+      "status": "implemented-unverified",
+      "note": "Expression binding exists for the core operator family; test precedence, NULL truth tables, coercion, signedness, collation and error behavior. Spelling alone is not proof.",
+      "evidence": [
+        "crates/pintail-sql/src/binder/mod.rs",
+        "docs/limitations.md"
+      ],
+      "scope": "analytics",
+      "priority": "P1"
+    }
+  }
+}

@@ -1,0 +1,1762 @@
+[
+  {
+    "id": "SQL-01",
+    "name": "SELECT, aliases, filters, ordering and LIMIT",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_select.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "Core query binding and execution exist.",
+    "acceptance": "Compare ordering/ties, aliases, NULL ordering, LIMIT/OFFSET and errors across literals and stored data."
+  },
+  {
+    "id": "SQL-02",
+    "name": "INNER/LEFT/RIGHT/CROSS and nested joins",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_resolver.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Core joins exist; nested RIGHT and some grouped shapes remain restricted.",
+    "acceptance": "Differential cases for USING/NATURAL, null extension, multi-key, theta, nested and bushy joins; repeat with spill."
+  },
+  {
+    "id": "SQL-03",
+    "name": "Correlated scalar, IN and EXISTS subqueries",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/item_subselect.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Decorrelation and bounded dependent execution exist; wider forms are restricted.",
+    "acceptance": "Check empty/multi-row results, NULL-sensitive NOT IN, depth, alias scoping, memory ceilings and planner alternatives."
+  },
+  {
+    "id": "SQL-04",
+    "name": "UNION, INTERSECT and EXCEPT",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_union.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "ALL/DISTINCT, precedence and operand scoping are implemented.",
+    "acceptance": "Compare bag multiplicities, output coercion/collation, branch LIMIT and spill; verify 8.0 patch-specific availability."
+  },
+  {
+    "id": "SQL-05",
+    "name": "Nonrecursive CTEs and derived tables",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "implemented-unverified",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_derived.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "CTE and derived-table bindings exist.",
+    "acceptance": "Check name shadowing, reuse, nested scope, projection names/types and materialization."
+  },
+  {
+    "id": "SQL-06",
+    "name": "Recursive CTEs",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_union.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Canonical one-member fixpoints are supported with a bounded recursion setting.",
+    "acceptance": "Compare UNION/UNION ALL, anchor types, recursion limits, duplicate elimination, unsupported recursion shapes and errors."
+  },
+  {
+    "id": "SQL-07",
+    "name": "LATERAL derived tables",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "gap",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_derived.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "Derived-table binding explicitly rejects lateral=true.",
+    "acceptance": "Add dependent table evaluation and compare correlation scope, joins and empty results."
+  },
+  {
+    "id": "SQL-08",
+    "name": "GROUP BY, HAVING and functional dependence",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/aggregate_check.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Grouping works; dependence through additional UNIQUE indexes remains limited.",
+    "acceptance": "Compare ONLY_FULL_GROUP_BY, composite keys, NULL-able UNIQUE keys, aliases, HAVING and error codes."
+  },
+  {
+    "id": "SQL-09",
+    "name": "ROLLUP and GROUPING",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/item_sum.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "Keyword inventories do not establish subtotal/grouping-indicator execution.",
+    "acceptance": "Exercise WITH ROLLUP, genuine NULL versus subtotal NULL, HAVING and ORDER BY; then classify support."
+  },
+  {
+    "id": "SQL-10",
+    "name": "Window functions, frames and named windows",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/window.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/function.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Several windows and ROWS/RANGE frames exist; function/argument/frame restrictions remain.",
+    "acceptance": "Check peer groups, frame bounds, named inheritance, empty frames, null treatment and memory limits."
+  },
+  {
+    "id": "SQL-11",
+    "name": "JSON_TABLE relational expansion",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "gap",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/table_function.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "No supported JSON_TABLE table-factor route.",
+    "acceptance": "Implement ordinality, nested paths, ON EMPTY/ERROR, coercion and implicit lateral semantics."
+  },
+  {
+    "id": "SQL-12",
+    "name": "Views and view security semantics",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_view.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/metadata.rs"
+    ],
+    "note": "A VIEWS discovery relation does not prove CREATE VIEW or executable stored views.",
+    "acceptance": "Check source-view discovery/replication and local view DDL, resolution, definer/invoker and check-option semantics separately."
+  },
+  {
+    "id": "SQL-13",
+    "name": "Optimizer hints and EXPLAIN",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/opt_hints.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/hints.rs",
+      "crates/pintail-exec/src/explain.rs"
+    ],
+    "note": "Pintail exposes its own optimizer/explain behavior; output is not assumed MySQL-identical.",
+    "acceptance": "Inventory accepted/ignored/rejected hints; compare query results with hints and document EXPLAIN contract."
+  },
+  {
+    "id": "SQL-14",
+    "name": "Full-text MATCH AGAINST",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "gap",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/item_func.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "docs/limitations.md"
+    ],
+    "note": "No full-text execution/index support established.",
+    "acceptance": "Compare natural-language/boolean modes, stopwords, tokenization, ranking, collation and index errors."
+  },
+  {
+    "id": "SQL-15",
+    "name": "Spatial queries and indexes",
+    "category": "SQL and relational execution",
+    "scope": "spatial",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "sql/item_geofunc.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/limitations.md"
+    ],
+    "note": "Spatial querying is outside current scope; binary retention does not establish GIS semantics.",
+    "acceptance": "Keep explicit rejection; require owner scope change before GIS implementation."
+  },
+  {
+    "id": "SQL-16",
+    "name": "TABLE, VALUES and locking SELECT forms",
+    "category": "SQL and relational execution",
+    "scope": "analytics",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/sql_yacc.yy",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs"
+    ],
+    "note": "Parser keywords alone do not establish executable statement forms.",
+    "acceptance": "Probe TABLE/VALUES, INTO OUTFILE, FOR UPDATE/SHARE, NOWAIT/SKIP LOCKED and document each contract."
+  },
+  {
+    "id": "TYPE-01",
+    "name": "Signed/unsigned integer ranges and BIT",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/field.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-types/src/lib.rs"
+    ],
+    "note": "Pintail has native integer carriers including UInt64.",
+    "acceptance": "Compare every width and signedness, BIT lengths, overflow and text/binary wire flags."
+  },
+  {
+    "id": "TYPE-02",
+    "name": "DECIMAL precision, arithmetic and display",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "mysys/decimal.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/limitations.md"
+    ],
+    "note": "Exact scaled arithmetic exists; precision above 38 becomes text and display/metadata residuals remain.",
+    "acceptance": "Check precision 1..65, scale, chained arithmetic, grouping, rounding, overflow and per-value result formatting."
+  },
+  {
+    "id": "TYPE-03",
+    "name": "FLOAT/DOUBLE and numeric coercion",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/item_func.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/expression/mod.rs"
+    ],
+    "note": "Approximate execution exists; broad conversion/diagnostic parity is not certified.",
+    "acceptance": "Compare exponent literals, overflow/underflow, domain errors, mixed text/numeric comparison and metadata."
+  },
+  {
+    "id": "TYPE-04",
+    "name": "DATE/DATETIME/TIMESTAMP/TIME/YEAR",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/item_timefunc.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/expression/temporal.rs"
+    ],
+    "note": "Temporal carriers and functions exist with documented zero-date, TIME and parsing restrictions.",
+    "acceptance": "Check negative/extended TIME, zero/partial dates, all fractional precisions, epoch limits and snapshot/CDC equivalence."
+  },
+  {
+    "id": "TYPE-05",
+    "name": "Time zones and statement time",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/tztime.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Wire session zone and pinned statement time exist; HTTP/session and stored-value effects differ.",
+    "acceptance": "Test DST gaps/folds, named/fixed zones, statement stability and prepared execution."
+  },
+  {
+    "id": "TYPE-06",
+    "name": "Character sets and transcoding",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "strings/ctype.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-probe/src/lib.rs"
+    ],
+    "note": "Supported source encodings are bounded; query transcoding is narrower.",
+    "acceptance": "Compare utf8mb4/utf8mb3/ascii/latin1 bytes and invalid sequences; reject unsupported encodings before serving wrong text."
+  },
+  {
+    "id": "TYPE-07",
+    "name": "Collation weights, padding and coercibility",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "strings/ctype-uca.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/collation/mod.rs"
+    ],
+    "note": "Three compatibility profiles exist; aliases/non-ASCII weights and mixed coercibility are restricted.",
+    "acceptance": "Compare equality/order/hash/group/join/LIKE, PAD/NO PAD, explicit COLLATE and mixed profiles through every storage path."
+  },
+  {
+    "id": "TYPE-08",
+    "name": "BINARY/VARBINARY/BLOB and TEXT lengths",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/field.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Binary carriers work; variable-expression metadata uses fallback widths.",
+    "acceptance": "Check embedded NUL, trailing spaces, bytes versus characters, source declaration lengths and binary/text protocol."
+  },
+  {
+    "id": "TYPE-09",
+    "name": "ENUM and SET identity",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/field.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/limitations.md",
+      "crates/pintail-exec/tests/enum_ordinal.rs"
+    ],
+    "note": "Declaration ordinal/mask and string-comparison behavior exist with residual coercion/collation limits.",
+    "acceptance": "Compare numeric/string contexts, invalid/empty members, schema history, ordering, grouping and CDC updates."
+  },
+  {
+    "id": "TYPE-10",
+    "name": "JSON identity, comparison and typed members",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql-common/json_dom.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/json_order.rs"
+    ],
+    "note": "JSON ordering and identity exist; typed members, mixed comparison and several key contexts remain restricted.",
+    "acceptance": "Compare JSON versus text/null, duplicate keys, numeric scale, temporal members, binary encoding and metadata."
+  },
+  {
+    "id": "TYPE-11",
+    "name": "JSON paths, mutation and schema validation",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/item_json_func.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/function.rs"
+    ],
+    "note": "Many read/search/mutation functions exist; schema validation and other family members are gaps.",
+    "acceptance": "Use the per-function ledger; cover wildcards, recursive paths, last/ranges, autowrap and invalid paths."
+  },
+  {
+    "id": "TYPE-12",
+    "name": "SQL modes, escaping and parser behavior",
+    "category": "Types, expressions and diagnostics",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sys_vars.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Modes that alter parsing/evaluation are explicitly rejected; selected inert modes are retained.",
+    "acceptance": "Compare mode combinations, quotes/escapes, operator precedence and connection reset; never treat accepted-but-ignored behavior as parity."
+  },
+  {
+    "id": "TYPE-13",
+    "name": "Identifiers, case and reserved words",
+    "category": "Types, expressions and diagnostics",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/lex.h",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/binder/mod.rs",
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Catalog resolution and advertised lower_case_table_names use a Pintail-specific contract.",
+    "acceptance": "Check quoted/unquoted Unicode identifiers, case modes, reserved/function names, IGNORE_SPACE and length limits."
+  },
+  {
+    "id": "TYPE-14",
+    "name": "NULL and three-valued logic",
+    "category": "Types, expressions and diagnostics",
+    "scope": "analytics",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/item_cmpfunc.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/expression/mod.rs"
+    ],
+    "note": "Core NULL predicates and expression evaluation exist.",
+    "acceptance": "Truth-table tests for all predicates, null-safe equality, CASE/IF short circuit, IN/NOT IN and aggregates."
+  },
+  {
+    "id": "TYPE-15",
+    "name": "Errors, warnings and diagnostics area",
+    "category": "Types, expressions and diagnostics",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_error.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Selected MySQL error mappings and GROUP_CONCAT warnings exist; general diagnostics do not.",
+    "acceptance": "Compare errno, SQLSTATE, message category, warning count, SHOW WARNINGS and diagnostics lifetime."
+  },
+  {
+    "id": "TYPE-16",
+    "name": "Generated and invisible columns",
+    "category": "Types, expressions and diagnostics",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/field.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-probe/src/lib.rs"
+    ],
+    "note": "Stored generated values are mirrored; virtual columns are skipped.",
+    "acceptance": "Check generated expressions, invisible/GIPK discovery, column ordering, source DDL and binlog layouts."
+  },
+  {
+    "id": "WRITE-01",
+    "name": "Database/table creation",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_table.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs"
+    ],
+    "note": "Local CREATE TABLE exists; database control-plane creation is distinct from SQL DDL parity.",
+    "acceptance": "Compare CREATE DATABASE/TABLE variants, IF NOT EXISTS, type options, duplicate objects and crash-safe publication."
+  },
+  {
+    "id": "WRITE-02",
+    "name": "INSERT VALUES",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_insert.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs"
+    ],
+    "note": "Literal INSERT exists with primary-key/NULL checks; expression values are rejected.",
+    "acceptance": "Compare omitted columns, multi-row inserts, coercion, errors, atomicity and affected rows."
+  },
+  {
+    "id": "WRITE-03",
+    "name": "INSERT SELECT, REPLACE and duplicate-key update",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_insert.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Current write engine accepts literal inserts, not these extended write forms.",
+    "acceptance": "Implement and compare conflict handling, unique keys, affected rows and transaction visibility."
+  },
+  {
+    "id": "WRITE-04",
+    "name": "UPDATE and DELETE",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_update.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Both are explicitly documented as unimplemented.",
+    "acceptance": "Compare predicates, multi-table forms, ORDER/LIMIT, key changes, atomicity and errors."
+  },
+  {
+    "id": "WRITE-05",
+    "name": "ALTER/DROP/RENAME/TRUNCATE local tables",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_table.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs"
+    ],
+    "note": "Local statement dispatch handles CREATE TABLE and INSERT only.",
+    "acceptance": "Compare DDL validation, metadata publication, concurrent readers and restart recovery."
+  },
+  {
+    "id": "WRITE-06",
+    "name": "PRIMARY/UNIQUE/FK/CHECK constraints",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_table.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Primary key and NOT NULL checks exist; other accepted constraints are not enforced.",
+    "acceptance": "Assert invalid rows are refused with MySQL-compatible errors and correct statement rollback."
+  },
+  {
+    "id": "WRITE-07",
+    "name": "Defaults and AUTO_INCREMENT",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/field.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "docs/limitations.md"
+    ],
+    "note": "AUTO_INCREMENT does not allocate; non-NULL defaults are refused.",
+    "acceptance": "Compare omitted versus NULL values, generated IDs, restart persistence and LAST_INSERT_ID."
+  },
+  {
+    "id": "WRITE-08",
+    "name": "BEGIN/COMMIT/ROLLBACK/SAVEPOINT",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/transaction.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Local explicit transactions are refused; each supported statement autocommits.",
+    "acceptance": "Implement atomic multi-statement writes and verify rollback, savepoints, failure recovery and wire status bits."
+  },
+  {
+    "id": "WRITE-09",
+    "name": "Isolation, MVCC, locks and deadlocks",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "gap",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "storage/innobase/trx/trx0trx.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Serialized local writes/read snapshots are not InnoDB transaction isolation.",
+    "acceptance": "Define supported isolation levels, conflict/deadlock behavior and concurrent read/write tests."
+  },
+  {
+    "id": "WRITE-10",
+    "name": "Temporary tables and session lifetime",
+    "category": "Local writes and transactions",
+    "scope": "client",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_base.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Temporary-table grammar acceptance and session isolation need direct review.",
+    "acceptance": "Check visibility, name shadowing, disconnect/reset cleanup and rollback behavior."
+  },
+  {
+    "id": "WRITE-11",
+    "name": "XA distributed transactions",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/xa.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Not established and beyond current autocommit implementation; scope needs a decision.",
+    "acceptance": "Decide whether explicit rejection is the contract; if required, test prepare/commit/recovery."
+  },
+  {
+    "id": "WRITE-12",
+    "name": "Stored procedures/functions, triggers and events",
+    "category": "Local writes and transactions",
+    "scope": "programmability",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "sql/sp_head.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Replica stored procedures/triggers are excluded by v1 scope; local programmability needs a separate decision.",
+    "acceptance": "Keep source-executed row effects correct via CDC; do not imply local routine execution."
+  },
+  {
+    "id": "WRITE-13",
+    "name": "LOAD DATA and import/export statements",
+    "category": "Local writes and transactions",
+    "scope": "local-write",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/sql_load.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs"
+    ],
+    "note": "No full SQL bulk-loader compatibility claim follows from Pintail snapshot loading.",
+    "acceptance": "Probe LOAD DATA LOCAL/INFILE, character sets, escaping, duplicate handling and file privileges."
+  },
+  {
+    "id": "WRITE-14",
+    "name": "Writes to mirrored databases",
+    "category": "Local writes and transactions",
+    "scope": "replication",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "sql/sql_parse.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Mirrored databases intentionally reject writes and never write back to MySQL.",
+    "acceptance": "Assert every write form rejects consistently on wire/HTTP/prepared paths without source mutation."
+  },
+  {
+    "id": "WIRE-01",
+    "name": "Handshake and client capabilities",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/protocol_classic.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-protocol/src/lib.rs"
+    ],
+    "note": "Pintail implements a MySQL-compatible endpoint with a bounded capability surface.",
+    "acceptance": "Inventory every capability bit; test only advertised features including large packets and sequence errors."
+  },
+  {
+    "id": "WIRE-02",
+    "name": "Text result sets and binary prepared results",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/protocol_classic.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Both encodings exist with documented metadata residuals.",
+    "acceptance": "Compare type codes, flags, charset IDs, length, scale, NULL bitmap, empty results, EOF/OK and errors."
+  },
+  {
+    "id": "WIRE-03",
+    "name": "Prepared statement lifecycle",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_prepare.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Prepare/execute/close/reset exist; long data is explicitly unsupported.",
+    "acceptance": "Test parameter types and rebinds, counts, metadata changes, unknown IDs, reset and memory limits."
+  },
+  {
+    "id": "WIRE-04",
+    "name": "Long parameters and server-side cursors",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_prepare.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "SEND_LONG_DATA is rejected; cursor behavior needs independent classification.",
+    "acceptance": "Test cursor execute flags, FETCH, reset/close and chunked parameter input; align advertised capabilities."
+  },
+  {
+    "id": "WIRE-05",
+    "name": "Multi-statements and multiple results",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "gap",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/protocol_classic.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/limitations.md"
+    ],
+    "note": "Multiple statements in one command are documented as unsupported.",
+    "acceptance": "Reject unsupported negotiation/forms predictably; test pending-results state and connection recovery."
+  },
+  {
+    "id": "WIRE-06",
+    "name": "USE, SET and connection reset/change user",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_parse.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Database selection and selected session state/reset handlers exist.",
+    "acceptance": "Compare state across reset, change-user, pooling, time zone, charset, modes and prepared handles."
+  },
+  {
+    "id": "WIRE-07",
+    "name": "SHOW and INFORMATION_SCHEMA",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_show.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-sql/src/metadata.rs"
+    ],
+    "note": "Ten discovery relations and selected query patterns exist.",
+    "acceptance": "Inventory actual relations/columns and SHOW forms; compare values, permissions, joins, filters and empty schemas."
+  },
+  {
+    "id": "WIRE-08",
+    "name": "System and user variables",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sys_vars.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "Selected @@variables are handled; this is not full sysvar or user-variable semantics.",
+    "acceptance": "Inventory read/set/global/session/persist behavior, values/defaults, assignment and unknown-variable errors."
+  },
+  {
+    "id": "WIRE-09",
+    "name": "KILL QUERY, cancellation and timeouts",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_parse.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "KILL QUERY works; connection termination forms reject.",
+    "acceptance": "Verify target IDs, interrupted error, per-query cleanup, disconnect cancellation and timeout units."
+  },
+  {
+    "id": "WIRE-10",
+    "name": "Connector and BI interoperability",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "libmysql/libmysql.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "tests/e2e/README.md"
+    ],
+    "note": "Wire tests do not certify every driver; DBeaver/Metabase smokes are not automated.",
+    "acceptance": "Version a driver matrix including mysql CLI, JDBC, Python, Go, Node and BI discovery/prepared/pooling flows."
+  },
+  {
+    "id": "WIRE-11",
+    "name": "Protocol compression and X Protocol",
+    "category": "Wire protocol, sessions and discovery",
+    "scope": "client",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "plugin/x/src/mysql_function_names.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-protocol/src/lib.rs"
+    ],
+    "note": "Classic protocol support does not imply compression or X Protocol/Document Store.",
+    "acceptance": "Audit capability negotiation and explicit unsupported paths; decide whether either is in scope."
+  },
+  {
+    "id": "CDC-01",
+    "name": "Consistent snapshot and snapshot-to-binlog handoff",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/rpl_source.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-snapshot/src/lib.rs"
+    ],
+    "note": "Snapshot/resume exists; lock privilege and mixed-time resume limitations are documented.",
+    "acceptance": "Mutate concurrently during snapshot/resume, verify no gaps/duplicates, checkpoint handoff and privilege failure behavior."
+  },
+  {
+    "id": "CDC-02",
+    "name": "ROW event decoding and row images",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/log_event.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/decoder.rs"
+    ],
+    "note": "Native row decoding exists; matrix coverage must be tied to actual source configurations.",
+    "acceptance": "Test FULL/MINIMAL/NOBLOB images, null masks, all column types, checksums, transaction compression and partial JSON events."
+  },
+  {
+    "id": "CDC-03",
+    "name": "GTID and file/position checkpoints",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/rpl_gtid.h",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/gtid.rs"
+    ],
+    "note": "Both modes exist with finite per-transaction ordinal limits.",
+    "acceptance": "Compare replay/idempotence, file rotation, GTID gaps, source UUID changes and exact event-count boundaries."
+  },
+  {
+    "id": "CDC-04",
+    "name": "Source transaction atomicity and crash replay",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "unassessed",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/binlog.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/lib.rs"
+    ],
+    "note": "Do not infer cross-table transaction visibility from individually correct rows/checkpoints.",
+    "acceptance": "Kill at each WAL/apply/checkpoint boundary; assert committed data, rollback exclusion and documented query visibility."
+  },
+  {
+    "id": "CDC-05",
+    "name": "Source DDL and schema history",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_table.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/ddl.rs"
+    ],
+    "note": "Compatible column/index changes evolve in place; identity/incompatible changes resnapshot or quarantine.",
+    "acceptance": "ALTER during live/offline intervals; verify old segments, memtables, new events and table/column identity."
+  },
+  {
+    "id": "CDC-06",
+    "name": "Keys, keyless rows and invisible primary keys",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_gipk.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-probe/src/lib.rs"
+    ],
+    "note": "PK/safe UNIQUE strategies exist; keyless mutation coverage depends on resnapshot/reconciliation.",
+    "acceptance": "Test nullable/composite keys, duplicate rows, GIPK, key strategy changes and deterministic replay."
+  },
+  {
+    "id": "CDC-07",
+    "name": "Polling and reconciliation fallback",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_select.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-poll/src/lib.rs"
+    ],
+    "note": "Polling converges on sampled state; intermediate transactions may be missed.",
+    "acceptance": "Test same-timestamp updates, deletes, cursorless sources, inclusive overlap and full-key reconciliation."
+  },
+  {
+    "id": "CDC-08",
+    "name": "Foreign-key cascade and trigger effects",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "storage/innobase/row/row0mysql.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-poll/src/lib.rs"
+    ],
+    "note": "Invisible cascade effects require reconciliation and can remain stale until it runs.",
+    "acceptance": "Compare cascaded delete/update and trigger-generated rows under selected/unselected parent tables."
+  },
+  {
+    "id": "CDC-09",
+    "name": "Disconnect, purged binlog and source replacement",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/rpl_replica.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/lib.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Recovery/quarantine paths exist; limits must be measured by failure scenario.",
+    "acceptance": "Exercise retention loss, reconnects, credentials, failover and checkpoint mismatch with state/data assertions."
+  },
+  {
+    "id": "CDC-10",
+    "name": "Source database/table lifecycle",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/sql_db.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/ddl.rs"
+    ],
+    "note": "Table auto-inclusion is bounded; source database drop is surfaced but retained replica freshness can mislead.",
+    "acceptance": "Test create/drop/rename/recreate and fail-closed freshness labels for orphaned data."
+  },
+  {
+    "id": "CDC-11",
+    "name": "8.0, 8.4 and older/fork source versions",
+    "category": "Snapshot and change replication",
+    "scope": "replication",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "MYSQL_VERSION",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md",
+      "tests/e2e/README.md"
+    ],
+    "note": "This ledger pins 8.4 source. Repository tests include 8.0; older MySQL/MariaDB claims require independent evidence.",
+    "acceptance": "Pin patch version/digest and configuration per oracle run; classify added/removed functions and event-format differences."
+  },
+  {
+    "id": "CDC-12",
+    "name": "Serving downstream MySQL replicas",
+    "category": "Snapshot and change replication",
+    "scope": "topology",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "sql/rpl_binlog_sender.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Consuming a source binlog is distinct from publishing a MySQL-compatible binlog.",
+    "acceptance": "Keep downstream replication outside the single-node mirror contract unless scope changes."
+  },
+  {
+    "id": "SEC-01",
+    "name": "Authentication plugins and password exchanges",
+    "category": "Security and access control",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/auth/sha2_password.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/server.rs"
+    ],
+    "note": "caching_sha2_password exchanges exist; this does not implement the full plugin/account model.",
+    "acceptance": "Test fast/full/RSA/TLS auth, malformed handshakes, key rotation, native-password version differences and account revocation."
+  },
+  {
+    "id": "SEC-02",
+    "name": "Transport TLS and certificate lifecycle",
+    "category": "Security and access control",
+    "scope": "client",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/ssl_init_callback.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-wire/src/managed_tls.rs"
+    ],
+    "note": "Wire TLS exists; certificate rotation needs restart and HTTP expects ingress TLS.",
+    "acceptance": "Check negotiation, trust/hostname validation, expiration, TLS policy and restart behavior."
+  },
+  {
+    "id": "SEC-03",
+    "name": "Users, GRANT/REVOKE, roles and privileges",
+    "category": "Security and access control",
+    "scope": "security",
+    "status": "unassessed",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "sql/auth/sql_authorization.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-api/src/lib.rs"
+    ],
+    "note": "Pintail API keys/auth are not evidence of MySQL object-privilege equivalence.",
+    "acceptance": "Inventory actual identity/authorization contracts, tenant/db visibility and denial errors; decide scope for MySQL ACLs."
+  },
+  {
+    "id": "SEC-04",
+    "name": "Definer/invoker, resource groups and limits",
+    "category": "Security and access control",
+    "scope": "security",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/resourcegroups/resource_group_mgr.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Per-query resource limits do not imply MySQL resource groups or definer semantics.",
+    "acceptance": "Decide scope, then compare privilege checks and executable resource-limit behavior."
+  },
+  {
+    "id": "SEC-05",
+    "name": "Keyring, encryption at rest and audit plugins",
+    "category": "Security and access control",
+    "scope": "optional-module",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "components/keyrings/common",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Optional plugin/component products require explicit deployment/module inventories.",
+    "acceptance": "Record exact edition/build/plugin and compare external security promises; do not infer them from transport TLS."
+  },
+  {
+    "id": "OPS-01",
+    "name": "InnoDB/MyISAM/MEMORY/NDB engine compatibility",
+    "category": "Storage, operations and availability",
+    "scope": "physical-engine",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "storage/innobase/handler/ha_innodb.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Pintail intentionally owns a columnar format; MySQL physical files and engines are not parity targets.",
+    "acceptance": "Preserve agreed SQL/data behavior while rejecting misleading engine-specific promises."
+  },
+  {
+    "id": "OPS-02",
+    "name": "Secondary/functional/invisible indexes",
+    "category": "Storage, operations and availability",
+    "scope": "local-write",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_table.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-write/src/engine.rs",
+      "docs/limitations.md"
+    ],
+    "note": "Source indexes inform metadata; local secondary indexes are not enforced/implemented as MySQL indexes.",
+    "acceptance": "Separate optimizer performance from UNIQUE enforcement; verify accepted DDL does not imply absent guarantees."
+  },
+  {
+    "id": "OPS-03",
+    "name": "Partitioned tables and partition DDL",
+    "category": "Storage, operations and availability",
+    "scope": "replication",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_partition.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-cdc/src/ddl.rs"
+    ],
+    "note": "Logical row ingestion does not prove partition EXCHANGE/TRUNCATE handling.",
+    "acceptance": "Test each source partition operation and its binlog visibility/resnapshot behavior; classify local DDL separately."
+  },
+  {
+    "id": "OPS-04",
+    "name": "Crash durability, WAL and corruption detection",
+    "category": "Storage, operations and availability",
+    "scope": "operations",
+    "status": "implemented-unverified",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "storage/innobase/log/log0log.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-store/src/lib.rs"
+    ],
+    "note": "Pintail has its own WAL/storage recovery contract.",
+    "acceptance": "Failpoint process death and torn/corrupt writes; verify checkpoint durability and explicit corruption failures."
+  },
+  {
+    "id": "OPS-05",
+    "name": "Query memory, spill and admission",
+    "category": "Storage, operations and availability",
+    "scope": "operations",
+    "status": "implemented-unverified",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/join_optimizer/join_optimizer.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-exec/src/spill.rs"
+    ],
+    "note": "Pintail implements its own bounded execution and spill paths.",
+    "acceptance": "Verify result equivalence under low memory, cancellation, cleanup and concurrent admission; benchmark separately."
+  },
+  {
+    "id": "OPS-06",
+    "name": "Performance Schema, sys and logs",
+    "category": "Storage, operations and availability",
+    "scope": "observability",
+    "status": "partial",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "storage/perfschema/pfs.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-telemetry/src/lib.rs"
+    ],
+    "note": "Pintail metrics/logs are available; MySQL Performance Schema/sys query compatibility is not established.",
+    "acceptance": "Inventory required monitoring queries and semantics; map to native metrics or explicitly reject."
+  },
+  {
+    "id": "OPS-07",
+    "name": "Backup/restore and incremental chains",
+    "category": "Storage, operations and availability",
+    "scope": "operations",
+    "status": "partial",
+    "priority": "P0",
+    "source": [
+      {
+        "path": "plugin/clone/src/clone_plugin.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "crates/pintail-backup/src/lib.rs"
+    ],
+    "note": "Pintail backups/restores use their own format and detached restore contract; no automatic retention policy.",
+    "acceptance": "Restore full/incremental chains, missing ancestors, checksums and crashes; verify source reconnection policy."
+  },
+  {
+    "id": "OPS-08",
+    "name": "Point-in-time recovery",
+    "category": "Storage, operations and availability",
+    "scope": "operations",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "client/mysqlbinlog.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/mysql-parity/README.md"
+    ],
+    "note": "Removed by explicit owner decision. Do not rebuild as a parity task.",
+    "acceptance": "Retain exclusion unless the owner explicitly reverses the decision."
+  },
+  {
+    "id": "OPS-09",
+    "name": "HA, clustering and automatic failover",
+    "category": "Storage, operations and availability",
+    "scope": "topology",
+    "status": "out-of-scope",
+    "priority": "excluded",
+    "source": [
+      {
+        "path": "plugin/group_replication/src/plugin.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Single-process analytics tier has no standby/read replica/failover.",
+    "acceptance": "Document availability boundary; do not conflate durable recovery with high availability."
+  },
+  {
+    "id": "OPS-10",
+    "name": "Upgrade/downgrade and format compatibility",
+    "category": "Storage, operations and availability",
+    "scope": "operations",
+    "status": "unassessed",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/dd/impl/upgrade/server.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/format.md"
+    ],
+    "note": "MySQL and Pintail have different catalog/storage upgrade systems.",
+    "acceptance": "Version snapshot/catalog/WAL formats; test supported upgrade paths, rollback and incompatible restores."
+  },
+  {
+    "id": "OPS-11",
+    "name": "Plugins, components and loadable functions",
+    "category": "Storage, operations and availability",
+    "scope": "optional-module",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "sql/sql_plugin.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Native-registry inventory is not an exhaustive inventory of runtime-installed functions/components.",
+    "acceptance": "Capture deployed mysql.func, plugin/component registries and build flags; add only requested module contracts."
+  },
+  {
+    "id": "OPS-12",
+    "name": "Enterprise products and external tooling",
+    "category": "Storage, operations and availability",
+    "scope": "optional-product",
+    "status": "unassessed",
+    "priority": "P2",
+    "source": [
+      {
+        "path": "README",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "GOAL.md"
+    ],
+    "note": "Community source does not define all Enterprise, Router, Shell, Workbench or HeatWave product capabilities.",
+    "acceptance": "Maintain separate version/edition/product inventories when deployments require those surfaces."
+  },
+  {
+    "id": "OPS-13",
+    "name": "Cross-database queries and local/replica joins",
+    "category": "Storage, operations and availability",
+    "scope": "analytics",
+    "status": "partial",
+    "priority": "P1",
+    "source": [
+      {
+        "path": "sql/sql_resolver.cc",
+        "line": 1,
+        "mechanism": "feature-module"
+      }
+    ],
+    "evidence": [
+      "docs/limitations.md"
+    ],
+    "note": "A query reaches one database; local and replicated data cannot be joined together.",
+    "acceptance": "Test qualified names, authorization and snapshot consistency before enabling cross-database joins."
+  }
+]
