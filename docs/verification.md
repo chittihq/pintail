@@ -164,8 +164,8 @@ claims to satisfy:
 | profile | stages | claims |
 |---|---|---|
 | `development` | fmt, typecheck, unit | it compiles, lints, typechecks, and passes its unit tests |
-| `rc` | + oracle, e2e, e2e-mysql80, browser | every correctness gate passed, on both MySQL majors the release covers |
-| `stable` | + bench, accept | the same, with the measured evidence regenerated |
+| `rc` | + oracle, e2e, e2e-mysql80, browser | rc correctness gates passed, on both MySQL majors the release covers |
+| `stable` | + recovery, bench, accept | the same, with the measured evidence regenerated |
 
 `--profile rc` is the release-candidate gate; the bare command is
 `--profile stable`. `--stages=…` still runs any subset, but a subset
@@ -180,6 +180,12 @@ committed — `scripts/release-chain.sh` runs it in the closing
 `--stages=fmt,freshness,accept` pass, on the banked tree, and that pass
 is the stable release's evidence gate. `soak` and `memsoak` are opt-in
 by cost.
+
+The stable profile runs `recovery` after `e2e-mysql80` and before `browser`.
+It uses a separate feature-enabled binary and banks `tests/e2e/results-recovery.md`;
+rc omits this additional fault matrix. For a development check, run
+`bun run scripts/validate.ts --stages=fmt,typecheck,unit,recovery`; its verdict
+is a subset, not a release gate.
 
 Each run writes its own directory under `validate-out/runs/`, recording
 HEAD, the toolchain versions, the requested stages and the ones that did

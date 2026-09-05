@@ -5,7 +5,8 @@
   "scripts": {
     "e2e": "bun run generate:prisma && bun run run.ts",
     "generate:prisma": "prisma generate --schema orm-compat/prisma/schema.prisma",
-    "test:orm": "bun run generate:prisma && bun test orm-compat && tsc --project orm-compat/tsconfig.json"
+    "test:orm": "bun run generate:prisma && bun test orm-compat && tsc --project orm-compat/tsconfig.json",
+    "test:recovery": "bash recovery/check.sh"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "7.9.1",

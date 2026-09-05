@@ -6,6 +6,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A recovery suite with test-only failpoints and 38 isolated scenarios across
+  eight fault areas plus a baseline. It checks exact rows, keyless duplicate
+  counts, column metadata, repair state and continued writes after a second
+  restart. Stable validation runs and banks the suite separately from E2E.
+
+### Fixed
+
+- Polling detects changed source columns at scheduled reconciliation and
+  repairs them through the existing resnapshot policy while healthy tables
+  keep polling. Reconciliation also repairs values whose cursor was unchanged or moved backwards.
+- Interrupted copies retain their pending work across errors and restarts,
+  including keyless tables under quarantine policy (metadata migration 21).
+- A source connection failure during automatic CDC resnapshot now flags
+  incomplete copies for repair immediately, preventing a later CDC cycle
+  from treating a reset but unfilled table as healthy.
+- Automatic CDC resnapshot attempts report the unavailable source-position
+  error in server diagnostics.
+- Successful full resnapshots clear dead letters for repaired tables before
+  restarting replication; failed table copies retain their diagnostics.
+
 ## [0.1.2-rc3] - 2026-09-05
 
 ### Fixed

@@ -61,6 +61,7 @@ bank() {
 }
 bank "test(e2e): bank the differential gate" tests/e2e/results.json tests/e2e/results.md
 bank "test(e2e): bank the mysql80 leg" tests/e2e/results-mysql80.json tests/e2e/results-mysql80.md
+bank "test(recovery): bank the recovery suite" tests/e2e/results-recovery.md
 bank "perf(bench): bank the analytical benchmark and README table" benchmark/results.json benchmark/results.md benchmark/mysql-baseline.json README.md
 bank "perf(bench): bank the TPC-H workload" benchmark/workloads/tpch-v1/results
 bank "perf(bench): bank the production workload" benchmark/workloads/commerce-production-v1/results

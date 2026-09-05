@@ -1,6 +1,8 @@
 # Recovery suite: failure → detection → recovery → continued sync
 
-Status: plan. Implements the extension proposed on 2026-09-05. Every
+Status: implemented; final validation recorded in `tests/e2e/results-recovery.md`.
+Sections 1–7 preserve the approved plan; §8 records implementation clarifications
+and supersedes differences in the original sketches. Every
 scenario ends in an exact value-and-multiplicity comparison against MySQL;
 a return to `streaming` or `polling` state is never the pass condition.
 
@@ -71,8 +73,8 @@ pub fn hit(site: &'static str) -> Result<(), std::io::Error>;
 - Feature `failpoints` on the `pintail` binary crate, forwarded to
   `pintail-store`, `pintail-cdc`, `pintail-poll`, `pintail-snapshot`,
   `pintail-meta`, `pintail-api`. Release builds and the compose image
-  never enable it. Clippy already runs `--all-features`, so the sites are
-  lint-checked in the gate.
+  never enable it. The recovery gate runs strict workspace clippy with
+  `--all-features`, so enabled sites are lint-checked alongside default builds.
 - Unit tests in the crate: parse table, nth semantics, error-once
   semantics, unknown site inert. Aborting is not unit-tested; the harness
   proves it.
@@ -532,3 +534,50 @@ lands red.
   and must pass every exact row, column and later-write check. The leftover
   `big` progress entry remains `snapshotting` with `copy_complete=0`. Only
   that named state gets WARN; no table's data or metadata comparison is skipped.
+
+
+- The final registry contains 38 end-to-end scenarios across eight fault
+  areas plus the baseline. Append/sync I/O errors and atomic metadata failures
+  also run in subprocess tests in the storage/metadata crates. The public
+  ledger contains checks and witnesses; raw failure diagnostics and durable
+  SQLite captures remain in ignored run artifacts to avoid publishing source
+  infrastructure details.
+- Outages use a victim-only TCP proxy, leaving source writers and a bystander
+  database reachable. Query-level interruption targets snapshot and scheduled
+  reconciliation work. Pagination mutation holds a named second-page query
+  while a separate writer commits the count/MAX-neutral transaction.
+- The writer uses deterministic sequence-based mutations seeded from the
+  ledger, rather than a PRNG. Its ledger table has an explicit integer PK and
+  no timestamp, so it exercises the checksum strategy. `run(ctx)` owns each
+  scenario's injection and restoration; the harness always owns setup,
+  `proveConverged()` and cleanup.
+- The boundary cases exposed two product gaps: polling's stored projection
+  hid ADD COLUMN changes, and its missing-key reconciliation could not repair
+  unchanged/backdated cursor values. The fixes and scan costs are recorded in
+  `docs/decisions.md` under “Polling reconciliation repairs values as well as
+  missing keys.” Ordinary cursor cycles still use the inclusive boundary.
+
+- An additional operator case covers keyless polling schema drift under the
+  default quarantine policy: healthy tables must continue receiving writes
+  while the changed table awaits explicit repair, including a crash during
+  that repair. This raises the registry from 37 planned cases to 38.
+
+- Partial-copy health assertions follow repair scope: a whole-database copy
+  cannot claim a healthy database, while a one-table resync leaves other tables
+  live. In both cases every incomplete table must remain visibly incomplete.
+
+- A connection failure during internal CDC resnapshot exposed a live-process
+  gap in the boot-time recovery sweep. Failed resnapshots now flag incomplete
+  copies immediately so subsequent source reconnection cannot silently skip
+  their missing baseline. The outage scenario requires exact automatic repair
+  before any additional process restart.
+
+- Metadata migration 21 records `copy_pending` independently of copy readiness.
+  Interrupted keyless operator copies now resume after restart without a second
+  POST, under quarantine policy. Operator scenarios explicitly wait for that
+  automatic completion before any policy change; later keyless mutations retain
+  their original quarantine policy.
+
+- Pending-copy scheduling excludes names absent from the latest successful
+  probe, preserving orphan progress without repeatedly attempting an impossible
+  copy. A failure after publishing the final chunk re-arms copy intent atomically.

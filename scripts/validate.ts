@@ -55,6 +55,7 @@ const KEPT_CONTAINER_MARKER = '-keep-'
 
 const OWNED_CONTAINER_PREFIXES = [
   'pintail-e2e-',
+  'pintail-recovery-',
   'pintail-browser-',
   'pintail-m9-bench-',
   'pintail-m4-',
@@ -225,6 +226,16 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
+    // Deterministic crash, storage-error and source-outage recovery. Stable
+    // only: each rc already runs both complete MySQL differential legs.
+    name: 'recovery',
+    remote: true,
+    timeoutMinutes: 75,
+    stallMinutes: 15,
+    command: ['bun', 'run', 'test:recovery'],
+    cwd: join(repository, 'tests', 'e2e'),
+  },
+  {
     // Production-shaped browser soak: 2M-row initial sync, dashboard actions
     // under live ingest, an 18M-row CDC backfill, Reset at 20M, and the
     // sakila dataset - tens of minutes BY DESIGN. Opt-in only; never in the
@@ -297,7 +308,7 @@ interface Profile {
 /// is claiming; anything else is a subset and reports itself as one.
 ///
 /// The lists are cumulative on purpose: rc is development plus the
-/// differential gates, stable is rc plus the measured ones. A profile that
+/// differential gates, stable adds recovery faults and the measured gates. A profile that
 /// dropped a cheaper check would let a heavier gate pass over something the
 /// fast loop had already caught.
 const PROFILES: Record<string, Profile> = {
@@ -316,11 +327,12 @@ const PROFILES: Record<string, Profile> = {
   /// rather than by omission.
   rc: {
     stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser'],
-    claim: 'every correctness gate passed, on both MySQL majors the release claims to cover',
+    claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
       'stable release\'s numbers, so the freshness gate is not part of this',
       'profile. Bank tests/e2e/results.md and results-mysql80.md on PASS.',
+      'The additional recovery fault matrix runs in the stable profile only.',
     ],
   },
   /// The full release gate. Run by scripts/release-chain.sh, which banks
@@ -330,7 +342,7 @@ const PROFILES: Record<string, Profile> = {
   stable: {
     stages: [
       'fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80',
-      'browser', 'bench', 'accept',
+      'recovery', 'browser', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',
     caveats: [

@@ -45,3 +45,38 @@ the whole loop, one process each, no shortcuts.
 For production BI dogfooding, use `bi-dogfood.ts` as documented in
 `../corpus/bi-captured/README.md`. Exact captures and raw replay reports stay
 local; only a manually reviewed, literal-redacted report may be shared.
+
+## Recovery suite
+
+`bun run test:recovery` builds a separate debug binary with the `failpoints`
+feature and runs isolated CDC, polling, mode handoff, interrupted snapshot,
+schema drift, source outage and operator repair scenarios. Each scenario
+compares every value, keyless duplicate multiplicity and column metadata
+against MySQL, checks health and dead letters, applies later writes and a
+rollback, and repeats the comparison after another restart.
+
+For one scenario: `bun run recovery/run.ts --only mode-handoff-abort`.
+`--only 'cdc-*,poll-*'` selects a union; `--list` lists matching contracts.
+Subset results go to `results-recovery-partial.md` and cannot overwrite the
+full `results-recovery.md` ledger. Process logs, events and metadata captured
+while Pintail is down remain private under `validate-out/recovery/`. The ledger
+records checkout HEAD, working-tree cleanliness, binary SHA-256 and toolchains.
+A full run builds from the checkout; `PINTAIL_RECOVERY_BINARY` is accepted
+only with `--only` for development runs.
+
+The binary accepts `PINTAIL_FAILPOINT=site[@nth][=abort|error]` only when
+built with the feature. Multiple sites are comma-separated. A failpoint
+must emit its stderr witness or its scenario fails. Normal builds ignore
+the environment variable. Process crashes test replay of recoverable WAL;
+they do not simulate loss of the OS page cache or hardware power failure.
+
+Automatic scenarios cannot call resync, reconcile, reset, forced snapshot
+or DLQ retry endpoints. Only mode scenarios may switch modes. Explicit
+operator repairs live in `recovery/scenarios/operator.ts`. Outages affect
+only the victim's source connection; source writes and the other database
+remain live. Retries assert visible failure and catch-up, without a retry cap.
+
+Recovery is a stable-profile gate, after both MySQL E2E legs and before the
+browser stage. It shares the remote Docker host: never run it concurrently
+with oracle, E2E, browser or benchmark. Only its own temporary MySQL
+container, schemas and local data directories are removed at teardown.
