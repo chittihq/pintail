@@ -273,6 +273,186 @@ async fn m3_snapshot_basic_resume_type_fidelity_and_pk_matrix() {
     pool.disconnect().await.expect("disconnect source pool");
 }
 
+/// Global `Com_select` on the source: how many SELECTs every session has
+/// issued since the server started.
+async fn source_selects(pool: &Pool) -> u64 {
+    let mut connection = pool.get_conn().await.expect("status connection");
+    let row: Option<(String, String)> = connection
+        .query_first("SHOW GLOBAL STATUS LIKE 'Com_select'")
+        .await
+        .expect("Com_select");
+    row.expect("Com_select row")
+        .1
+        .parse()
+        .expect("Com_select value")
+}
+
+/// A resumed table advances past its journaled chunks by their upper keys:
+/// the source answers one empty tail page per table, not every chunk again.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_resumed_snapshot_does_not_reread_the_chunks_it_already_holds() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-05T00:00:00Z",
+        )
+        .expect("register database");
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "resume_rows")
+        .expect("resume table")
+        .clone();
+    let directory = workspace.path().join("resume_rows");
+    let options = SnapshotOptions {
+        workers: 1,
+        chunk_rows: 1_000,
+        ..SnapshotOptions::default()
+    };
+    let first = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        options.clone(),
+    )
+    .await
+    .expect("first copy");
+    assert_eq!(first.tables[0].chunks, 100);
+    drop(first);
+
+    let before = source_selects(&pool).await;
+    let resumed = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        options,
+    )
+    .await
+    .expect("resume over a complete journal");
+    let selects = source_selects(&pool).await - before;
+    assert_eq!(resumed.tables[0].chunks, 100);
+    assert_eq!(resumed.tables[0].rows, RESUME_ROWS);
+    // The tail page that proves the table ended, plus the status reads
+    // around it; a hundred and more means the chunks were read again.
+    assert!(
+        selects <= 4,
+        "a resume over a complete journal issued {selects} SELECTs against the source"
+    );
+    pool.disconnect().await.expect("disconnect source pool");
+}
+
+/// One table that cannot be copied is flagged for a resync; the others
+/// complete and the run reports the failure instead of becoming one.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_table_that_cannot_be_copied_is_flagged_and_the_rest_complete() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-05T00:00:00Z",
+        )
+        .expect("register database");
+    let find = |name: &str| {
+        report
+            .tables
+            .iter()
+            .find(|table| table.name == name)
+            .expect("probed table")
+            .clone()
+    };
+    let healthy = target(
+        &find("primary_table"),
+        &workspace.path().join("primary_table"),
+    );
+    let broken_directory = workspace.path().join("composite_table");
+    let broken = target(&find("composite_table"), &broken_directory);
+    // The store is open; its directory is now read-only, so the first
+    // segment the copy writes fails as a storage error of this table alone.
+    std::fs::set_permissions(&broken_directory, std::fs::Permissions::from_mode(0o555))
+        .expect("read-only table directory");
+
+    let result = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![healthy, broken],
+        SnapshotOptions {
+            workers: 1,
+            chunk_rows: 1_000,
+            ..SnapshotOptions::default()
+        },
+    )
+    .await;
+    std::fs::set_permissions(&broken_directory, std::fs::Permissions::from_mode(0o755))
+        .expect("restore permissions");
+    let result = result.expect("the run completes despite one table");
+    assert_eq!(
+        result
+            .failed
+            .iter()
+            .map(|failure| failure.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["composite_table"]
+    );
+    assert_eq!(
+        result
+            .tables
+            .iter()
+            .map(|table| table.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["primary_table"]
+    );
+    let metadata = MetaStore::open(&metadata_path).expect("metadata");
+    let states = metadata
+        .tables(DATABASE_ID)
+        .expect("tables")
+        .into_iter()
+        .map(|table| (table.name, table.state, table.copy_complete))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![
+            (
+                "composite_table".to_owned(),
+                "needs_resync".to_owned(),
+                false
+            ),
+            ("primary_table".to_owned(), "pending".to_owned(), true),
+        ]
+    );
+    pool.disconnect().await.expect("disconnect source pool");
+}
+
 struct CompatibilityVariant {
     label: &'static str,
     image: &'static str,

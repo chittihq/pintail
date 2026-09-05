@@ -597,6 +597,7 @@ mod tests {
             schema_version: 1,
             orphaned_at: None,
             soft_delete_column: None,
+            copy_complete: true,
         }
     }
 

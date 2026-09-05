@@ -55,6 +55,7 @@ pub fn spawn(
         let mut resume: std::collections::BTreeMap<String, bool> =
             std::collections::BTreeMap::new();
         if let Ok(metadata) = state.metadata() {
+            restore_tables_after_restart(&state, &metadata);
             match metadata.quarantine_interrupted_snapshots(
                 "a table copy was interrupted by a restart; resync to repair the partial data",
             ) {
@@ -99,6 +100,22 @@ pub fn spawn(
             }
         }
         for (database_id, force) in resume {
+            // A database already replicating lost one table's copy, not its
+            // snapshot: repair that table the way the stream would, and the
+            // rest of the database stays live meanwhile.
+            if !force
+                && let Ok(metadata) = state.metadata()
+                && let Ok(Some(_)) = metadata.snapshot_checkpoint(&database_id)
+            {
+                state.publish(ApiEvent::database(
+                    "resync.resumed",
+                    &database_id,
+                    "the table copy interrupted by the restart resumes as a table resync; \
+                     the rest of the database stays live",
+                ));
+                crate::controls::auto_resync_quarantined(&state, &database_id);
+                continue;
+            }
             match crate::snapshot::begin_snapshot_job(&state, &database_id, force) {
                 Ok(run_id) => state.publish(ApiEvent::database(
                     "snapshot.resumed",
@@ -677,7 +694,74 @@ fn elapsed_ms(started: std::time::Instant) -> u64 {
 }
 
 fn display(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    // Alternate form: an `anyhow` chain prints every cause, so "failed to
+    // create private metadata database" arrives with the OS error behind it.
+    format!("{error:#}")
+}
+
+/// Hands every fully copied table a restart left mid-walk back to its live
+/// state, per database that has already handed off to replication.
+///
+/// The states a job writes - snapshotting, pending, error - describe the
+/// walk, not the copy; the copy marker does. Restoring from it means a
+/// restart in the middle of a whole-database walk, or after a job failed on
+/// one table, costs nothing but the tables that were genuinely incomplete.
+fn restore_tables_after_restart(state: &ApiState, metadata: &MetaStore) {
+    let databases = match metadata.databases() {
+        Ok(databases) => databases,
+        Err(error) => {
+            state.publish(ApiEvent::database(
+                "supervisor.error",
+                "control-plane",
+                format!("restart table restore could not list databases: {error:#}"),
+            ));
+            return;
+        }
+    };
+    for database in databases {
+        let Ok(Some(_)) = metadata.snapshot_checkpoint(&database.id) else {
+            continue;
+        };
+        let Some(mode) = database
+            .effective_mode
+            .as_deref()
+            .filter(|mode| matches!(*mode, "cdc" | "polling"))
+        else {
+            continue;
+        };
+        let table_state = if mode == "polling" {
+            "polling"
+        } else {
+            "streaming"
+        };
+        match metadata.restore_complete_tables(&database.id, table_state) {
+            Ok(restored) if !restored.is_empty() => {
+                let cleared = metadata
+                    .clear_database_error(&database.id, mode, &Utc::now().to_rfc3339())
+                    .unwrap_or(false);
+                state.publish(ApiEvent::database(
+                    "restart.restored",
+                    &database.id,
+                    format!(
+                        "{} fully copied table(s) a restart left mid-walk are live again: {}{}",
+                        restored.len(),
+                        crate::snapshot::summarize_names(restored.iter().map(String::as_str)),
+                        if cleared {
+                            "; the database is out of its error state"
+                        } else {
+                            ""
+                        }
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) => state.publish(ApiEvent::database(
+                "supervisor.error",
+                &database.id,
+                format!("restart table restore failed: {error:#}"),
+            )),
+        }
+    }
 }
 
 #[cfg(test)]

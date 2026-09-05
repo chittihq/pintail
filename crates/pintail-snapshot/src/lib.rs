@@ -7,6 +7,7 @@
 //! checkpointed in `SQLite`.
 
 use std::{
+    collections::HashMap,
     fmt::Write as _,
     path::{Path, PathBuf},
     sync::{
@@ -152,6 +153,18 @@ pub struct SnapshotProgress {
 }
 
 /// Per-table completion summary.
+/// A table the copy could not finish. It is flagged for a resync and the
+/// rest of the run proceeds: one table's failure used to abort its worker,
+/// fail the whole job, and mark every other table - copied or not - as
+/// error, which is how a restart left a live database with nothing streaming.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TableSnapshotFailure {
+    /// Source table name.
+    pub table: String,
+    /// The error, as the table's `last_error` records it.
+    pub error: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TableSnapshotOutcome {
     /// Source table name.
@@ -179,6 +192,8 @@ pub struct SnapshotResult {
     pub consistency_warning: Option<String>,
     /// Per-table durable totals.
     pub tables: Vec<TableSnapshotOutcome>,
+    /// Tables the run could not copy; each is flagged `needs_resync`.
+    pub failed: Vec<TableSnapshotFailure>,
     /// Populated stores in the same source-name order as the input.
     pub targets: Vec<SnapshotTarget>,
 }
@@ -212,6 +227,13 @@ pub enum SnapshotError {
         reason: String,
     },
     /// A supervisor-requested chunk budget was reached at a durable boundary.
+    #[error("every table failed to copy ({count}); first: {first}")]
+    EveryTableFailed {
+        /// How many tables failed.
+        count: usize,
+        /// The first table's error.
+        first: String,
+    },
     #[error("snapshot paused after {completed_chunks} newly completed chunks")]
     Paused {
         /// Number of chunks durably completed by this attempt.
@@ -428,14 +450,30 @@ async fn run_snapshot_inner(
         });
     let worker_results = join_all(futures).await;
     let mut populated = Vec::new();
+    let mut failed = Vec::new();
     for result in worker_results {
-        populated.extend(result?);
+        let (targets, failures) = result?;
+        populated.extend(targets);
+        failed.extend(failures);
     }
     populated.sort_by(|left, right| left.source.name.cmp(&right.source.name));
+    failed.sort_by(|left, right| left.table.cmp(&right.table));
+    if !failed.is_empty() && failed.len() == populated.len() {
+        return Err(SnapshotError::EveryTableFailed {
+            count: failed.len(),
+            first: failed[0].error.clone(),
+        });
+    }
 
     let metadata = MetaStore::open(metadata_path.as_path())?;
     let mut table_outcomes = Vec::with_capacity(populated.len());
     for target in &populated {
+        if failed
+            .iter()
+            .any(|failure| failure.table == target.source.name)
+        {
+            continue;
+        }
         let chunks = metadata.snapshot_chunks(database_id, &target.source.name)?;
         table_outcomes.push(TableSnapshotOutcome {
             table: target.source.name.clone(),
@@ -454,9 +492,10 @@ async fn run_snapshot_inner(
     // later inspection can recover: whether the copy shared one source
     // transaction is decided here and nowhere else.
     pintail_log::log_info!(
-        "snapshot done db={database_id} tables={} rows={} consistent={globally_consistent}{}",
+        "snapshot done db={database_id} tables={} rows={} failed={} consistent={globally_consistent}{}",
         table_outcomes.len(),
         table_outcomes.iter().map(|table| table.rows).sum::<u64>(),
+        failed.len(),
         consistency_warning
             .as_deref()
             .map_or_else(String::new, |warning| format!(" warning={warning}"))
@@ -467,6 +506,7 @@ async fn run_snapshot_inner(
         globally_consistent,
         consistency_warning,
         tables: table_outcomes,
+        failed,
         targets: populated,
     })
 }
@@ -481,8 +521,9 @@ async fn snapshot_worker(
     options: SnapshotOptions,
     newly_completed: Arc<AtomicUsize>,
     progress: ProgressListener,
-) -> Result<Vec<SnapshotTarget>, SnapshotError> {
+) -> Result<(Vec<SnapshotTarget>, Vec<TableSnapshotFailure>), SnapshotError> {
     let mut metadata = MetaStore::open(&metadata_path)?;
+    let mut failures = Vec::new();
     for target in &mut targets {
         let result = snapshot_table(
             &mut transaction,
@@ -495,16 +536,45 @@ async fn snapshot_worker(
             &progress,
         )
         .await;
-        if let Err(error) = result {
-            let _record_error =
-                metadata.fail_snapshot_table(&database_id, &target.source.name, &error.to_string());
-            let _rollback = transaction.rollback().await;
-            return Err(error);
+        match result {
+            Ok(()) => metadata.complete_snapshot_table(&database_id, &target.source.name)?,
+            // The source, the metadata store, or the run's own budget: not
+            // this table's fault, and the tables after it would fail the
+            // same way, so the worker stops as a whole.
+            Err(
+                error @ (SnapshotError::Mysql(_)
+                | SnapshotError::Metadata(_)
+                | SnapshotError::InvalidConfiguration(_)
+                | SnapshotError::Paused { .. }
+                | SnapshotError::EveryTableFailed { .. }),
+            ) => {
+                let _record_error = metadata.fail_snapshot_table(
+                    &database_id,
+                    &target.source.name,
+                    &error.to_string(),
+                );
+                let _rollback = transaction.rollback().await;
+                return Err(error);
+            }
+            // This table's data or schema: flag it for a resync and copy the
+            // rest. CDC blocks a flagged table, and the automatic resync
+            // recopies it with a fresh probe.
+            Err(error) => {
+                let message = error.to_string();
+                pintail_log::log_error!(
+                    "snapshot table failed db={database_id} table={} flagged for resync: {message}",
+                    target.source.name
+                );
+                metadata.mark_table_needs_resync(&database_id, &target.source.name, &message)?;
+                failures.push(TableSnapshotFailure {
+                    table: target.source.name.clone(),
+                    error: message,
+                });
+            }
         }
-        metadata.complete_snapshot_table(&database_id, &target.source.name)?;
     }
     transaction.commit().await?;
-    Ok(targets)
+    Ok((targets, failures))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -518,13 +588,25 @@ async fn snapshot_table(
     newly_completed: &AtomicUsize,
     progress: &ProgressListener,
 ) -> Result<(), SnapshotError> {
-    let completed = metadata.completed_snapshot_chunks(database_id, &target.source.name)?;
-    let previously_completed_rows = metadata
+    // The journal is the resume: a chunk it records as completed is in the
+    // store already, and its upper key is where the next chunk starts. A
+    // resumed table therefore advances past its completed chunks without
+    // asking the source for their rows again - re-reading them made a
+    // restarted copy of a large replica pull the whole source through the
+    // network before it reached the one table that needed copying.
+    let completed = metadata
         .snapshot_chunks(database_id, &target.source.name)?
         .into_iter()
         .filter(|chunk| chunk.status == SnapshotChunkStatus::Completed)
-        .map(|chunk| chunk.rows)
-        .sum::<u64>();
+        .map(|chunk| (chunk.chunk_id.clone(), chunk))
+        .collect::<HashMap<_, _>>();
+    let previously_completed_rows = completed.values().map(|chunk| chunk.rows).sum::<u64>();
+    pintail_log::log_info!(
+        "snapshot table start db={database_id} table={} completed_chunks={} rows_in_store={previously_completed_rows}",
+        target.source.name,
+        completed.len()
+    );
+    let mut skipped_chunks = 0_usize;
     let columns = target
         .source
         .columns
@@ -570,6 +652,20 @@ async fn snapshot_table(
     let mut newly_completed_rows = 0_u64;
     let mut run_bytes = 0_u64;
     loop {
+        let chunk_id = format!("chunk-{page:020}");
+        if let Some(record) = completed.get(&chunk_id)
+            && let JournalResume::Skip(next) = journal_cursor(record, key_indices.is_empty())?
+        {
+            skipped_chunks += 1;
+            cursor = next;
+            page = page.saturating_add(1);
+            if key_indices.is_empty() && page.saturating_mul(options.chunk_rows) == usize::MAX {
+                return Err(SnapshotError::InvalidConfiguration(
+                    "PK-less snapshot offset overflowed".to_owned(),
+                ));
+            }
+            continue;
+        }
         let mut parameters = Vec::new();
         let sql = if key_indices.is_empty() {
             let offset = page.saturating_mul(options.chunk_rows);
@@ -631,8 +727,7 @@ async fn snapshot_table(
                     .collect::<Result<Vec<_>, _>>()?,
             )
         };
-        let chunk_id = format!("chunk-{page:020}");
-        if !completed.contains(&chunk_id) {
+        if !completed.contains_key(&chunk_id) {
             let chunk_reserved = reserve_snapshot_chunk(newly_completed, options.max_new_chunks)?;
             let lo_json = cursor
                 .as_ref()
@@ -711,7 +806,113 @@ async fn snapshot_table(
             ));
         }
     }
+    pintail_log::log_info!(
+        "snapshot table done db={database_id} table={} rows={run_rows} new_rows={newly_completed_rows} skipped_chunks={skipped_chunks} {}ms",
+        target.source.name,
+        started.elapsed().as_millis()
+    );
     Ok(())
+}
+
+/// Where a resumed copy continues after a chunk the journal holds complete.
+#[derive(Debug, PartialEq)]
+enum JournalResume {
+    /// Skip the chunk and carry this cursor into the next page. Offset-paged
+    /// (keyless) chunks carry no cursor at all, so they always skip.
+    Skip(Option<Vec<MysqlValue>>),
+    /// The journal cannot say where the chunk ended, so it is read again.
+    Reread,
+}
+
+fn journal_cursor(
+    record: &pintail_meta::SnapshotChunkRecord,
+    keyless: bool,
+) -> Result<JournalResume, SnapshotError> {
+    if keyless {
+        return Ok(JournalResume::Skip(None));
+    }
+    match record.hi_key_json.as_deref() {
+        Some(json) => Ok(JournalResume::Skip(Some(cursor_from_json(json)?))),
+        None => Ok(JournalResume::Reread),
+    }
+}
+
+fn cursor_from_json(json: &str) -> Result<Vec<MysqlValue>, SnapshotError> {
+    let values: Vec<serde_json::Value> = serde_json::from_str(json)
+        .map_err(|error| SnapshotError::Metadata(anyhow::anyhow!("snapshot cursor: {error}")))?;
+    values.iter().map(json_mysql_value).collect()
+}
+
+fn json_mysql_value(value: &serde_json::Value) -> Result<MysqlValue, SnapshotError> {
+    fn invalid(what: &str) -> SnapshotError {
+        SnapshotError::Metadata(anyhow::anyhow!("snapshot cursor: invalid {what}"))
+    }
+    fn number<T: TryFrom<u64>>(value: &serde_json::Value, what: &str) -> Result<T, SnapshotError> {
+        value
+            .as_u64()
+            .and_then(|number| T::try_from(number).ok())
+            .ok_or_else(|| invalid(what))
+    }
+    let serde_json::Value::Object(fields) = value else {
+        return if value.is_null() {
+            Ok(MysqlValue::NULL)
+        } else {
+            Err(invalid("value"))
+        };
+    };
+    let Some((kind, inner)) = fields.iter().next() else {
+        return Err(invalid("value"));
+    };
+    Ok(match kind.as_str() {
+        "int" => MysqlValue::Int(inner.as_i64().ok_or_else(|| invalid("int"))?),
+        "uint" => MysqlValue::UInt(inner.as_u64().ok_or_else(|| invalid("uint"))?),
+        "float_bits" => MysqlValue::Float(f32::from_bits(number(inner, "float")?)),
+        "double_bits" => MysqlValue::Double(f64::from_bits(
+            inner.as_u64().ok_or_else(|| invalid("double"))?,
+        )),
+        "bytes_hex" => {
+            let hex = inner.as_str().ok_or_else(|| invalid("bytes"))?;
+            if hex.len() % 2 != 0 {
+                return Err(invalid("bytes"));
+            }
+            let bytes = (0..hex.len())
+                .step_by(2)
+                .map(|index| u8::from_str_radix(&hex[index..index + 2], 16))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| invalid("bytes"))?;
+            MysqlValue::Bytes(bytes)
+        }
+        "date" => {
+            let parts = inner
+                .as_array()
+                .filter(|parts| parts.len() == 7)
+                .ok_or_else(|| invalid("date"))?;
+            MysqlValue::Date(
+                number(&parts[0], "date")?,
+                number(&parts[1], "date")?,
+                number(&parts[2], "date")?,
+                number(&parts[3], "date")?,
+                number(&parts[4], "date")?,
+                number(&parts[5], "date")?,
+                number(&parts[6], "date")?,
+            )
+        }
+        "time" => {
+            let parts = inner
+                .as_array()
+                .filter(|parts| parts.len() == 6)
+                .ok_or_else(|| invalid("time"))?;
+            MysqlValue::Time(
+                parts[0].as_bool().ok_or_else(|| invalid("time"))?,
+                number(&parts[1], "time")?,
+                number(&parts[2], "time")?,
+                number(&parts[3], "time")?,
+                number(&parts[4], "time")?,
+                number(&parts[5], "time")?,
+            )
+        }
+        _ => return Err(invalid("kind")),
+    })
 }
 
 fn reserve_snapshot_chunk(
@@ -1311,6 +1512,51 @@ mod tests {
     use mysql_async::Value as MysqlValue;
     use pintail_types::{KeyPart, Value};
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn a_journal_cursor_round_trips_every_value_kind() {
+        let values = vec![
+            MysqlValue::NULL,
+            MysqlValue::Int(-42),
+            MysqlValue::UInt(u64::MAX),
+            MysqlValue::Float(1.5),
+            MysqlValue::Double(-2.25),
+            MysqlValue::Bytes(vec![0, 255, 16, 222]),
+            MysqlValue::Date(2026, 9, 5, 7, 55, 45, 123_456),
+            MysqlValue::Time(true, 3, 4, 5, 6, 7),
+        ];
+        let json = super::cursor_json(&values).expect("encode");
+        assert_eq!(super::cursor_from_json(&json).expect("decode"), values);
+        assert!(super::cursor_from_json("[{\"kind\":1}]").is_err());
+        assert!(super::cursor_from_json("[{\"bytes_hex\":\"abc\"}]").is_err());
+    }
+
+    #[test]
+    fn a_completed_chunk_resumes_from_its_journaled_upper_key() {
+        let record = pintail_meta::SnapshotChunkRecord {
+            chunk_id: "chunk-00000000000000000003".to_owned(),
+            lo_key_json: Some("[{\"int\":300000}]".to_owned()),
+            hi_key_json: Some("[{\"int\":400000}]".to_owned()),
+            status: pintail_meta::SnapshotChunkStatus::Completed,
+            rows: 100_000,
+        };
+        assert_eq!(
+            super::journal_cursor(&record, false).expect("cursor"),
+            super::JournalResume::Skip(Some(vec![MysqlValue::Int(400_000)]))
+        );
+        // Offset paging carries no cursor; the page number is the resume.
+        assert_eq!(
+            super::journal_cursor(&record, true).expect("cursor"),
+            super::JournalResume::Skip(None)
+        );
+        // A keyed chunk without an upper key has to be read again.
+        let mut bare = record;
+        bare.hi_key_json = None;
+        assert_eq!(
+            super::journal_cursor(&bare, false).expect("cursor"),
+            super::JournalResume::Reread
+        );
+    }
 
     #[test]
     fn preserves_zero_dates_and_nulls_only_genuinely_invalid_ones() {

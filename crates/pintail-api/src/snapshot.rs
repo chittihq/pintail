@@ -16,11 +16,12 @@ use axum::{
 use chrono::Utc;
 use mysql_async::Pool;
 use pintail_cdc::{CdcOptions, CdcTarget, run_cdc};
-use pintail_meta::{DatabaseRecord, SnapshotChunkStatus, TableRecord};
+use pintail_meta::{DatabaseRecord, MetaStore, SnapshotChunkStatus, TableRecord};
 use pintail_poll::{PollOptions, PollTarget, run_poll_cycle};
 use pintail_probe::{ProbeReport, RecommendedMode, probe};
 use pintail_snapshot::{
-    SnapshotOptions, SnapshotProgress, SnapshotResult, SnapshotTarget, run_snapshot_with_progress,
+    SnapshotOptions, SnapshotPosition, SnapshotProgress, SnapshotResult, SnapshotTarget,
+    TableSnapshotFailure, run_snapshot_with_progress,
 };
 use pintail_store::{StoreOptions, TableStore};
 use serde::{Deserialize, Serialize};
@@ -241,7 +242,18 @@ pub(crate) fn begin_snapshot_job(
 async fn complete_snapshot_job(state: ApiState, database_id: String, run_id: String, force: bool) {
     let started = Instant::now();
     match run_snapshot_job(&state, &database_id, &run_id, force).await {
-        Ok((rows, bytes, mode)) => {
+        Ok((rows, bytes, mode, failed)) => {
+            let partial = (!failed.is_empty()).then(|| {
+                format!(
+                    "{} table(s) could not be copied and are flagged for resync: {}",
+                    failed.len(),
+                    failed
+                        .iter()
+                        .map(|failure| format!("{} ({})", failure.table, failure.error))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            });
             if let Ok(metadata) = state.metadata() {
                 let _ = metadata.finish_sync_run(
                     &run_id,
@@ -249,8 +261,15 @@ async fn complete_snapshot_job(state: ApiState, database_id: String, run_id: Str
                     rows,
                     bytes,
                     duration_ms(started),
-                    None,
+                    partial.as_deref(),
                 );
+            }
+            if let Some(partial) = &partial {
+                state.publish(ApiEvent::database(
+                    "snapshot.partial",
+                    &database_id,
+                    partial,
+                ));
             }
             state.publish(ApiEvent::database(
                 "replication.ready",
@@ -308,12 +327,13 @@ pub(crate) async fn status(
     }))
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_snapshot_job(
     state: &ApiState,
     database_id: &str,
     run_id: &str,
     force: bool,
-) -> Result<(u64, u64, &'static str), String> {
+) -> Result<(u64, u64, &'static str, Vec<TableSnapshotFailure>), String> {
     let mut metadata = state.metadata().map_err(display)?;
     let database = metadata
         .database(database_id)
@@ -350,6 +370,59 @@ async fn run_snapshot_job(
         .map_err(display)?
     };
     let sources = selected_sources(&database, &report)?;
+    // A database that already handed off to replication keeps its copied
+    // tables live. Without `force`, a snapshot here copies only the tables
+    // whose copy never reached its end - a restart's leftovers - and any
+    // table the source added since; walking the complete ones re-read the
+    // whole source and turned them all pending while it did.
+    let handed_off = !force
+        && metadata
+            .snapshot_checkpoint(database_id)
+            .map_err(display)?
+            .is_some();
+    let sources = if handed_off {
+        let incomplete = metadata
+            .tables_without_complete_copy(database_id)
+            .map_err(display)?
+            .into_iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
+        let tracked = metadata
+            .tables(database_id)
+            .map_err(display)?
+            .into_iter()
+            .map(|table| table.name.to_ascii_lowercase())
+            .collect::<BTreeSet<_>>();
+        let total = sources.len();
+        let selected = sources
+            .into_iter()
+            .filter(|source| {
+                let name = source.name.to_ascii_lowercase();
+                incomplete.contains(&name) || !tracked.contains(&name)
+            })
+            .collect::<Vec<_>>();
+        if selected.is_empty() {
+            state.publish(ApiEvent::database(
+                "snapshot.nothing_to_copy",
+                database_id,
+                format!("every one of the {total} tables holds a complete copy; nothing to do"),
+            ));
+            pool.disconnect().await.map_err(display)?;
+            return Ok((0, 0, effective_mode(&database, &report), Vec::new()));
+        }
+        state.publish(ApiEvent::database(
+            "snapshot.partial_copy",
+            database_id,
+            format!(
+                "copying {} of {total} tables whose copy is incomplete: {}; the rest stay live",
+                selected.len(),
+                summarize_names(selected.iter().map(|source| source.name.as_str()))
+            ),
+        ));
+        selected
+    } else {
+        sources
+    };
     let data_dir = state.data_dir().map_err(display)?.to_path_buf();
     let metadata_path = state.metadata_path().map_err(display)?.to_path_buf();
     let root = data_dir.join("databases").join(database_id).join("tables");
@@ -393,6 +466,46 @@ async fn run_snapshot_job(
     .await
     .map_err(display)?;
     let rows = result.tables.iter().map(|table| table.rows).sum();
+    let failed = result.failed.clone();
+    if handed_off {
+        // The database is already replicating: finish each copied table the
+        // way a table resync does - fence it against replaying its own rows,
+        // hand it back to the live state, drop its dead letters - and leave
+        // the handoff alone.
+        let mode = effective_mode(&database, &report);
+        let table_state = if mode == "polling" {
+            "polling"
+        } else {
+            "streaming"
+        };
+        let metadata = state.metadata().map_err(display)?;
+        for target in &result.targets {
+            let name = target.source().name.clone();
+            if failed.iter().any(|failure| failure.table == name) {
+                continue;
+            }
+            fence_table_after_copy(
+                &metadata,
+                database_id,
+                &name,
+                &result.captured_position,
+                mode == "cdc",
+            )?;
+            metadata
+                .finish_table_resnapshot(database_id, &name, table_state)
+                .map_err(display)?;
+            metadata
+                .clear_dlq_for_table(database_id, &name)
+                .map_err(display)?;
+        }
+        pool.disconnect().await.map_err(display)?;
+        state.publish(ApiEvent::database(
+            "snapshot.completed",
+            database_id,
+            format!("snapshot run {run_id} copied {rows} rows into the live database"),
+        ));
+        return Ok((rows, bytes.load(Ordering::Relaxed), mode, failed));
+    }
     let mode = handoff_replication(
         &pool,
         &metadata_path,
@@ -414,7 +527,61 @@ async fn run_snapshot_job(
         database_id,
         format!("snapshot run {run_id} completed with {rows} rows"),
     ));
-    Ok((rows, bytes.load(Ordering::Relaxed), mode))
+    Ok((rows, bytes.load(Ordering::Relaxed), mode, failed))
+}
+
+/// Up to a dozen names, then a count of the rest.
+pub(crate) fn summarize_names<'a>(names: impl Iterator<Item = &'a str>) -> String {
+    let names = names.collect::<Vec<_>>();
+    if names.len() <= 12 {
+        return names.join(", ");
+    }
+    format!("{} and {} more", names[..12].join(", "), names.len() - 12)
+}
+
+/// Records where a freshly copied table's data stands in the stream, so CDC
+/// does not replay the rows the copy already holds.
+///
+/// Without a fence the stream would replay events the copy already holds.
+/// Deletes and updates would land again harmlessly on a keyed table, but an
+/// append-keyed one would duplicate, so a CDC database whose source reported
+/// no position refuses the copy rather than leave that to chance. A polling
+/// database has no stream to replay, and its source may not write a binlog
+/// at all.
+///
+/// # Errors
+///
+/// Returns the metadata error, or the refusal.
+pub(crate) fn fence_table_after_copy(
+    metadata: &MetaStore,
+    database_id: &str,
+    table_name: &str,
+    captured: &SnapshotPosition,
+    cdc: bool,
+) -> Result<(), String> {
+    let fence = match captured {
+        SnapshotPosition::Gtid {
+            file: Some(file),
+            position: Some(position),
+            ..
+        }
+        | SnapshotPosition::FilePosition { file, position } => Some((file.clone(), *position)),
+        SnapshotPosition::Gtid { .. } | SnapshotPosition::Unavailable => None,
+    };
+    match fence {
+        Some((file, position)) => metadata
+            .set_setting(
+                &pintail_cdc::snapshot_fence_key(database_id, &table_name.to_ascii_lowercase()),
+                &format!("{file}:{position}"),
+            )
+            .map_err(display),
+        None if cdc => Err(
+            "source did not report a binlog position for the snapshot, so the table \
+             cannot be fenced against replaying its own rows"
+                .to_owned(),
+        ),
+        None => Ok(()),
+    }
 }
 
 async fn handoff_replication(
@@ -762,5 +929,7 @@ fn duration_ms(started: Instant) -> u64 {
 }
 
 fn display(error: impl std::fmt::Display) -> String {
-    error.to_string()
+    // Alternate form: an `anyhow` chain prints every cause, so "failed to
+    // create private metadata database" arrives with the OS error behind it.
+    format!("{error:#}")
 }

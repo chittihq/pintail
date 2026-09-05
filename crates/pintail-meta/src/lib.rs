@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 19;
+const CURRENT_SCHEMA_VERSION: u32 = 20;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1000,7 +1000,7 @@ impl MetaStore {
     ) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE tables SET state = 'needs_resync', last_error = ?3 \
+                "UPDATE tables SET state = 'needs_resync', last_error = ?3, copy_complete = 0 \
                  WHERE db_id = ?1 AND name = ?2",
                 (database_id, table_name, error),
             )
@@ -1044,7 +1044,8 @@ impl MetaStore {
         let changed = transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
-                   last_error = NULL WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                   last_error = NULL, copy_complete = 0 \
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name),
             )
             .with_context(|| {
@@ -1072,7 +1073,7 @@ impl MetaStore {
         let changed = self
             .connection
             .execute(
-                "UPDATE tables SET state = ?3, last_error = NULL \
+                "UPDATE tables SET state = ?3, last_error = NULL, copy_complete = 1 \
                  WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name, state),
             )
@@ -1301,7 +1302,8 @@ impl MetaStore {
         transaction
             .execute(
                 "UPDATE tables SET state = 'snapshotting', rows_synced = 0, \
-                   last_error = NULL WHERE db_id = ?1 AND state != 'excluded'",
+                   last_error = NULL, copy_complete = 0 \
+                 WHERE db_id = ?1 AND state != 'excluded'",
                 [database_id],
             )
             .context("failed to reset table snapshot state")?;
@@ -1492,7 +1494,7 @@ impl MetaStore {
     pub fn complete_snapshot_table(&self, database_id: &str, table_name: &str) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE tables SET state = 'pending', last_error = NULL \
+                "UPDATE tables SET state = 'pending', last_error = NULL, copy_complete = 1 \
                  WHERE db_id = ?1 AND name = ?2",
                 (database_id, table_name),
             )
@@ -1500,6 +1502,108 @@ impl MetaStore {
                 format!("failed to complete snapshot table {database_id}.{table_name}")
             })?;
         Ok(())
+    }
+
+    /// Tables whose copy has not reached its end - never copied, mid-copy,
+    /// or flagged for a recopy - excluding tables the mirror leaves out.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the query fails.
+    pub fn tables_without_complete_copy(&self, database_id: &str) -> Result<BTreeSet<String>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT name FROM tables \
+                 WHERE db_id = ?1 AND copy_complete = 0 AND state != 'excluded'",
+            )
+            .context("failed to prepare incomplete-copy query")?;
+        let names = statement
+            .query_map([database_id], |row| row.get::<_, String>(0))
+            .context("failed to query incomplete copies")?
+            .collect::<rusqlite::Result<BTreeSet<_>>>()
+            .context("failed to decode incomplete copies")?;
+        Ok(names)
+    }
+
+    /// Hands every fully copied table that a restart left mid-walk back to
+    /// `state` (`streaming` or `polling`), and drops the chunk journal rows
+    /// that walk left unfinished. Returns the tables it restored.
+    ///
+    /// A whole-database walk moves each table through snapshotting and
+    /// pending before the handoff flips them all at once; a failed job marks
+    /// them error. None of that changes the copy on disk, so after a restart
+    /// the copy marker, not the state, says which tables need work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the update fails.
+    pub fn restore_complete_tables(&self, database_id: &str, state: &str) -> Result<Vec<String>> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin table restore")?;
+        let restored = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT name FROM tables \
+                     WHERE db_id = ?1 AND copy_complete = 1 \
+                       AND state IN ('pending', 'snapshotting', 'error') \
+                     ORDER BY name",
+                )
+                .context("failed to prepare table restore query")?;
+            statement
+                .query_map([database_id], |row| row.get::<_, String>(0))
+                .context("failed to query tables to restore")?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("failed to decode tables to restore")?
+        };
+        for name in &restored {
+            transaction
+                .execute(
+                    "DELETE FROM snapshot_chunks \
+                     WHERE db_id = ?1 AND table_name = ?2 AND status != 'completed'",
+                    (database_id, name),
+                )
+                .with_context(|| {
+                    format!("failed to drop unfinished chunks of {database_id}.{name}")
+                })?;
+            transaction
+                .execute(
+                    "UPDATE tables SET state = ?3, last_error = NULL \
+                     WHERE db_id = ?1 AND name = ?2",
+                    (database_id, name, state),
+                )
+                .with_context(|| format!("failed to restore {database_id}.{name}"))?;
+        }
+        transaction
+            .commit()
+            .context("failed to commit table restore")?;
+        Ok(restored)
+    }
+
+    /// Lifts a database out of `error` after its tables were restored, back
+    /// to the state its effective mode implies. Touches no table row: the
+    /// tables the restore left alone are the ones that still need work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the update fails.
+    pub fn clear_database_error(&self, id: &str, effective_mode: &str, now: &str) -> Result<bool> {
+        let state = match effective_mode {
+            "cdc" => "streaming",
+            "polling" => "polling",
+            _ => bail!("effective database mode must be cdc or polling"),
+        };
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE databases SET state = ?2, updated_at = ?3 \
+                 WHERE id = ?1 AND state = 'error'",
+                (id, state, now),
+            )
+            .context("failed to clear the database error state")?;
+        Ok(changed > 0)
     }
 
     /// Records a table-level snapshot error.
@@ -1515,7 +1619,7 @@ impl MetaStore {
     ) -> Result<()> {
         self.connection
             .execute(
-                "UPDATE tables SET state = 'error', last_error = ?3 \
+                "UPDATE tables SET state = 'error', last_error = ?3, copy_complete = 0 \
                  WHERE db_id = ?1 AND name = ?2",
                 (database_id, table_name, error),
             )
@@ -1669,7 +1773,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 19 {
         migration_v19(connection.transaction()?)?;
     }
+    if found < 20 {
+        migration_v20(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v20(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/020_copy_complete.sql"))
+        .context("failed to apply metadata migration 20")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 20")
 }
 
 fn migration_v1(transaction: Transaction<'_>) -> Result<()> {

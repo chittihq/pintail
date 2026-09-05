@@ -14,7 +14,7 @@ use pintail_poll::{
     CdcReconcileScope, PollOptions, PollTarget, run_cdc_reconciliation, run_poll_cycle,
 };
 use pintail_probe::ProbeReport;
-use pintail_snapshot::{SnapshotOptions, SnapshotPosition, SnapshotTarget};
+use pintail_snapshot::{SnapshotOptions, SnapshotTarget};
 use serde::Serialize;
 
 use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, events::ApiEvent, snapshot};
@@ -359,15 +359,6 @@ async fn run_table_resnapshot_job(
         .iter()
         .map(|outcome| outcome.rows)
         .sum::<u64>();
-    let fence = match &snapshot.captured_position {
-        SnapshotPosition::Gtid {
-            file: Some(file),
-            position: Some(position),
-            ..
-        }
-        | SnapshotPosition::FilePosition { file, position } => Some((file.clone(), *position)),
-        SnapshotPosition::Gtid { .. } | SnapshotPosition::Unavailable => None,
-    };
     let metadata = state.metadata().map_err(display)?;
     if let Some(checkpoint) = preserved_checkpoint
         && metadata.snapshot_checkpoint(database_id).map_err(display)? != Some(checkpoint.clone())
@@ -386,27 +377,13 @@ async fn run_table_resnapshot_job(
             )
             .map_err(display)?;
     }
-    match fence {
-        Some((file, position)) => metadata
-            .set_setting(
-                &pintail_cdc::snapshot_fence_key(database_id, &table_name.to_ascii_lowercase()),
-                &format!("{file}:{position}"),
-            )
-            .map_err(display)?,
-        // Without a fence the stream would replay events this snapshot has
-        // already copied. Deletes and updates would land again harmlessly on a
-        // keyed table, but an append-keyed one would duplicate, so refuse
-        // rather than leave that to chance. A polling database has no stream
-        // to replay, and its source may not write a binlog at all.
-        None if effective_mode(&database) == "cdc" => {
-            return Err(
-                "source did not report a binlog position for the snapshot, so the table \
-                 cannot be fenced against replaying its own rows"
-                    .to_owned(),
-            );
-        }
-        None => {}
-    }
+    snapshot::fence_table_after_copy(
+        &metadata,
+        database_id,
+        table_name,
+        &snapshot.captured_position,
+        effective_mode(&database) == "cdc",
+    )?;
     Ok(rows)
 }
 

@@ -167,6 +167,9 @@ pub struct TableRecord {
     pub schema_version: u32,
     pub orphaned_at: Option<String>,
     pub soft_delete_column: Option<String>,
+    /// Whether the table's copy reached its end (set on completion or a
+    /// finished resync, cleared when a copy or resync begins).
+    pub copy_complete: bool,
 }
 
 /// Durable database-scoped API key metadata.
@@ -1358,7 +1361,7 @@ impl MetaStore {
             .prepare(
                 "SELECT db_id, name, state, pk_json, cursor_column, sort_key_json, \
                         rows_synced, last_error, last_reconcile_at, schema_version, \
-                        orphaned_at, soft_delete_column \
+                        orphaned_at, soft_delete_column, copy_complete \
                  FROM tables WHERE db_id = ?1 ORDER BY name COLLATE NOCASE",
             )
             .context("failed to prepare table query")?;
@@ -1906,6 +1909,7 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
         })?,
         orphaned_at: row.get(10)?,
         soft_delete_column: row.get(11)?,
+        copy_complete: row.get::<_, i64>(12)? != 0,
     })
 }
 
