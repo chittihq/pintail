@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-05T07:14:55.753Z.
+Measured 2026-09-05T10:14:29.465Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**4727 passed, 0 failed, 54 documented-gap warnings, 37 skipped.**
+**4913 passed, 0 failed, 56 documented-gap warnings, 37 skipped.**
 
-167 unique corpus queries produced 4342 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+167 unique corpus queries produced 4509 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -750,6 +750,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:order_items: product rollup without the orders table | PASS |  |
 | type-edges | query:shipments: carrier value through the items bridge | SKIP |  |
 | type-edges | query:json: distinct case variants survive a derived table | PASS |  |
+| ddl | a virtual column added mid-stream is recopied with its values | PASS |  |
 | ddl | converge:Dim | PASS |  |
 | ddl | converge:Event | PASS |  |
 | ddl | converge:Fact | PASS |  |
@@ -2588,12 +2589,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150072 sync_runs rows for db_a350b142d33a6e496d5b1eb70714bcac |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150053 sync_runs rows for db_8f0bb2f6afb789a224d6ca294a6abd7b |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
 | activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
 | activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 25ms p99 40ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 32ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 26ms p99 48ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 35ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -2774,10 +2775,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4726 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4726 requests: p50 2ms p99 57ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 54ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 596 vs source 596 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4743 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4743 requests: p50 3ms p99 23ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 6ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 635 vs source 635 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -4082,14 +4083,201 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | restart-during-snapshot | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-snapshot | query:json: distinct case variants survive a derived table | PASS |  |
+| restart-during-resync | restart-during-resync:interrupts a resync in flight | PASS |  |
+| restart-during-resync | restart-during-resync:the interrupted table comes back on its own | PASS |  |
+| restart-during-resync | restart-during-resync:the other table never leaves streaming | PASS |  |
+| restart-during-resync | restart-during-resync:no whole-database snapshot ran for a one-table repair | PASS | 1 snapshot run(s) recorded; the initial copy is the only one allowed |
+| restart-during-resync | restart-during-resync:the stream keeps applying while the table is repaired | PASS |  |
+| restart-during-resync | restart-during-resync:every row of the repaired table arrives | PASS | big: 200000 of 200000 |
+| restart-during-resync | converge:Dim | PASS |  |
+| restart-during-resync | converge:Event | PASS |  |
+| restart-during-resync | converge:Fact | PASS |  |
+| restart-during-resync | converge:Person | PASS |  |
+| restart-during-resync | converge:audit_log | PASS |  |
+| restart-during-resync | converge:badges | PASS |  |
+| restart-during-resync | converge:counters | PASS |  |
+| restart-during-resync | converge:customers | PASS |  |
+| restart-during-resync | converge:keyless_log | PASS |  |
+| restart-during-resync | converge:order_items | PASS |  |
+| restart-during-resync | converge:orders | PASS |  |
+| restart-during-resync | converge:shipments | PASS |  |
+| restart-during-resync | converge:staff | PASS |  |
+| restart-during-resync | converge:information_schema.columns | PASS |  |
+| restart-during-resync | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| restart-during-resync | query:conformance: mixed-collation double grouping | PASS |  |
+| restart-during-resync | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| restart-during-resync | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| restart-during-resync | query:conformance: case-variant code grouping | PASS |  |
+| restart-during-resync | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| restart-during-resync | query:conformance: nullable join key NULL-extends | PASS |  |
+| restart-during-resync | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| restart-during-resync | query:conformance: date bucketing over the fact table | PASS |  |
+| restart-during-resync | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| restart-during-resync | query:point lookup by key | PASS |  |
+| restart-during-resync | query:range scan with compound predicate | PASS |  |
+| restart-during-resync | query:inner join with aggregation | PASS |  |
+| restart-during-resync | query:join with a residual comparison between both inputs | PASS |  |
+| restart-during-resync | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| restart-during-resync | query:residual comparison through coalesce on a nullable column | PASS |  |
+| restart-during-resync | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| restart-during-resync | query:alias pair with the join order reversed | PASS |  |
+| restart-during-resync | query:four aliases of one table joined in a chain | PASS |  |
+| restart-during-resync | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| restart-during-resync | query:self-join manager chain preserves the roots | PASS |  |
+| restart-during-resync | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| restart-during-resync | query:aliases stay distinct when the empty side joins first | PASS |  |
+| restart-during-resync | query:left join preserves unmatched rows | PASS |  |
+| restart-during-resync | query:right join preserves unmatched rows | PASS |  |
+| restart-during-resync | query:three-way join through items | PASS |  |
+| restart-during-resync | query:union all across sources | PASS |  |
+| restart-during-resync | query:intersect customer identifiers | PASS |  |
+| restart-during-resync | query:except customer identifiers | PASS |  |
+| restart-during-resync | query:order by an expression over an aggregate | PASS |  |
+| restart-during-resync | query:order by a tree over several aggregates | PASS |  |
+| restart-during-resync | query:order by an aggregate absent from the select list | PASS |  |
+| restart-during-resync | query:group by with having | PASS |  |
+| restart-during-resync | query:conditional decimal sum keeps the fraction | PASS |  |
+| restart-during-resync | query:distinct count and min max | PASS |  |
+| restart-during-resync | query:uncorrelated in-subquery | PASS |  |
+| restart-during-resync | query:correlated exists with inner predicate | PASS |  |
+| restart-during-resync | query:correlated scalar aggregate | PASS |  |
+| restart-during-resync | query:correlated scalar unique lookup | PASS |  |
+| restart-during-resync | query:scalar subquery threshold | PASS |  |
+| restart-during-resync | query:non-recursive cte | PASS |  |
+| restart-during-resync | query:bounded recursive cte | PASS |  |
+| restart-during-resync | query:date bucketing | PASS |  |
+| restart-during-resync | query:string functions and like | PASS |  |
+| restart-during-resync | query:looker symmetric key helpers | PASS |  |
+| restart-during-resync | query:json constructor preserves json versus text | PASS |  |
+| restart-during-resync | query:json aggregate embeds documents | PASS |  |
+| restart-during-resync | query:regular expression read transforms | PASS |  |
+| restart-during-resync | query:case expression buckets | PASS |  |
+| restart-during-resync | query:null handling | PASS |  |
+| restart-during-resync | query:coalesce and ifnull | PASS |  |
+| restart-during-resync | query:enum and set filters | PASS |  |
+| restart-during-resync | query:unsigned boundary readback | PASS |  |
+| restart-during-resync | query:derived table | PASS |  |
+| restart-during-resync | query:group_concat single expression | PASS |  |
+| restart-during-resync | query:window ranking per group | PASS |  |
+| restart-during-resync | query:window share of total over grouped output | PASS |  |
+| restart-during-resync | query:window running total | PASS |  |
+| restart-during-resync | query:decimal column average beyond simple sum | PASS |  |
+| restart-during-resync | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| restart-during-resync | query:json extract filter on customer meta | PASS |  |
+| restart-during-resync | query:fan-out join group concat line products | PASS |  |
+| restart-during-resync | query:outer join customers without recent orders | PASS |  |
+| restart-during-resync | query:set op union distinct tiers and statuses | PASS |  |
+| restart-during-resync | query:temporal convert and date_format grain | PASS |  |
+| restart-during-resync | query:correlated not exists open orders | PASS |  |
+| restart-during-resync | query:window lag payment-shaped totals | PASS |  |
+| restart-during-resync | query:multi-key join items to orders | PASS |  |
+| restart-during-resync | query:between and null-safe coalesce on balance | PASS |  |
+| restart-during-resync | query:intersect all-style customer buyers | PASS |  |
+| restart-during-resync | query:derived table status revenue share | PASS |  |
+| restart-during-resync | query:general_ci: equality folds ASCII case | PASS |  |
+| restart-during-resync | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| restart-during-resync | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart-during-resync | query:general_ci: every supplementary character compares equal | PASS |  |
+| restart-during-resync | query:general_ci: grouping partitions by collated equality | PASS |  |
+| restart-during-resync | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| restart-during-resync | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| restart-during-resync | query:general_ci: joining on a collated column | PASS |  |
+| restart-during-resync | query:general_ci: representative spelling of a collated group | PASS |  |
+| restart-during-resync | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| restart-during-resync | query:enum: order by ascends by declared ordinal | PASS |  |
+| restart-during-resync | query:enum: order by descends by declared ordinal | PASS |  |
+| restart-during-resync | query:enum: min and max compare as strings | PASS |  |
+| restart-during-resync | query:enum: a greater-than range compares as strings | PASS |  |
+| restart-during-resync | query:enum: a less-than range compares as strings | PASS |  |
+| restart-during-resync | query:enum: between compares as strings | PASS |  |
+| restart-during-resync | query:enum: distinct orders by ordinal | PASS |  |
+| restart-during-resync | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| restart-during-resync | query:enum: a window order walks the ordinal | PASS |  |
+| restart-during-resync | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| restart-during-resync | query:collation: distinct counts fold per column collation | PASS |  |
+| restart-during-resync | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| restart-during-resync | query:set: order by walks the member bitmask | PASS |  |
+| restart-during-resync | query:set: grouping orders groups by bitmask | PASS |  |
+| restart-during-resync | query:enum: the empty member groups by its ordinal | PASS |  |
+| restart-during-resync | query:enum: the empty member sorts by its ordinal | PASS |  |
+| restart-during-resync | query:enum: the empty member is selectable by text | PASS |  |
+| restart-during-resync | query:geometry: hex round-trips the internal format | PASS |  |
+| restart-during-resync | query:geometry: byte length includes the srid prefix | PASS |  |
+| restart-during-resync | query:geometry: null routes filter and count | PASS |  |
+| restart-during-resync | query:geometry: spatial functions are a documented gap | WARN | spatial query functions are not implemented; geometry is carried as bytes only |
+| restart-during-resync | query:set: find_in_set filters by membership | PASS |  |
+| restart-during-resync | query:set: equality is literal, not member-normalized | PASS |  |
+| restart-during-resync | query:set: distinct values walk the bitmask including empty | PASS |  |
+| restart-during-resync | query:set: grouped counts order by bitmask not text | PASS |  |
+| restart-during-resync | query:set: a range predicate compares the bitmask | PASS |  |
+| restart-during-resync | query:star: fact with dimension and two audit persons | PASS |  |
+| restart-during-resync | query:star: five-alias chain fans out through events | PASS |  |
+| restart-during-resync | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| restart-during-resync | query:star: five tables bridge the shop and the star | PASS |  |
+| restart-during-resync | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| restart-during-resync | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| restart-during-resync | query:json: length and keys survive null documents | PASS |  |
+| restart-during-resync | query:json: contains_path filters the documented rows | PASS |  |
+| restart-during-resync | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| restart-during-resync | query:json: object construction embeds an extracted scalar | PASS |  |
+| restart-during-resync | query:json: search locates a literal value | PASS |  |
+| restart-during-resync | query:json: grouping by an extracted scalar | PASS |  |
+| restart-during-resync | query:json: merge_patch overlays and reads back | PASS |  |
+| restart-during-resync | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| restart-during-resync | query:temporal: month-end bucketing via last_day | PASS |  |
+| restart-during-resync | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| restart-during-resync | query:temporal: datetime range keeps the year window | PASS |  |
+| restart-during-resync | query:temporal: date_sub bound in the predicate | PASS |  |
+| restart-during-resync | query:temporal: year-month split grouping | PASS |  |
+| restart-during-resync | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| restart-during-resync | query:regex: substr extracts the mail domain | PASS |  |
+| restart-during-resync | query:regex: the REGEXP operator anchors a class | PASS |  |
+| restart-during-resync | query:regex: replace folds suffix classes before grouping | PASS |  |
+| restart-during-resync | query:bi metabase: month grain through convert_tz | PASS |  |
+| restart-during-resync | query:bi metabase: iso week bucketing | PASS |  |
+| restart-during-resync | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| restart-during-resync | query:bi metabase: previous-period revenue window | PASS |  |
+| restart-during-resync | query:bi superset: week-start grain with a rolling average | PASS |  |
+| restart-during-resync | query:bi superset: running total over grouped revenue | PASS |  |
+| restart-during-resync | query:bi superset: lag and lead against a named window | PASS |  |
+| restart-during-resync | query:bi superset: quartile counts from ntile | PASS |  |
+| restart-during-resync | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| restart-during-resync | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart-during-resync | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| restart-during-resync | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| restart-during-resync | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
+| restart-during-resync | query:bi looker: the grouped primary key determines the row | PASS |  |
+| restart-during-resync | query:bi looker: a grouped self-join key reads the managers row | PASS |  |
+| restart-during-resync | query:bi tableau: explicit cast ladder | PASS |  |
+| restart-during-resync | query:bi tableau: the stddev and variance family | PASS |  |
+| restart-during-resync | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| restart-during-resync | query:bi shared: substring_index dimension cleanup | PASS |  |
+| restart-during-resync | query:bi shared: json validity and typed path filter | PASS |  |
+| restart-during-resync | query:bi shared: contains_path over several paths at once | PASS |  |
+| restart-during-resync | query:bi shared: maketime from extracted parts | PASS |  |
+| restart-during-resync | query:bi shared: extract year_month grouping | PASS |  |
+| restart-during-resync | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| restart-during-resync | query:staff: three-level management chain with an inactive tail | PASS |  |
+| restart-during-resync | query:staff: active split with id extremes | PASS |  |
+| restart-during-resync | query:counters: full unsigned ladder readback | PASS |  |
+| restart-during-resync | query:counters: greatest and least across widths | PASS |  |
+| restart-during-resync | query:dim: enum status split | PASS |  |
+| restart-during-resync | query:dim: pattern filter across collated columns | PASS |  |
+| restart-during-resync | query:person: anti-join finds owners without facts | PASS |  |
+| restart-during-resync | query:person: created-fact counts through a scalar subquery | PASS |  |
+| restart-during-resync | query:event: lag over per-dimension timelines | PASS |  |
+| restart-during-resync | query:event: daily grain per dimension code | PASS |  |
+| restart-during-resync | query:order_items: product rollup without the orders table | PASS |  |
+| restart-during-resync | query:shipments: carrier value through the items bridge | PASS |  |
+| restart-during-resync | query:json: distinct case variants survive a derived table | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 65 ok, dashboards 194 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 64 ok, dashboards 168 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 65 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 574ms p99 1053ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 23ms over 14 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 309MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201100 vs source 201100 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 64 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 494ms p99 843ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 9ms over 12 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 321MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200900 vs source 200900 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -4275,8 +4463,8 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
-| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 114.7s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 30MB before, peak 200MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 58.0s |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 31MB before, peak 185MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -4833,30 +5021,31 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 2.2 | 1.9 |
-| orm-compat | 12.8 | 5.1 | 1.8 |
-| crud | 0.8 | 71.4 | 1.9 |
-| type-edges | 0.2 | 0.8 | 1.6 |
-| ddl | 1.3 | 41.1 | 1.6 |
-| schema-drift-minimal | 0.4 | 5.3 | 1.8 |
-| schema-drift-unseen | 1.7 | 8.7 | 1.8 |
-| churn | 26.3 | 1.0 | 1.8 |
-| contention | 13.1 | 1.0 | 8.6 |
-| execution-budget | 0.0 | 7.9 | 34.5 |
-| spill | 3.0 | 11.8 | 43.3 |
-| pooling | 4.4 | 31.7 | 50.6 |
-| local-database | 0.1 | 13.5 | 43.8 |
-| restart | 9.4 | 35.3 | 49.0 |
-| activity-history | 1.3 | 25.1 | 24.7 |
-| poll-storm | 35.1 | 1.3 | 1.8 |
-| control-plane | 91.8 | 2.5 | 1.8 |
-| snapshot-ddl-window | 14.9 | 3.0 | 1.9 |
-| drop-table-cdc | 24.7 | 2.7 | 1.7 |
-| drop-table-recreate | 144.1 | 2.7 | 2.0 |
-| drop-table-polling | 50.3 | 3.0 | 1.9 |
-| restart-during-snapshot | 13.7 | 3.1 | 2.1 |
-| memory-pressure | 44.6 | 2.6 | 1.9 |
-| reconcile-memory | 274.6 | 3.3 | 1.8 |
-| drop-database | 25.5 | 2.8 | 1.9 |
-| ddl-documented-gaps | 0.3 | 2.8 | 1.7 |
-| total | 794.4 | 291.7 | 289.3 |
+| snapshot | 0.0 | 2.6 | 1.7 |
+| orm-compat | 12.7 | 0.9 | 1.4 |
+| crud | 1.7 | 1.7 | 1.6 |
+| type-edges | 0.1 | 1.0 | 1.8 |
+| ddl | 23.3 | 43.0 | 1.6 |
+| schema-drift-minimal | 0.6 | 5.7 | 1.6 |
+| schema-drift-unseen | 6.4 | 16.8 | 2.1 |
+| churn | 30.6 | 0.8 | 2.4 |
+| contention | 12.7 | 0.5 | 1.8 |
+| execution-budget | 0.0 | 1.4 | 1.4 |
+| spill | 3.0 | 1.2 | 1.6 |
+| pooling | 0.1 | 3.8 | 1.8 |
+| local-database | 0.1 | 1.9 | 2.0 |
+| restart | 0.6 | 3.0 | 2.0 |
+| activity-history | 1.2 | 0.6 | 2.3 |
+| poll-storm | 38.0 | 0.9 | 2.0 |
+| control-plane | 131.7 | 3.1 | 1.3 |
+| snapshot-ddl-window | 15.2 | 3.1 | 1.6 |
+| drop-table-cdc | 40.8 | 2.0 | 1.4 |
+| drop-table-recreate | 163.1 | 2.4 | 1.5 |
+| drop-table-polling | 62.2 | 2.9 | 1.6 |
+| restart-during-snapshot | 14.2 | 2.0 | 1.7 |
+| restart-during-resync | 17.6 | 13.5 | 1.5 |
+| memory-pressure | 27.1 | 3.2 | 2.0 |
+| reconcile-memory | 125.4 | 2.3 | 1.8 |
+| drop-database | 25.5 | 3.3 | 1.3 |
+| ddl-documented-gaps | 0.4 | 2.1 | 1.7 |
+| total | 754.3 | 125.9 | 46.3 |

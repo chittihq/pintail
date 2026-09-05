@@ -3705,6 +3705,11 @@
   },
   {
     "phase": "ddl",
+    "check": "a virtual column added mid-stream is recopied with its values",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:Dim",
     "status": "PASS"
   },
@@ -12917,7 +12922,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150072 sync_runs rows for db_a350b142d33a6e496d5b1eb70714bcac"
+    "detail": "150053 sync_runs rows for db_8f0bb2f6afb789a224d6ca294a6abd7b"
   },
   {
     "phase": "activity-history",
@@ -12941,13 +12946,13 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 25ms p99 40ms"
+    "detail": "p50 26ms p99 48ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 32ms"
+    "detail": "health p95 35ms"
   },
   {
     "phase": "activity-history",
@@ -13855,25 +13860,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4726"
+    "detail": "0 failed of 4743"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4726 requests: p50 2ms p99 57ms"
+    "detail": "4743 requests: p50 3ms p99 23ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 54ms"
+    "detail": "health p99 6ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 596 vs source 596"
+    "detail": "orders replica 635 vs source 635"
   },
   {
     "phase": "poll-storm",
@@ -20413,6 +20418,945 @@
     "status": "PASS"
   },
   {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:interrupts a resync in flight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:the interrupted table comes back on its own",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:the other table never leaves streaming",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:no whole-database snapshot ran for a one-table repair",
+    "status": "PASS",
+    "detail": "1 snapshot run(s) recorded; the initial copy is the only one allowed"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:the stream keeps applying while the table is repaired",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "restart-during-resync:every row of the repaired table arrives",
+    "status": "PASS",
+    "detail": "big: 200000 of 200000"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:shipments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:geometry: null routes filter and count",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "WARN",
+    "detail": "spatial query functions are not implemented; geometry is carried as bytes only\nError: unsupported expression: ST_AsText(route)"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi looker: a grouped foreign key reads the joined dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi looker: the grouped primary key determines the row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi looker: a grouped self-join key reads the managers row",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "memory-pressure",
     "check": "memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling",
     "status": "PASS",
@@ -20422,7 +21366,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 65 ok, dashboards 194 ok; no errors"
+    "detail": "wire 240 ok, http 64 ok, dashboards 168 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -20434,31 +21378,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 65"
+    "detail": "wire 240 of 240, http 64"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 574ms p99 1053ms over 240 queries"
+    "detail": "wire p50 494ms p99 843ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 23ms over 14 samples"
+    "detail": "health p99 9ms over 12 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 309MB with a 256MB budget"
+    "detail": "peak RSS 321MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201100 vs source 201100"
+    "detail": "big 200900 vs source 200900"
   },
   {
     "phase": "memory-pressure",
@@ -21395,13 +22339,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 114.7s"
+    "detail": "child 1800000 vs source 1800000 after 58.0s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 30MB before, peak 200MB during (margin 768MB)"
+    "detail": "RSS 31MB before, peak 185MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
