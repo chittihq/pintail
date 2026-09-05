@@ -1,10 +1,10 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-04T12:12:13.111Z.
+Measured 2026-09-05T07:14:55.753Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**4719 passed, 0 failed, 54 documented-gap warnings, 37 skipped.**
+**4727 passed, 0 failed, 54 documented-gap warnings, 37 skipped.**
 
 167 unique corpus queries produced 4342 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
@@ -2217,6 +2217,13 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | not-null violation is 1048 | PASS |  |
 | local-database | unknown table is 1146 | PASS |  |
 | local-database | unknown column is 1054 | PASS |  |
+| local-database | BEGIN is refused on a local database | PASS |  |
+| local-database | START TRANSACTION is refused on a local database | PASS |  |
+| local-database | COMMIT is refused on a local database | PASS |  |
+| local-database | ROLLBACK is refused on a local database | PASS |  |
+| local-database | SET autocommit = 0 is refused on a local database | PASS |  |
+| local-database | the rows an autocommit committed survive a ROLLBACK | PASS |  |
+| local-database | a replicated database keeps the transaction no-op | PASS |  |
 | local-database | a refused write leaves the table unchanged | PASS |  |
 | local-database | the replicated database still refuses writes | PASS |  |
 | local-database | a local database is not scheduled for replication | PASS |  |
@@ -2581,12 +2588,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150048 sync_runs rows for db_eca5f61f50984009e8f28157a269fd5e |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150072 sync_runs rows for db_a350b142d33a6e496d5b1eb70714bcac |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
 | activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
 | activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 31ms p99 44ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 23ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 25ms p99 40ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 32ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -2767,10 +2774,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4603 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4603 requests: p50 2ms p99 112ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 108ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 633 vs source 633 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4726 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4726 requests: p50 2ms p99 57ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 54ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 596 vs source 596 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -4075,13 +4082,14 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | restart-during-snapshot | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-snapshot | query:json: distinct case variants survive a derived table | PASS |  |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 68 ok, dashboards 253 ok; no errors |
+| memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 65 ok, dashboards 194 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 68 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 734ms p99 1921ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 20ms over 19 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 326MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201200 vs source 201200 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 65 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 574ms p99 1053ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 23ms over 14 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 309MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201100 vs source 201100 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -4267,8 +4275,8 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
-| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 45.8s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 29MB before, peak 165MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 114.7s |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 30MB before, peak 200MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -4825,30 +4833,30 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 2.6 | 1.4 |
-| orm-compat | 16.1 | 0.5 | 1.6 |
-| crud | 1.0 | 2.5 | 1.6 |
-| type-edges | 0.1 | 2.7 | 1.2 |
-| ddl | 1.7 | 42.7 | 1.3 |
-| schema-drift-minimal | 0.7 | 7.2 | 1.6 |
-| schema-drift-unseen | 1.6 | 6.8 | 1.5 |
-| churn | 26.3 | 1.8 | 1.8 |
-| contention | 15.7 | 1.2 | 2.5 |
-| execution-budget | 0.0 | 2.5 | 1.2 |
-| spill | 2.9 | 0.7 | 1.3 |
-| pooling | 0.1 | 1.9 | 1.7 |
-| local-database | 0.0 | 0.7 | 1.4 |
-| restart | 0.7 | 2.4 | 1.5 |
-| activity-history | 1.1 | 0.9 | 1.4 |
-| poll-storm | 48.5 | 1.2 | 1.6 |
-| control-plane | 125.9 | 2.7 | 1.4 |
-| snapshot-ddl-window | 15.7 | 2.4 | 1.8 |
-| drop-table-cdc | 27.1 | 3.1 | 1.5 |
-| drop-table-recreate | 191.9 | 2.5 | 1.4 |
-| drop-table-polling | 67.3 | 2.5 | 1.4 |
-| restart-during-snapshot | 18.3 | 2.6 | 1.4 |
-| memory-pressure | 30.0 | 2.9 | 1.4 |
-| reconcile-memory | 120.1 | 5.0 | 2.6 |
-| drop-database | 31.7 | 3.7 | 2.0 |
-| ddl-documented-gaps | 0.3 | 2.9 | 2.0 |
-| total | 745.0 | 108.8 | 41.7 |
+| snapshot | 0.0 | 2.2 | 1.9 |
+| orm-compat | 12.8 | 5.1 | 1.8 |
+| crud | 0.8 | 71.4 | 1.9 |
+| type-edges | 0.2 | 0.8 | 1.6 |
+| ddl | 1.3 | 41.1 | 1.6 |
+| schema-drift-minimal | 0.4 | 5.3 | 1.8 |
+| schema-drift-unseen | 1.7 | 8.7 | 1.8 |
+| churn | 26.3 | 1.0 | 1.8 |
+| contention | 13.1 | 1.0 | 8.6 |
+| execution-budget | 0.0 | 7.9 | 34.5 |
+| spill | 3.0 | 11.8 | 43.3 |
+| pooling | 4.4 | 31.7 | 50.6 |
+| local-database | 0.1 | 13.5 | 43.8 |
+| restart | 9.4 | 35.3 | 49.0 |
+| activity-history | 1.3 | 25.1 | 24.7 |
+| poll-storm | 35.1 | 1.3 | 1.8 |
+| control-plane | 91.8 | 2.5 | 1.8 |
+| snapshot-ddl-window | 14.9 | 3.0 | 1.9 |
+| drop-table-cdc | 24.7 | 2.7 | 1.7 |
+| drop-table-recreate | 144.1 | 2.7 | 2.0 |
+| drop-table-polling | 50.3 | 3.0 | 1.9 |
+| restart-during-snapshot | 13.7 | 3.1 | 2.1 |
+| memory-pressure | 44.6 | 2.6 | 1.9 |
+| reconcile-memory | 274.6 | 3.3 | 1.8 |
+| drop-database | 25.5 | 2.8 | 1.9 |
+| ddl-documented-gaps | 0.3 | 2.8 | 1.7 |
+| total | 794.4 | 291.7 | 289.3 |
