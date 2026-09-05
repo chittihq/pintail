@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc3] - 2026-09-05
+
 ### Fixed
 
 - A `MySQL` table with a `VIRTUAL` generated column no longer loops through
