@@ -1,0 +1,32 @@
+{
+  "scope": "Auditor kit smoke only; not published performance evidence",
+  "provenance": {
+    "schemaVersion": 1,
+    "commit": "cdee845de511b30c261e133e503be7cb22e128a3",
+    "mode": "smoke-not-published-evidence",
+    "startedAt": "2026-09-05T16:54:48.801Z",
+    "tools": {
+      "bun": "1.4.0",
+      "git": "git version 2.50.1 (Apple Git-155)",
+      "docker": "29.1.3"
+    },
+    "hardware": {
+      "cpus": 16,
+      "memoryBytes": 32465870848,
+      "architecture": "x86_64",
+      "os": "linux",
+      "kernel": "7.0.0-30-generic"
+    },
+    "cacheReuse": false,
+    "status": "PASS",
+    "finishedAt": "2026-09-05T17:01:34.605Z"
+  },
+  "rows": {
+    "users": 100000,
+    "products": 10000,
+    "orders": 20000
+  },
+  "comparedQueryResults": 20,
+  "pintailResultMismatches": 0,
+  "reportSha256": "a43e50cfa896c6154c19ff2c5d069aa5aaeb0f9746bd9cc397abdfc99b0cb143"
+}

@@ -85,8 +85,10 @@ serialized and uses only containers created by this repository's harnesses.
   implementation-only, missing, unassessed or out-of-scope coverage.
 - Item 7: the auditor command creates an isolated checkout and unique owned
   resources, rejects reused evidence, and exports reports with provenance.
-  Strict TypeScript checking and remote Docker prerequisite checks pass.
-  Full benchmark numbers have not been remeasured for this kit.
+  Strict TypeScript checks and an actual 20,000-order remote smoke run pass,
+  including report export and owned-resource cleanup. Portable smoke provenance
+  is banked in `benchmark/auditor-kit-smoke.json`. This kit smoke does not
+  remeasure published full-scale performance.
 
 - Item 8: strict clippy and all SQL/store/wire tests pass. Contention tests
   prove reserved capacity and total bounds; a real replica test proves cold
