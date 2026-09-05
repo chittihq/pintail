@@ -5,7 +5,7 @@ reviewable slice. Local tests and clippy cover each slice; one complete
 development validation runs after implementation. Remote benchmark work is
 serialized and uses only containers created by this repository's harnesses.
 
-1. [ ] **Partition and rewrite tests.** Exercise the real in-process
+1. [x] **Partition and rewrite tests.** Exercise the real in-process
    parse/bind/plan/execute path. Compare the complete row multiset with the
    concatenation of TRUE, FALSE and NULL predicate partitions. Cover nullable
    values, duplicate projections, joins, aggregates and equivalent rewrites.
@@ -38,6 +38,11 @@ serialized and uses only containers created by this repository's harnesses.
    and classification. Document that classification is not a latency guarantee.
 
 ## Evidence and decisions
+
+- Item 1: `partition_rewrites.rs` covers 107 predicate partitions and seven
+  equivalent rewrites over deterministic nullable fixtures, including outer
+  joins and duplicate projections. All executor tests and strict crate clippy
+  pass; the new checks run in the existing workspace push-CI job (~0.2 seconds).
 
 - The existing `cargo nextest run --workspace` push CI already runs local
   correctness tests. Item 1 adds metamorphic coverage to that path; it does
