@@ -12917,7 +12917,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150050 sync_runs rows for db_892aa5a4326292a66fb77a2d37d1785f"
+    "detail": "150047 sync_runs rows for db_7c3961fd869674019794f2744b846761"
   },
   {
     "phase": "activity-history",
@@ -12941,13 +12941,13 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 31ms p99 42ms"
+    "detail": "p50 31ms p99 46ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 23ms"
+    "detail": "health p95 31ms"
   },
   {
     "phase": "activity-history",
@@ -13861,19 +13861,19 @@
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4835 requests: p50 2ms p99 19ms"
+    "detail": "4835 requests: p50 2ms p99 22ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 2ms"
+    "detail": "health p99 22ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 645 vs source 645"
+    "detail": "orders replica 648 vs source 648"
   },
   {
     "phase": "poll-storm",
@@ -20414,9 +20414,15 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling",
+    "status": "PASS",
+    "detail": "pintail 40, source 40"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 69 ok, dashboards 192 ok; no errors"
+    "detail": "wire 240 ok, http 65 ok, dashboards 196 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -20428,25 +20434,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 69"
+    "detail": "wire 240 of 240, http 65"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 496ms p99 1197ms over 240 queries"
+    "detail": "wire p50 565ms p99 1068ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 10ms over 14 samples"
+    "detail": "health p99 20ms over 14 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 318MB with a 256MB budget"
+    "detail": "peak RSS 312MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -21389,13 +21395,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 7.4s"
+    "detail": "child 1800000 vs source 1800000 after 117.5s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 25MB before, peak 143MB during (margin 768MB)"
+    "detail": "RSS 24MB before, peak 179MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
