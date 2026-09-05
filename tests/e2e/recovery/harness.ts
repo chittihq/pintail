@@ -137,8 +137,17 @@ export class Context {
   }
   async sql(statement: string): Promise<void> { await this.sourceConnection.query({ sql: statement, timeout: 15_000 }) }
   async rows(statement: string): Promise<unknown[][]> {
-    const [rows] = await this.sourceConnection.query({ sql: statement, rowsAsArray: true, timeout: 15_000 })
-    return rows as unknown[][]
+    try {
+      const [rows] = await this.sourceConnection.query({ sql: statement, rowsAsArray: true, timeout: 15_000 })
+      return rows as unknown[][]
+    } catch (error) {
+      // A timed-out mysql2 connection cannot accept subsequent commands.
+      // Reconnect for the next bounded comparison attempt; never replay a
+      // mutation, and keep this attempt's failure visible to its caller.
+      this.sourceConnection.destroy()
+      this.sourceConnection = await this.source.connect(this.schema)
+      throw new Error(`source read failed (${statement.slice(0, 160)}): ${error}`)
+    }
   }
   async replicaRows(statement: string): Promise<unknown[][]> {
     this.replica ??= await mysql.createConnection({ host: '127.0.0.1', port: this.wirePort, user: this.schema,
