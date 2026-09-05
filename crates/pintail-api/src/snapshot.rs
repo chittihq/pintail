@@ -506,6 +506,19 @@ async fn run_snapshot_job(
         ));
         return Ok((rows, bytes.load(Ordering::Relaxed), mode, failed));
     }
+    // A full repair replaces the affected rows too. Clear only dead letters
+    // belonging to successful copies, before CDC resumes and can create new
+    // ones. Failed copies must retain their diagnostic evidence.
+    let metadata = state.metadata().map_err(display)?;
+    for target in &result.targets {
+        let name = &target.source().name;
+        if !failed.iter().any(|failure| &failure.table == name) {
+            metadata
+                .clear_dlq_for_table(database_id, name)
+                .map_err(display)?;
+        }
+    }
+    drop(metadata);
     let mode = handoff_replication(
         &pool,
         &metadata_path,
