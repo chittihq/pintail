@@ -1151,3 +1151,13 @@ estimate, not a duration promise: disk latency, compression and contention
 still matter. Broader planner estimates can extend eligibility without
 changing the two-pool admission contract. The shared total applies equally
 to HTTP and wire requests.
+
+### Background compaction cannot outlive its writer generation
+
+A table keeps its writer lock until its background merge thread has joined.
+The previous detached thread could rename a temporary segment while the next
+writer swept orphans, making a reopen fail intermittently. Resnapshot joins
+and discards pending work before resetting the WAL or reclaiming input files;
+otherwise a ready result could republish pre-reset rows into the new manifest.
+Completed unpublished output files remain orphans for the next open to sweep.
+Closing or resetting a table may therefore wait for its one bounded merge pass.

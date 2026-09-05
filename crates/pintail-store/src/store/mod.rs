@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod lifecycle_tests;
 mod scan;
 mod snapshot;
 
@@ -361,11 +363,28 @@ pub struct TableStore {
 
 /// One background size-tier merge in flight.
 struct BackgroundMerge {
+    worker: std::thread::JoinHandle<()>,
     receiver: std::sync::mpsc::Receiver<Result<Vec<segment::SegmentMeta>, StoreError>>,
     input_files: Vec<String>,
 }
 
+impl Drop for TableStore {
+    fn drop(&mut self) {
+        // Hold the writer lock (and input files) until output publication has
+        // stopped. Dropping a JoinHandle detaches it; a subsequent writer's
+        // orphan sweep must never race the old worker's temporary-file rename.
+        // Unpublished completed outputs remain safe orphans for the next open.
+        self.discard_background_merge();
+    }
+}
+
 impl TableStore {
+    fn discard_background_merge(&mut self) {
+        if let Some(merge) = self.background.take() {
+            let _ = merge.worker.join();
+        }
+    }
+
     /// Opens a table, exclusively claims its writer lock, and replays its WAL.
     ///
     /// # Errors
@@ -844,6 +863,9 @@ impl TableStore {
     /// Returns an error when the WAL cannot be reset, the empty manifest
     /// cannot be published, or obsolete segments cannot be reclaimed.
     pub fn reset_for_resnapshot(&mut self) -> Result<(), StoreError> {
+        // Old inputs must no longer be read when reclaimed, and a completed
+        // result must never be published into the new empty generation.
+        self.discard_background_merge();
         self.wal.reset()?;
         let mut next_manifest = Manifest::empty(&self.schema);
         next_manifest.generation = self
@@ -1195,7 +1217,7 @@ impl TableStore {
         let schema = self.schema.clone();
         let options = self.options;
         let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("pintail-compaction".to_owned())
             .spawn(move || {
                 let result = run_background_merge(
@@ -1206,12 +1228,13 @@ impl TableStore {
                     full_merge,
                     id_base,
                 );
-                // A dropped receiver means the store is gone; the orphan
-                // sweep at the next open cleans any chunks written.
+                // The owner joins this worker before releasing its writer
+                // lock; the next open may then sweep unpublished chunks.
                 let _ = sender.send(result);
             })
             .map_err(|error| StoreError::io("spawn compaction thread", error))?;
         self.background = Some(BackgroundMerge {
+            worker,
             receiver,
             input_files,
         });

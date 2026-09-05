@@ -581,5 +581,17 @@ fn background_compaction_merges_while_ingest_continues() {
     drop(table);
     let reopened = TableStore::open(directory.path(), schema(), options).expect("reopen");
     let rows = reopened.snapshot().scan().expect("reopen scan");
-    assert_eq!(rows.len(), expected.len());
+    let reopened_values: BTreeMap<u64, String> = rows
+        .iter()
+        .map(|stored| {
+            let KeyPart::UInt64(key) = stored.key().parts()[0] else {
+                panic!("unexpected key shape");
+            };
+            let Value::Utf8(text) = &stored.values()[1] else {
+                panic!("unexpected value shape");
+            };
+            (key, text.clone())
+        })
+        .collect();
+    assert_eq!(reopened_values, expected);
 }

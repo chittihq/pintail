@@ -38,6 +38,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Closing a table now waits for background compaction before releasing its
+  writer lock, preventing reopen cleanup from racing temporary segment writes.
+  Resnapshot also discards pending compaction results so old rows cannot be
+  published into the reset table.
+
 - Polling detects changed source columns at scheduled reconciliation and
   repairs them through the existing resnapshot policy while healthy tables
   keep polling. Reconciliation also repairs values whose cursor was unchanged or moved backwards.
