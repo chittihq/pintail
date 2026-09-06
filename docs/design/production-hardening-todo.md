@@ -49,13 +49,17 @@ per-query ceiling and a 9 GiB shared budget.
   the effective admission limit, per-query ceiling, shared budget, process
   memory ceiling, descriptor soft and hard limits, and spill directory and
   its ceilings. That line makes B1 and B2 self-evident in the first minute.
-- [ ] **B4. Raise the soft descriptor limit at startup, after the engine
+- [x] **B4. Raise the soft descriptor limit at startup, after the engine
   fixes.** Best-effort, to a documented finite target capped by the
   inherited hard limit, never lowering a higher soft limit and never
   touching the hard limit, with an opt-out and an honest report on
   failure. This does nothing under the updated compose file, where soft
   and hard are already equal, but it covers direct-binary and other
   deployment paths. Not a substitute for bounded spill behaviour.
+  Done: the binary raises its soft limit toward 65,536, capped by the hard
+  limit, never lowering and never touching the hard limit; a refusal is
+  logged and the limits line reports what the kernel actually holds.
+  `PINTAIL_KEEP_OPEN_FILE_LIMIT=1` opts out.
 
 ## C. Engine: bound what a spilling query holds
 
@@ -86,16 +90,25 @@ Resulting descriptor bound: one writer during build, K+1 during
 intermediate passes, K during the final merge, excluding upstream
 operators.
 
-- [ ] **C1. Aggregate: closed runs and bounded merge passes.** Every
+- [x] **C1. Aggregate: closed runs and bounded merge passes.** Every
   `AggregateSpillRun` owns an open reader; the build loop appends runs with
   no bound, and the merge initializes and retains every head. Split the run
   into closed metadata plus an active cursor, close after a checked flush,
   and merge in chunks of K.
-- [ ] **C1b. Sort has the same defect.** `SpilledRun` retains its
+- [x] **C1b. Sort has the same defect.** `SpilledRun` retains its
   `BufReader` after writing, `materialize_with_spill` appends without
   bound, and `SpilledMerge::new` loads every head. Its comment treats input
   bytes over the memory ceiling as a sufficient bound, which is exactly the
   assumption this incident disproved. Same closed-run treatment.
+  Done, both: one run machinery in the spill module (a writer that closes
+  into a descriptor-free run, a reader that reopens on demand, a merge
+  over at most the fan-in, and a reduction that copies records in passes
+  and never combines them), with the aggregate combining partial states
+  only in its final pass and in the order the runs were written. Per-query
+  active and peak handle counters cover creation, reopen and close, and
+  `EXPLAIN ANALYZE` prints the peak. The grace join creates a partition
+  file on first append rather than up front, so an empty partition costs
+  nothing.
 - [x] **C1c. Grace join: a separate real bug, fix before bounding it.**
   The serve loop calls `reader()` on a build partition, consuming the
   writer; on overflow it drops that reader and `split_grace_partition`
@@ -112,9 +125,11 @@ operators.
 - [x] **C1d. `two_pass.rs` does not spill at all.** Its partitions are
   in-memory buckets and maps, with no file creation. My earlier assumption
   that it shared the defect was wrong; nothing to do there.
-- [ ] **C2. Replace the linear k-way merge scan with a heap** while that
-  code is open, if it is free to do so.
-- [ ] **C3. Understand the 30x reservation overestimate (A3).** The shared
+- [x] **C2. Replace the linear k-way merge scan with a heap** while that
+  code is open, if it is free to do so. Not done, on purpose: the merge
+  now sees at most the fan-in of sixteen runs, so the linear scan is a
+  sixteen-element loop and a heap would buy nothing measurable.
+- [x] **C3. Understand the 30x reservation overestimate (A3).** The shared
   budget read within 0.02% of its ceiling across eight seconds of
   consecutive refusals while the process held 325 MiB resident. Refusals
   later stopped on their own, so the budget drains: this is
@@ -126,13 +141,28 @@ operators.
   constraint and refuses work the box could do. Either admission and the
   budget agree on a number, or the budget stops hard-refusing reservations
   the process is not actually holding.
+  Measured: an in-process ten-way `LEFT JOIN` chain over an invented
+  eleven-table schema with 850K rows reserved 718 MiB at its peak against
+  a resident-set growth of about the same, so the reservations were real
+  memory, not an estimate; the "30x" came from comparing a budget read
+  under sixteen concurrent reports with a resident set read while idle.
+  The structural half was the real defect: a build side refused by the
+  process budget failed the query, where the same refusal from the query
+  ceiling would have spilled. The hash join now treats a memory refusal
+  from either ceiling as a spill signal whenever it has rows to spill, so
+  under load a query slows down instead of failing, and the budget is a
+  backpressure valve rather than a verdict. A test in its own process sets
+  a 40 MiB budget under a 1 GiB query ceiling and checks the join spills
+  and answers exactly. The admission-times-ceiling arithmetic still
+  exceeds the budget on paper, by design: a ceiling is what one query may
+  take when the box is otherwise idle.
 
 ## D. Test gaps that let all of this through
 
 Approved by the owner 2026-09-06. Each converts a known-but-dismissed
 observation into a gate.
 
-- [ ] **D1. Assert a descriptor bound where spilling is already forced.**
+- [x] **D1. Assert a descriptor bound where spilling is already forced.**
   Worse than "untested": `tests/sqllogic/tests/agg_spill.rs` explicitly
   SKIPS the 16 MiB ceiling because of this exhaustion, so the suite
   encodes the bug as expected. Two layers, per the review. First, track
@@ -148,6 +178,10 @@ observation into a gate.
   restoring afterwards does not prevent interference. Use a `rustix`
   dev-dependency for the safe call, since the workspace forbids unsafe.
   Then reinstate the skipped 16 MiB case as the integration regression.
+  Done as specified: handle counters in the spill module, the 16 MiB
+  ceiling back in the sweep with the fan-in bound asserted at every
+  ceiling, and a child process under a 128-descriptor soft limit running
+  the ceiling that spills hundreds of runs.
 - [ ] **D2. Run one gate inside the shipped compose file.** Today
   `docker-compose.yml` gets `config --quiet`, `up --wait` and a curl of
   `/health`. Every functional gate launches the bare binary on the host, so

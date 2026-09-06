@@ -21,6 +21,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A spilling aggregation or sort holds a bounded number of open files
+  however many runs it spilled: one while writing runs, seventeen while a
+  merge pass runs, sixteen in the final merge. Runs close as soon as they
+  are written and reopen on demand, and more runs than the fan-in are
+  first reduced in passes that copy records without combining them, so a
+  partial aggregate state is combined exactly once and in the order the
+  runs were written. Before this every run kept a file open until the
+  final merge, and a grouped report that spilled a few hundred times
+  exhausted a container's 1024-descriptor limit with
+  `aggregate spill create: Too many open files`. `EXPLAIN ANALYZE` now
+  reports the peak number of open spill files.
+- A hash join whose build side is refused by the process-wide memory
+  budget now partitions to disk like one refused by its own ceiling,
+  instead of failing the query with `server memory limit exceeded`. Under
+  load the budget is a backpressure valve: queries slow down rather than
+  fail.
+- The server raises its own soft open-file limit toward 65,536 at startup,
+  capped by the inherited hard limit and never lowering it;
+  `PINTAIL_KEEP_OPEN_FILE_LIMIT=1` opts out.
 - A derived table whose `ORDER BY` names a column outside its select
   list, such as `(SELECT a FROM t ORDER BY b LIMIT 3)`, failed to plan
   with an internal layout error. The hidden sort key is no longer exposed
