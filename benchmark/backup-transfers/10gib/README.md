@@ -79,3 +79,12 @@ python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT --dataset 10gib
 ```
 
 [Raw measurements](measurements.jsonl) · [Binary hashes and metadata](metadata.json)
+
+## Development validation
+
+The complete `development` profile passed on clean commit `dda1f7470` after
+benchmark cleanup: formatting, workspace Clippy with warnings denied,
+dashboard typechecking, and 893 unit tests passed; 25 normally ignored tests
+were skipped. Validation used the pinned Rust 1.97.0. The transport benchmarks
+reused the matched Rust 1.97.1 binaries from the earlier experiment.
+See [validation.json](validation.json). This is not a release gate.

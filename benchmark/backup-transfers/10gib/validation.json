@@ -1,0 +1,28 @@
+{
+  "profile": "development",
+  "verdict": "PASS",
+  "complete": true,
+  "head": "dda1f74706d911d73127b00be81b43d85f9c33a2",
+  "finished_at": "2026-09-06T16:39:15.336Z",
+  "command": "bun run scripts/validate.ts --profile development",
+  "stages": {
+    "fmt": "PASS",
+    "typecheck": "PASS",
+    "unit": "PASS"
+  },
+  "unit": {
+    "passed": 893,
+    "failed": 0,
+    "skipped": 25,
+    "seconds": 385.584
+  },
+  "toolchain": {
+    "rustc": "1.97.0",
+    "cargo": "1.97.0",
+    "bun": "1.4.2",
+    "node": "24.20.0",
+    "nextest": "0.9.143"
+  },
+  "environment": "TMPDIR on the system filesystem, as required by an existing storage test. No assertions or test selection changed. Validation started after benchmark cleanup.",
+  "scope": "Complete development gate and a separate 10 GiB S3 transport benchmark. No release gate is claimed."
+}
