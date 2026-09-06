@@ -1345,3 +1345,27 @@ ones a range touches although the footer's sparse index could seek to
 them, and the merge path streams a segment's key, version and tombstone
 columns from the first row whatever the merged range is. Both are bounded
 by the key column's size, not the table's width.
+
+### A table mid-copy is not ready, not empty
+
+A table's store is complete once its snapshot finishes and stays complete
+through replication, a flagged resync it has not started, and local
+writes. While a snapshot or resnapshot is running, or after a first copy
+failed part-way, the store is empty or partial, and the engine used to
+answer from it: a report joining a table that was being resnapshotted came
+back short, with no error, and the application acted on it. The replica
+now marks such tables from the metadata store's copy state (`copy_complete`,
+with the `snapshotting`, `error` and `pending` states as the incomplete
+ones), keeps them in the catalog so `SHOW TABLES` and `information_schema`
+still list them, and refuses to open a scan of them with a not-ready error
+that names the table. The HTTP surface answers 503 and the wire surface an
+error a client retries, the same classes the replica's own not-ready
+states already used. The other tables of the database keep answering. The
+alternative, dropping the table from the catalog, would have turned the
+condition into "unknown table", which a client cannot tell from a typo.
+
+The queue wait of the concurrency bound is configurable for the same
+incident's other half: a burst of short reports met a two-second wait and a
+fourteen-slot general pool and was refused with 1040 rather than queued.
+Raising the ceiling is one answer; waiting longer is the other, and the
+operator now has both.

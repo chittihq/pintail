@@ -19,8 +19,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   6%; a scan-bound five-group text key costs about 10% more, the price of
   the scan holding half the ceiling instead of all of it.
 
+### Added
+
+- `PINTAIL_QUERY_QUEUE_WAIT_SECONDS` (also `--query-queue-wait-seconds` and
+  `query.queue_wait_seconds` in the config file) sets how long a query at
+  the concurrency ceiling waits for a slot before it is refused with 1040.
+  The default stays at 2 seconds; fractions are accepted and zero refuses
+  at once. A dashboard that fires a burst of reports can trade errors for
+  latency without raising the ceiling. The startup limits line reports it.
+
 ### Fixed
 
+- A table whose copy from its source has not completed is refused as not
+  ready (HTTP 503, wire 1040-class unknown error naming the table) instead
+  of answering from an empty or partial store. While a resnapshot ran, the
+  engine served the table's rows as they arrived, so a report joining it
+  returned silently short results with no error; the other tables of the
+  database, and metadata queries, keep answering. A table flagged for a
+  resync it has not started, a table under replication and a local table
+  hold complete stores and serve as before.
 - A segment reader skips the blocks it will not decode. The readers behind
   key lookups, ranged projections and late materialization walked every
   column of a segment through the file and loaded and checksummed each
