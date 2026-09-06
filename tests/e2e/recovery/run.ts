@@ -30,7 +30,7 @@ mkdirSync(runDir, { recursive: true })
 const source = new Source()
 const checks: Check[] = []
 const started = Date.now()
-const binary = process.env.PINTAIL_RECOVERY_BINARY ?? join(repository, 'target/debug/pintail')
+const binary = process.env.PINTAIL_RECOVERY_BINARY ?? join(repository, 'target/recovery/pintail')
 let completed = 0
 const head = (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout
 const dirty = !!(await command(['git', 'status', '--porcelain'], { quiet: true })).stdout.trim()
@@ -40,7 +40,7 @@ let binaryHash = 'unavailable'
 try {
   if (process.env.PINTAIL_RECOVERY_BINARY && !patterns.length) throw new Error('A full recovery ledger requires a checkout build; PINTAIL_RECOVERY_BINARY is only allowed with --only')
   if (!process.env.PINTAIL_RECOVERY_BINARY) {
-    const build = Bun.spawn([join(homedir(), '.cargo/bin/cargo'), 'build', '-p', 'pintail', '--features', 'failpoints'], {
+    const build = Bun.spawn([join(homedir(), '.cargo/bin/cargo'), 'build', '--profile', 'recovery', '-p', 'pintail', '--features', 'failpoints'], {
       cwd: repository, env: { ...process.env, CARGO_TARGET_DIR: join(repository, 'target') }, stdout: 'inherit', stderr: 'inherit',
     })
     if (await build.exited !== 0) throw new Error('recovery binary build failed')
@@ -71,7 +71,7 @@ try {
   const sanitize = (text: string) => (source.host ? text.replaceAll(source.host, '<source>') : text).replaceAll(source.name, '<source-container>').replaceAll('|', '\\|').replaceAll('\n', ' ')
   const ledger = [`# Recovery suite — ${new Date().toISOString()}`, '', `Verdict: **${passed ? patterns.length ? 'PASS (SUBSET)' : 'PASS' : 'FAIL'}**`, '',
     `HEAD: ${head}; ${rust}; Bun ${Bun.version}.`,
-    `Working tree: ${dirty ? 'dirty' : 'clean'}. Binary: ${process.env.PINTAIL_RECOVERY_BINARY ? 'supplied for subset' : 'built from checkout'}; SHA-256: ${binaryHash}.`,
+    `Working tree: ${dirty ? 'dirty' : 'clean'}. Binary: ${process.env.PINTAIL_RECOVERY_BINARY ? 'supplied for subset' : 'built from checkout (recovery profile)'}; SHA-256: ${binaryHash}.`,
     `Source: MySQL ${sourceVersion}; ROW/FULL images; MINIMAL metadata; GTID. Seed: ${Number(process.env.PINTAIL_RECOVERY_SEED ?? 953)}.`,
     `Checks: ${checks.filter(r=>r.status==='PASS').length} PASS, ${checks.filter(r=>r.status==='WARN').length} WARN, ${checks.filter(r=>r.status==='FAIL').length} FAIL.`,
     `Scenarios: ${completed}/${requested.length} requested; ${scenarios.length} registered. Duration: ${((Date.now()-started)/60000).toFixed(1)} minutes.`, '',

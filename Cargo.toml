@@ -144,3 +144,9 @@ debug = "line-tables-only"
 # override deliberately does not touch.
 [profile.dev.package."*"]
 debug = false
+
+# The recovery gate repeatedly scans large fixtures. Keep development checks
+# while optimizing the comparisons and fault-enabled engine.
+[profile.recovery]
+inherits = "dev"
+opt-level = 2

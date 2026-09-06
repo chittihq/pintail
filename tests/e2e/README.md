@@ -48,12 +48,15 @@ local; only a manually reviewed, literal-redacted report may be shared.
 
 ## Recovery suite
 
-`bun run test:recovery` builds a separate debug binary with the `failpoints`
+`bun run test:recovery` builds the `recovery` Cargo profile with the `failpoints`
 feature and runs isolated CDC, polling, mode handoff, interrupted snapshot,
 schema drift, source outage and operator repair scenarios. Each scenario
 compares every value, keyless duplicate multiplicity and column metadata
 against MySQL, checks health and dead letters, applies later writes and a
 rollback, and repeats the comparison after another restart.
+
+The profile optimizes the engine while retaining development debug assertions
+and overflow checks.
 
 For one scenario: `bun run recovery/run.ts --only mode-handoff-abort`.
 `--only 'cdc-*,poll-*'` selects a union; `--list` lists matching contracts.

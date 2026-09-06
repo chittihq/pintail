@@ -409,7 +409,13 @@ to plain scans; only the FastLanes transposed layout can change this and is
 untested — e13). Length-classed string hash tables (tie with hashbrown).
 The simplified Umbra unchained join table (lost to hashbrown on all-hit inner
 probes on both machines; revisit only for miss-heavy workloads). Normalized
-memcmp keys in heap merges (see above).
+memcmp keys in heap merges (see above). Disabling Nagle's algorithm on
+accepted wire connections (`TCP_NODELAY`): the packet writer issues two
+unbuffered writes per packet, so without coalescing every result row costs
+two segments, and the round-trip harness measured the single-row and
+small-result queries 2-4x slower. The right lever is buffering the response
+stream before the socket, which stays a follow-up; the socket option alone
+is not it.
 
 ### String columns execute as 16-byte views
 
@@ -1130,6 +1136,14 @@ rebuild during the Docker build; the default is 0. Profiling tools and training
 data never enter the runtime image. The four-query executor training workload
 has an independent result oracle and produces a separate PGO binary; it is not
 representative evidence for replication, networking or all SQL workloads.
+
+The recovery gate builds its engine under a `recovery` profile: `dev` with
+optimization level 2, so debug assertions, overflow checks and the fault
+points stay on while the comparisons and scans run optimized. Measured on
+the full 38-scenario suite on the same host: 24.0 minutes with the debug
+binary, 12.6 minutes under the profile, identical verdict (692 PASS, 3
+WARN, 0 FAIL). The profile exists only for that gate; unit tests keep
+`dev` and releases keep `release`.
 
 ### Reserved admission for conservatively bounded queries
 
