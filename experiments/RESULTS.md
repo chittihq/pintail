@@ -2315,3 +2315,62 @@ should not carry a switch that makes its own storage slower. Reinstating them
 is a ten-line change against compress_block_for_storage and select_encoding
 if a RAM-rich deployment ever reopens the question; this table is the reason
 it should not need to.
+
+## e65 — Scan and execution pools controlled separately, with the per-operator profile (20M rows, shared docker host, 8 CPUs)
+
+The first use of `EXPLAIN ANALYZE`'s profile on the benchmark replica:
+`benchmark/profile.ts` rebuilds the image from the tree, copies a finished
+run's pintail data volume, and restarts the container per thread
+configuration with the settled memo off. Three runs each; the engine
+column is the profile's own total, the wall column the HTTP round trip
+of the same call. The host was shared with other stacks, so the spread
+between runs is real and the minimum is the number to read.
+
+| query | pools scan x exec | engine ms (profile) | wall ms (min of 3) |
+|---|---|---:|---:|
+| Q2 filtered count | 8x8 | 66 | 96 |
+| Q2 | 16x8 | 57 | 79 |
+| Q2 | 2x8 | — | 159 |
+| N1 filtered count + `id >= 1` | 8x8 | 162 | 174 |
+| N1 | 16x8 | 146 | 154 |
+| N1 | 2x8 | — | 468 |
+| Q5 monthly revenue | 8x8 | 116 | 154 |
+| Q5 | 16x8 | 98 | 127 |
+| Q5 | 2x8 | — | 223 |
+| Q8 join + group | 8x8 | 463 | 513 |
+| Q8 | 8x4 | — | 669 |
+| Q8 | 8x2 | — | 1042 |
+| Q8 | 8x16 | — | 523 |
+| Q8 | 16x8 | 437 | 495 |
+
+Where the time goes, at 8x8:
+
+- **Q2**: the scan is the query. 65 ms of scan self time over 200
+  batches; the aggregate takes 0.5 ms. Sixteen scan threads on eight CPUs
+  take it to 57 ms, two scan threads more than double it: the scan pool
+  is the lever, and eight is not yet its ceiling on this host.
+- **N1**: the same scan with `id >= 1` added decodes 2,800 blocks instead
+  of 1,400 and takes 160 ms, 2.5x Q2, for a predicate that excludes
+  nothing. That is G2 of the hardening todo: the second predicate's cost
+  is the second column's decode, not the comparison, which now stays on
+  the packed kernel.
+- **Q5**: 85 ms in the scan, 31 ms in the aggregate. The scan retains
+  272 MiB at its peak, which is G1: every prefetched segment is adopted
+  at once.
+- **Q8**: 463 ms, of which the two scans are 59 ms. The rest is the
+  fused join-and-aggregate loop probing 20M rows, about 20 ns a probe,
+  and it scales with the execution pool up to the CPU count (8x2 1042 ms,
+  8x4 669 ms, 8x8 513 ms, 8x16 no better). This is where Q8's gap to
+  ClickHouse lives, and it is not a scan problem.
+- **API overhead**: the wall time of the call exceeds the engine's own
+  total by 25-40 ms on every query. On Q2 that is a third of the banked
+  number. The benchmark times `/api/query`, so a third of the reported
+  gap on the fast queries is authentication, the replica cache and JSON,
+  not execution.
+
+Verdicts: raise the scan pool above the CPU count for scan-bound queries
+(it costs nothing measurable on the others); the execution pool should
+stay at the CPU count; the fused probe loop and the API path are the
+next two things to profile inside, in that order. Numbers are not banked;
+the shared host puts a 2x spread between runs of the same
+configuration.

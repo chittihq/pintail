@@ -931,6 +931,23 @@ async function runQueries(
     }
     const mysqlTiming = summarizeTimings(mysqlTimes)
     const mysqlMs = mysqlTiming.medianMs
+    // Captured BEFORE the timed runs: a settled aggregate memoizes its
+    // answer, and an EXPLAIN ANALYZE issued after them would profile a
+    // replay that decodes nothing. The warmups populate the memo the timed
+    // runs use either way, so this changes no measurement.
+    let pintailExplain: string | undefined
+    try {
+      const explain = await api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
+        method: 'POST',
+        token,
+        // The plan of what was TIMED: a cold-only query times its variants,
+        // whose extra predicate the base statement does not carry.
+        body: { db: databaseId, sql: `EXPLAIN ANALYZE ${query.coldOnly ? (variants[0]?.sql ?? query.sql) : query.sql}` },
+      })
+      pintailExplain = explain.rows.map((row) => row.join(' ')).join('\n')
+    } catch {
+      pintailExplain = undefined
+    }
     // Shuffled per query from the run seed, so no engine is always last.
     const measurements = await inShuffledOrder(engineOrder, {
       pintail: () =>
@@ -999,19 +1016,6 @@ async function runQueries(
     const clickhouseFinalMatchesMysql = clickhouseFinalRun.values.every(
       (value, index) => canonicalRows(value) === mysqlCanonicals[index],
     )
-    let pintailExplain: string | undefined
-    try {
-      const explain = await api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
-        method: 'POST',
-        token,
-        // The plan of what was TIMED: a cold-only query times its variants,
-        // whose extra predicate the base statement does not carry.
-        body: { db: databaseId, sql: `EXPLAIN ANALYZE ${query.coldOnly ? (variants[0]?.sql ?? query.sql) : query.sql}` },
-      })
-      pintailExplain = explain.rows.map((row) => row.join(' ')).join('\n')
-    } catch {
-      pintailExplain = undefined
-    }
     const speedup = mysqlMs / pintailRun.timing.medianMs
     const speedupVsClickhouse = clickhouseFinalRun.timing.medianMs / pintailRun.timing.medianMs
     results.push({
