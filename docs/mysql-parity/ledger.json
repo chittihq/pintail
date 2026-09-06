@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "541afc8a941b096772374f1d6fc3a208ccabf203",
-    "measuredAt": "2026-09-06T12:29:41.075Z",
+    "commit": "02f47c57a14dbb37f42aa8c3737e19b215ec07b1",
+    "measuredAt": "2026-09-06T16:37:32.620Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "31f5dc3fddb444d9183b6a4da170d26ff97aebfe5cdc8bf3e5212d4958b2ce0d",
+    "ledgerSha256": "46b4aa16f1efb2352d8c63062bf0e8edcf8cf0ec5f75f9a9e3be7d9c451e90a2",
     "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "145a2e00a318abfea9f88bda8878fc6ade166d06",
-      "sourceCommit": "ccb31b3ab16aee88481f70b8551d18d2bf8f1194",
-      "measuredAt": "2026-09-06T12:15:32.479673+00:00",
+      "commit": "e81aa7147f117ae2a7db9fec9884e403d091a820",
+      "sourceCommit": "c31e2258e7d41cdcc20f5f023dbbef38ab176c30",
+      "measuredAt": "2026-09-06T16:18:39.180034+00:00",
       "source": "MySQL 8.4.11 (mysql:8.4)",
-      "ledgerSha256": "514fdc47abb1ec95af0b6c5c47e8d3b1212336a2ad76faf241b9ce251415f555",
+      "ledgerSha256": "1709d05dcd4629ed0d614e649b7db32fe7ae72e6aaac3e6ea3951e66d392c9f7",
       "corpusSha256": "6f76a58739b077165abe3370443673b9f2662148a8306cb34ea76fb2a3503d63"
     }
   },
@@ -703,7 +703,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/agg_spill.rs:92",
         "tests/sqllogic/tests/mysql_oracle.rs:734",
-        "tests/sqllogic/tests/report_shapes.rs:379"
+        "tests/sqllogic/tests/report_shapes.rs:377"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -1776,7 +1776,7 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/enum_ordinal.rs:199",
         "tests/sqllogic/tests/mysql_oracle.rs:649",
-        "tests/sqllogic/tests/report_shapes.rs:401"
+        "tests/sqllogic/tests/report_shapes.rs:399"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3209,7 +3209,7 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
         "tests/sqllogic/tests/mysql_oracle.rs:920",
-        "tests/sqllogic/tests/report_shapes.rs:392"
+        "tests/sqllogic/tests/report_shapes.rs:390"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11394,7 +11394,8 @@
       ],
       "testOccurrences": [
         "tests/sqllogic/tests/mysql_oracle.rs:663",
-        "tests/sqllogic/tests/report_shapes.rs:459"
+        "tests/sqllogic/tests/report_shapes.rs:457",
+        "tests/sqllogic/tests/two_pass_spill.rs:127"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11611,6 +11612,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:170",
+        "crates/pintail-exec/tests/morsel_bench.rs:146",
         "tests/sqllogic/tests/mysql_oracle.rs:104"
       ],
       "verification": "historical-differential-cases",
@@ -12165,7 +12167,9 @@
         "crates/pintail-sql/src/binder/function.rs"
       ],
       "binderGuards": [],
-      "testOccurrences": [],
+      "testOccurrences": [
+        "crates/pintail-exec/tests/profile.rs:268"
+      ],
       "verification": "not-run",
       "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
       "acceptance": "Check bytes versus characters, NULL propagation, empty strings, multibyte text, collation, all optional arguments, output limits and metadata."
@@ -13352,7 +13356,7 @@
         "crates/pintail-exec/tests/enum_ordinal.rs:265",
         "crates/pintail-exec/tests/set_ordinal.rs:217",
         "tests/sqllogic/tests/mysql_oracle.rs:879",
-        "tests/sqllogic/tests/report_shapes.rs:398"
+        "tests/sqllogic/tests/report_shapes.rs:396"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17914,7 +17918,7 @@
         "crates/pintail-exec/tests/constant_predicate_folds.rs:124",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:7",
         "crates/pintail-exec/tests/mixed_collation_grouping.rs:225",
-        "crates/pintail-exec/tests/partition_rewrites.rs:217"
+        "crates/pintail-exec/tests/morsel_bench.rs:170"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -19616,7 +19620,8 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
-        "tests/sqllogic/tests/mysql_oracle.rs:663"
+        "tests/sqllogic/tests/mysql_oracle.rs:663",
+        "tests/sqllogic/tests/two_pass_spill.rs:127"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
