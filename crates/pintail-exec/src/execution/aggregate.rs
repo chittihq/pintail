@@ -245,6 +245,40 @@ impl DistinctSeen {
         }
     }
 
+    /// Inserts a key that another distinct set already normalized. Text
+    /// keys are collation sort keys, and normalizing a sort key again
+    /// yields a different key, so a merged or revived key must be taken
+    /// as it is rather than sent through [`Self::insert_value`].
+    fn absorb(
+        &mut self,
+        key: Value,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<bool, ExecError> {
+        if let Some(int) = int_distinct_key(&key) {
+            return self.insert_int(int, memory, collation);
+        }
+        if let Self::Ints(_) = self {
+            self.migrate_to_values(memory, collation)?;
+        }
+        let Self::Values(set) = self else {
+            unreachable!()
+        };
+        reserve_hash_set_entries(
+            set,
+            1,
+            size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD),
+            0,
+            memory,
+        )?;
+        if set.contains(&key) {
+            return Ok(false);
+        }
+        memory.reserve(key.heap_bytes())?;
+        set.insert(key);
+        Ok(true)
+    }
+
     fn migrate_to_values(
         &mut self,
         memory: &MemoryTracker,
@@ -436,6 +470,30 @@ impl AggregateState {
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
         self.update_with_number(aggregate, value, None, memory)
+    }
+
+    /// Takes one key from another state's distinct set, counting it once
+    /// if this state has not seen it. The key is already normalized, so it
+    /// bypasses the distinct check that would normalize it again; a merge
+    /// that replayed keys through [`Self::update`] counted every text value
+    /// a second time whenever a group met itself across two spill runs or
+    /// two parallel partials.
+    fn absorb_distinct(
+        &mut self,
+        aggregate: &CompiledAggregate,
+        key: &Value,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let Some(seen) = &mut self.seen else {
+            return self.update(aggregate, key, memory);
+        };
+        if !seen.absorb(key.clone(), memory, self.collation)? {
+            return Ok(());
+        }
+        let seen = self.seen.take();
+        let result = self.update(aggregate, key, memory);
+        self.seen = seen;
+        result
     }
 
     #[allow(clippy::too_many_lines)]
@@ -677,8 +735,8 @@ impl AggregateState {
         self.extreme_number = None;
         if aggregate.distinct {
             if let Some(seen) = other.seen.take() {
-                for value in seen.drain_values() {
-                    self.update(aggregate, &value, memory)?;
+                for key in seen.drain_values() {
+                    self.absorb_distinct(aggregate, &key, memory)?;
                 }
             }
             return Ok(());
@@ -2286,13 +2344,25 @@ fn build_buffered_hash_aggregate(
                 break;
             };
             let bytes = batch.estimated_bytes();
-            reserve_or_spill_groups(
+            match reserve_or_spill_groups(
                 bytes,
                 &mut groups,
                 &mut groups_reserved,
                 &mut spill_runs,
                 memory,
-            )?;
+            ) {
+                Ok(()) => {}
+                Err(ExecError::MemoryLimitExceeded { .. }) if !batches.is_empty() => {
+                    // Nothing left to spill and the round already holds
+                    // batches: the round is as large as this ceiling allows.
+                    // Merge what is buffered and let this batch open the
+                    // next round, rather than failing a query whose map was
+                    // just spilled to make room for exactly this.
+                    first_batch = Some(batch);
+                    break;
+                }
+                Err(error) => return Err(error),
+            }
             batch_reserved = batch_reserved.saturating_add(bytes);
             selected_rows = selected_rows.saturating_add(batch.visible_row_count());
             batches.push(batch);
@@ -2464,13 +2534,18 @@ fn merge_partial_group(
 ) -> Result<(), MergeGroupFailure> {
     if groups.len() == groups.capacity() {
         let growth = groups.capacity().max(64);
+        // No transient headroom for the batches: the round already holds
+        // them as a persistent reservation, and asking for them again here
+        // made a 64 MiB ceiling refuse a 10 MiB batch it had already paid
+        // for, on the first round, with an empty map and nothing to spill.
+        let _ = batch_reserved;
         if let Err(error) = reserve_hash_map_entries(
             groups,
             growth,
             size_of::<Vec<Value>>()
                 .saturating_add(size_of::<AggregateGroup>())
                 .saturating_add(HASH_ENTRY_OVERHEAD),
-            batch_reserved,
+            0,
             memory,
         ) {
             return Err((error, Some((key, partial_group))));
@@ -2651,9 +2726,9 @@ fn revive_aggregate_state(
     memory: &MemoryTracker,
 ) -> Result<AggregateState, ExecError> {
     let mut state = AggregateState::new(aggregate);
-    if let Some(values) = spilled.seen {
-        for value in values {
-            state.update(aggregate, &value, memory)?;
+    if let Some(keys) = spilled.seen {
+        for key in keys {
+            state.absorb_distinct(aggregate, &key, memory)?;
         }
         return Ok(state);
     }
@@ -3797,6 +3872,37 @@ fn finish_aggregate_groups(
     Ok(MaterializedRows { rows, position: 0 })
 }
 
+/// The direct path's groups keyed the way the buffered path keys its map:
+/// by the normalized group values, so a spilled run from either path
+/// merges with a run from the other on identical encoded keys.
+fn direct_groups_map(
+    groups: Vec<AggregateGroup>,
+    key_collations: &[Collation],
+) -> HashMap<Vec<Value>, AggregateGroup> {
+    let mut map = HashMap::with_capacity(groups.len());
+    for group in groups {
+        let key = group
+            .values
+            .iter()
+            .cloned()
+            .zip(key_collations)
+            .map(|(value, collation)| normalized_hash_key(value, *collation).unwrap_or(Value::Null))
+            .collect::<Vec<_>>();
+        map.insert(key, group);
+    }
+    map
+}
+
+/// Drains the direct path's groups into one closed, sorted run.
+fn write_direct_groups_run(
+    groups: &mut Vec<AggregateGroup>,
+    key_collations: &[Collation],
+    memory: &MemoryTracker,
+) -> Result<spill::ClosedRun, ExecError> {
+    let mut map = direct_groups_map(std::mem::take(groups), key_collations);
+    write_aggregate_spill_run(&mut map, memory)
+}
+
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn build_direct_column_aggregate(
@@ -3902,6 +4008,28 @@ fn build_direct_column_aggregate(
     let mut scalar_index = HashMap::<Value, usize>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut index_reserved = 0_usize;
+    // Everything this loop reserves is the map and its indexes, so the
+    // difference from here is what a spill hands back.
+    let used_at_start = memory.used();
+    let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
+    // GROUP_CONCAT and the JSON aggregates have no spilled form, so a map
+    // holding one keeps growing to the ceiling as it always did.
+    let spillable = aggregates.iter().all(|aggregate| {
+        !matches!(
+            aggregate.function,
+            AggregateFunction::GroupConcat
+                | AggregateFunction::JsonArrayAgg
+                | AggregateFunction::JsonObjectAgg
+        )
+    });
+    let per_row_upper = group_columns
+        .len()
+        .saturating_mul(size_of::<Value>())
+        .saturating_mul(2)
+        .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+        .saturating_add(size_of::<AggregateGroup>())
+        .saturating_add(HASH_ENTRY_OVERHEAD)
+        .saturating_add(256);
 
     loop {
         let batch = if let Some(batch) = pending.pop_front() {
@@ -3920,6 +4048,35 @@ fn build_direct_column_aggregate(
                 )
             });
         for row in batch.selection().selected_rows() {
+            // The spill valve every other aggregate path has, and this one
+            // did not: a high-cardinality group column with aggregates the
+            // two-pass lanes cannot take ran here and failed at the ceiling
+            // instead of going to disk. Checked per row rather than per
+            // batch, because one scan batch can hold every row of a table
+            // and grow the map from nothing to the ceiling on its own.
+            // Spill at half the ceiling, or sooner when a burst of new
+            // groups could not fit on top of the map, so the reservations
+            // below never meet a full budget. A group split across a run
+            // and the resident map merges at the end.
+            let map_bytes = memory.used().saturating_sub(used_at_start);
+            let under_pressure = map_bytes > memory.limit() / 4
+                || (groups.len() >= 256
+                    && memory
+                        .used()
+                        .saturating_add(per_row_upper.saturating_mul(64))
+                        .saturating_add(batch_bytes)
+                        > memory.limit().saturating_mul(3) / 4);
+            if spillable && under_pressure && !groups.is_empty() {
+                spill_runs.push(write_direct_groups_run(
+                    &mut groups,
+                    key_collations,
+                    memory,
+                )?);
+                scalar_index = HashMap::new();
+                raw_index = HashMap::new();
+                memory.release(memory.used().saturating_sub(used_at_start));
+                index_reserved = 0;
+            }
             let raw_hash = (!indexed)
                 .then(|| direct_group_hash(&batch, row, group_columns))
                 .transpose()?;
@@ -4011,6 +4168,11 @@ fn build_direct_column_aggregate(
 
     drop(scalar_index);
     drop(raw_index);
+    if !spill_runs.is_empty() {
+        let resident = direct_groups_map(groups, key_collations);
+        memory.release(memory.used().saturating_sub(used_at_start));
+        return merge_spilled_aggregate_groups(spill_runs, resident, aggregates, memory);
+    }
     memory.release(index_reserved);
     memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
     let mut rows = Vec::with_capacity(groups.len());

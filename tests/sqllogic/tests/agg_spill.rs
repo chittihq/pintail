@@ -26,6 +26,7 @@ fn schema() -> TableSchema {
             Column::new(3, "tag", DataType::Utf8, false),
             Column::new(4, "score", DataType::Int64, false),
             Column::new(5, "label", DataType::Utf8, false),
+            Column::new(6, "note", DataType::Utf8, false),
         ],
     )
     .expect("schema")
@@ -45,6 +46,13 @@ fn row(id: u64) -> StoredRow {
             Value::Utf8(format!("t{}", (id / 15_000) % 2)),
             Value::Int64(score),
             Value::Utf8(format!("label-{:07}", (id * 31) % ROWS)),
+            // Two spellings per group that the default collation folds to
+            // one distinct value each, so the answer is 1 or 2 per group.
+            Value::Utf8(if id % 4 < 2 {
+                "Note-A".to_owned()
+            } else {
+                "note-b".to_owned()
+            }),
         ],
         id,
         false,
@@ -78,8 +86,11 @@ fn run_aggregated_with_metrics(
         SnapshotScanProvider::new([(DATABASE_ID, TABLE_ID, &snapshot)]).expect("provider");
 
     let statement = parse_statement(
+        // COUNT(DISTINCT note) is the text set that repeats within a group
+        // across many runs: a merge that re-normalized its keys counted it
+        // once per run.
         "SELECT grp, tag, COUNT(*), SUM(score), AVG(score), MIN(label), \
-         COUNT(DISTINCT score), COUNT(DISTINCT label) \
+         COUNT(DISTINCT score), COUNT(DISTINCT label), COUNT(DISTINCT note) \
          FROM events GROUP BY grp, tag ORDER BY grp, tag",
     )
     .map_err(|error| format!("parse: {error}"))?;
