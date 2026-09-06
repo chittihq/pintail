@@ -78,8 +78,16 @@ They also asserted that the original handoff checkpoint was unchanged. Source da
 was quiescent; concurrent DDL, live CDC overlap and process-kill recovery were not
 exercised by these experiments.
 
-The six snapshot unit tests and touched-crate clippy passed. Development validation
-is recorded separately after the experiment commit. This is not an rc/stable gate.
+The six snapshot unit tests and touched-crate clippy passed. Full development
+validation passed at code commit `a2b28a9`: formatting, workspace clippy, dashboard
+type checking, and workspace unit tests. The full result is banked in
+`benchmark/snapshot-throughput/validation.md`. This is not an rc/stable gate.
+
+The fresh environment initially lacked Node; adding Node 24 resolved the dashboard
+type-check failure. A storage test assumes its temporary directory shares the root
+filesystem; setting TMPDIR to a directory on that filesystem resolved the other
+environment failure. No application or test changes were made for either issue.
+The complete development profile was then rerun successfully.
 
 Evidence: `benchmark/snapshot-throughput/matrix-results.json`, `matrix-summary.json`,
 `composite-explain.log`, and `resume-checks.json`. The `estimated_row_bytes` fields
