@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "9de94f37750f338183de94c4ea07980349633fc7",
-    "measuredAt": "2026-09-06T08:46:31.892Z",
+    "commit": "541afc8a941b096772374f1d6fc3a208ccabf203",
+    "measuredAt": "2026-09-06T12:29:41.075Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "ce9075b92adc47e0c7754c81a55989253a9c665b5b93213cee6e5c3ba51ad009",
+    "ledgerSha256": "31f5dc3fddb444d9183b6a4da170d26ff97aebfe5cdc8bf3e5212d4958b2ce0d",
     "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "7c38ca1e492931a0a013d40dad319b16240f4e0c",
-      "sourceCommit": "db0a2a3818c4b260d7124dd56758843d4f1255f7",
-      "measuredAt": "2026-09-06T09:18:46.329655+00:00",
+      "commit": "145a2e00a318abfea9f88bda8878fc6ade166d06",
+      "sourceCommit": "ccb31b3ab16aee88481f70b8551d18d2bf8f1194",
+      "measuredAt": "2026-09-06T12:15:32.479673+00:00",
       "source": "MySQL 8.4.11 (mysql:8.4)",
-      "ledgerSha256": "ad604c4b7257d516482550f00acb9527336d3bbfecb69dfeaf42a1f776a883fd",
+      "ledgerSha256": "514fdc47abb1ec95af0b6c5c47e8d3b1212336a2ad76faf241b9ce251415f555",
       "corpusSha256": "6f76a58739b077165abe3370443673b9f2662148a8306cb34ea76fb2a3503d63"
     }
   },
@@ -701,8 +701,9 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/agg_spill.rs:74",
-        "tests/sqllogic/tests/mysql_oracle.rs:734"
+        "tests/sqllogic/tests/agg_spill.rs:92",
+        "tests/sqllogic/tests/mysql_oracle.rs:734",
+        "tests/sqllogic/tests/report_shapes.rs:379"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -1774,7 +1775,8 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/enum_ordinal.rs:199",
-        "tests/sqllogic/tests/mysql_oracle.rs:649"
+        "tests/sqllogic/tests/mysql_oracle.rs:649",
+        "tests/sqllogic/tests/report_shapes.rs:401"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3206,7 +3208,8 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
-        "tests/sqllogic/tests/mysql_oracle.rs:920"
+        "tests/sqllogic/tests/mysql_oracle.rs:920",
+        "tests/sqllogic/tests/report_shapes.rs:392"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -6173,6 +6176,7 @@
         "if args.len() == 4"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/runtime_join_filter.rs:189",
         "tests/sqllogic/tests/mysql_oracle.rs:4859"
       ],
       "verification": "not-run",
@@ -11389,7 +11393,8 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:663"
+        "tests/sqllogic/tests/mysql_oracle.rs:663",
+        "tests/sqllogic/tests/report_shapes.rs:459"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13346,7 +13351,8 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/enum_ordinal.rs:265",
         "crates/pintail-exec/tests/set_ordinal.rs:217",
-        "tests/sqllogic/tests/mysql_oracle.rs:879"
+        "tests/sqllogic/tests/mysql_oracle.rs:879",
+        "tests/sqllogic/tests/report_shapes.rs:398"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
