@@ -420,6 +420,25 @@ impl StrColumn {
         })
     }
 
+    /// A column pre-sized for strings of the given lengths, so building it
+    /// by `push` never grows: a column grown by doubling can hold twice its
+    /// bytes in slack, and every batch of a scan retained that slack.
+    #[must_use]
+    pub(crate) fn with_capacity_for_lengths(lengths: impl Iterator<Item = usize>) -> Self {
+        let mut rows = 0_usize;
+        let mut heap_bytes = 0_usize;
+        for length in lengths {
+            rows += 1;
+            if length > INLINE_LEN {
+                heap_bytes = heap_bytes.saturating_add(length);
+            }
+        }
+        let mut column = Self::default();
+        column.views.reserve_exact(rows);
+        column.heap.reserve_exact(heap_bytes);
+        column
+    }
+
     /// Appends one string.
     pub fn push(&mut self, bytes: &[u8]) {
         if self.lazy.is_some() {

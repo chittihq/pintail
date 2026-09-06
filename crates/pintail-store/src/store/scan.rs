@@ -380,6 +380,27 @@ impl ColumnValidity {
     }
 }
 
+/// Moves the first `count` elements out of `values` into a vector sized to
+/// exactly `count`, leaving the tail in place.
+fn split_prefix<T>(values: &mut Vec<T>, count: usize) -> Vec<T> {
+    let rest = values.split_off(count);
+    let mut prefix = std::mem::replace(values, rest);
+    prefix.shrink_to_fit();
+    prefix
+}
+
+fn split_validity_prefix(validity: &mut ColumnValidity, count: usize) -> ColumnValidity {
+    let rest = validity.split_off(count);
+    let prefix = std::mem::replace(validity, rest);
+    match prefix {
+        ColumnValidity::Bytes(mut bytes) => {
+            bytes.shrink_to_fit();
+            ColumnValidity::Bytes(bytes)
+        }
+        all_valid @ ColumnValidity::AllValid(_) => all_valid,
+    }
+}
+
 /// (Boolean, Binary, merged or memtable rows).
 #[derive(Clone, Debug)]
 pub enum DecodedColumn {
@@ -512,83 +533,69 @@ impl DecodedColumn {
     /// Splits off the first `count` rows (clamped to the column length),
     /// leaving the remainder in place. Used by executors slicing one decoded
     /// chunk into fixed-size batches.
+    ///
+    /// The prefix is right-sized. `Vec::split_off` hands the tail a fresh
+    /// exact allocation and leaves the head holding the WHOLE original
+    /// capacity, so a 1M-row segment sliced into sixteen 64K-row batches
+    /// used to retain sixteen prefixes of 1M, 940K, 875K ... rows each -
+    /// about eight times the segment - for as long as those batches lived.
+    /// Measured on a two-column 1M-row segment: 118 MB retained for 16 MB
+    /// of data, which is what made a plain GROUP BY under the shipped
+    /// ceiling fail on its first pull.
     #[must_use]
     pub fn take_prefix(&mut self, count: usize) -> Self {
         let count = count.min(self.len());
         match self {
-            Self::Values(values) => {
-                let rest = values.split_off(count);
-                Self::Values(std::mem::replace(values, rest))
-            }
-            Self::Int64 { values, validity } => {
-                let rest_values = values.split_off(count);
-                let rest_validity = validity.split_off(count);
-                Self::Int64 {
-                    values: std::mem::replace(values, rest_values),
-                    validity: std::mem::replace(validity, rest_validity),
-                }
-            }
+            Self::Values(values) => Self::Values(split_prefix(values, count)),
+            Self::Int64 { values, validity } => Self::Int64 {
+                values: split_prefix(values, count),
+                validity: split_validity_prefix(validity, count),
+            },
             Self::NativeUnits {
                 units,
                 values,
                 validity,
-            } => {
-                let rest_values = values.split_off(count);
-                let rest_validity = validity.split_off(count);
-                Self::NativeUnits {
-                    units: *units,
-                    values: std::mem::replace(values, rest_values),
-                    validity: std::mem::replace(validity, rest_validity),
-                }
-            }
-            Self::UInt64 { values, validity } => {
-                let rest_values = values.split_off(count);
-                let rest_validity = validity.split_off(count);
-                Self::UInt64 {
-                    values: std::mem::replace(values, rest_values),
-                    validity: std::mem::replace(validity, rest_validity),
-                }
-            }
-            Self::Float64 { bits, validity } => {
-                let rest_bits = bits.split_off(count);
-                let rest_validity = validity.split_off(count);
-                Self::Float64 {
-                    bits: std::mem::replace(bits, rest_bits),
-                    validity: std::mem::replace(validity, rest_validity),
-                }
-            }
+            } => Self::NativeUnits {
+                units: *units,
+                values: split_prefix(values, count),
+                validity: split_validity_prefix(validity, count),
+            },
+            Self::UInt64 { values, validity } => Self::UInt64 {
+                values: split_prefix(values, count),
+                validity: split_validity_prefix(validity, count),
+            },
+            Self::Float64 { bits, validity } => Self::Float64 {
+                bits: split_prefix(bits, count),
+                validity: split_validity_prefix(validity, count),
+            },
             Self::DictionaryUtf8 {
                 dict_heap,
                 dict_offsets,
                 codes,
                 validity,
-            } => {
-                let rest_codes = codes.split_off(count);
-                let rest_validity = validity.split_off(count);
-                Self::DictionaryUtf8 {
-                    dict_heap: dict_heap.clone(),
-                    dict_offsets: dict_offsets.clone(),
-                    codes: std::mem::replace(codes, rest_codes),
-                    validity: std::mem::replace(validity, rest_validity),
-                }
-            }
+            } => Self::DictionaryUtf8 {
+                dict_heap: dict_heap.clone(),
+                dict_offsets: dict_offsets.clone(),
+                codes: split_prefix(codes, count),
+                validity: split_validity_prefix(validity, count),
+            },
             Self::Utf8 {
                 heap,
                 offsets,
                 validity,
             } => {
                 let cut = offsets[count];
-                let rest_heap = heap.split_off(cut);
                 let rest_offsets = offsets[count..]
                     .iter()
                     .map(|offset| offset - cut)
                     .collect::<Vec<_>>();
                 offsets.truncate(count + 1);
-                let rest_validity = validity.split_off(count);
+                let mut prefix_offsets = std::mem::replace(offsets, rest_offsets);
+                prefix_offsets.shrink_to_fit();
                 Self::Utf8 {
-                    heap: std::mem::replace(heap, rest_heap),
-                    offsets: std::mem::replace(offsets, rest_offsets),
-                    validity: std::mem::replace(validity, rest_validity),
+                    heap: split_prefix(heap, cut),
+                    offsets: prefix_offsets,
+                    validity: split_validity_prefix(validity, count),
                 }
             }
         }

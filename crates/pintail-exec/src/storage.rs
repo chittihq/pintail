@@ -1776,7 +1776,8 @@ fn typed_from_utf8_arena_labelled(
     enum_labels: Option<&Arc<Vec<String>>>,
     set_members: Option<&Arc<Vec<String>>>,
 ) -> ColumnVector {
-    let mut text = StrColumn::default();
+    let mut text =
+        StrColumn::with_capacity_for_lengths(offsets.windows(2).map(|pair| pair[1] - pair[0]));
     for row in 0..validity.len() {
         text.push(&heap[offsets[row]..offsets[row + 1]]);
     }
