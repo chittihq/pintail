@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc5] - 2026-09-06
+
 ### Added
 
 - Generated recovery sequences for the store: random interleavings of
@@ -34,6 +36,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- The hash join's build-side key filter tests a typed integer key column
+  through a bitmap of the probe's keys instead of building a `Value` and a
+  hash key per build row, and the probe is read ahead to filter the build
+  only when the build is estimated at least four times the probe's size.
+  Together these return the executor instruction gate's 4,096-row join to
+  3% below its baseline from 20% above it.
 - Backups and restores stream their segment transfers, four objects at a
   time. Segments above 8 MiB upload as multipart with two parts in flight
   and a whole-object digest computed as the parts are read; restores write
@@ -74,6 +82,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   left alone. On an eleven-table grouped report over 850K rows the
   derived predicates took 35 % off the run time. Forty-five oracle cases
   pin the pass and its boundaries byte-exact against MySQL.
+
+### Changed
+
+- The analytical benchmark runs against ClickHouse 26.8 LTS (was 25.8), and
+  the keyword and function compatibility matrix reads that image's
+  inventory. Its concurrency sweep is a mixed workload, Q2 through Q8
+  round-robin per call with a per-query breakdown in results.json, beside
+  the full-table count as its own row. The README states the 4 GiB
+  per-query ceiling the harness has always run with, and that the
+  RMT+FINAL column is charged without a live update tail and is therefore
+  a lower bound on ClickHouse's merge-on-read cost (issue #31 tracks the
+  live-tail phase). A smoke-scale run caches its MySQL baseline separately
+  instead of overwriting the full-scale ledger.
 
 ### Fixed
 
