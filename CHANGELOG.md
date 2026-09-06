@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Date-function predicates now prune and vectorize. The optimizer rewrites
+  `DATE(c)`, `CAST(c AS DATE)` and `YEAR(c)` compared with a literal
+  (=, <>, <, <=, >, >=, BETWEEN, NOT BETWEEN, IN, NOT IN) into half-open
+  ranges on the wrapped DATETIME or DATE column, so segment and block
+  pruning and the vectorized filter mask apply. On a 10M-row table
+  `DATE(created_at) BETWEEN` fell from 15 s to the plain range's
+  milliseconds. Time-bearing literals other than exact midnight, impossible
+  dates and text columns keep their original evaluation; every rewritten
+  shape is checked byte-exact against MySQL in the fixed oracle corpus.
+
+### Fixed
+
+- `DATE(c) = 'YYYY-MM-DD 00:00:00'` and `<>` with a midnight datetime
+  literal now match MySQL, which promotes the date to midnight before
+  comparing; the previous string comparison never matched.
+
 ### Added
 
 - Query admission reserves up to two slots for simple queries over small,
