@@ -33,7 +33,15 @@ static SHARED: OnceLock<Arc<QueryAdmission>> = OnceLock::new();
 /// Installs the process-wide bound. Called once at startup; later calls are
 /// ignored so a stray caller cannot loosen a configured limit.
 pub fn init_shared_admission(limit: usize) {
-    let _ = SHARED.set(Arc::new(QueryAdmission::new(limit)));
+    init_shared_admission_with_wait(limit, DEFAULT_QUEUE_WAIT);
+}
+
+/// Installs the process-wide admission bound with an explicit queue wait:
+/// how long a query at the concurrency ceiling waits for a slot before it
+/// is refused. A longer wait turns a burst into latency instead of errors;
+/// a shorter one sheds sooner. Zero refuses immediately.
+pub fn init_shared_admission_with_wait(limit: usize, wait: Duration) {
+    let _ = SHARED.set(Arc::new(QueryAdmission::with_wait(limit, wait)));
 }
 
 /// The process-wide bound, defaulting if startup never configured one.
@@ -47,7 +55,9 @@ pub fn shared_admission() -> Arc<QueryAdmission> {
 /// How long a query waits for a slot before it is refused. Long enough to
 /// absorb a burst that clears quickly, short enough that the caller learns
 /// the server is saturated while its own deadline still has room.
-const DEFAULT_QUEUE_WAIT: Duration = Duration::from_secs(2);
+/// How long a query waits at the concurrency ceiling before it is refused,
+/// unless the operator configures otherwise.
+pub const DEFAULT_QUEUE_WAIT: Duration = Duration::from_secs(2);
 
 /// Concurrency limit when the operator sets none. Past the point where
 /// every core is busy, more concurrent queries buy no throughput and only
@@ -117,6 +127,12 @@ impl QueryAdmission {
     #[must_use]
     pub const fn limit(&self) -> usize {
         self.limit
+    }
+
+    /// How long a query at the ceiling waits for a slot before refusal.
+    #[must_use]
+    pub const fn wait(&self) -> Duration {
+        self.wait
     }
 
     /// Takes a slot, waiting up to the queue timeout. `None` means the

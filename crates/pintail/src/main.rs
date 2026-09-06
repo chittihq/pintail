@@ -69,7 +69,10 @@ async fn main() -> Result<()> {
 
     // Installed before either listener binds so every query on both
     // surfaces draws from one bound.
-    pintail_wire::init_shared_admission(config.max_concurrent_queries());
+    pintail_wire::init_shared_admission_with_wait(
+        config.max_concurrent_queries(),
+        config.query_queue_wait(),
+    );
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
     raise_open_file_limit();
     report_effective_limits(&config);
@@ -250,9 +253,10 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
         limit => limit.to_string(),
     };
     pintail_log::log_info!(
-        "pintail limits: concurrent_queries={admission} query_memory={} \
+        "pintail limits: concurrent_queries={admission} queue_wait={:.1}s query_memory={} \
          shared_memory={} process_memory={} open_files={} spill_dir={} \
          query_spill={} global_spill={}",
+        config.query_queue_wait().as_secs_f64(),
         describe(config.query_memory_limit_bytes() as u64),
         describe(config.total_query_memory_limit_bytes() as u64),
         pintail::config::available_memory_bytes().map_or_else(|| "undetected".to_owned(), describe),

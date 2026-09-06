@@ -106,6 +106,10 @@ services:
       # count multiplied by the per-query ceiling above can exceed the
       # shared total, in which case the total refuses first.
       PINTAIL_MAX_CONCURRENT_QUERIES: ${PINTAIL_MAX_CONCURRENT_QUERIES:-}
+      # Seconds a query waits at that ceiling for a slot before the 1040.
+      # Longer turns a burst into latency instead of errors; zero refuses at
+      # once. Fractions are accepted. Unset uses 2.
+      PINTAIL_QUERY_QUEUE_WAIT_SECONDS: ${PINTAIL_QUERY_QUEUE_WAIT_SECONDS:-}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk

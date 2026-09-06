@@ -8,8 +8,8 @@ mod replica_cache;
 mod server;
 
 pub use admission::{
-    QueryAdmission, QueryClass, QueryPermit, default_max_concurrent_queries, init_shared_admission,
-    shared_admission,
+    DEFAULT_QUEUE_WAIT, QueryAdmission, QueryClass, QueryPermit, default_max_concurrent_queries,
+    init_shared_admission, init_shared_admission_with_wait, shared_admission,
 };
 pub use engine::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,

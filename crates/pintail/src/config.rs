@@ -11,7 +11,9 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use pintail_wire::{DEFAULT_QUERY_MEMORY_LIMIT, default_max_concurrent_queries};
+use pintail_wire::{
+    DEFAULT_QUERY_MEMORY_LIMIT, DEFAULT_QUEUE_WAIT, default_max_concurrent_queries,
+};
 use serde::Deserialize;
 
 /// Memory available to this process in bytes, or `None` when it cannot be
@@ -185,6 +187,12 @@ pub struct Cli {
     #[arg(long)]
     pub max_concurrent_queries: Option<usize>,
 
+    /// Seconds a query at the concurrency ceiling waits for a slot before
+    /// it is refused with 1040. Fractions are accepted; zero refuses at
+    /// once. Defaults to 2.
+    #[arg(long)]
+    pub query_queue_wait_seconds: Option<f64>,
+
     /// Byte ceiling shared by every concurrent query. The per-query limit
     /// bounds one query; this bounds their sum. Zero disables the bound.
     #[arg(long)]
@@ -215,6 +223,7 @@ pub struct AppConfig {
     wire_max_prepared_statements: usize,
     query_memory_limit_bytes: usize,
     max_concurrent_queries: usize,
+    query_queue_wait: Duration,
     total_query_memory_limit_bytes: usize,
     query_spill_limit_bytes: u64,
     global_spill_limit_bytes: u64,
@@ -404,6 +413,27 @@ impl AppConfig {
             .or(environment_max_concurrent_queries)
             .or(file.query.max_concurrent_queries)
             .unwrap_or_else(default_max_concurrent_queries);
+        let environment_query_queue_wait = environment
+            .get(&OsString::from("PINTAIL_QUERY_QUEUE_WAIT_SECONDS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_QUERY_QUEUE_WAIT_SECONDS must be valid UTF-8")?
+                    .parse::<f64>()
+                    .context("PINTAIL_QUERY_QUEUE_WAIT_SECONDS must be a number of seconds")
+            })
+            .transpose()?;
+        let query_queue_wait_seconds = cli
+            .query_queue_wait_seconds
+            .or(environment_query_queue_wait)
+            .or(file.query.queue_wait_seconds);
+        let query_queue_wait = match query_queue_wait_seconds {
+            None => DEFAULT_QUEUE_WAIT,
+            Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
+                Duration::from_secs_f64(seconds)
+            }
+            Some(_) => bail!("query queue wait must be a non-negative number of seconds"),
+        };
         let environment_total_query_memory = environment
             .get(&OsString::from("PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES"))
             .map(|value| {
@@ -508,6 +538,7 @@ impl AppConfig {
             wire_max_prepared_statements,
             query_memory_limit_bytes,
             max_concurrent_queries,
+            query_queue_wait,
             total_query_memory_limit_bytes,
             query_spill_limit_bytes,
             global_spill_limit_bytes,
@@ -585,6 +616,13 @@ impl AppConfig {
         self.max_concurrent_queries
     }
 
+    /// How long a query at the concurrency ceiling waits for a slot before
+    /// it is refused.
+    #[must_use]
+    pub const fn query_queue_wait(&self) -> Duration {
+        self.query_queue_wait
+    }
+
     #[must_use]
     pub const fn total_query_memory_limit_bytes(&self) -> usize {
         self.total_query_memory_limit_bytes
@@ -643,6 +681,7 @@ struct FileWireConfig {
 struct FileQueryConfig {
     memory_limit_bytes: Option<usize>,
     max_concurrent_queries: Option<usize>,
+    queue_wait_seconds: Option<f64>,
     total_memory_limit_bytes: Option<usize>,
     spill_limit_bytes: Option<u64>,
 }
@@ -697,6 +736,7 @@ mod tests {
             wire_max_prepared_statements: None,
             query_memory_limit_bytes: None,
             max_concurrent_queries: None,
+            query_queue_wait_seconds: None,
             total_query_memory_limit_bytes: None,
             spill_dir: None,
             query_spill_limit_bytes: None,
@@ -777,6 +817,33 @@ mod tests {
         )
         .expect("environment config");
         assert_eq!(configured.query_memory_limit_bytes(), 268_435_456);
+    }
+
+    #[test]
+    fn query_queue_wait_defaults_and_accepts_fractional_seconds() {
+        let default = AppConfig::load_from(&cli(), []).expect("default config");
+        assert_eq!(default.query_queue_wait(), Duration::from_secs(2));
+
+        let configured = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "7.5".into())],
+        )
+        .expect("environment config");
+        assert_eq!(configured.query_queue_wait(), Duration::from_millis(7500));
+
+        let immediate = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "0".into())],
+        )
+        .expect("zero is immediate refusal");
+        assert_eq!(immediate.query_queue_wait(), Duration::ZERO);
+
+        let error = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "-1".into())],
+        )
+        .expect_err("negative wait");
+        assert!(error.to_string().contains("non-negative"));
     }
 
     #[test]

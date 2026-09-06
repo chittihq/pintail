@@ -35,6 +35,7 @@ fn cli_and_environment_override_the_toml_configuration() {
         wire_max_prepared_statements: None,
         query_memory_limit_bytes: Some(268_435_456),
         max_concurrent_queries: None,
+        query_queue_wait_seconds: None,
         total_query_memory_limit_bytes: None,
         spill_dir: None,
         query_spill_limit_bytes: Some(536_870_912),
