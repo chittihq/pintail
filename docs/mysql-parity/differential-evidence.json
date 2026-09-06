@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "commit": "b91fe31af9437228fb247397554e332dc47bfa6e",
-  "measuredAt": "2026-09-06T04:52:48.663Z",
+  "commit": "9de94f37750f338183de94c4ea07980349633fc7",
+  "measuredAt": "2026-09-06T08:46:31.892Z",
   "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-  "ledgerSha256": "a7942d9fea6b15c411e24d8c1eb05e9bc53b432fe0dde6d2702c10e6feaf9665",
+  "ledgerSha256": "ce9075b92adc47e0c7754c81a55989253a9c665b5b93213cee6e5c3ba51ad009",
   "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab",
   "cases": [
     {
@@ -5896,12 +5896,12 @@
   ],
   "oracle": {
     "schemaVersion": 1,
-    "commit": "238312ac1f201c765009aa1716f0e047cda6b06a",
-    "sourceCommit": "547a2686de9121c3408cbe80105cf0218ec53088",
-    "measuredAt": "2026-09-06T04:43:21.195129+00:00",
+    "commit": "65a37cbc15c9836431f294c5d1a831ce882556ef",
+    "sourceCommit": "093c5b67dd98ec646b13339e8885f170ae3851e3",
+    "measuredAt": "2026-09-06T08:29:23.828796+00:00",
     "source": "MySQL 8.4.11 (mysql:8.4)",
-    "ledgerSha256": "6b73f5a3e81e8a68118e8f46d5333667f611692128f470bb0c9b3b81029f8070",
-    "corpusSha256": "ad15d8f8c285eb827ed6ba3a4d7fc18250067024ef103fc2feb47e14b463cee0",
+    "ledgerSha256": "475ff9832a27b420bea3d9f9b1b1f89daddf2e5f8422e40a7a0ca4a7702edd76",
+    "corpusSha256": "c4c6576b96e340bce6a072ec1289fea0cfb84ecf9181735a757a8edb9409fc00",
     "cases": [
       {
         "name": "oracle:0000:arithmetic and predicates",
@@ -14971,7 +14971,122 @@
         ]
       },
       {
-        "name": "oracle:0731:json bin collation",
+        "name": "oracle:0731:join constant propagation",
+        "sqlSha256": "84481bdfbe6987f8655a3df8f25f901335286f832c943d37fa6cf1601dd621a1",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0732:join constant propagation",
+        "sqlSha256": "0ea8852162fcc15cbe5e15063d77198cbc6a37b75daded93a4639ccb5c083c5a",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0733:join constant propagation",
+        "sqlSha256": "256a665f9ee5396695084a95dd973fa667809cb1c46a436f2dbfab0ed50253dc",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0734:join constant propagation",
+        "sqlSha256": "1cf91a7883b797a17a8decd783e115c480364a9d4e131f96ff3fc43da3ff85d2",
+        "functions": [
+          "IN"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0735:join constant propagation",
+        "sqlSha256": "fead4baefa7455e638077ad630b946d77a3de90898078cb125e49bfb05a50947",
+        "functions": [
+          "COUNT"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0736:join constant propagation",
+        "sqlSha256": "4c858c1091022ab45ee98548ada5e6f3dcd3fb5e2b799b8931e669d351349f0f",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0737:join constant propagation",
+        "sqlSha256": "071c86c7c0c2622524ced549150ac13eb2e3a1d6e0c935341b8eca20b1c50e80",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0738:join constant propagation",
+        "sqlSha256": "c010ce45d14ed9d0a3be183a8e34d6a3f0ab40450a55b8cc5098127bfef4d275",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0739:join constant propagation",
+        "sqlSha256": "45a2c5bb3140a4e118790fb0b5cfe84cdb4fd2e90d2111a7e46b7e67e90e1bfe",
+        "functions": [
+          "EXISTS"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0740:join constant propagation",
+        "sqlSha256": "f64386ff8fc26bab26485831a7c9987f17466eec617d29c9706beb042a3bfc38",
+        "functions": [
+          "EXISTS",
+          "IN"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0741:join constant propagation",
+        "sqlSha256": "8ac147291225bd93ff4d0c5b7b87dbb6e9d8b453846850523d1e6c2ce73d7cf3",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0742:join constant propagation",
+        "sqlSha256": "e1c3f9f67a3947fc6afc7c653892c743c8b896bef482a795cf224b99d37495a2",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0743:join constant propagation",
+        "sqlSha256": "8b61287cabfab59c3bd06b9d917ae4f15ee84ad0d19cdb91d588f66376e7f420",
+        "functions": [
+          "COUNT"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:0744:json bin collation",
         "sqlSha256": "29e3d85e328ac8d178a611a4c6393dd9aaeec9fdd104d6ae0ee17c0fbed3847f",
         "functions": [
           "JSON_EXTRACT",
@@ -14982,7 +15097,7 @@
         ]
       },
       {
-        "name": "oracle:0732:json bin collation",
+        "name": "oracle:0745:json bin collation",
         "sqlSha256": "2c34f2dd529c4f2d9780bd4e6e3dbb7dd78987f8755627d6e41d005f00175717",
         "functions": [
           "JSON_EXTRACT",
@@ -14993,7 +15108,7 @@
         ]
       },
       {
-        "name": "oracle:0733:json bin collation",
+        "name": "oracle:0746:json bin collation",
         "sqlSha256": "279fad9b3b5029721c1115cda090ed60021638487eb7d33559bb58b8349bc28c",
         "functions": [
           "JSON_EXTRACT",
@@ -15004,7 +15119,7 @@
         ]
       },
       {
-        "name": "oracle:0734:json bin collation",
+        "name": "oracle:0747:json bin collation",
         "sqlSha256": "07d71bf1d4b74e9906e0d560f7dc40247314d2eae0418bfa69578ee364153c25",
         "functions": [
           "CONCAT",
@@ -15017,7 +15132,7 @@
         ]
       },
       {
-        "name": "oracle:0735:json bin collation",
+        "name": "oracle:0748:json bin collation",
         "sqlSha256": "2b5f7fdb2df934715ceb1018dde92bc8f13f3e2dbd3411e5f1df4ae6f6fcfa2f",
         "functions": [
           "CONCAT",
@@ -15029,7 +15144,7 @@
         ]
       },
       {
-        "name": "oracle:0736:json bin collation",
+        "name": "oracle:0749:json bin collation",
         "sqlSha256": "5950a83267dee7bee1549eb715c0ce969e71d23fa471f704c92455f27b34e7c8",
         "functions": [
           "COUNT"
@@ -15039,7 +15154,7 @@
         ]
       },
       {
-        "name": "oracle:0737:json bin collation",
+        "name": "oracle:0750:json bin collation",
         "sqlSha256": "6c76101f6d0007bc4a161de1fb248bdc586c9a494bf49fecf3576533f5bf96fc",
         "functions": [
           "COUNT"
@@ -15049,7 +15164,7 @@
         ]
       },
       {
-        "name": "oracle:0738:json bin collation",
+        "name": "oracle:0751:json bin collation",
         "sqlSha256": "438c29f7ef100b35ea4a04f6bc238e6d4de107961df6ea51baac3d4bfe42bf00",
         "functions": [],
         "phases": [
@@ -15057,7 +15172,7 @@
         ]
       },
       {
-        "name": "oracle:0739:json bin collation",
+        "name": "oracle:0752:json bin collation",
         "sqlSha256": "b9e642f8917705613e1d2f02b32952a8cc085afb5e99cd3d27fc8e993a3c2923",
         "functions": [
           "JSON_EXTRACT",
@@ -15069,7 +15184,7 @@
         ]
       },
       {
-        "name": "oracle:0740:json bin collation",
+        "name": "oracle:0753:json bin collation",
         "sqlSha256": "f6d58882366cabca73b976a0bcf0943085f11a9fd5dc772b31e94bbf6cefd8ee",
         "functions": [
           "JSON_TYPE"
@@ -15079,7 +15194,7 @@
         ]
       },
       {
-        "name": "oracle:0741:json bin collation",
+        "name": "oracle:0754:json bin collation",
         "sqlSha256": "2514180d322ef818c7b8ca46238b2132df89530e4107e3d4c8f0b56cfe300c32",
         "functions": [
           "COUNT",
@@ -15091,7 +15206,7 @@
         ]
       },
       {
-        "name": "oracle:0742:json bin collation",
+        "name": "oracle:0755:json bin collation",
         "sqlSha256": "ac9621093b2a87fb2ce46aa76207f1ef704213b22c8dfba38af01678f06bdd94",
         "functions": [
           "COUNT",
@@ -15103,7 +15218,7 @@
         ]
       },
       {
-        "name": "oracle:0743:like default escape",
+        "name": "oracle:0756:like default escape",
         "sqlSha256": "02e27cd406461706fda691e954272cf8e589ce5aee453fb8b23245c1f52d79ad",
         "functions": [],
         "phases": [
@@ -15111,7 +15226,7 @@
         ]
       },
       {
-        "name": "oracle:0744:binary operator",
+        "name": "oracle:0757:binary operator",
         "sqlSha256": "a3f33d3878daffb1434095ae7dcbbd3fb166eda7ecb78d51243165a3982715f8",
         "functions": [],
         "phases": [
@@ -15119,7 +15234,7 @@
         ]
       },
       {
-        "name": "oracle:0745:binary operator",
+        "name": "oracle:0758:binary operator",
         "sqlSha256": "5ece9ed888e60760c882d2d7584145db81858851a4025151829b93e54c7be423",
         "functions": [
           "COUNT"
@@ -15129,7 +15244,7 @@
         ]
       },
       {
-        "name": "oracle:0746:binary operator",
+        "name": "oracle:0759:binary operator",
         "sqlSha256": "c36d6cf92875dd0ace80fb3022de87cd41561819b6bb47d5849ac7438561d77e",
         "functions": [
           "COUNT"
@@ -15139,7 +15254,7 @@
         ]
       },
       {
-        "name": "oracle:0747:null-only derived",
+        "name": "oracle:0760:null-only derived",
         "sqlSha256": "4789403b65781baca7fcef12c5bf4fe031885740c482c03237a9b448d2bdffb5",
         "functions": [
           "COUNT",
@@ -15150,7 +15265,7 @@
         ]
       },
       {
-        "name": "oracle:0748:null-only derived",
+        "name": "oracle:0761:null-only derived",
         "sqlSha256": "5904edf1e6a1775af4e8efac05449c4c3f877428b68a20f333291ab311e35123",
         "functions": [
           "COUNT",
@@ -15161,7 +15276,7 @@
         ]
       },
       {
-        "name": "oracle:0749:rejected constructs",
+        "name": "oracle:0762:rejected constructs",
         "sqlSha256": "9026f306fbd4a2f79050d88a408b30387ac5128a3c5c18446e9b2f4f583ec342",
         "functions": [
           "CAST"
@@ -15171,7 +15286,7 @@
         ]
       },
       {
-        "name": "oracle:0750:rejected constructs",
+        "name": "oracle:0763:rejected constructs",
         "sqlSha256": "251722196c50b72b57fd3c07e33916597fd0b6dcd3fb9248680ea2ae72167797",
         "functions": [
           "TRIM"
@@ -15181,7 +15296,7 @@
         ]
       },
       {
-        "name": "oracle:0751:rejected constructs",
+        "name": "oracle:0764:rejected constructs",
         "sqlSha256": "b88358aaec579cafb25405bd88173b1c30316cb89599ca1ac0990c3e62b2c038",
         "functions": [],
         "phases": [
@@ -15189,7 +15304,7 @@
         ]
       },
       {
-        "name": "oracle:0752:rejected constructs",
+        "name": "oracle:0765:rejected constructs",
         "sqlSha256": "c7ad69ef0be1953ea9e2be00d4426047107800042d82d36c4b4cdc8d6cb4d370",
         "functions": [
           "COUNT"
@@ -15199,7 +15314,7 @@
         ]
       },
       {
-        "name": "oracle:0753:rejected constructs",
+        "name": "oracle:0766:rejected constructs",
         "sqlSha256": "a62595721010366b66a12d9d17596e9f4c9839b5d025bd8f7c3e266605404255",
         "functions": [],
         "phases": [
@@ -15207,7 +15322,7 @@
         ]
       },
       {
-        "name": "oracle:0754:rejected constructs",
+        "name": "oracle:0767:rejected constructs",
         "sqlSha256": "38f7d5e83416941be16b25538fc6efc21e3ccbf4046ae3cd2bea3e53d85fec56",
         "functions": [
           "COUNT"
@@ -15217,7 +15332,7 @@
         ]
       },
       {
-        "name": "oracle:0755:json bin collation",
+        "name": "oracle:0768:json bin collation",
         "sqlSha256": "7117df138d0b524b978c5352068a826739905be9d764a3c6a03f51f67a6b8f3c",
         "functions": [
           "CONCAT",
@@ -15230,7 +15345,7 @@
         ]
       },
       {
-        "name": "oracle:0756:coercion matrix",
+        "name": "oracle:0769:coercion matrix",
         "sqlSha256": "79a6f520b3e62c8077027a02ef274bfdedacffa44dd9e98591954e67b82b4af7",
         "functions": [],
         "phases": [
@@ -15238,7 +15353,7 @@
         ]
       },
       {
-        "name": "oracle:0757:coercion matrix",
+        "name": "oracle:0770:coercion matrix",
         "sqlSha256": "f9b4cfd00af4fe5010c0167167e055359b3bf12e285d421f9b2188edff992fe8",
         "functions": [
           "DATE"
@@ -15248,7 +15363,7 @@
         ]
       },
       {
-        "name": "oracle:0758:prefix precedence",
+        "name": "oracle:0771:prefix precedence",
         "sqlSha256": "e39b1de5013255442382d0e15cba9580f587cfe396b70f4c7c40182ed0973c90",
         "functions": [],
         "phases": [
@@ -15256,7 +15371,7 @@
         ]
       },
       {
-        "name": "oracle:0759:prefix precedence",
+        "name": "oracle:0772:prefix precedence",
         "sqlSha256": "dee37d0346fd24c2de26e2ff019710f4fe047ed5299d56ee78824bb2cd612a4f",
         "functions": [
           "COUNT"
@@ -15266,7 +15381,7 @@
         ]
       },
       {
-        "name": "oracle:0760:prefix precedence",
+        "name": "oracle:0773:prefix precedence",
         "sqlSha256": "be7987695a84ce3adc2d30652df6b3230e88af588834d1da33533d1d52a234d1",
         "functions": [
           "COUNT"
@@ -15276,7 +15391,7 @@
         ]
       },
       {
-        "name": "oracle:0761:pad space matrix",
+        "name": "oracle:0774:pad space matrix",
         "sqlSha256": "6f50a965070f3a8b3f5adf5bdbb6b586a474c17db29ce883d1f4d39fed1f87cf",
         "functions": [
           "IN"
@@ -15286,7 +15401,7 @@
         ]
       },
       {
-        "name": "oracle:0762:pad space matrix",
+        "name": "oracle:0775:pad space matrix",
         "sqlSha256": "ae32a6a24d489bb9cd3acd2615fd5ee25c2979e0db2068282a6f6e48f33e62d2",
         "functions": [
           "COUNT"
@@ -15296,7 +15411,7 @@
         ]
       },
       {
-        "name": "oracle:0763:like escape corners",
+        "name": "oracle:0776:like escape corners",
         "sqlSha256": "b19953153c758441858ba9696ef8d8c91eab88655a1030bca9f3e6ba65025fc7",
         "functions": [],
         "phases": [
@@ -15304,7 +15419,7 @@
         ]
       },
       {
-        "name": "oracle:0764:null-safe matrix",
+        "name": "oracle:0777:null-safe matrix",
         "sqlSha256": "d74faa1ef6e570bc6d4d91f5bebe859826b2811d29a65ab2f6d0e4bc0cad784e",
         "functions": [
           "DATE"
@@ -15314,7 +15429,7 @@
         ]
       },
       {
-        "name": "oracle:0765:null-safe matrix",
+        "name": "oracle:0778:null-safe matrix",
         "sqlSha256": "ee24824295911ef809bb651b46c6dcc0dafbbcc2485003ffd567742cf2f39117",
         "functions": [
           "COUNT",
@@ -15325,7 +15440,7 @@
         ]
       },
       {
-        "name": "oracle:0766:collate positions",
+        "name": "oracle:0779:collate positions",
         "sqlSha256": "b7c9cb07002b43243be917218e3c33d6a4ad02b26b0f25e44b3e479984a0be45",
         "functions": [
           "COUNT"
@@ -15335,7 +15450,7 @@
         ]
       },
       {
-        "name": "oracle:0767:collate positions",
+        "name": "oracle:0780:collate positions",
         "sqlSha256": "71e0a5eda14be61c586fdea61fc57873ff488c74b41451ef2dba65728f947c7d",
         "functions": [],
         "phases": [
@@ -15343,7 +15458,7 @@
         ]
       },
       {
-        "name": "oracle:0768:collate positions",
+        "name": "oracle:0781:collate positions",
         "sqlSha256": "3cbb47422b4fe721d8e282e52bb1dc77c26600f40e06d436602c65f698266a3a",
         "functions": [],
         "phases": [
@@ -15351,7 +15466,7 @@
         ]
       },
       {
-        "name": "oracle:0769:unsigned wrap",
+        "name": "oracle:0782:unsigned wrap",
         "sqlSha256": "fb10de04373a05c0a283bbc84d046d2e3d02c928867f312c46c9486434e447f5",
         "functions": [
           "CAST"
@@ -15361,7 +15476,7 @@
         ]
       },
       {
-        "name": "oracle:0770:json comparison",
+        "name": "oracle:0783:json comparison",
         "sqlSha256": "488e65758b4c21b3e5a228b5504db3c9d983beccbb4ae6ed22f4c87bbf7aed88",
         "functions": [
           "JSON_EXTRACT"
@@ -15371,7 +15486,7 @@
         ]
       },
       {
-        "name": "oracle:0771:json comparison",
+        "name": "oracle:0784:json comparison",
         "sqlSha256": "ee2ef2f9a790dbbb8490ae515fba1187b5fa1443423da05fadcec2a83727b54e",
         "functions": [
           "JSON_EXTRACT"
@@ -15381,7 +15496,7 @@
         ]
       },
       {
-        "name": "oracle:0772:json comparison",
+        "name": "oracle:0785:json comparison",
         "sqlSha256": "488e217dffe1d194abac4c9ccd529351008dd72918418fbb400d6c37a9c9eb1f",
         "functions": [
           "CONCAT",
@@ -15394,7 +15509,7 @@
         ]
       },
       {
-        "name": "oracle:0773:json comparison",
+        "name": "oracle:0786:json comparison",
         "sqlSha256": "2556ff82944767ace2c96337893735efbd5faba50fc5a0025c34948b3a8c7fa0",
         "functions": [
           "CONCAT",
@@ -15405,7 +15520,7 @@
         ]
       },
       {
-        "name": "oracle:0774:json comparison",
+        "name": "oracle:0787:json comparison",
         "sqlSha256": "0ba4aba683c95bbf94676e1f76ec8353bf2037a6acb04246ffaea8ae55478b5f",
         "functions": [
           "CONCAT",
@@ -15417,7 +15532,7 @@
         ]
       },
       {
-        "name": "oracle:0775:json comparison",
+        "name": "oracle:0788:json comparison",
         "sqlSha256": "3d3b1b7aca7b2ff1280f71fbdfb584386e3ebff84c3a801c1d9d009e44108c39",
         "functions": [
           "CONCAT",
@@ -15429,7 +15544,7 @@
         ]
       },
       {
-        "name": "oracle:0776:json path wildcards",
+        "name": "oracle:0789:json path wildcards",
         "sqlSha256": "3f7dc60123c10fc481beef77c2e8a70ca5889c7e914e2c30252c04c7cae75880",
         "functions": [
           "JSON_EXTRACT"
@@ -15439,7 +15554,7 @@
         ]
       },
       {
-        "name": "oracle:0777:json path wildcards",
+        "name": "oracle:0790:json path wildcards",
         "sqlSha256": "fea15a231ba5b0044b314433b5687d51d32c2d6ccdc003ab64d1514886238c75",
         "functions": [
           "JSON_EXTRACT"
@@ -15449,7 +15564,7 @@
         ]
       },
       {
-        "name": "oracle:0778:json path wildcards",
+        "name": "oracle:0791:json path wildcards",
         "sqlSha256": "fb0225246da3b97f9d8b76eceb97a4643687ec8ecbb0c71d8d38a465d6dfa134",
         "functions": [
           "JSON_CONTAINS_PATH",
@@ -15460,7 +15575,7 @@
         ]
       },
       {
-        "name": "oracle:0779:json modification",
+        "name": "oracle:0792:json modification",
         "sqlSha256": "78fcf4040f0689d009f8e9d5cdd6423cd2c5e402d294cb5f6c9efcd604f8eb55",
         "functions": [
           "JSON_INSERT",
@@ -15473,7 +15588,7 @@
         ]
       },
       {
-        "name": "oracle:0780:json modification",
+        "name": "oracle:0793:json modification",
         "sqlSha256": "7fc6b830158491820552c8be50779a35229d4e86749a810eeb35c126c2429edf",
         "functions": [
           "JSON_EXTRACT",
@@ -15485,7 +15600,7 @@
         ]
       },
       {
-        "name": "oracle:0781:json modification",
+        "name": "oracle:0794:json modification",
         "sqlSha256": "7aefdc9d5e53f7245831a3d77b9d7da35c4facbe20aa1e3561c6c6270f21382d",
         "functions": [
           "JSON_DEPTH",
@@ -15500,7 +15615,7 @@
         ]
       },
       {
-        "name": "oracle:0782:hash and net scalars",
+        "name": "oracle:0795:hash and net scalars",
         "sqlSha256": "65fb6364513da422e74be8448cd32f2b5827578a46863d8ab3a451ec0b670be8",
         "functions": [
           "CRC32",
@@ -15513,7 +15628,7 @@
         ]
       },
       {
-        "name": "oracle:0783:hash and net scalars",
+        "name": "oracle:0796:hash and net scalars",
         "sqlSha256": "11d810cec8b124de15a7e856867474296e4f9701742a7b11702dce84cba1fe3f",
         "functions": [
           "BIN",
@@ -15526,7 +15641,7 @@
         ]
       },
       {
-        "name": "oracle:0784:hash and net scalars",
+        "name": "oracle:0797:hash and net scalars",
         "sqlSha256": "b7e96555f1164f9a01f8bd163d03d7e0b1e708edf9d0ccc9264db6c0f81c976d",
         "functions": [
           "CRC32",
@@ -15537,7 +15652,7 @@
         ]
       },
       {
-        "name": "oracle:0785:extract composite units",
+        "name": "oracle:0798:extract composite units",
         "sqlSha256": "cf1b9cf64230bef422236158bf267e393820d4e5c66f215feccddc5bfee0a7ee",
         "functions": [
           "EXTRACT"
@@ -15547,7 +15662,7 @@
         ]
       },
       {
-        "name": "oracle:0786:theta joins",
+        "name": "oracle:0799:theta joins",
         "sqlSha256": "0903ccba02124f24abc548bf899dfcc3e516429a23a9c01a7f9cbe1faa46ad78",
         "functions": [
           "COUNT"
@@ -15557,7 +15672,7 @@
         ]
       },
       {
-        "name": "oracle:0787:theta joins",
+        "name": "oracle:0800:theta joins",
         "sqlSha256": "61f782388956cc5483cd3c88eb2d5a3bacc39fa7abbd823531d70ccfc055b23a",
         "functions": [
           "COUNT"
@@ -15567,7 +15682,7 @@
         ]
       },
       {
-        "name": "oracle:0788:theta joins",
+        "name": "oracle:0801:theta joins",
         "sqlSha256": "f23eba70ae91121d0d6dc3355647993d6dcdf4120a8fc72cda2603d09cb6e01e",
         "functions": [
           "COUNT"
@@ -15577,7 +15692,7 @@
         ]
       },
       {
-        "name": "oracle:0789:theta joins",
+        "name": "oracle:0802:theta joins",
         "sqlSha256": "f27553a519908b222dc5c8deb95dece7b1e038261c8c94819984ed3dd62f70b3",
         "functions": [
           "COUNT"
@@ -15587,7 +15702,7 @@
         ]
       },
       {
-        "name": "oracle:0790:correlated ranges",
+        "name": "oracle:0803:correlated ranges",
         "sqlSha256": "41034ea67d451dce0280da8d042ebce31f1511fa6715ea846487db9e5ed9d418",
         "functions": [
           "COUNT",
@@ -15598,7 +15713,7 @@
         ]
       },
       {
-        "name": "oracle:0791:correlated ranges",
+        "name": "oracle:0804:correlated ranges",
         "sqlSha256": "d688b353443412e2075c504d82141a70ee430d5dfc89ec7b1fdfdb0949fbb0af",
         "functions": [
           "COUNT",
@@ -15609,7 +15724,7 @@
         ]
       },
       {
-        "name": "oracle:0792:correlated ranges",
+        "name": "oracle:0805:correlated ranges",
         "sqlSha256": "f5f4f34319f7ee65f55b7a3bacf71871199d27aab7680f3f89766afc63609580",
         "functions": [
           "COUNT",
@@ -15620,7 +15735,7 @@
         ]
       },
       {
-        "name": "oracle:0793:correlated ranges",
+        "name": "oracle:0806:correlated ranges",
         "sqlSha256": "ff50d1ef14604ccd9f3190ccd0bf0be708294110b75ceed6a73d5efdfe416550",
         "functions": [
           "COUNT",
@@ -15631,7 +15746,7 @@
         ]
       },
       {
-        "name": "oracle:0794:chained right joins",
+        "name": "oracle:0807:chained right joins",
         "sqlSha256": "17f90c491e87ea17546e79f410a40e9ae405301baab0b916204c670e88acd2be",
         "functions": [],
         "phases": [
@@ -15639,7 +15754,7 @@
         ]
       },
       {
-        "name": "oracle:0795:chained right joins",
+        "name": "oracle:0808:chained right joins",
         "sqlSha256": "2bf7408f814ac8f57c335cc687951945c8aa62a871baf6ccc1d947dca98e58be",
         "functions": [
           "JOIN"
@@ -15649,7 +15764,7 @@
         ]
       },
       {
-        "name": "oracle:0796:chained right joins",
+        "name": "oracle:0809:chained right joins",
         "sqlSha256": "aea0e98acd359331d32221a4a9b376e5cddb70e09b2fad9c20de4049200a2ae2",
         "functions": [
           "COUNT"
@@ -15659,7 +15774,7 @@
         ]
       },
       {
-        "name": "oracle:0797:hand-written distinct",
+        "name": "oracle:0810:hand-written distinct",
         "sqlSha256": "4aaf2f182eb03fc0d29674859c8778cbe1a0605c1d1c8c398146ab9d2325b840",
         "functions": [],
         "phases": [
@@ -15667,7 +15782,7 @@
         ]
       },
       {
-        "name": "oracle:0798:hand-written distinct",
+        "name": "oracle:0811:hand-written distinct",
         "sqlSha256": "502c5b2e20d07ee6baa4be82d7aa4be3c4b73f8251291ee13df28e56ea17a5b2",
         "functions": [],
         "phases": [
@@ -15675,7 +15790,7 @@
         ]
       },
       {
-        "name": "oracle:0799:hand-written left join",
+        "name": "oracle:0812:hand-written left join",
         "sqlSha256": "625c0e88008079c7d1e1ffc0e7acdc42c9a6d3dbc0e9d9c73053fd91ef1afdd7",
         "functions": [],
         "phases": [
@@ -15683,7 +15798,7 @@
         ]
       },
       {
-        "name": "oracle:0800:hand-written left join",
+        "name": "oracle:0813:hand-written left join",
         "sqlSha256": "33b97382ab4e36838ce9152bcdd04014dbbdfa138421782dda830584bb712d03",
         "functions": [],
         "phases": [
@@ -15691,7 +15806,7 @@
         ]
       },
       {
-        "name": "oracle:0801:hand-written cross join",
+        "name": "oracle:0814:hand-written cross join",
         "sqlSha256": "8f0593f6960242c540e786b5c9297fbad0191e8482f4e26c04674aea8dbd0cc8",
         "functions": [],
         "phases": [
@@ -15699,7 +15814,7 @@
         ]
       },
       {
-        "name": "oracle:0802:hand-written using join",
+        "name": "oracle:0815:hand-written using join",
         "sqlSha256": "a93b9932b4709d806a31a498bd2ef81c42be35034485ad6ebcd68db0ad09f4bf",
         "functions": [
           "USING"
@@ -15709,7 +15824,7 @@
         ]
       },
       {
-        "name": "oracle:0803:hand-written using join",
+        "name": "oracle:0816:hand-written using join",
         "sqlSha256": "58e6d23b4e8467930e66ec2fe8dc52a27c754f48247692186667d4063143291d",
         "functions": [
           "USING"
@@ -15719,7 +15834,7 @@
         ]
       },
       {
-        "name": "oracle:0804:hand-written using join",
+        "name": "oracle:0817:hand-written using join",
         "sqlSha256": "ba11416f0ac2c9f98bf386fa2e206d0b9c0225760c2900ddc8d4195cd2d028f1",
         "functions": [
           "USING"
@@ -15729,7 +15844,7 @@
         ]
       },
       {
-        "name": "oracle:0805:hand-written using join",
+        "name": "oracle:0818:hand-written using join",
         "sqlSha256": "b445c1e31525d855fd8d0334ece1b473b4882cdd4d0c14cc088fe8d762c2211c",
         "functions": [
           "USING"
@@ -15739,7 +15854,7 @@
         ]
       },
       {
-        "name": "oracle:0806:hand-written using join",
+        "name": "oracle:0819:hand-written using join",
         "sqlSha256": "1ed1a031d1023b326ebcc78d97c5beb87d42e9d954ba239d94c8f7662de13caf",
         "functions": [
           "USING"
@@ -15749,7 +15864,7 @@
         ]
       },
       {
-        "name": "oracle:0807:hand-written using join",
+        "name": "oracle:0820:hand-written using join",
         "sqlSha256": "20f36b2b5648699c04a73eebb8bb7427c8ecf797220d16dfac886ec3a6f15087",
         "functions": [
           "USING"
@@ -15759,7 +15874,7 @@
         ]
       },
       {
-        "name": "oracle:0808:hand-written natural join",
+        "name": "oracle:0821:hand-written natural join",
         "sqlSha256": "820dc0cca9ce74919103d2becd5039f2d29047bbdfe63939c6aa2c68e35b00ec",
         "functions": [],
         "phases": [
@@ -15767,7 +15882,7 @@
         ]
       },
       {
-        "name": "oracle:0809:hand-written natural join",
+        "name": "oracle:0822:hand-written natural join",
         "sqlSha256": "c5285dbc72299c9f125b77eedff7d13d8f62ed9996a21dd702f39421907e77f1",
         "functions": [],
         "phases": [
@@ -15775,7 +15890,7 @@
         ]
       },
       {
-        "name": "oracle:0810:hand-written parenthesized inner join",
+        "name": "oracle:0823:hand-written parenthesized inner join",
         "sqlSha256": "b42476fe9baadd1d6f38ec125eae5a2cc7934252dc8efb86912478cf09346909",
         "functions": [
           "FROM"
@@ -15785,7 +15900,7 @@
         ]
       },
       {
-        "name": "oracle:0811:hand-written scalar subquery",
+        "name": "oracle:0824:hand-written scalar subquery",
         "sqlSha256": "f63a4e845d122590a5ab8f655b99c8f2e0ff9c466aeb3bd8536e1d1e03b01558",
         "functions": [
           "COUNT"
@@ -15795,7 +15910,7 @@
         ]
       },
       {
-        "name": "oracle:0812:hand-written scalar subquery",
+        "name": "oracle:0825:hand-written scalar subquery",
         "sqlSha256": "5bf7868ddce89b39b7c115b8222d085e573303ed5a796594e25670c09b58e6ef",
         "functions": [
           "COUNT"
@@ -15805,7 +15920,7 @@
         ]
       },
       {
-        "name": "oracle:0813:hand-written scalar subquery",
+        "name": "oracle:0826:hand-written scalar subquery",
         "sqlSha256": "89af8928d23cbec56308f5c0cb555f642fc08b875456e673859efd897b500c11",
         "functions": [
           "SUM"
@@ -15815,7 +15930,7 @@
         ]
       },
       {
-        "name": "oracle:0814:hand-written scalar subquery",
+        "name": "oracle:0827:hand-written scalar subquery",
         "sqlSha256": "67e0ac4f8b1e62df297eeeab5e27859570dc6babe52df090148b175e01c0a1a1",
         "functions": [
           "MIN"
@@ -15825,7 +15940,7 @@
         ]
       },
       {
-        "name": "oracle:0815:hand-written scalar subquery",
+        "name": "oracle:0828:hand-written scalar subquery",
         "sqlSha256": "26f06a8cddf3a4b6effa9b9d8f2ea103f7d4e9ff1b1a656fd109764d4bd5c5e8",
         "functions": [
           "AVG"
@@ -15835,7 +15950,7 @@
         ]
       },
       {
-        "name": "oracle:0816:hand-written scalar subquery unique lookup",
+        "name": "oracle:0829:hand-written scalar subquery unique lookup",
         "sqlSha256": "9501ef91df8f0783ac515b44e4891fa88ddd0adcada7fa3ca086a8d6b550ba14",
         "functions": [],
         "phases": [
@@ -15843,7 +15958,7 @@
         ]
       },
       {
-        "name": "oracle:0817:hand-written convert_tz",
+        "name": "oracle:0830:hand-written convert_tz",
         "sqlSha256": "f968e2c617fc6797aa8dd74f8bb22a1d3b52a21d03b6285ce0c62294e81b66a9",
         "functions": [
           "CONVERT_TZ"
@@ -15853,7 +15968,7 @@
         ]
       },
       {
-        "name": "oracle:0818:hand-written convert_tz",
+        "name": "oracle:0831:hand-written convert_tz",
         "sqlSha256": "d05da4a3f7f7c2dba402e22fa5f77e6e26208f02c1ecfefceebcb876eb6b2088",
         "functions": [
           "CONVERT_TZ"
@@ -15863,7 +15978,7 @@
         ]
       },
       {
-        "name": "oracle:0819:hand-written convert_tz",
+        "name": "oracle:0832:hand-written convert_tz",
         "sqlSha256": "14f85fc5e2cdc75c2d87abb565b05b2c87b414824e3737c2a287cdf762dd5e85",
         "functions": [
           "CONVERT_TZ"
@@ -15873,7 +15988,7 @@
         ]
       },
       {
-        "name": "oracle:0820:hand-written convert_tz",
+        "name": "oracle:0833:hand-written convert_tz",
         "sqlSha256": "1e31cca5fa5877083f024c5dbfef940821d8aa7e20ed013ea615699f6df21cfd",
         "functions": [
           "CONVERT_TZ"
@@ -15883,7 +15998,7 @@
         ]
       },
       {
-        "name": "oracle:0821:hand-written char and rand",
+        "name": "oracle:0834:hand-written char and rand",
         "sqlSha256": "9bed484b84fc9c8b07b362a2e7ffb860e57b3039b1779f58d0f5e82e3bbc666c",
         "functions": [
           "CHAR"
@@ -15893,7 +16008,7 @@
         ]
       },
       {
-        "name": "oracle:0822:hand-written char and rand",
+        "name": "oracle:0835:hand-written char and rand",
         "sqlSha256": "00e744c0e3f15cc755cae840dba083982e5cd1b4d21ebdc91db889d04d9556a3",
         "functions": [
           "RAND"
@@ -15903,7 +16018,7 @@
         ]
       },
       {
-        "name": "oracle:0823:hand-written cross join",
+        "name": "oracle:0836:hand-written cross join",
         "sqlSha256": "f6b4da1080f5e0d042aa7ba3c8362980ba3088860b8d9eb0fc8bc4400b0fa086",
         "functions": [],
         "phases": [
@@ -15911,7 +16026,7 @@
         ]
       },
       {
-        "name": "oracle:0824:hand-written null predicates",
+        "name": "oracle:0837:hand-written null predicates",
         "sqlSha256": "ad2182ec8848531b1f7339eb4c3d94a9eaacdb22c54132f23199c6cf2c30ae49",
         "functions": [],
         "phases": [
@@ -15919,7 +16034,7 @@
         ]
       },
       {
-        "name": "oracle:0825:hand-written null predicates",
+        "name": "oracle:0838:hand-written null predicates",
         "sqlSha256": "281b4430483183e0136e94164adc53c4f5b44fcf523c45665023001cdf41a54d",
         "functions": [
           "NOT"
@@ -15929,7 +16044,7 @@
         ]
       },
       {
-        "name": "oracle:0826:hand-written null predicates",
+        "name": "oracle:0839:hand-written null predicates",
         "sqlSha256": "7d31e9127446261e824c088272c364dffc2da7520698d12d80c03f7d4385eedd",
         "functions": [],
         "phases": [
@@ -15937,7 +16052,7 @@
         ]
       },
       {
-        "name": "oracle:0827:hand-written null predicates",
+        "name": "oracle:0840:hand-written null predicates",
         "sqlSha256": "9d254fd4ec7b7d38cd16020d61d768c2598d1be8095f8ecaffb8b426a4c208e3",
         "functions": [],
         "phases": [
@@ -15945,7 +16060,7 @@
         ]
       },
       {
-        "name": "oracle:0828:hand-written logic",
+        "name": "oracle:0841:hand-written logic",
         "sqlSha256": "d4a99cd707c082fb3ed328e1afa52c3d5a52e9400fc634b0d34a7bd9f08e9f7b",
         "functions": [],
         "phases": [
@@ -15953,7 +16068,7 @@
         ]
       },
       {
-        "name": "oracle:0829:hand-written logic",
+        "name": "oracle:0842:hand-written logic",
         "sqlSha256": "c38313642c47555bc18bfec0faedf9fd80feff6d8d98fbb494731df58e99c7c1",
         "functions": [],
         "phases": [
@@ -15961,7 +16076,7 @@
         ]
       },
       {
-        "name": "oracle:0830:hand-written strings",
+        "name": "oracle:0843:hand-written strings",
         "sqlSha256": "fa733728c390b49aac3f449b45db1594586f621879f9b6292c043f4ad07695c3",
         "functions": [
           "CHAR_LENGTH",
@@ -15974,7 +16089,7 @@
         ]
       },
       {
-        "name": "oracle:0831:hand-written hashes",
+        "name": "oracle:0844:hand-written hashes",
         "sqlSha256": "2a6f3d045304a4297e2db73d50c2a901c82626cb16c97e079110fab5c8ed15ff",
         "functions": [
           "MD5"
@@ -15984,7 +16099,7 @@
         ]
       },
       {
-        "name": "oracle:0832:hand-written strings",
+        "name": "oracle:0845:hand-written strings",
         "sqlSha256": "14ec70c8b7051d2c33ed1f19a6f81736f1c3c911688e019b7a8208d9da5ce342",
         "functions": [],
         "phases": [
@@ -15992,7 +16107,7 @@
         ]
       },
       {
-        "name": "oracle:0833:hand-written date and time",
+        "name": "oracle:0846:hand-written date and time",
         "sqlSha256": "fa4984fd465c16e1a3b0590b090642d6f5a3b4331b4104a76199c18773aaad5a",
         "functions": [
           "HOUR",
@@ -16004,7 +16119,7 @@
         ]
       },
       {
-        "name": "oracle:0834:hand-written date and time",
+        "name": "oracle:0847:hand-written date and time",
         "sqlSha256": "bacc9eb0a9fbc580373774405cb2d30b4d5f90ff0fd2cd7da6d3cecf22d04daf",
         "functions": [
           "FROM_UNIXTIME",
@@ -16015,7 +16130,7 @@
         ]
       },
       {
-        "name": "oracle:0835:hand-written date and time",
+        "name": "oracle:0848:hand-written date and time",
         "sqlSha256": "984589b3abf5e15ea8f5e71c29423ab3de14501d4d53c9d34ea7827253c31ece",
         "functions": [
           "CHAR_LENGTH",
@@ -16029,7 +16144,7 @@
         ]
       },
       {
-        "name": "oracle:0836:hand-written date and time",
+        "name": "oracle:0849:hand-written date and time",
         "sqlSha256": "29ca555068bda53412a788762b34f10d255b1157fce44ef4a91f6909695dd81a",
         "functions": [
           "DATE",
@@ -16040,7 +16155,7 @@
         ]
       },
       {
-        "name": "oracle:0837:hand-written date format directives",
+        "name": "oracle:0850:hand-written date format directives",
         "sqlSha256": "a31e0bddc3e7f1fd320e111491f1badecdf2741da9de63da0be527dfbb93dea5",
         "functions": [
           "DATE_FORMAT"
@@ -16050,7 +16165,7 @@
         ]
       },
       {
-        "name": "oracle:0838:hand-written date format week numbering",
+        "name": "oracle:0851:hand-written date format week numbering",
         "sqlSha256": "217145c81673d1051482b67f4164b2916e1826ed87ab26e350ab690de085c137",
         "functions": [
           "DATE_FORMAT"
@@ -16060,7 +16175,7 @@
         ]
       },
       {
-        "name": "oracle:0839:hand-written date format edges",
+        "name": "oracle:0852:hand-written date format edges",
         "sqlSha256": "131f1d582f2f71ef3a5c2e2a7c885da43e28ba3cb88cac56f21d1fcfc9ff05a2",
         "functions": [
           "DATE_FORMAT"
@@ -16070,7 +16185,7 @@
         ]
       },
       {
-        "name": "oracle:0840:hand-written statistical aggregates",
+        "name": "oracle:0853:hand-written statistical aggregates",
         "sqlSha256": "9d5898356afed0e428343c6ad0fdbeee9ce1f9a51bbbf98eeaafed7f2d59cc61",
         "functions": [
           "STD",
@@ -16086,7 +16201,7 @@
         ]
       },
       {
-        "name": "oracle:0841:hand-written statistical aggregates grouped",
+        "name": "oracle:0854:hand-written statistical aggregates grouped",
         "sqlSha256": "dd2b59460fade65b01bf286fafae7c2d0f830a331de18529af4fbc14455b04f7",
         "functions": [
           "STDDEV_POP",
@@ -16097,7 +16212,7 @@
         ]
       },
       {
-        "name": "oracle:0842:hand-written statistical aggregate single row",
+        "name": "oracle:0855:hand-written statistical aggregate single row",
         "sqlSha256": "091ce5c9ec071ff7080b62f758dd529cf9bba0000aeb07e9b545ef7347377ddc",
         "functions": [
           "STDDEV_POP",
@@ -16110,7 +16225,7 @@
         ]
       },
       {
-        "name": "oracle:0843:hand-written statistical aggregate empty group",
+        "name": "oracle:0856:hand-written statistical aggregate empty group",
         "sqlSha256": "3ed4bfaae67f58a13f24f227b3408f67008732b272fa292aa109f2f267711234",
         "functions": [
           "STDDEV_POP",
@@ -16122,7 +16237,7 @@
         ]
       },
       {
-        "name": "oracle:0844:hand-written bit aggregates",
+        "name": "oracle:0857:hand-written bit aggregates",
         "sqlSha256": "3f477e320498bbcb2fea432d815a7ec2914272c85cb945727e408eaf71e198d9",
         "functions": [
           "BIT_AND",
@@ -16134,7 +16249,7 @@
         ]
       },
       {
-        "name": "oracle:0845:hand-written bit aggregates grouped",
+        "name": "oracle:0858:hand-written bit aggregates grouped",
         "sqlSha256": "fde8bbb80d4d0a9a22b824513fb0e94e05a1502a848731920870bc91bc0e3848",
         "functions": [
           "BIT_AND",
@@ -16146,7 +16261,7 @@
         ]
       },
       {
-        "name": "oracle:0846:hand-written bit aggregates empty group",
+        "name": "oracle:0859:hand-written bit aggregates empty group",
         "sqlSha256": "ebcad14ffa41341cad4476957cf23a75c953a7ba23fc9c544ae34e9edc0b54da",
         "functions": [
           "BIT_AND",
@@ -16158,7 +16273,7 @@
         ]
       },
       {
-        "name": "oracle:0847:hand-written any_value",
+        "name": "oracle:0860:hand-written any_value",
         "sqlSha256": "112d4a4f687ca7c82358fce10f38f24a01ae563876ec4261f32275f4706d8237",
         "functions": [
           "ANY_VALUE"
@@ -16168,7 +16283,7 @@
         ]
       },
       {
-        "name": "oracle:0848:hand-written any_value empty group",
+        "name": "oracle:0861:hand-written any_value empty group",
         "sqlSha256": "9261bf80c51b61d5c8d07b01957d7f2f9b5c5aff1c19b37f2f7595e99c9f2a32",
         "functions": [
           "ANY_VALUE"
@@ -16178,7 +16293,7 @@
         ]
       },
       {
-        "name": "oracle:0849:hand-written any_value ungrouped",
+        "name": "oracle:0862:hand-written any_value ungrouped",
         "sqlSha256": "99f9562f2dc1255eca990324e35de339be04f2c4d0590a4b8dfc984a82c848e9",
         "functions": [
           "ANY_VALUE"
@@ -16188,7 +16303,7 @@
         ]
       },
       {
-        "name": "oracle:0850:hand-written any_value ungrouped expression",
+        "name": "oracle:0863:hand-written any_value ungrouped expression",
         "sqlSha256": "c855a1b3db380cde352680c221faa7f70c5b7b2b5bff8d43788ca0e5125678f2",
         "functions": [
           "ANY_VALUE"
@@ -16198,7 +16313,7 @@
         ]
       },
       {
-        "name": "oracle:0851:hand-written cast temporal",
+        "name": "oracle:0864:hand-written cast temporal",
         "sqlSha256": "3741dba12a37d16284362bbd1bf6b1928712bcab6692fe1825125c4c0d7370bb",
         "functions": [
           "CAST"
@@ -16208,7 +16323,7 @@
         ]
       },
       {
-        "name": "oracle:0852:hand-written cast temporal invalid",
+        "name": "oracle:0865:hand-written cast temporal invalid",
         "sqlSha256": "8b178daff086a5295394f69f7d2dff52d52b24ac4a2f5d56e085429c21a41401",
         "functions": [
           "CAST"
@@ -16218,7 +16333,7 @@
         ]
       },
       {
-        "name": "oracle:0853:hand-written cast targets",
+        "name": "oracle:0866:hand-written cast targets",
         "sqlSha256": "ed1b735e826daebe525e5f3deb3214e8c2b63312f582bcecad2a6ce4f73b5301",
         "functions": [
           "CAST",
@@ -16229,7 +16344,7 @@
         ]
       },
       {
-        "name": "oracle:0854:hand-written json contains",
+        "name": "oracle:0867:hand-written json contains",
         "sqlSha256": "26b0e3b0b9a3609d53bc5694b4ad45373fbc01d32aed26f59eee2b5565544854",
         "functions": [
           "JSON_CONTAINS"
@@ -16239,7 +16354,7 @@
         ]
       },
       {
-        "name": "oracle:0855:hand-written json contains path",
+        "name": "oracle:0868:hand-written json contains path",
         "sqlSha256": "bff11d899af7c4222b0af6346939b35312f2167492435ce709107d0e0f8ba4c9",
         "functions": [
           "JSON_CONTAINS_PATH"
@@ -16249,7 +16364,7 @@
         ]
       },
       {
-        "name": "oracle:0856:hand-written json length keys type",
+        "name": "oracle:0869:hand-written json length keys type",
         "sqlSha256": "ff988d3f54156375cdb8f92c0c43f5599b0680da3c4330f6761aa010575521fc",
         "functions": [
           "JSON_KEYS",
@@ -16261,7 +16376,7 @@
         ]
       },
       {
-        "name": "oracle:0857:hand-written json valid",
+        "name": "oracle:0870:hand-written json valid",
         "sqlSha256": "daa8059630f16be91ea318f0545cbd2a063a78aaa5e07c280d459765ef8c6ac6",
         "functions": [
           "JSON_VALID"
@@ -16271,7 +16386,7 @@
         ]
       },
       {
-        "name": "oracle:0858:hand-written substring_index",
+        "name": "oracle:0871:hand-written substring_index",
         "sqlSha256": "78911513b128d8606f4ccc2224ed904a10fe861c715a1b699cd5ea3a9a0de8da",
         "functions": [
           "SUBSTRING_INDEX"
@@ -16281,7 +16396,7 @@
         ]
       },
       {
-        "name": "oracle:0859:hand-written conv",
+        "name": "oracle:0872:hand-written conv",
         "sqlSha256": "b3488390bf263d62758d4ab5d7c076bb0e3ea76f430e5580d12922f2cd54ea2a",
         "functions": [
           "CONV"
@@ -16291,7 +16406,7 @@
         ]
       },
       {
-        "name": "oracle:0860:hand-written maketime",
+        "name": "oracle:0873:hand-written maketime",
         "sqlSha256": "12331e045ca4a1c44b773277e9631a32e19daae1232cde966f4609da49bf502d",
         "functions": [
           "MAKETIME"
@@ -16301,7 +16416,7 @@
         ]
       },
       {
-        "name": "oracle:0861:hand-written lag lead",
+        "name": "oracle:0874:hand-written lag lead",
         "sqlSha256": "57c3b1ba069bc55a10a97c91be32f2e43d922efdd0ffec87560c012e218574f5",
         "functions": [
           "LAG",
@@ -16313,7 +16428,7 @@
         ]
       },
       {
-        "name": "oracle:0862:hand-written lag lead offset default",
+        "name": "oracle:0875:hand-written lag lead offset default",
         "sqlSha256": "ba418a575965034369aa5ea7d212b480058862b6d0e09f9bdf47456faddbe441",
         "functions": [
           "LAG",
@@ -16325,7 +16440,7 @@
         ]
       },
       {
-        "name": "oracle:0863:hand-written lag lead partitioned",
+        "name": "oracle:0876:hand-written lag lead partitioned",
         "sqlSha256": "c02c12aba50b75e5c9d18ccdfecd152355f398791ba6fc4b632702554c35d825",
         "functions": [
           "LAG",
@@ -16337,7 +16452,7 @@
         ]
       },
       {
-        "name": "oracle:0864:hand-written ntile",
+        "name": "oracle:0877:hand-written ntile",
         "sqlSha256": "80780e57a59a4766ce95d0b7d32a7bb8bec29d936897f10879ee42e6e75c6078",
         "functions": [
           "NTILE",
@@ -16348,7 +16463,7 @@
         ]
       },
       {
-        "name": "oracle:0865:hand-written first last value unique order",
+        "name": "oracle:0878:hand-written first last value unique order",
         "sqlSha256": "83058a36393c31464a4693a28eb5e6fb4ed8e68136eb6ea3520c609c56b290db",
         "functions": [
           "FIRST_VALUE",
@@ -16360,7 +16475,7 @@
         ]
       },
       {
-        "name": "oracle:0866:hand-written first last value peer groups",
+        "name": "oracle:0879:hand-written first last value peer groups",
         "sqlSha256": "12ada8c0abefe4a89075ba2aac69b17729cac1dc5fdfc030e8fab2ec15543d0d",
         "functions": [
           "FIRST_VALUE",
@@ -16372,7 +16487,7 @@
         ]
       },
       {
-        "name": "oracle:0867:hand-written first last value no order",
+        "name": "oracle:0880:hand-written first last value no order",
         "sqlSha256": "d759809c17768d0d9b7416c222af11e9da3881d43945877e64188163f5a0d3bc",
         "functions": [
           "FIRST_VALUE",
@@ -16384,7 +16499,7 @@
         ]
       },
       {
-        "name": "oracle:0868:hand-written window rows frames",
+        "name": "oracle:0881:hand-written window rows frames",
         "sqlSha256": "da181e42685196092640c909a29c0a2708da3167c3e9a0209738e97b3ef51e43",
         "functions": [
           "OVER",
@@ -16395,7 +16510,7 @@
         ]
       },
       {
-        "name": "oracle:0869:hand-written window rows frames unbounded",
+        "name": "oracle:0882:hand-written window rows frames unbounded",
         "sqlSha256": "f14b94f5572ff38e04fff013bdc4519eee7147dddcb28a6889c7a24b7a02aa0c",
         "functions": [
           "COUNT",
@@ -16408,7 +16523,7 @@
         ]
       },
       {
-        "name": "oracle:0870:repaired trim whitespace class",
+        "name": "oracle:0883:repaired trim whitespace class",
         "sqlSha256": "fad77c57ed23b57fff89616efda7f6a49f28f51b06e2df37e1cd83dd9cf5b0cd",
         "functions": [
           "CHAR",
@@ -16421,7 +16536,7 @@
         ]
       },
       {
-        "name": "oracle:0871:repaired base64 wrapping",
+        "name": "oracle:0884:repaired base64 wrapping",
         "sqlSha256": "5c3155e9e18cfd488168862ecc5e2e81730dd2383691d7cafa48fb1e821095ed",
         "functions": [
           "CHAR",
@@ -16435,7 +16550,7 @@
         ]
       },
       {
-        "name": "oracle:0872:repaired sec_to_time fraction",
+        "name": "oracle:0885:repaired sec_to_time fraction",
         "sqlSha256": "93935dcb52829e2b4038562110c31b6cb632d97228ba7229cab7185bdbe23b98",
         "functions": [
           "SEC_TO_TIME"
@@ -16445,7 +16560,7 @@
         ]
       },
       {
-        "name": "oracle:0873:hand-written window range frames",
+        "name": "oracle:0886:hand-written window range frames",
         "sqlSha256": "5400ae7f0c9c0ae8e6f3c63d1da25e764cbade5be1936f56a9464f73d5444afc",
         "functions": [
           "OVER",
@@ -16456,7 +16571,7 @@
         ]
       },
       {
-        "name": "oracle:0874:hand-written window range peer groups",
+        "name": "oracle:0887:hand-written window range peer groups",
         "sqlSha256": "d10d37ab28a565a9d6dbac2373399b9ed50ac1ecbab697866afe89d23a223746",
         "functions": [
           "OVER",
@@ -16467,7 +16582,7 @@
         ]
       },
       {
-        "name": "oracle:0875:hand-written window numeric range offsets",
+        "name": "oracle:0888:hand-written window numeric range offsets",
         "sqlSha256": "7e4bc7f389e8fdee0e8c00753727f0a5599862735818a7f0c55150ca7f0ffa7e",
         "functions": [
           "COUNT",
@@ -16479,7 +16594,7 @@
         ]
       },
       {
-        "name": "oracle:0876:hand-written window temporal range offsets",
+        "name": "oracle:0889:hand-written window temporal range offsets",
         "sqlSha256": "e94926d83f75031be7539ffa144bdd1bc3fce3b96438c8302c4c64324e3ea996",
         "functions": [
           "CAST",
@@ -16493,7 +16608,7 @@
         ]
       },
       {
-        "name": "oracle:0877:hand-written named windows",
+        "name": "oracle:0890:hand-written named windows",
         "sqlSha256": "18438905a983153d7ecd1f04b1b9b9ea8c7757cb66e7f528f200990e7cb367f7",
         "functions": [
           "AS",
@@ -16505,7 +16620,7 @@
         ]
       },
       {
-        "name": "oracle:0878:hand-written named windows with frame",
+        "name": "oracle:0891:hand-written named windows with frame",
         "sqlSha256": "3764618c063df30c036c750d4dacd3c8a33061733432f6204eb8bd133904966d",
         "functions": [
           "AS",
@@ -16516,7 +16631,7 @@
         ]
       },
       {
-        "name": "oracle:0879:hand-written named windows partitioned",
+        "name": "oracle:0892:hand-written named windows partitioned",
         "sqlSha256": "b247f96a2e232473b20f12efe7bc1973ba28d3d44d8057f07121777b1a3f77d2",
         "functions": [
           "AS",
@@ -16528,7 +16643,7 @@
         ]
       },
       {
-        "name": "oracle:0880:hand-written named window extension",
+        "name": "oracle:0893:hand-written named window extension",
         "sqlSha256": "371cfd638b88d46e5c969dc44036d36ddb610a007baec1fc568fbedbf723bb7f",
         "functions": [
           "AS",
@@ -16540,7 +16655,7 @@
         ]
       },
       {
-        "name": "oracle:0881:hand-written chained named windows",
+        "name": "oracle:0894:hand-written chained named windows",
         "sqlSha256": "37b3b2f8f22b12a31bb33dd2f3ed6339afa27c5b830fad0c9987d8854ce3c0b6",
         "functions": [
           "AS",
@@ -16551,7 +16666,7 @@
         ]
       },
       {
-        "name": "oracle:0882:repaired from_base64 whitespace set",
+        "name": "oracle:0895:repaired from_base64 whitespace set",
         "sqlSha256": "5f331853807c95bfd3dcb126178c6fb45785c3d4321fcc22aa68233ab9a94228",
         "functions": [
           "CHAR",
@@ -16564,7 +16679,7 @@
         ]
       },
       {
-        "name": "oracle:0883:repaired exact literal rounding",
+        "name": "oracle:0896:repaired exact literal rounding",
         "sqlSha256": "6ee5fd1a052616fa10b3f7eab3d7f03a87a3cea48ed341d936c60bbfe32524cc",
         "functions": [
           "CEIL",
@@ -16577,7 +16692,7 @@
         ]
       },
       {
-        "name": "oracle:0884:reviewed conv edges",
+        "name": "oracle:0897:reviewed conv edges",
         "sqlSha256": "67e8f600b56fce215fa98f241c1ad2f5c3c3d6eed17f326363f4b133ddfc3ebb",
         "functions": [
           "CONV"
@@ -16587,7 +16702,7 @@
         ]
       },
       {
-        "name": "oracle:0885:reviewed maketime fraction",
+        "name": "oracle:0898:reviewed maketime fraction",
         "sqlSha256": "bb13672b0453f0773252efcd9c7cae1570133531e0b7c74aecac608357fe4a66",
         "functions": [
           "MAKETIME"
@@ -16597,7 +16712,7 @@
         ]
       },
       {
-        "name": "oracle:0886:json search",
+        "name": "oracle:0899:json search",
         "sqlSha256": "69d266bbb40831a9d96f5a2d1f3b0d5f185711cd7d03374def55b6a403a4819a",
         "functions": [
           "JSON_SEARCH"
@@ -16607,7 +16722,7 @@
         ]
       },
       {
-        "name": "oracle:0887:json value",
+        "name": "oracle:0900:json value",
         "sqlSha256": "0a2f6028e4168fedb29cea87667e9ed954ea233431cf97f21925d37d5163075d",
         "functions": [
           "JSON_VALUE"
@@ -16617,7 +16732,7 @@
         ]
       },
       {
-        "name": "oracle:0888:json objectagg",
+        "name": "oracle:0901:json objectagg",
         "sqlSha256": "c32961a0367130d5aabc06a9516c715a01009edb75c1761c5259ddaa30140f70",
         "functions": [
           "JSON_OBJECTAGG"
@@ -16627,7 +16742,7 @@
         ]
       },
       {
-        "name": "oracle:0889:json objectagg grouped",
+        "name": "oracle:0902:json objectagg grouped",
         "sqlSha256": "2e24b6913dd5097a4cbe24d0168b7206e5989dcefcd4e9e079c7cf0b4908c130",
         "functions": [
           "JSON_ARRAYAGG",
@@ -16638,7 +16753,7 @@
         ]
       },
       {
-        "name": "oracle:0890:reviewed json keys ordering",
+        "name": "oracle:0903:reviewed json keys ordering",
         "sqlSha256": "985d9d7d3a33e0f2cf97b607a8c2a97a7188e193a5946f9e890605d1afb6ff7c",
         "functions": [
           "JSON_KEYS"
@@ -16648,7 +16763,7 @@
         ]
       },
       {
-        "name": "oracle:0891:reviewed frame on extremes",
+        "name": "oracle:0904:reviewed frame on extremes",
         "sqlSha256": "a3e28732614dff93b1daff7030a6518bdae16844cf384d22b4a67201581efaa0",
         "functions": [
           "FIRST_VALUE",
@@ -16660,7 +16775,7 @@
         ]
       },
       {
-        "name": "oracle:0892:reviewed named window in arguments",
+        "name": "oracle:0905:reviewed named window in arguments",
         "sqlSha256": "7e458cb0778a8157480b539b783a7f15190414dfedc55b173d0aeec64125e9d6",
         "functions": [
           "AS",
@@ -16672,7 +16787,7 @@
         ]
       },
       {
-        "name": "oracle:0893:reviewed grouped statistical aggregates",
+        "name": "oracle:0906:reviewed grouped statistical aggregates",
         "sqlSha256": "ac6979410f058f9620c064784f11ae080d041d70cc51337348ee467c51acf2cf",
         "functions": [
           "ANY_VALUE",
@@ -16685,7 +16800,7 @@
         ]
       },
       {
-        "name": "oracle:0894:repaired binary case sensitivity",
+        "name": "oracle:0907:repaired binary case sensitivity",
         "sqlSha256": "c0b5d4be4742ed1dfa3551d4acc01f819f4d2f697d6674dc32fe4eefed0907f6",
         "functions": [
           "CAST",
@@ -16699,7 +16814,7 @@
         ]
       },
       {
-        "name": "oracle:0895:repaired regexp unicode classes",
+        "name": "oracle:0908:repaired regexp unicode classes",
         "sqlSha256": "0fd610c785fbadc1d9627a922d336aa704127c6b71440284fcc51776cae3c454",
         "functions": [
           "REGEXP_LIKE"
@@ -16709,7 +16824,7 @@
         ]
       },
       {
-        "name": "oracle:0896:hand-written conditionals",
+        "name": "oracle:0909:hand-written conditionals",
         "sqlSha256": "758fa11f347c9d5a6db4f7d059ddcc00b48cdc584a56a2096f484a6fc766c427",
         "functions": [
           "CAST",
@@ -16723,7 +16838,7 @@
         ]
       },
       {
-        "name": "oracle:0897:hand-written derived table",
+        "name": "oracle:0910:hand-written derived table",
         "sqlSha256": "e96751ef37116a5a36c55c6a1354ca7b115c623f885c0b79fff9473e73741553",
         "functions": [
           "COUNT",
@@ -16734,7 +16849,7 @@
         ]
       },
       {
-        "name": "oracle:0898:hand-written common table expression",
+        "name": "oracle:0911:hand-written common table expression",
         "sqlSha256": "37691cc8cb99ac47841158997709717a5e9a915fec7b2e0d3e2f6d244e9f51ce",
         "functions": [
           "AS"
@@ -16744,7 +16859,7 @@
         ]
       },
       {
-        "name": "oracle:0899:hand-written distinct aggregate",
+        "name": "oracle:0912:hand-written distinct aggregate",
         "sqlSha256": "2fcbf9ad72b18eab9d6a64fbde87555e2016cf06a3061eb9ddca4dd4638df6fb",
         "functions": [
           "COUNT",
@@ -16755,7 +16870,7 @@
         ]
       },
       {
-        "name": "oracle:0900:hand-written null membership",
+        "name": "oracle:0913:hand-written null membership",
         "sqlSha256": "f83a44b2abe08f0ac13d327dc15794db3645688bd28515a1600dc32e7fe1fd77",
         "functions": [
           "IN"
@@ -16765,7 +16880,7 @@
         ]
       },
       {
-        "name": "oracle:0901:hand-written null membership",
+        "name": "oracle:0914:hand-written null membership",
         "sqlSha256": "9883d94ad1bbca10f2ddd1e487181fc900e417ffba18d4c373e7f602659fa10f",
         "functions": [
           "IN"
@@ -16775,7 +16890,7 @@
         ]
       },
       {
-        "name": "oracle:0902:hand-written null membership",
+        "name": "oracle:0915:hand-written null membership",
         "sqlSha256": "38326309083c921881d135d696e0edc7715ccbb0ec7a4b5bd9612dca931b02b9",
         "functions": [
           "IN"
@@ -16785,7 +16900,7 @@
         ]
       },
       {
-        "name": "oracle:0903:hand-written grouping",
+        "name": "oracle:0916:hand-written grouping",
         "sqlSha256": "d8e4ee3468a58bf7aef20d9b7529e98335e07ccd8419b0559ff2d91cddcf6a31",
         "functions": [
           "COUNT",
@@ -16797,7 +16912,7 @@
         ]
       },
       {
-        "name": "oracle:0904:hand-written collation",
+        "name": "oracle:0917:hand-written collation",
         "sqlSha256": "12c92b58f5cd9df9ae0b2c6e600ba0ccc26cefe24fd4edaf313c991d743d491a",
         "functions": [
           "MAX",
@@ -16808,7 +16923,7 @@
         ]
       },
       {
-        "name": "oracle:0905:collation unicode equality",
+        "name": "oracle:0918:collation unicode equality",
         "sqlSha256": "b93b5e7e25bf19edc6a794702fa74d257bf06b45ae5bdf78f750c102a2e8a85a",
         "functions": [],
         "phases": [
@@ -16816,7 +16931,7 @@
         ]
       },
       {
-        "name": "oracle:0906:collation locale-sensitive equality",
+        "name": "oracle:0919:collation locale-sensitive equality",
         "sqlSha256": "6ff0753d08d3e95f8f2dd7b5e363e67d18af1550c3fb21ecd61c67ebb88475b4",
         "functions": [],
         "phases": [
@@ -16824,7 +16939,7 @@
         ]
       },
       {
-        "name": "oracle:0907:collation supplementary equality and order",
+        "name": "oracle:0920:collation supplementary equality and order",
         "sqlSha256": "ab4a6aa1179234c5714b57fd0c2626874cff8eeb29b465b6883e6fedd054cae4",
         "functions": [],
         "phases": [
@@ -16832,7 +16947,7 @@
         ]
       },
       {
-        "name": "oracle:0908:collation no-pad and binary",
+        "name": "oracle:0921:collation no-pad and binary",
         "sqlSha256": "c26cbc3209830d4926cc37832cded899d58cc964f9a9751dbfc3687f898ef568",
         "functions": [
           "CAST"
@@ -16842,7 +16957,7 @@
         ]
       },
       {
-        "name": "oracle:0909:collation explicit profile",
+        "name": "oracle:0922:collation explicit profile",
         "sqlSha256": "bbb4aefe9095c46f09a8ed2da97ad5b9a148cf3796265f67c1fd285c6fd060d6",
         "functions": [],
         "phases": [
@@ -16850,7 +16965,7 @@
         ]
       },
       {
-        "name": "oracle:0910:collation grouping",
+        "name": "oracle:0923:collation grouping",
         "sqlSha256": "6720c2eb3d8fe1fd9ef20d9617bb4e7d520ba3936562772feb0d81dcf7e91847",
         "functions": [
           "COUNT",
@@ -16861,7 +16976,7 @@
         ]
       },
       {
-        "name": "oracle:0911:collation distinct",
+        "name": "oracle:0924:collation distinct",
         "sqlSha256": "4cf22d4ab65cdc929a11d36318aba7b5a7c1968d7991b18f62d916bf76ad65a5",
         "functions": [
           "COUNT",
@@ -16872,7 +16987,7 @@
         ]
       },
       {
-        "name": "oracle:0912:collation join",
+        "name": "oracle:0925:collation join",
         "sqlSha256": "91029da6586066ef23da89efde856da08aa08602354b58040e683928458d5a31",
         "functions": [
           "COUNT",
@@ -16884,7 +16999,7 @@
         ]
       },
       {
-        "name": "oracle:0913:collation membership",
+        "name": "oracle:0926:collation membership",
         "sqlSha256": "7c196be7c83befa83fa8978c94aaf2a83e10f55dd167a3d543b2cbbdd8fa2539",
         "functions": [
           "IN"
@@ -16894,7 +17009,7 @@
         ]
       },
       {
-        "name": "oracle:0914:collation pattern matching",
+        "name": "oracle:0927:collation pattern matching",
         "sqlSha256": "f664c2b975ab7c6c9412865020471eb00519e8c8b4d5cda6029b8b197e819562",
         "functions": [
           "LOCATE"
@@ -16904,7 +17019,7 @@
         ]
       },
       {
-        "name": "oracle:0915:collation extrema",
+        "name": "oracle:0928:collation extrema",
         "sqlSha256": "9671ee20748287597b6f3cd4cd5a2197f2c7de0ae907b74112633c9c6b599b09",
         "functions": [
           "FROM",
@@ -16916,7 +17031,7 @@
         ]
       },
       {
-        "name": "oracle:0916:collation ordering",
+        "name": "oracle:0929:collation ordering",
         "sqlSha256": "079ae38ac3983cbd70d5df90d90657f8dfe5ba0c8c660c21df0629f52d0c4478",
         "functions": [
           "FROM"
@@ -16926,7 +17041,7 @@
         ]
       },
       {
-        "name": "oracle:0917:hand-written left join aggregate",
+        "name": "oracle:0930:hand-written left join aggregate",
         "sqlSha256": "265bdcef346b8b21ddf506daaa7c387c34571075b5930388b2f98dfbd206f2f8",
         "functions": [
           "COUNT"
@@ -16936,7 +17051,7 @@
         ]
       },
       {
-        "name": "oracle:0918:hand-written relational subquery",
+        "name": "oracle:0931:hand-written relational subquery",
         "sqlSha256": "3a3210bb7dbda740a665779ccacb2cbc19436550d006e3e0d66ae32feb0515d6",
         "functions": [
           "IN"
@@ -16946,7 +17061,7 @@
         ]
       },
       {
-        "name": "oracle:0919:hand-written relational subquery",
+        "name": "oracle:0932:hand-written relational subquery",
         "sqlSha256": "b561444421c3d119c593aee1be67388ae5277d1c4b86422ab56470ac06e52eed",
         "functions": [
           "IN",
@@ -16958,7 +17073,7 @@
         ]
       },
       {
-        "name": "oracle:0920:hand-written union all",
+        "name": "oracle:0933:hand-written union all",
         "sqlSha256": "0e4f8f0ed67d1581df516452aa01f9903c49569c85cfd8696f94f5e4bf4d254d",
         "functions": [],
         "phases": [
@@ -16966,7 +17081,7 @@
         ]
       },
       {
-        "name": "oracle:0921:hand-written union all",
+        "name": "oracle:0934:hand-written union all",
         "sqlSha256": "3680197a55ef3c3d8637d95758e0df6a53b51e35001a0f2ba7b9157415c723a6",
         "functions": [],
         "phases": [
@@ -16974,7 +17089,7 @@
         ]
       },
       {
-        "name": "oracle:0922:hand-written left join distinct",
+        "name": "oracle:0935:hand-written left join distinct",
         "sqlSha256": "e2f5733494adc12bba3c23286bdf70d2025f8268972bce9e5f4e924c1ef78409",
         "functions": [],
         "phases": [
@@ -16982,7 +17097,7 @@
         ]
       },
       {
-        "name": "oracle:0923:hand-written limit offset",
+        "name": "oracle:0936:hand-written limit offset",
         "sqlSha256": "634bbb0d032c1c5c7d9aff0eef439ab85705e785961fae92ec8fb598d1bd11d0",
         "functions": [],
         "phases": [
@@ -16990,7 +17105,7 @@
         ]
       },
       {
-        "name": "oracle:0924:hand-written reversed comparison",
+        "name": "oracle:0937:hand-written reversed comparison",
         "sqlSha256": "082f2d3c07a66d73febbb15504dc0ac747dd99daed234845e826877067226103",
         "functions": [],
         "phases": [
@@ -16998,7 +17113,7 @@
         ]
       },
       {
-        "name": "oracle:0925:hand-written between",
+        "name": "oracle:0938:hand-written between",
         "sqlSha256": "a002a0c2c10b28e5ffd1460d4867a4f129ddc86b27075222aaf64f97ceefbad2",
         "functions": [
           "IN"
@@ -17008,7 +17123,7 @@
         ]
       },
       {
-        "name": "oracle:0926:hand-written arithmetic",
+        "name": "oracle:0939:hand-written arithmetic",
         "sqlSha256": "60caa0b9d7120d73ad8ddbdcc9310749b5cf0eb16bf8b7e2f34a343c2897f028",
         "functions": [],
         "phases": [
@@ -17016,7 +17131,7 @@
         ]
       },
       {
-        "name": "oracle:0927:hand-written aggregate empty input",
+        "name": "oracle:0940:hand-written aggregate empty input",
         "sqlSha256": "89c6f677ba3fa2997e4ee11986fbfbed221fbd2c946e9c0933c4156b4e4b5eb6",
         "functions": [
           "AVG",
@@ -17030,7 +17145,7 @@
         ]
       },
       {
-        "name": "oracle:0928:hand-written scalar subquery",
+        "name": "oracle:0941:hand-written scalar subquery",
         "sqlSha256": "aa7575900c330953676561edeb3b36d6ffdf61eef9c8ae083fb26fc7d023841e",
         "functions": [
           "IN"
@@ -17040,7 +17155,7 @@
         ]
       },
       {
-        "name": "oracle:0929:hand-written case expression",
+        "name": "oracle:0942:hand-written case expression",
         "sqlSha256": "b58590bd098fdc7cde2d6a33e7aa2f722da76bd93b37396e8f6cf7bab4aa0d72",
         "functions": [],
         "phases": [
@@ -17048,7 +17163,7 @@
         ]
       },
       {
-        "name": "oracle:0930:hand-written exact mixed integers",
+        "name": "oracle:0943:hand-written exact mixed integers",
         "sqlSha256": "8d955cc6344e6dc17cd11deaa7bd624306631cbae132a78292d48c5afa3c95cc",
         "functions": [
           "CAST"
@@ -17058,7 +17173,7 @@
         ]
       },
       {
-        "name": "oracle:0931:hand-written mixed scalar join",
+        "name": "oracle:0944:hand-written mixed scalar join",
         "sqlSha256": "ed94428696736fc07cd5228031b737cf5c14c7a26fe555d17dc902ade2e46462",
         "functions": [
           "CAST"
@@ -17068,7 +17183,7 @@
         ]
       },
       {
-        "name": "oracle:0932:hand-written large mixed scalar join",
+        "name": "oracle:0945:hand-written large mixed scalar join",
         "sqlSha256": "e65aa4c15823a0cdb3ec01d838185fe0b0998c06b7fafc8a65013c00a55dbb95",
         "functions": [
           "CAST",
@@ -17080,7 +17195,7 @@
         ]
       },
       {
-        "name": "oracle:0933:window ranking",
+        "name": "oracle:0946:window ranking",
         "sqlSha256": "f8835b4297875551f9541d41983c02d6ad11296c2954156167954851e80d1444",
         "functions": [
           "OVER",
@@ -17091,7 +17206,7 @@
         ]
       },
       {
-        "name": "oracle:0934:window ranking",
+        "name": "oracle:0947:window ranking",
         "sqlSha256": "8a30132c73c9f87c934611611505d16f8bcaef623b0423c3a2de9fff2a3ba3db",
         "functions": [
           "DENSE_RANK",
@@ -17103,7 +17218,7 @@
         ]
       },
       {
-        "name": "oracle:0935:window ranking",
+        "name": "oracle:0948:window ranking",
         "sqlSha256": "fcc0963c4d68e9a04d7b81ae28fbfa92792d821fd8024c93082c12e17326b019",
         "functions": [
           "OVER",
@@ -17114,7 +17229,7 @@
         ]
       },
       {
-        "name": "oracle:0936:window ranking",
+        "name": "oracle:0949:window ranking",
         "sqlSha256": "6b38545e0dbeb494094704c4aca7eea58d90fa8f8100f9e4730f0f9576c7737a",
         "functions": [
           "OVER",
@@ -17125,7 +17240,7 @@
         ]
       },
       {
-        "name": "oracle:0937:window aggregate",
+        "name": "oracle:0950:window aggregate",
         "sqlSha256": "4bf8ff8c8d1277f3005324e580d7504f5707d5a1e65c937d1a512332ccdf1e2b",
         "functions": [
           "OVER",
@@ -17136,7 +17251,7 @@
         ]
       },
       {
-        "name": "oracle:0938:window aggregate",
+        "name": "oracle:0951:window aggregate",
         "sqlSha256": "d81c981c273775ecf7bf46b404bc0120428238a49b7ee06a6fe2ed00bd245e83",
         "functions": [
           "COUNT",
@@ -17147,7 +17262,7 @@
         ]
       },
       {
-        "name": "oracle:0939:window aggregate",
+        "name": "oracle:0952:window aggregate",
         "sqlSha256": "e95f0b0dbe180bcebaf00c706e58dea24f0b1bf5a62a33d53d7e602419388349",
         "functions": [
           "AVG",
@@ -17158,7 +17273,7 @@
         ]
       },
       {
-        "name": "oracle:0940:window aggregate",
+        "name": "oracle:0953:window aggregate",
         "sqlSha256": "01523b86817a62f4e00415190ab7764ccbc09fc8443b8cd6e5b0fc4b541a6f2c",
         "functions": [
           "MAX",
@@ -17170,7 +17285,7 @@
         ]
       },
       {
-        "name": "oracle:0941:window running frame",
+        "name": "oracle:0954:window running frame",
         "sqlSha256": "c0215f1588f164cc3dfe6cb28978e3b874d514a8e5a08b3f2ef9b2b3e9994f7b",
         "functions": [
           "OVER",
@@ -17181,7 +17296,7 @@
         ]
       },
       {
-        "name": "oracle:0942:window running frame",
+        "name": "oracle:0955:window running frame",
         "sqlSha256": "a4826692e6d6d667653834a8d2bd25f67a38d310c85fdbeabcc9e57dbe5443ec",
         "functions": [
           "OVER",
@@ -17192,7 +17307,7 @@
         ]
       },
       {
-        "name": "oracle:0943:window running frame",
+        "name": "oracle:0956:window running frame",
         "sqlSha256": "8e01b395d58ca908e29c0a83eedbf70015e73e812d103e34bc6665531c5ca2b3",
         "functions": [
           "COUNT",
@@ -17203,7 +17318,7 @@
         ]
       },
       {
-        "name": "oracle:0944:window nested in expression",
+        "name": "oracle:0957:window nested in expression",
         "sqlSha256": "2532a7841d2f9f0a7d333f533b55fae324f6c6c02f5084c1c1d49c248e6c8eb7",
         "functions": [
           "OVER",
@@ -17215,7 +17330,7 @@
         ]
       },
       {
-        "name": "oracle:0945:window nested in expression",
+        "name": "oracle:0958:window nested in expression",
         "sqlSha256": "9597fcf8e124d5c66cdeff127240a5bdb09d0bc8fc1653f9ca93404c16fcb9ae",
         "functions": [
           "OVER",
@@ -17226,7 +17341,7 @@
         ]
       },
       {
-        "name": "oracle:0946:window nested in expression",
+        "name": "oracle:0959:window nested in expression",
         "sqlSha256": "b89f309f0e0da1e77e698d4c25e84a416529c1ab8a52a7d32bf3dd1e1ad08559",
         "functions": [
           "AVG",
@@ -17237,7 +17352,7 @@
         ]
       },
       {
-        "name": "oracle:0947:window over grouped output",
+        "name": "oracle:0960:window over grouped output",
         "sqlSha256": "e24301b332f1e59137fdef7e4b2a2d542e59c9bd70a7d6f403f3092b2c4cf04e",
         "functions": [
           "OVER",
@@ -17249,7 +17364,7 @@
         ]
       },
       {
-        "name": "oracle:0948:window over grouped output",
+        "name": "oracle:0961:window over grouped output",
         "sqlSha256": "45ef2560cdcc50f1712e8d000c55fb23f073d0916f8c3d61bc7e5b11d3621064",
         "functions": [
           "COUNT",
@@ -17261,7 +17376,7 @@
         ]
       },
       {
-        "name": "oracle:0949:window over grouped output",
+        "name": "oracle:0962:window over grouped output",
         "sqlSha256": "772104f39212a184fdd6a4a3f79d97704859ad37ab8062b13ffd38a10c3fa70c",
         "functions": [
           "COUNT",
@@ -17274,7 +17389,7 @@
         ]
       },
       {
-        "name": "oracle:0950:window in cte",
+        "name": "oracle:0963:window in cte",
         "sqlSha256": "2b6c5d8039416e84ae0cab7516f7d64b91857309ee2ffc660f7c6dffef96777c",
         "functions": [
           "AS",
@@ -17289,7 +17404,7 @@
         ]
       },
       {
-        "name": "oracle:0951:window in cte",
+        "name": "oracle:0964:window in cte",
         "sqlSha256": "9392d11ab6c321e3e57d51a9f4335267b7c16612e30612537349ec11e5158f27",
         "functions": [
           "AS",
@@ -17302,7 +17417,7 @@
         ]
       },
       {
-        "name": "oracle:0952:window multiple in one query",
+        "name": "oracle:0965:window multiple in one query",
         "sqlSha256": "7523e6ea7c1ce8cbfbda3457243fbc25e304f7642a4a2bc147d22cd78a24ac18",
         "functions": [
           "OVER",
@@ -17314,7 +17429,7 @@
         ]
       },
       {
-        "name": "oracle:0953:decimal division",
+        "name": "oracle:0966:decimal division",
         "sqlSha256": "86bf598e2afd9300243c6c3383754c77ed7af9660eb253c09bdbeccf4e1269d9",
         "functions": [],
         "phases": [
@@ -17322,7 +17437,7 @@
         ]
       },
       {
-        "name": "oracle:0954:decimal division",
+        "name": "oracle:0967:decimal division",
         "sqlSha256": "dad1bd47211f45187d14419d20940105a789d60a644b44072decc589eacf6ea1",
         "functions": [
           "COUNT",
@@ -17333,7 +17448,7 @@
         ]
       },
       {
-        "name": "oracle:0955:decimal division",
+        "name": "oracle:0968:decimal division",
         "sqlSha256": "a6fa61b495b2fc687a971706725ddc98d8d7c4fade62e433ba69dd90a1210a0d",
         "functions": [
           "OVER",
@@ -17344,7 +17459,7 @@
         ]
       },
       {
-        "name": "oracle:0956:decimal division",
+        "name": "oracle:0969:decimal division",
         "sqlSha256": "e16e234468885fb9f7a3370842aaffd6456b28b8b4bdfe17b9ea91b3e845644a",
         "functions": [],
         "phases": [
@@ -17352,7 +17467,7 @@
         ]
       },
       {
-        "name": "oracle:0957:decimal division intermediates",
+        "name": "oracle:0970:decimal division intermediates",
         "sqlSha256": "3c634eaf4ad4181ed77ae66abf782efe9f496aeb00770edd55a5d44cdf13d697",
         "functions": [
           "SELECT"
@@ -17362,7 +17477,7 @@
         ]
       },
       {
-        "name": "oracle:0958:json",
+        "name": "oracle:0971:json",
         "sqlSha256": "07bb3e7887f79fc3b9455ef568d6e330b2ec519bf2e16a33854e1de29f55ed54",
         "functions": [
           "JSON_EXTRACT",
@@ -17373,7 +17488,7 @@
         ]
       },
       {
-        "name": "oracle:0959:json",
+        "name": "oracle:0972:json",
         "sqlSha256": "6a81cf6ea0f9d26f695bfe51be4e07f6e8c68cc9951a8b353eeaa3c146bcfcaf",
         "functions": [
           "JSON_EXTRACT",
@@ -17384,7 +17499,7 @@
         ]
       },
       {
-        "name": "oracle:0960:json",
+        "name": "oracle:0973:json",
         "sqlSha256": "d582a1f7a62c6767c18277f4d936fdde98f343c9cb6a8f86c2ff695f34d89a0c",
         "functions": [
           "JSON_OBJECT"
@@ -17394,7 +17509,7 @@
         ]
       },
       {
-        "name": "oracle:0961:json",
+        "name": "oracle:0974:json",
         "sqlSha256": "59f28849b2a94f655a399fb78786ce032697a91c4abc41ebfbe04892bb9ce9e6",
         "functions": [
           "JSON_ARRAY"
@@ -17404,7 +17519,7 @@
         ]
       },
       {
-        "name": "oracle:0962:json",
+        "name": "oracle:0975:json",
         "sqlSha256": "dd9f0ea38932536d09b3fac1a083c77089a31e1b3d06b3cda2fa0ece5cdf4a1c",
         "functions": [
           "JSON_ARRAY",
@@ -17415,7 +17530,7 @@
         ]
       },
       {
-        "name": "oracle:0963:json aggregate",
+        "name": "oracle:0976:json aggregate",
         "sqlSha256": "ea00bef4fceb5d0e8a1b5e765a52eb6a87b4a63d16a395cf46a5bd6807e9c89f",
         "functions": [
           "JSON_ARRAYAGG"
@@ -17425,7 +17540,7 @@
         ]
       },
       {
-        "name": "oracle:0964:json aggregate",
+        "name": "oracle:0977:json aggregate",
         "sqlSha256": "4778af54c89da1462a5d37bcd8ed8635c7cade139c78af4a1df5e5541dc859ef",
         "functions": [
           "JSON_ARRAYAGG"
@@ -17435,7 +17550,7 @@
         ]
       },
       {
-        "name": "oracle:0965:json aggregate",
+        "name": "oracle:0978:json aggregate",
         "sqlSha256": "5542daed4047dac2f3e2e48653fba78036c7e116c0fa384db814e15a8dd53a81",
         "functions": [
           "JSON_ARRAYAGG"
@@ -17445,7 +17560,7 @@
         ]
       },
       {
-        "name": "oracle:0966:json aggregate",
+        "name": "oracle:0979:json aggregate",
         "sqlSha256": "4a445623c282c8c9e322eb915feed87f176c98fef575899bd1ab873e68491075",
         "functions": [
           "JSON_ARRAYAGG"
@@ -17455,7 +17570,7 @@
         ]
       },
       {
-        "name": "oracle:0967:json",
+        "name": "oracle:0980:json",
         "sqlSha256": "57f2b4501f3349ac24ab1364417c114e8ac4037d251a3517a00cc140e362c07f",
         "functions": [
           "JSON_EXTRACT"
@@ -17465,7 +17580,7 @@
         ]
       },
       {
-        "name": "oracle:0968:right join",
+        "name": "oracle:0981:right join",
         "sqlSha256": "ae150ddd95fdfa5b5821300a6bbeb098916e8f180ae93d1cc6635bb0438af015",
         "functions": [],
         "phases": [
@@ -17473,7 +17588,7 @@
         ]
       },
       {
-        "name": "oracle:0969:right join",
+        "name": "oracle:0982:right join",
         "sqlSha256": "2d8ebf8e3978258441494b9809c27a952369f8f81d524e8fb33f5f2594e2b565",
         "functions": [],
         "phases": [
@@ -17481,7 +17596,7 @@
         ]
       },
       {
-        "name": "oracle:0970:bushy outer join",
+        "name": "oracle:0983:bushy outer join",
         "sqlSha256": "25aae6b7ad3ddef52f21aba073e63f0803b52108683ecf1f2340f385763df27a",
         "functions": [
           "JOIN"
@@ -17491,7 +17606,7 @@
         ]
       },
       {
-        "name": "oracle:0971:join predicate subquery",
+        "name": "oracle:0984:join predicate subquery",
         "sqlSha256": "adb45d6923796ce47e68743fa0354feaeb039be5c332e308bf4bb7d1865f3ac9",
         "functions": [
           "EXISTS"
@@ -17501,7 +17616,7 @@
         ]
       },
       {
-        "name": "oracle:0972:set operations",
+        "name": "oracle:0985:set operations",
         "sqlSha256": "34a3cf3790747231b101a45af80b5c952d280650c4df7530a25a4a5bdd6b1fcb",
         "functions": [],
         "phases": [
@@ -17509,7 +17624,7 @@
         ]
       },
       {
-        "name": "oracle:0973:set operations",
+        "name": "oracle:0986:set operations",
         "sqlSha256": "0b8962872b33674518e77e37067398213dac4a07d0846616b66d2d82b02b338c",
         "functions": [],
         "phases": [
@@ -17517,7 +17632,7 @@
         ]
       },
       {
-        "name": "oracle:0974:set operations",
+        "name": "oracle:0987:set operations",
         "sqlSha256": "af3a9fc7450e5fe5fcd58a9bfafe01127ac19df18d065dba2fb9f9e6e4cf8235",
         "functions": [
           "UPPER"
@@ -17527,7 +17642,7 @@
         ]
       },
       {
-        "name": "oracle:0975:set operations",
+        "name": "oracle:0988:set operations",
         "sqlSha256": "a236f477374c73bde03ce19b29ad95d3af70844f9023aba69a59f613cefb80e1",
         "functions": [],
         "phases": [
@@ -17535,7 +17650,7 @@
         ]
       },
       {
-        "name": "oracle:0976:set operations",
+        "name": "oracle:0989:set operations",
         "sqlSha256": "62bdc2d4e7ba98109cb3cea7a80a5a48796f562a5dc10c496ee302b6abbece41",
         "functions": [],
         "phases": [
@@ -17543,7 +17658,7 @@
         ]
       },
       {
-        "name": "oracle:0977:set operations",
+        "name": "oracle:0990:set operations",
         "sqlSha256": "6dbccaaa8dbc5a0e8363ddd4a5c15ab5c849bf6d88a8c1b45522659766cb5ab7",
         "functions": [],
         "phases": [
@@ -17551,7 +17666,7 @@
         ]
       },
       {
-        "name": "oracle:0978:set operations",
+        "name": "oracle:0991:set operations",
         "sqlSha256": "1338dd4a650d4e03a6950073f4e1217240cca172c79273eadafd5ba43fca7a84",
         "functions": [],
         "phases": [
@@ -17559,7 +17674,7 @@
         ]
       },
       {
-        "name": "oracle:0979:set operations",
+        "name": "oracle:0992:set operations",
         "sqlSha256": "7f47751a73741be020189d3ad3bd0e09056124e9881da69b2ecd6e2575859a28",
         "functions": [],
         "phases": [
@@ -17567,7 +17682,7 @@
         ]
       },
       {
-        "name": "oracle:0980:set operations",
+        "name": "oracle:0993:set operations",
         "sqlSha256": "8a9ccd5bb6bd599c0ae3c7dabd4e2c2a7b5607cd94c1e8340353a14932015526",
         "functions": [],
         "phases": [
@@ -17575,7 +17690,7 @@
         ]
       },
       {
-        "name": "oracle:0981:set operation scoping",
+        "name": "oracle:0994:set operation scoping",
         "sqlSha256": "d0b42a6579d4cf3527014d5e08010784cb05485d6687afa089fb235b1e90b6bf",
         "functions": [],
         "phases": [
@@ -17583,7 +17698,7 @@
         ]
       },
       {
-        "name": "oracle:0982:set operation scoping",
+        "name": "oracle:0995:set operation scoping",
         "sqlSha256": "a86c14e293c38dff67b2dff7dc2510981d6990d7dcda822cf52538ab6ef08290",
         "functions": [],
         "phases": [
@@ -17591,7 +17706,7 @@
         ]
       },
       {
-        "name": "oracle:0983:set operation precedence",
+        "name": "oracle:0996:set operation precedence",
         "sqlSha256": "ced9154760feaa7d24e4c1d617e7c88337b5c8e78f67b86f56cd9c4c414d53cc",
         "functions": [],
         "phases": [
@@ -17599,7 +17714,7 @@
         ]
       },
       {
-        "name": "oracle:0984:set operation precedence",
+        "name": "oracle:0997:set operation precedence",
         "sqlSha256": "eb794b8667cbd4281613fc5ee5187852e1d85e70000a4625624d5191a603fb6b",
         "functions": [],
         "phases": [
@@ -17607,7 +17722,7 @@
         ]
       },
       {
-        "name": "oracle:0985:set operation scoping",
+        "name": "oracle:0998:set operation scoping",
         "sqlSha256": "658462df38eeb28f5244bd97c6c931402c54ce7f1205255175ccfcb62ad3e204",
         "functions": [
           "ALL"
@@ -17617,7 +17732,7 @@
         ]
       },
       {
-        "name": "oracle:0986:union mixed numeric",
+        "name": "oracle:0999:union mixed numeric",
         "sqlSha256": "653c168303bf008d6719433318cf4cf836a08c18a61993bec7890611af31b672",
         "functions": [],
         "phases": [
@@ -17625,7 +17740,7 @@
         ]
       },
       {
-        "name": "oracle:0987:union mixed numeric",
+        "name": "oracle:1000:union mixed numeric",
         "sqlSha256": "c7e86789e75dce9c18f84e30467722738a7deb9eb60cd8cc453bcdb6219c06d9",
         "functions": [],
         "phases": [
@@ -17633,7 +17748,7 @@
         ]
       },
       {
-        "name": "oracle:0988:union mixed numeric",
+        "name": "oracle:1001:union mixed numeric",
         "sqlSha256": "ef1664d198ecf0e4935513f41ccfcab55ec9d77fd8c764b751ad7239d32367d1",
         "functions": [
           "CAST"
@@ -17643,7 +17758,7 @@
         ]
       },
       {
-        "name": "oracle:0989:union mixed numeric",
+        "name": "oracle:1002:union mixed numeric",
         "sqlSha256": "7d10aed42c3e682f723df9ace16668a4e68c5b63df42aad17abc44064e3b6ab7",
         "functions": [],
         "phases": [
@@ -17651,7 +17766,7 @@
         ]
       },
       {
-        "name": "oracle:0990:regexp",
+        "name": "oracle:1003:regexp",
         "sqlSha256": "7937c83a0d68a25632c59169c4a21b9401660fc9bd6484b97b346565b99c7d46",
         "functions": [],
         "phases": [
@@ -17659,7 +17774,7 @@
         ]
       },
       {
-        "name": "oracle:0991:regexp",
+        "name": "oracle:1004:regexp",
         "sqlSha256": "6ccbdb948bd1d58b89acb91a32cf10f05bb6aa7866d138fe7696e6c8efd1a1bf",
         "functions": [
           "REGEXP_INSTR",
@@ -17672,7 +17787,7 @@
         ]
       },
       {
-        "name": "oracle:0992:regexp match type",
+        "name": "oracle:1005:regexp match type",
         "sqlSha256": "3f63fe57d2ab07354b4399b32bdb19d88be6c240f1a3224800a89a18a6de595e",
         "functions": [
           "CHAR",
@@ -17685,7 +17800,7 @@
         ]
       },
       {
-        "name": "oracle:0993:json extract multiple paths",
+        "name": "oracle:1006:json extract multiple paths",
         "sqlSha256": "554a2a41ff0d0b15f31d513f48cbff091ebdbc303f57d15b5316a2d03f673789",
         "functions": [
           "JSON_EXTRACT"
@@ -17695,7 +17810,7 @@
         ]
       },
       {
-        "name": "oracle:0994:json typed constructor input",
+        "name": "oracle:1007:json typed constructor input",
         "sqlSha256": "e0dbc634e52355958027ae42560bdf981d42e9b909a3d70c39a2d60948ceae97",
         "functions": [
           "JSON_ARRAY",
@@ -17707,7 +17822,7 @@
         ]
       },
       {
-        "name": "oracle:0995:json typed aggregate input",
+        "name": "oracle:1008:json typed aggregate input",
         "sqlSha256": "750f30ef81bdd1289480040ae93b683ba17c2f5dbba386ad248bc194d3476060",
         "functions": [
           "JSON_ARRAYAGG",
@@ -17718,7 +17833,7 @@
         ]
       },
       {
-        "name": "oracle:0996:json null distinction",
+        "name": "oracle:1009:json null distinction",
         "sqlSha256": "fd90c19c5a30c352d6ac8bc5dee631baa467d6ce2799c8beb81edd7f00a15bc2",
         "functions": [
           "JSON_ARRAY",
@@ -17729,7 +17844,7 @@
         ]
       },
       {
-        "name": "oracle:0997:union distinct",
+        "name": "oracle:1010:union distinct",
         "sqlSha256": "ef31c9ee91d864639b368d2c756c9a05d6e771172fccc489e28775e00c71496c",
         "functions": [],
         "phases": [
@@ -17737,7 +17852,7 @@
         ]
       },
       {
-        "name": "oracle:0998:union distinct",
+        "name": "oracle:1011:union distinct",
         "sqlSha256": "7efed291d94e982f9b78c25ed0b55ca96a04df670d9ad4601305fb0197fe05c5",
         "functions": [],
         "phases": [
@@ -17745,7 +17860,7 @@
         ]
       },
       {
-        "name": "oracle:0999:union distinct",
+        "name": "oracle:1012:union distinct",
         "sqlSha256": "ee1ab7ddd8adf21e2cc36a4cca8b76c829090887094d30373586a68f17029652",
         "functions": [],
         "phases": [
@@ -17753,7 +17868,7 @@
         ]
       },
       {
-        "name": "oracle:1000:exists subqueries",
+        "name": "oracle:1013:exists subqueries",
         "sqlSha256": "66e24893670df81343775e74d23179d7d7a3d632a3388315f7e855177bf52b70",
         "functions": [
           "EXISTS"
@@ -17763,7 +17878,7 @@
         ]
       },
       {
-        "name": "oracle:1001:exists subqueries",
+        "name": "oracle:1014:exists subqueries",
         "sqlSha256": "fb87aa402b0a11a84f227640e1dc5f2addee3a8cb4c163257fc00cf6a3fef0e0",
         "functions": [
           "EXISTS"
@@ -17773,7 +17888,7 @@
         ]
       },
       {
-        "name": "oracle:1002:exists subqueries",
+        "name": "oracle:1015:exists subqueries",
         "sqlSha256": "aeb1773b387146ae224e468c8d3978ea99b25195dd2aa7e21ed9fe06c69f6128",
         "functions": [
           "EXISTS"
@@ -17783,7 +17898,7 @@
         ]
       },
       {
-        "name": "oracle:1003:exists subqueries",
+        "name": "oracle:1016:exists subqueries",
         "sqlSha256": "8eb62f134e95ad893e37bab33fb9c320e2cdc2844333f5ec2c125bcc0dade4ae",
         "functions": [
           "EXISTS"
@@ -17793,7 +17908,7 @@
         ]
       },
       {
-        "name": "oracle:1004:exists subqueries",
+        "name": "oracle:1017:exists subqueries",
         "sqlSha256": "d29ed6adb78ae98bd537b49ebf9da274258cb2d05cda3dd37eb146e8de112ff5",
         "functions": [
           "EXISTS"
@@ -17803,7 +17918,7 @@
         ]
       },
       {
-        "name": "oracle:1005:exists subqueries",
+        "name": "oracle:1018:exists subqueries",
         "sqlSha256": "bae0369e509e65ba83dabbbb2ab3b1ed0a15bea22399f767cb359fd0c2e5bf10",
         "functions": [
           "EXISTS"
@@ -17813,7 +17928,7 @@
         ]
       },
       {
-        "name": "oracle:1006:exists subqueries",
+        "name": "oracle:1019:exists subqueries",
         "sqlSha256": "1d3deab41215eb1f5a020c857cd783b1944e83c11208e8f353af5b00a808a4d7",
         "functions": [
           "EXISTS"
@@ -17823,7 +17938,7 @@
         ]
       },
       {
-        "name": "oracle:1007:exists subqueries",
+        "name": "oracle:1020:exists subqueries",
         "sqlSha256": "cc98ee7e8a988a44d5018e3e3613ac45360b11cf14904062d52e0421bb9b6f26",
         "functions": [
           "EXISTS"
@@ -17833,7 +17948,7 @@
         ]
       },
       {
-        "name": "oracle:1008:exists subqueries",
+        "name": "oracle:1021:exists subqueries",
         "sqlSha256": "6a26d381bfa11d09ad83b5ba0e5b8f3c7cfd8abf7c419cc134d42c0e4a1885cf",
         "functions": [
           "EXISTS"
@@ -17843,7 +17958,7 @@
         ]
       },
       {
-        "name": "oracle:1009:in subqueries",
+        "name": "oracle:1022:in subqueries",
         "sqlSha256": "89ccad17dc4cbd13be55f3d919a6d3cf1219a8340ade43b54e8765bb2316c45a",
         "functions": [
           "IN"
@@ -17853,7 +17968,7 @@
         ]
       },
       {
-        "name": "oracle:1010:in subqueries",
+        "name": "oracle:1023:in subqueries",
         "sqlSha256": "4858f8be352c21a271c82390a6c385392580385c0d72379a1610a00883427f3f",
         "functions": [
           "IN"
@@ -17863,7 +17978,7 @@
         ]
       },
       {
-        "name": "oracle:1011:in subqueries",
+        "name": "oracle:1024:in subqueries",
         "sqlSha256": "48dc56fb6f823ca3db46f8434a5b5ed190b5dd02cab4097cade33a45271e09be",
         "functions": [
           "IN"
@@ -17873,7 +17988,7 @@
         ]
       },
       {
-        "name": "oracle:1012:dependent correlated subqueries",
+        "name": "oracle:1025:dependent correlated subqueries",
         "sqlSha256": "9637308a5acd844a815f5c14ddeffe2256338f7e502539ff462f17ec7fb6a3dd",
         "functions": [],
         "phases": [
@@ -17881,7 +17996,7 @@
         ]
       },
       {
-        "name": "oracle:1013:dependent correlated subqueries",
+        "name": "oracle:1026:dependent correlated subqueries",
         "sqlSha256": "48fe709385b4c4902b1c8622fa6d62e3296f6b068735833b15ff2ea6e959a537",
         "functions": [
           "EXISTS"
@@ -17891,7 +18006,7 @@
         ]
       },
       {
-        "name": "oracle:1014:dependent correlated subqueries",
+        "name": "oracle:1027:dependent correlated subqueries",
         "sqlSha256": "b77cd4b10d3e8dde21aed77519ad1a467b948ab659aeb6d9e24d20914ec7d560",
         "functions": [
           "IN"
@@ -17901,7 +18016,7 @@
         ]
       },
       {
-        "name": "oracle:1015:dependent correlated subqueries",
+        "name": "oracle:1028:dependent correlated subqueries",
         "sqlSha256": "dc179809986ce029abacb7f49a23be09aa27f26bddf070b2e314d6e28e8fa97e",
         "functions": [
           "COUNT",
@@ -17912,7 +18027,7 @@
         ]
       },
       {
-        "name": "oracle:1016:dependent correlated subqueries",
+        "name": "oracle:1029:dependent correlated subqueries",
         "sqlSha256": "9fa1f9082555f123c587b980cc3dfab7cd841ae6b9a13991fbaf4f7d69161fa1",
         "functions": [
           "AS"
@@ -17922,7 +18037,7 @@
         ]
       },
       {
-        "name": "oracle:1017:dependent correlated subqueries",
+        "name": "oracle:1030:dependent correlated subqueries",
         "sqlSha256": "2ba35e9e9b2b52870e934c3d5e1352cc815d1db46ebf0f05563c903e8f8127b7",
         "functions": [
           "SELECT"
@@ -17932,7 +18047,7 @@
         ]
       },
       {
-        "name": "oracle:1018:dependent correlated subqueries",
+        "name": "oracle:1031:dependent correlated subqueries",
         "sqlSha256": "85a02921f20d165950c2ebdb0308c784e14b781d1af78eeb41b3d65b2d316660",
         "functions": [
           "SELECT"
@@ -17942,7 +18057,7 @@
         ]
       },
       {
-        "name": "oracle:1019:dependent correlated subqueries",
+        "name": "oracle:1032:dependent correlated subqueries",
         "sqlSha256": "e0bd66a86e17bdd7425530d2a5953601b7e427602e32b3acf9734f2bf51f453a",
         "functions": [
           "IF"
@@ -17952,7 +18067,7 @@
         ]
       },
       {
-        "name": "oracle:1020:dependent correlated subqueries",
+        "name": "oracle:1033:dependent correlated subqueries",
         "sqlSha256": "c35707471ddbf8898c2bdff2f80e205541e1ce421cf2ce6d8d186b98b79a5580",
         "functions": [
           "COALESCE"
@@ -17962,7 +18077,7 @@
         ]
       },
       {
-        "name": "oracle:1021:recursive cte",
+        "name": "oracle:1034:recursive cte",
         "sqlSha256": "5381602537d6ed402d5af9017fc1ca3a43110396ad7422605e5b81095b61e24d",
         "functions": [
           "AS",
@@ -17973,7 +18088,7 @@
         ]
       },
       {
-        "name": "oracle:1022:recursive cte",
+        "name": "oracle:1035:recursive cte",
         "sqlSha256": "e0241fa49dd1d59b3b700c493c6037e7305c3e729dc0609578358eb6293c3c6c",
         "functions": [
           "AS",
@@ -17984,7 +18099,7 @@
         ]
       },
       {
-        "name": "oracle:1023:recursive cte",
+        "name": "oracle:1036:recursive cte",
         "sqlSha256": "875dc6d9355fc4c596ee5e267ab7bb3fc3fbb5199c20c4b4a0d1cda893369d38",
         "functions": [
           "AS",
@@ -17995,7 +18110,7 @@
         ]
       },
       {
-        "name": "oracle:1024:recursive cte",
+        "name": "oracle:1037:recursive cte",
         "sqlSha256": "e14b9b409d145088bbe6fab247037c88a4ef2ca8b91441be954717387d7589a3",
         "functions": [
           "AS",
@@ -18008,7 +18123,7 @@
         ]
       },
       {
-        "name": "oracle:1025:decimal round",
+        "name": "oracle:1038:decimal round",
         "sqlSha256": "51ff8af3e120250d9aaf34890162eb8c35164e64c2ae1da837b3bfc8bc937115",
         "functions": [
           "CAST",
@@ -18019,7 +18134,7 @@
         ]
       },
       {
-        "name": "oracle:1026:decimal round",
+        "name": "oracle:1039:decimal round",
         "sqlSha256": "f6e2fcfd48353ee7fae065480f7c3af60b0b5823dbb7c25be5b60c08e3085264",
         "functions": [
           "CAST",
@@ -18030,7 +18145,7 @@
         ]
       },
       {
-        "name": "oracle:1027:decimal round",
+        "name": "oracle:1040:decimal round",
         "sqlSha256": "638c05801e9f88f818795c043383cd5c7f62457626c36a2ddc4b426d6fdc9441",
         "functions": [
           "AVG",
@@ -18041,7 +18156,7 @@
         ]
       },
       {
-        "name": "oracle:1028:decimal round",
+        "name": "oracle:1041:decimal round",
         "sqlSha256": "80de29df385305fa0b0ae869dedc11f3d2514a5589f7a3a6edc38df26827b1b6",
         "functions": [
           "CAST",
@@ -18053,7 +18168,7 @@
         ]
       },
       {
-        "name": "oracle:1029:decimal round",
+        "name": "oracle:1042:decimal round",
         "sqlSha256": "583169da63d882c0020f78ccc9e146ecc434e5cefe99bd3f471a8fd80ee39a64",
         "functions": [
           "CAST",
@@ -18064,7 +18179,7 @@
         ]
       },
       {
-        "name": "oracle:1030:div precedence",
+        "name": "oracle:1043:div precedence",
         "sqlSha256": "fea9424042c76cf07f30c6187a15068111f1dca46319d95c5f2a9645d0e020f9",
         "functions": [],
         "phases": [
@@ -18072,7 +18187,7 @@
         ]
       },
       {
-        "name": "oracle:1031:div precedence",
+        "name": "oracle:1044:div precedence",
         "sqlSha256": "20a2e382bd160963d03e05af0dc3badcec66bdd471d1aff5a7d072885a7e39b4",
         "functions": [],
         "phases": [
@@ -18080,7 +18195,7 @@
         ]
       },
       {
-        "name": "oracle:1032:multi-key join",
+        "name": "oracle:1045:multi-key join",
         "sqlSha256": "95b6b62aa1d5c56cd3e741bf8b5af69bf9e25010d7dccea6519e4ac76d4fedce",
         "functions": [],
         "phases": [
@@ -18088,7 +18203,7 @@
         ]
       },
       {
-        "name": "oracle:1033:exists subqueries",
+        "name": "oracle:1046:exists subqueries",
         "sqlSha256": "ab41f8fab108cf2196e058d1805045901274e7881ba4a35d8b7f9a766cfa66db",
         "functions": [
           "EXISTS"
@@ -18098,7 +18213,7 @@
         ]
       },
       {
-        "name": "oracle:1034:exists subqueries",
+        "name": "oracle:1047:exists subqueries",
         "sqlSha256": "aab8fbe7255a1cb696eab5015c955e26eb62c374cbee2c28accae71534b5216a",
         "functions": [
           "EXISTS"
@@ -18108,7 +18223,7 @@
         ]
       },
       {
-        "name": "oracle:1035:exists subqueries",
+        "name": "oracle:1048:exists subqueries",
         "sqlSha256": "2f213515f30da2a2231bacd3bae26d735f2e54c976505babdfa3ff8670a59577",
         "functions": [
           "EXISTS"
@@ -18118,7 +18233,7 @@
         ]
       },
       {
-        "name": "oracle:1036:datetime calendar",
+        "name": "oracle:1049:datetime calendar",
         "sqlSha256": "5f2e65a741c96f5a569238d497f7fad84277f6e91cfce7c1fe219ef2b3cc4b80",
         "functions": [
           "DAYOFWEEK",
@@ -18133,7 +18248,7 @@
         ]
       },
       {
-        "name": "oracle:1037:datetime week modes",
+        "name": "oracle:1050:datetime week modes",
         "sqlSha256": "4e608922acae9bd58e516eded6b2117754aead1b264db275ec7bd6e359e92f04",
         "functions": [
           "WEEK"
@@ -18143,7 +18258,7 @@
         ]
       },
       {
-        "name": "oracle:1038:datetime calendar",
+        "name": "oracle:1051:datetime calendar",
         "sqlSha256": "e76a1d66613eefa609d236e1fd13a53c737cb298b2a89d235b1892ce0013a6e8",
         "functions": [
           "DAYNAME",
@@ -18156,7 +18271,7 @@
         ]
       },
       {
-        "name": "oracle:1039:datetime calendar",
+        "name": "oracle:1052:datetime calendar",
         "sqlSha256": "3cab75a84ae1b95b173ae39ecf4e8142a7d9ab9c4ed70ef23372636248fa5fa3",
         "functions": [
           "FROM_DAYS",
@@ -18169,7 +18284,7 @@
         ]
       },
       {
-        "name": "oracle:1040:datetime calendar",
+        "name": "oracle:1053:datetime calendar",
         "sqlSha256": "661b7f4a7424c57c63c20daba2639338b0f603c54d71492e0304b6bf8afd3166",
         "functions": [
           "EXTRACT",
@@ -18181,7 +18296,7 @@
         ]
       },
       {
-        "name": "oracle:1041:datetime calendar",
+        "name": "oracle:1054:datetime calendar",
         "sqlSha256": "cfa1f62d6c7c71e1cb286f6bc2ea772c1af48181959e68471b561aae164e2d96",
         "functions": [
           "STR_TO_DATE"
@@ -18191,7 +18306,7 @@
         ]
       },
       {
-        "name": "oracle:1042:group concat",
+        "name": "oracle:1055:group concat",
         "sqlSha256": "1f5b318a8ba9d20ba7ca01980e1dda1ec237f6b52a2ceecac8321f7508ab10dd",
         "functions": [
           "GROUP_CONCAT"
@@ -18201,7 +18316,7 @@
         ]
       },
       {
-        "name": "oracle:1043:group concat",
+        "name": "oracle:1056:group concat",
         "sqlSha256": "e0539747e6341bff38720627d057bdd896e99736fb18b2a219f81dd6ca0378e9",
         "functions": [
           "GROUP_CONCAT"
@@ -18211,7 +18326,7 @@
         ]
       },
       {
-        "name": "oracle:1044:group concat",
+        "name": "oracle:1057:group concat",
         "sqlSha256": "1382c74f68327871b3c7f0b05ad0084a43e6eedcb0509034231b33bddd59a218",
         "functions": [
           "GROUP_CONCAT",
@@ -18223,7 +18338,7 @@
         ]
       },
       {
-        "name": "oracle:1045:numeric scalars",
+        "name": "oracle:1058:numeric scalars",
         "sqlSha256": "f7371c4ca0edec78836e3ef8d15bfc5c31ee5f8aa894f99f482325c1a1efb0df",
         "functions": [
           "ABS",
@@ -18235,7 +18350,7 @@
         ]
       },
       {
-        "name": "oracle:1046:numeric scalars",
+        "name": "oracle:1059:numeric scalars",
         "sqlSha256": "edf521c0d6ffef440ee791c9aaa54b2375d9406ff81ef46e404966f5ee38cfcb",
         "functions": [
           "EXP",
@@ -18248,7 +18363,7 @@
         ]
       },
       {
-        "name": "oracle:1047:numeric scalars",
+        "name": "oracle:1060:numeric scalars",
         "sqlSha256": "01045ca9efe1f8a8d110b0e751fbb988650574290bb2604259be4574439367bc",
         "functions": [
           "LN",
@@ -18263,7 +18378,7 @@
         ]
       },
       {
-        "name": "oracle:1048:numeric scalars",
+        "name": "oracle:1061:numeric scalars",
         "sqlSha256": "1122b160fbbfa970fd14e3df0018443bd4682b843b72cd6e7e099fbacb4c6b65",
         "functions": [
           "MOD",
@@ -18274,7 +18389,7 @@
         ]
       },
       {
-        "name": "oracle:1049:numeric scalars",
+        "name": "oracle:1062:numeric scalars",
         "sqlSha256": "65d8ba21d96984abe4cd11abec6dce553749f6198796de7c31cc78c85db67d58",
         "functions": [
           "GREATEST",
@@ -18285,7 +18400,7 @@
         ]
       },
       {
-        "name": "oracle:1050:numeric scalars",
+        "name": "oracle:1063:numeric scalars",
         "sqlSha256": "02f3e4fea8ed62d813f5bb5b3b4c7c0c2d5db433f5cdb30fe4e87a82878f99d4",
         "functions": [
           "IFNULL"
@@ -18295,7 +18410,7 @@
         ]
       },
       {
-        "name": "oracle:1051:string scalars",
+        "name": "oracle:1064:string scalars",
         "sqlSha256": "82ed7bfb9d5540dd94950db1a18400ec6327e36decb659b0cf70600856db3091",
         "functions": [
           "CONCAT_WS"
@@ -18305,7 +18420,7 @@
         ]
       },
       {
-        "name": "oracle:1052:string scalars",
+        "name": "oracle:1065:string scalars",
         "sqlSha256": "e7c7385bd4c5914b65e09f136606e3be5e0e661e2a782b926f34b88535eb857a",
         "functions": [
           "LPAD",
@@ -18319,7 +18434,7 @@
         ]
       },
       {
-        "name": "oracle:1053:string scalars",
+        "name": "oracle:1066:string scalars",
         "sqlSha256": "554bbaf6541f81ab432ec3b61b1383a914680d621c9149873f8686ecedbfa484",
         "functions": [
           "FIND_IN_SET",
@@ -18330,7 +18445,7 @@
         ]
       },
       {
-        "name": "oracle:1054:string scalars",
+        "name": "oracle:1067:string scalars",
         "sqlSha256": "67afb3a2bf9bb30c2b390719b7ff51b2f270be4a168a17ab69f48a18cd05ce84",
         "functions": [
           "ASCII",
@@ -18343,7 +18458,7 @@
         ]
       },
       {
-        "name": "oracle:1055:string scalars",
+        "name": "oracle:1068:string scalars",
         "sqlSha256": "2588f6641a96d25125f8720721adfd326d3f75914da9adca2c6ee8158e5c8611",
         "functions": [
           "ELT",
@@ -18355,7 +18470,7 @@
         ]
       },
       {
-        "name": "oracle:1056:string scalars",
+        "name": "oracle:1069:string scalars",
         "sqlSha256": "3cff3b3646e1313a0f3433725d6e0057d73911254570bf0ab460209e9a639449",
         "functions": [
           "FROM_BASE64",
@@ -18366,7 +18481,7 @@
         ]
       },
       {
-        "name": "oracle:1057:decimal arithmetic",
+        "name": "oracle:1070:decimal arithmetic",
         "sqlSha256": "d232df0b50bfb58bac5bbde8dfdd1faeb7838db4ec674c08235dbdba7a6163bb",
         "functions": [
           "CAST"
@@ -18376,7 +18491,7 @@
         ]
       },
       {
-        "name": "oracle:1058:decimal arithmetic",
+        "name": "oracle:1071:decimal arithmetic",
         "sqlSha256": "f5c9e0de6e0e912ddeb3f323a503fbd447fa191e959408ddd96bd048caf7d2d4",
         "functions": [
           "CAST"
@@ -18386,7 +18501,7 @@
         ]
       },
       {
-        "name": "oracle:1059:decimal exact comparison",
+        "name": "oracle:1072:decimal exact comparison",
         "sqlSha256": "a3687080315db7268f16bb06341aaf7ddf178a146d1a67df5a7e9c0df577f9cd",
         "functions": [
           "CAST"
@@ -18396,7 +18511,7 @@
         ]
       },
       {
-        "name": "oracle:1060:decimal exact set and modulo",
+        "name": "oracle:1073:decimal exact set and modulo",
         "sqlSha256": "31b91f3dcfb407cc0e70ec44b4c4614b3873a88da054f5d55a28b6bd309c718c",
         "functions": [
           "CAST",
@@ -18407,7 +18522,7 @@
         ]
       },
       {
-        "name": "oracle:1061:decimal ordering",
+        "name": "oracle:1074:decimal ordering",
         "sqlSha256": "f4cb71e79cfdbc6acd50ec42b3b35e6f09e7a7748b56b57022ec47d2898f021a",
         "functions": [],
         "phases": [
@@ -18415,7 +18530,7 @@
         ]
       },
       {
-        "name": "oracle:1062:decimal ordering",
+        "name": "oracle:1075:decimal ordering",
         "sqlSha256": "708faaee81a4e5a7e72b8680d5c76f9c5fd52b970b2730b96c68678467962ce9",
         "functions": [
           "OVER",
@@ -18427,7 +18542,7 @@
         ]
       },
       {
-        "name": "oracle:1063:decimal average",
+        "name": "oracle:1076:decimal average",
         "sqlSha256": "6810d0a60ac67403a6e584ea686de0bc141012f692947961591037e7d63d6d28",
         "functions": [
           "AVG"
@@ -18437,7 +18552,7 @@
         ]
       },
       {
-        "name": "oracle:1064:decimal average",
+        "name": "oracle:1077:decimal average",
         "sqlSha256": "c2fe019eee0320921d47156e8421c77faca42fa3c94d0377ff13c66bdeeb343e",
         "functions": [
           "AVG",
@@ -18448,7 +18563,7 @@
         ]
       },
       {
-        "name": "oracle:1065:decimal mixed precision boundaries",
+        "name": "oracle:1078:decimal mixed precision boundaries",
         "sqlSha256": "b4c6efb7878fb9cb5f4c5ad93c63cce29f8c658dde608f65d345fcc5bf9b38a0",
         "functions": [
           "CAST"
@@ -18458,7 +18573,7 @@
         ]
       },
       {
-        "name": "oracle:1066:decimal exact grouping distinct and extremes",
+        "name": "oracle:1079:decimal exact grouping distinct and extremes",
         "sqlSha256": "f01a15fc35980b3e80c43f254cae6007cc9c7cfab8fa130a48f58484f3c69605",
         "functions": [
           "CAST",
@@ -18471,7 +18586,7 @@
         ]
       },
       {
-        "name": "oracle:1067:decimal exact distinct ordering",
+        "name": "oracle:1080:decimal exact distinct ordering",
         "sqlSha256": "d721806f1a78abc8e78ba59078ec097329be68ebfa8ad54cefce3f318f358eaa",
         "functions": [
           "CAST"
@@ -18481,7 +18596,7 @@
         ]
       },
       {
-        "name": "oracle:1068:decimal mixed comparison and join keys",
+        "name": "oracle:1081:decimal mixed comparison and join keys",
         "sqlSha256": "d5f4b40e5a68d8f31def688dc59e490136221377fb231538afed158442d4c096",
         "functions": [
           "CAST"
@@ -18491,7 +18606,7 @@
         ]
       },
       {
-        "name": "oracle:1069:datetime helpers",
+        "name": "oracle:1082:datetime helpers",
         "sqlSha256": "d32a0b375a2cea129db243c7a3bc97a53dd0394ae976cd7df216f889aebd8ea4",
         "functions": [
           "TIMESTAMPDIFF"
@@ -18501,7 +18616,7 @@
         ]
       },
       {
-        "name": "oracle:1070:datetime helpers",
+        "name": "oracle:1083:datetime helpers",
         "sqlSha256": "1afd38f93844e449bc0978f51cc473304fef817b6f7388db1ffe4dce4550d3ad",
         "functions": [
           "TIMESTAMPDIFF"
@@ -18511,7 +18626,7 @@
         ]
       },
       {
-        "name": "oracle:1071:datetime helpers",
+        "name": "oracle:1084:datetime helpers",
         "sqlSha256": "3c8a9fc5b80783bf2cc5b1119b1d9f54578e3e06382072cfa9acd3dec4d47bae",
         "functions": [
           "CEIL",
@@ -18522,7 +18637,7 @@
         ]
       },
       {
-        "name": "oracle:1072:datetime helpers",
+        "name": "oracle:1085:datetime helpers",
         "sqlSha256": "ec7d642097d47de3fba4955d5ba66f0127cb1e88e36b02f69cebbca4aceb0d52",
         "functions": [],
         "phases": [
@@ -18530,7 +18645,7 @@
         ]
       },
       {
-        "name": "oracle:1073:datetime helpers",
+        "name": "oracle:1086:datetime helpers",
         "sqlSha256": "882641dc0ba26c51f8baf3d2a4281ee72f90e3623dd8207bc26eccb2551d2d63",
         "functions": [
           "CEIL",
@@ -18541,7 +18656,7 @@
         ]
       },
       {
-        "name": "oracle:1074:diversify decimal column aggregates",
+        "name": "oracle:1087:diversify decimal column aggregates",
         "sqlSha256": "eae1ba003c3b28ee34a454d48b85c06f68a6dc0e387da228042927246dce6553",
         "functions": [
           "AVG",
@@ -18556,7 +18671,7 @@
         ]
       },
       {
-        "name": "oracle:1075:diversify decimal column aggregates",
+        "name": "oracle:1088:diversify decimal column aggregates",
         "sqlSha256": "58d95bc0939576c9cdb2120ae5f40ae64657b980f8a26cf38a7cfaa945efe8bc",
         "functions": [
           "AVG",
@@ -18569,7 +18684,7 @@
         ]
       },
       {
-        "name": "oracle:1076:diversify decimal column math",
+        "name": "oracle:1089:diversify decimal column math",
         "sqlSha256": "0cce9640feab4941266185ac0982b4f8ca51dad58ce4329f20655ecd0692a656",
         "functions": [
           "ROUND",
@@ -18580,7 +18695,7 @@
         ]
       },
       {
-        "name": "oracle:1077:diversify decimal beyond float64",
+        "name": "oracle:1090:diversify decimal beyond float64",
         "sqlSha256": "c861c203603c76f91f2e5d3279226505c5973cd42485bf75cbb68a700aa631d2",
         "functions": [
           "CAST"
@@ -18590,7 +18705,7 @@
         ]
       },
       {
-        "name": "oracle:1078:diversify decimal join key",
+        "name": "oracle:1091:diversify decimal join key",
         "sqlSha256": "f29a0127f0bfa9e8fc8620524340a8d42e7ba8687614a0f730eced9e6632a146",
         "functions": [
           "CAST"
@@ -18600,7 +18715,7 @@
         ]
       },
       {
-        "name": "oracle:1079:diversify outer join nullability",
+        "name": "oracle:1092:diversify outer join nullability",
         "sqlSha256": "f72cded79827367f043834160eab5779909c4e2796ab1cf750e522aac915c9b0",
         "functions": [
           "COALESCE",
@@ -18612,7 +18727,7 @@
         ]
       },
       {
-        "name": "oracle:1080:diversify outer join unmatched orders",
+        "name": "oracle:1093:diversify outer join unmatched orders",
         "sqlSha256": "38db75f4a9697dff55d31f690c3f9627e37b0ea228aaf13dde091b0bf6c3bd0e",
         "functions": [],
         "phases": [
@@ -18620,7 +18735,7 @@
         ]
       },
       {
-        "name": "oracle:1081:diversify temporal column",
+        "name": "oracle:1094:diversify temporal column",
         "sqlSha256": "7ecfa606ba3ae585b5f83cbe964cbcc99e71a877de3380f3608cdafe0b183d1e",
         "functions": [
           "DATE",
@@ -18634,7 +18749,7 @@
         ]
       },
       {
-        "name": "oracle:1082:diversify temporal bucketing",
+        "name": "oracle:1095:diversify temporal bucketing",
         "sqlSha256": "9a2d3ab46a68096f26860a453d8222dc50644812b460451cb4ad5fdd1f1c4b15",
         "functions": [
           "COUNT",
@@ -18647,7 +18762,7 @@
         ]
       },
       {
-        "name": "oracle:1083:diversify convert_tz on column",
+        "name": "oracle:1096:diversify convert_tz on column",
         "sqlSha256": "f2c1f6ec297e4d11e30e55e2d8163cf0b8ebb64eef5977427321538f1fefab95",
         "functions": [
           "CONVERT_TZ",
@@ -18658,7 +18773,7 @@
         ]
       },
       {
-        "name": "oracle:1084:diversify json column extract",
+        "name": "oracle:1097:diversify json column extract",
         "sqlSha256": "cf5acd7e3e5e4dc62279435adcb4bc3fbe71f87a04bf6ed3992a4ee992e1598b",
         "functions": [
           "JSON_EXTRACT",
@@ -18669,7 +18784,7 @@
         ]
       },
       {
-        "name": "oracle:1085:diversify json contains and length",
+        "name": "oracle:1098:diversify json contains and length",
         "sqlSha256": "e359f80e94751414f0cbea35c5e954646a61c9a3570b5a3c77d3191074b710ee",
         "functions": [
           "JSON_CONTAINS",
@@ -18682,7 +18797,7 @@
         ]
       },
       {
-        "name": "oracle:1086:diversify json null rows",
+        "name": "oracle:1099:diversify json null rows",
         "sqlSha256": "5d782a88945336bf739e895823f234a1b223cfc2576ff86eeb0f2a466ad7ed56",
         "functions": [
           "COALESCE",
@@ -18693,7 +18808,7 @@
         ]
       },
       {
-        "name": "oracle:1087:diversify window on decimal",
+        "name": "oracle:1100:diversify window on decimal",
         "sqlSha256": "10f9623affd5023f0daf5df28448862dbc8871e23a1a63c6ee50af0469460d32",
         "functions": [
           "OVER",
@@ -18706,7 +18821,7 @@
         ]
       },
       {
-        "name": "oracle:1088:diversify correlated scalar on orders",
+        "name": "oracle:1101:diversify correlated scalar on orders",
         "sqlSha256": "af7c8d5685dbf2350793090e22cf40b292e16da94fd332e561018b2caaf4c26f",
         "functions": [
           "COALESCE",
@@ -18718,7 +18833,7 @@
         ]
       },
       {
-        "name": "oracle:1089:diversify correlated exists",
+        "name": "oracle:1102:diversify correlated exists",
         "sqlSha256": "a0f3925b3bc9d1f9c93b33e40b370ca1e49e371297201bc698484d8a2984a8b9",
         "functions": [
           "EXISTS"
@@ -18728,7 +18843,7 @@
         ]
       },
       {
-        "name": "oracle:1090:diversify in subquery",
+        "name": "oracle:1103:diversify in subquery",
         "sqlSha256": "695caa2ac251d2be8dc4795237f5a7e202a9193eadbbdc621ece3f7c9bf1a375",
         "functions": [
           "IN"
@@ -18738,7 +18853,7 @@
         ]
       },
       {
-        "name": "oracle:1091:diversify set ops with columns",
+        "name": "oracle:1104:diversify set ops with columns",
         "sqlSha256": "45f7765f0d6297fcbebdcb6495af8766ce8df8b8457fd016a65e90ba4157e35c",
         "functions": [],
         "phases": [
@@ -18746,7 +18861,7 @@
         ]
       },
       {
-        "name": "oracle:1092:diversify set ops except",
+        "name": "oracle:1105:diversify set ops except",
         "sqlSha256": "e2b221432ed332cdfd701b3ed7b9d5ec7dbd0cffa807d7ad48da7f2109071a41",
         "functions": [],
         "phases": [
@@ -18754,7 +18869,7 @@
         ]
       },
       {
-        "name": "oracle:1093:diversify three table join",
+        "name": "oracle:1106:diversify three table join",
         "sqlSha256": "a1be6b6e5ba78c2a8d2e785a0626d50b4aca16325c5095e84778b5973fcd3f0b",
         "functions": [],
         "phases": [
@@ -18762,7 +18877,7 @@
         ]
       },
       {
-        "name": "oracle:1094:diversify case on status and decimal",
+        "name": "oracle:1107:diversify case on status and decimal",
         "sqlSha256": "e8207a035d105ab5b609d82ef7bd6a489676c32f69f604c68636c63579241c15",
         "functions": [
           "COUNT",
@@ -18773,7 +18888,7 @@
         ]
       },
       {
-        "name": "oracle:1095:diversify group_concat statuses",
+        "name": "oracle:1108:diversify group_concat statuses",
         "sqlSha256": "e3e8a127f7e83cdd41da03f08298ae81113bc8b0fe1f3bb9ea44bfc7c9afdfa4",
         "functions": [
           "COUNT",
@@ -18784,7 +18899,7 @@
         ]
       },
       {
-        "name": "oracle:1096:diversify filter null json and temporal range",
+        "name": "oracle:1109:diversify filter null json and temporal range",
         "sqlSha256": "1a46b80887ac86fc02b4c884b560b4915180048c8f7c44abfc42e25913edb8d9",
         "functions": [],
         "phases": [
@@ -18792,7 +18907,7 @@
         ]
       },
       {
-        "name": "oracle:1097:diversify distinct status total pairs",
+        "name": "oracle:1110:diversify distinct status total pairs",
         "sqlSha256": "bcc621ac4a560f1e505fa5e23908031758c73710a516c40f45121815f8972d38",
         "functions": [
           "ROUND"
@@ -18802,7 +18917,7 @@
         ]
       },
       {
-        "name": "oracle:1098:diversify decimal average by user",
+        "name": "oracle:1111:diversify decimal average by user",
         "sqlSha256": "e6bec10a6316fa15f877cf205e45743f6eecab365e932a739b644d29cfe70588",
         "functions": [
           "AVG",
@@ -18813,7 +18928,7 @@
         ]
       },
       {
-        "name": "oracle:1099:diversify date_add on column",
+        "name": "oracle:1112:diversify date_add on column",
         "sqlSha256": "f773266b2ea9e7bbb83cd7ea71370fa07027f9f7225f06c306e55135ba4847df",
         "functions": [
           "DATE_ADD",
@@ -18824,7 +18939,7 @@
         ]
       },
       {
-        "name": "oracle:1100:diversify like and string on status",
+        "name": "oracle:1113:diversify like and string on status",
         "sqlSha256": "505e3134f7c7aa3ae2bb690a5b4d7eb03a0f1b93c025139e0919820a6ebadc45",
         "functions": [
           "UPPER"
@@ -18834,7 +18949,7 @@
         ]
       },
       {
-        "name": "oracle:1101:diversify multi-key style equality join",
+        "name": "oracle:1114:diversify multi-key style equality join",
         "sqlSha256": "5488248d30ff1ced9be32801e0cf85df972faf679ec83a81bdef938e513d3320",
         "functions": [
           "CONCAT"
@@ -18844,7 +18959,7 @@
         ]
       },
       {
-        "name": "oracle:1102:diversify distinct user ids with orders",
+        "name": "oracle:1115:diversify distinct user ids with orders",
         "sqlSha256": "8eabb5b4cb715272a8fb68ee0e32746d668bba6407c15b589d3d10521a562936",
         "functions": [],
         "phases": [
@@ -18852,7 +18967,7 @@
         ]
       },
       {
-        "name": "oracle:1103:diversify having on decimal sum",
+        "name": "oracle:1116:diversify having on decimal sum",
         "sqlSha256": "c68e96391ba94d6c3bb59e038107898a7b7afcbc9b5bdeba8e9020bc34cacb9a",
         "functions": [
           "SUM"
@@ -18862,7 +18977,7 @@
         ]
       },
       {
-        "name": "oracle:1104:diversify order by decimal column",
+        "name": "oracle:1117:diversify order by decimal column",
         "sqlSha256": "c87c78a25449e9c8faa7244b010bc149892cf18f223f757d9bd0d0f10a1ed8bc",
         "functions": [],
         "phases": [
@@ -18870,7 +18985,7 @@
         ]
       },
       {
-        "name": "oracle:1105:diversify coalesce meta length",
+        "name": "oracle:1118:diversify coalesce meta length",
         "sqlSha256": "8adb9c0b15d357e9ea33f69ba12f44b884741f6c5db6c3f4c2eee998d39acb99",
         "functions": [
           "COALESCE",
@@ -18881,7 +18996,7 @@
         ]
       },
       {
-        "name": "oracle:1106:diversify between on decimal",
+        "name": "oracle:1119:diversify between on decimal",
         "sqlSha256": "32e65741ac7934a40971c61a4763929746c20b5a805a85753f8e2723f1ffac21",
         "functions": [],
         "phases": [
@@ -18889,7 +19004,7 @@
         ]
       },
       {
-        "name": "oracle:1107:diversify not in statuses",
+        "name": "oracle:1120:diversify not in statuses",
         "sqlSha256": "4c34e5027288f00678f43ccafcfb6eab4aec47d5ea2fa8c33819922d8aedd666",
         "functions": [
           "IN"
@@ -18899,7 +19014,7 @@
         ]
       },
       {
-        "name": "oracle:1108:diversify derived table on orders",
+        "name": "oracle:1121:diversify derived table on orders",
         "sqlSha256": "a227d3c96d22922b0ed6349ae7dcf66840e59b4c52f5e4099e121cd6f35406fe",
         "functions": [
           "AVG",
@@ -18910,7 +19025,7 @@
         ]
       },
       {
-        "name": "oracle:1109:diversify cte spend",
+        "name": "oracle:1122:diversify cte spend",
         "sqlSha256": "4c686d5f786c319fb0d2f8a8cf298d11591f4b42db40662e6559cded33221b54",
         "functions": [
           "AS",
@@ -18922,7 +19037,7 @@
         ]
       },
       {
-        "name": "oracle:1110:diversify lag lead on totals",
+        "name": "oracle:1123:diversify lag lead on totals",
         "sqlSha256": "4ed0fc9bd08e3e2b6dde8a14bfc607488828cae238641116510a81154e5d1021",
         "functions": [
           "LAG",
@@ -18934,7 +19049,7 @@
         ]
       },
       {
-        "name": "oracle:1111:diversify json object constructor with column",
+        "name": "oracle:1124:diversify json object constructor with column",
         "sqlSha256": "2d4ce42a1728d5959ed171205b96ff1568ee767d9a2d9a7ffc9f48fdfcf097f3",
         "functions": [
           "JSON_OBJECT"
@@ -18944,7 +19059,7 @@
         ]
       },
       {
-        "name": "oracle:1112:diversify unsigned order id filter",
+        "name": "oracle:1125:diversify unsigned order id filter",
         "sqlSha256": "f049c22577fdd389dc877c11e716eb5eaa6785d90d4b9423ba62145c82baa468",
         "functions": [],
         "phases": [
@@ -18952,7 +19067,7 @@
         ]
       },
       {
-        "name": "oracle:1113:diversify min max datetime",
+        "name": "oracle:1126:diversify min max datetime",
         "sqlSha256": "f52216b6e7beb88115ce9427b2ba0cad45f7812982d6aa920b40abfe3d67c84b",
         "functions": [
           "COUNT",
