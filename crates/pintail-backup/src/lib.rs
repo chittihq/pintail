@@ -280,22 +280,24 @@ pub async fn create_backup_with_options(
             .context("backup byte counter overflow")?;
         uploaded_objects += 1;
 
-        let transfers = stream::iter(table.segments.iter().map(|segment| {
+        let mut pending = Vec::with_capacity(table.segments.len());
+        for segment in &table.segments {
             let key = format!("{root}/tables/{table_key}/segments/{}", segment.file_name);
             let logical = format!("{}/{}", table.name, segment.file_name);
-            transfer_segment(
+            pending.push(transfer_segment(
                 store.as_ref(),
                 segment,
                 key,
                 &source.backup_id,
                 inherited.get(&logical).copied(),
-            )
-        }))
-        .buffered(options.concurrency)
-        // Drain all transfers before returning an error so each active upload
-        // can complete or abort; no background task outlives the snapshot pin.
-        .collect::<Vec<_>>()
-        .await;
+            ));
+        }
+        let transfers = stream::iter(pending)
+            .buffered(options.concurrency)
+            // Drain all transfers before returning an error so each active upload
+            // can complete or abort; no background task outlives the snapshot pin.
+            .collect::<Vec<_>>()
+            .await;
         let mut segments = Vec::with_capacity(transfers.len());
         for transfer in transfers {
             let (reference, reused) = transfer?;
@@ -554,15 +556,15 @@ async fn restore_objects(
         }
     }
     let count = u64::try_from(objects.len())?;
-    let transfers = stream::iter(
-        objects
-            .into_iter()
-            .map(|(reference, path)| async move { restore_object(store, reference, &path).await }),
-    )
-    .buffered(options.concurrency)
-    // Drain before removing staging, including when another transfer fails.
-    .collect::<Vec<_>>()
-    .await;
+    let mut pending = Vec::with_capacity(objects.len());
+    for (reference, path) in objects {
+        pending.push(restore_object(store, reference, path));
+    }
+    let transfers = stream::iter(pending)
+        .buffered(options.concurrency)
+        // Drain before removing staging, including when another transfer fails.
+        .collect::<Vec<_>>()
+        .await;
     let mut bytes = 0_u64;
     for transfer in transfers {
         bytes = bytes
@@ -575,7 +577,7 @@ async fn restore_objects(
 async fn restore_object(
     store: &dyn ObjectStore,
     reference: &ObjectReference,
-    path: &FsPath,
+    path: PathBuf,
 ) -> Result<u64> {
     let mut body = store
         .get(&Path::parse(&reference.key)?)

@@ -130,6 +130,32 @@ fn prefix_validation_is_an_accident_guard() {
     validate_prefix("pintail/production").expect("safe prefix");
 }
 
+#[test]
+fn transfer_futures_can_run_in_multithreaded_handlers() {
+    fn assert_send<T: Send>(_: T) {}
+    let store: Arc<dyn ObjectStore> = Arc::new(InMemory::new());
+    assert_send(create_backup(
+        store.clone(),
+        "test",
+        source("base", None, vec![]),
+        None,
+    ));
+    let manifest = pintail_backup::BackupManifest {
+        format_version: pintail_backup::BACKUP_FORMAT_VERSION,
+        database_id: "source-db".into(),
+        backup_id: "base".into(),
+        parent_id: None,
+        created_at: String::new(),
+        control_plane: json!({}),
+        tables: vec![],
+    };
+    assert_send(restore_backup(
+        store.as_ref(),
+        manifest,
+        std::path::Path::new("unused"),
+    ));
+}
+
 #[tokio::test]
 async fn multipart_tail_reuse_and_same_size_corruption() {
     use pintail_backup::{
