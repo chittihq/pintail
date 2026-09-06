@@ -34,15 +34,60 @@ interface Row {
   speedupVsClickhouse: number
 }
 
+interface ConcurrencyPoint {
+  clients: number
+  throughput: number
+  p95Ms: number
+  errors: number
+}
+
+interface ConcurrencyRow {
+  /// `mixed Q2–Q8` or a single query's name; older artifacts named the
+  /// pinned query under `query`.
+  workload?: string
+  query?: string
+  pintail: ConcurrencyPoint
+  clickhouse: ConcurrencyPoint
+}
+
 interface Artifact {
   generatedAt: string
   rows: Record<string, number>
   queries: Row[]
   novelQueries: Row[]
+  concurrency?: ConcurrencyRow[]
   methodology: { pintailPlacement: string; iterations: string }
 }
 
 const ms = (value: number) => `${Math.round(value).toLocaleString()} ms`
+
+/// The mixed-workload concurrency sweep, when the artifact carries one. An
+/// artifact from before the sweep was mixed (a single query pinned to every
+/// client) renders nothing here rather than a table that would be misread.
+function concurrencySection(artifact: Artifact): string[] {
+  const rows = (artifact.concurrency ?? []).filter((row) =>
+    (row.workload ?? row.query ?? '').startsWith('mixed'),
+  )
+  if (rows.length === 0) return []
+  const workload = rows[0].workload ?? rows[0].query
+  return [
+    `**Concurrency — ${workload}.** Simultaneous clients, each call taking the`,
+    'next of Q2 through Q8 in turn, against both engines executing (memo off,',
+    'query cache off). Completed queries per second and the p95 latency, which',
+    'together show whether an engine holds its latency while it adds throughput.',
+    '',
+    '| Clients | Pintail /s | Pintail p95 | CH /s | CH p95 |',
+    '|---:|---:|---:|---:|---:|',
+    ...rows.map(
+      (row) =>
+        `| ${row.pintail.clients} | ${row.pintail.throughput}` +
+        `${row.pintail.errors ? ` (${row.pintail.errors} errors)` : ''} | ${row.pintail.p95Ms} ms | ` +
+        `${row.clickhouse.throughput}${row.clickhouse.errors ? ` (${row.clickhouse.errors} errors)` : ''} | ` +
+        `${row.clickhouse.p95Ms} ms |`,
+    ),
+    '',
+  ]
+}
 
 /// Strips the `Qn: ` / `Nn: ` prefix — the ordinal is an artifact of the
 /// harness and means nothing to a reader.
@@ -85,6 +130,7 @@ function render(artifact: Artifact): string {
         `${ms(row.clickhouseFinalMs)} | ${row.speedupVsClickhouse.toFixed(2)}× |`,
     ),
     '',
+    ...concurrencySection(artifact),
     'ClickHouse is measured in both configurations: plain `MergeTree` for its',
     'raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is',
     'the comparable one because it does the merge-on-read work a CDC replica owes',

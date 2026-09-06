@@ -88,7 +88,7 @@ const CONCURRENCY_CLIENTS = (process.env.BENCHMARK_CONCURRENCY ?? '1,4,8,16')
   .filter((value) => Number.isFinite(value) && value > 0)
 const CONCURRENCY_SECONDS = Number(process.env.BENCHMARK_CONCURRENCY_SECONDS ?? 10)
 const mysqlImage = 'mysql:8.4'
-const clickhouseImage = 'clickhouse/clickhouse-server:25.8'
+const clickhouseImage = 'clickhouse/clickhouse-server:26.8'
 const mysqlServerArgs = [
   '--server-id=909',
   '--log-bin=mysql-bin',
@@ -765,6 +765,49 @@ type ConcurrencyPoint = {
   errors: number
 }
 
+/// One query's share of a mixed sweep.
+type ConcurrencyShare = {
+  completed: number
+  medianMs: number
+  p95Ms: number
+  errors: number
+}
+
+/// One client level of one workload: the aggregate point per engine, and
+/// for a mixed workload each query's own share, so a good aggregate cannot
+/// hide one shape that collapsed.
+type ConcurrencyRow = {
+  /// `mixed Q2–Q8` or a single query's name.
+  workload: string
+  pintail: ConcurrencyPoint
+  clickhouse: ConcurrencyPoint
+  perQuery?: Record<string, { pintail: ConcurrencyShare; clickhouse: ConcurrencyShare }>
+}
+
+/// Round-robin over `queries`, per call across all clients: call n runs
+/// query n mod k, so every level of the sweep sees every shape in the same
+/// proportion and no client is pinned to one query.
+function roundRobin<T>(queries: T[]): () => T {
+  let call = 0
+  return () => {
+    const next = queries[call % queries.length]
+    call += 1
+    return next
+  }
+}
+
+function summarise(latencies: number[], errors: number): ConcurrencyShare {
+  const sorted = [...latencies].sort((left, right) => left - right)
+  const at = (index: number) =>
+    sorted.length === 0 ? 0 : Math.round(sorted[Math.min(sorted.length - 1, index)])
+  return {
+    completed: sorted.length,
+    medianMs: at(Math.floor(sorted.length / 2)),
+    p95Ms: at(Math.ceil(sorted.length * 0.95) - 1),
+    errors,
+  }
+}
+
 /// Drives `clients` concurrent callers at one operation for `seconds`.
 ///
 /// Every published number so far is single-client, which says nothing about
@@ -776,39 +819,48 @@ type ConcurrencyPoint = {
 /// can rise while the slowest decile becomes unusable, and a flat p95 can
 /// hide an engine that stopped accepting work.
 async function measureConcurrency(
-  operation: () => Promise<unknown>,
+  operation: () => { label: string; done: Promise<unknown> },
   clients: number,
   seconds: number,
-): Promise<ConcurrencyPoint> {
+): Promise<{ point: ConcurrencyPoint; shares: Record<string, ConcurrencyShare> }> {
   const latencies: number[] = []
+  const perLabel = new Map<string, { latencies: number[]; errors: number }>()
   let errors = 0
   const until = performance.now() + seconds * 1000
   const client = async () => {
     while (performance.now() < until) {
       const started = performance.now()
+      const { label, done } = operation()
+      const share = perLabel.get(label) ?? { latencies: [], errors: 0 }
+      perLabel.set(label, share)
       try {
-        await operation()
-        latencies.push(performance.now() - started)
+        await done
+        const latency = performance.now() - started
+        latencies.push(latency)
+        share.latencies.push(latency)
       } catch {
         // Counted, not thrown: an engine that refuses work under load has
         // told us something, and losing the run would lose the finding.
         errors += 1
+        share.errors += 1
       }
     }
   }
   const started = performance.now()
   await Promise.all(Array.from({ length: clients }, client))
   const elapsed = (performance.now() - started) / 1000
-  const sorted = [...latencies].sort((left, right) => left - right)
-  const at = (index: number) =>
-    sorted.length === 0 ? 0 : Math.round(sorted[Math.min(sorted.length - 1, index)])
+  const whole = summarise(latencies, errors)
+  const shares: Record<string, ConcurrencyShare> = {}
+  for (const [label, share] of [...perLabel.entries()].sort()) {
+    shares[label] = summarise(share.latencies, share.errors)
+  }
   return {
-    clients,
-    completed: sorted.length,
-    throughput: Math.round((sorted.length / elapsed) * 10) / 10,
-    medianMs: at(Math.floor(sorted.length / 2)),
-    p95Ms: at(Math.ceil(sorted.length * 0.95) - 1),
-    errors,
+    point: {
+      clients,
+      throughput: Math.round((whole.completed / elapsed) * 10) / 10,
+      ...whole,
+    },
+    shares,
   }
 }
 
@@ -1052,7 +1104,7 @@ async function runQueries(
 function publishResults(
   allResults: QueryResult[],
   engineResults: QueryResult[] = [],
-  concurrency: Array<{ query: string; pintail: ConcurrencyPoint; clickhouse: ConcurrencyPoint }> = [],
+  concurrency: ConcurrencyRow[] = [],
 ) {
   // Gate totals keep their original definition: repeat-query medians of
   // the canonical eight. Novel (cold) rows publish separately — they
@@ -1078,7 +1130,7 @@ function publishResults(
     rows: { users: 100_000, products: 10_000, orders: orderRows },
     methodology: {
       pintailPlacement: containerizedPintail
-        ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse)'
+        ? 'container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse), 4 GiB per-query memory ceiling'
         : 'LOCAL PROCESS — cross-host numbers, not comparable',
       iterations: baselineProvenance
         ? `warm: ${WARMUP_COUNT} warmup + ${RUN_COUNT} measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from ${baselineProvenance}`
@@ -1144,12 +1196,16 @@ function publishResults(
     '',
     `Measured ${generatedAt} with ${orderRows.toLocaleString()} orders.`,
     '',
-    'All engines run on the docker host under identical limits (8 CPUs, 8 GB).',
+    'All engines run on the docker host under identical limits (8 CPUs, 8 GB);',
+    "pintail's per-query memory ceiling is 4 GiB inside its container.",
     baselineProvenance
       ? `Canonical queries: ${RUN_COUNT} measured runs after ${WARMUP_COUNT} warmups; ad-hoc queries: 5 distinct cold variants. MySQL baseline measured ${baselineProvenance}.`
       : `Canonical queries: ${RUN_COUNT} measured runs after ${WARMUP_COUNT} warmups; ad-hoc queries: 5 distinct cold variants.`,
     'CH RMT+FINAL = ReplacingMergeTree read with `final = 1` — ClickHouse doing',
-    "pintail's always-correct merge-on-read duty.",
+    "pintail's always-correct merge-on-read duty. It is charged WITHOUT a live",
+    'update tail (the snapshot is fully merged before the timed queries), so it',
+    "is a lower bound on ClickHouse's merge-on-read cost; issue #31 tracks the",
+    'phase that keeps writes flowing while the queries run.',
     '',
     'NOT like for like: the canonical table is served from pintail\'s settled',
     "aggregate memo, while ClickHouse's query cache is off and it executes every",
@@ -1193,17 +1249,44 @@ function publishResults(
           'actually meets, and where admission, memory accounting and lock',
           'contention appear. Throughput and p95 together: throughput alone can',
           'rise while the slowest decile becomes unusable, and a flat p95 can',
-          'hide an engine that has stopped accepting work.',
+          'hide an engine that has stopped accepting work. The mixed workload',
+          'round-robins Q2 through Q8 per call across all clients, so no client',
+          'is pinned to one shape; the single-query row is the full-table count',
+          'alone, the cheapest shape, kept as a ceiling on request rate.',
           '',
-          '| Clients | Pintail /s | Pintail p95 | Pintail errors | CH /s | CH p95 | CH errors |',
-          '|---:|---:|---:|---:|---:|---:|---:|',
-          ...concurrency.map(
-            (row) =>
-              `| ${row.pintail.clients} | ${row.pintail.throughput} | ${row.pintail.p95Ms} ms | ` +
-              `${row.pintail.errors} | ${row.clickhouse.throughput} | ${row.clickhouse.p95Ms} ms | ` +
-              `${row.clickhouse.errors} |`,
-          ),
-          '',
+          ...[...new Set(concurrency.map((row) => row.workload))].flatMap((workload) => {
+            const rows = concurrency.filter((row) => row.workload === workload)
+            const widest = rows[rows.length - 1]
+            return [
+              `### ${workload}`,
+              '',
+              '| Clients | Pintail /s | Pintail p95 | Pintail errors | CH /s | CH p95 | CH errors |',
+              '|---:|---:|---:|---:|---:|---:|---:|',
+              ...rows.map(
+                (row) =>
+                  `| ${row.pintail.clients} | ${row.pintail.throughput} | ${row.pintail.p95Ms} ms | ` +
+                  `${row.pintail.errors} | ${row.clickhouse.throughput} | ${row.clickhouse.p95Ms} ms | ` +
+                  `${row.clickhouse.errors} |`,
+              ),
+              '',
+              ...(widest?.perQuery
+                ? [
+                    `Per query at ${widest.pintail.clients} clients (every level is in results.json):`,
+                    '',
+                    '| Query | Pintail median | Pintail p95 | Pintail done | CH median | CH p95 | CH done |',
+                    '|---|---:|---:|---:|---:|---:|---:|',
+                    ...Object.entries(widest.perQuery).map(
+                      ([query, share]) =>
+                        `| ${query} | ${share.pintail.medianMs} ms | ${share.pintail.p95Ms} ms | ` +
+                        `${share.pintail.completed}${share.pintail.errors ? ` (${share.pintail.errors} errors)` : ''} | ` +
+                        `${share.clickhouse.medianMs} ms | ${share.clickhouse.p95Ms} ms | ` +
+                        `${share.clickhouse.completed}${share.clickhouse.errors ? ` (${share.clickhouse.errors} errors)` : ''} |`,
+                    ),
+                    '',
+                  ]
+                : []),
+            ]
+          }),
         ]
       : []),
     ...(engineResults.length > 0
@@ -1532,11 +1615,7 @@ async function main() {
   // Restarted rather than re-seeded: the replica sits on a named volume, so
   // this costs a container restart instead of another full snapshot.
   let engineResults: QueryResult[] = []
-  const concurrency: Array<{
-    query: string
-    pintail: ConcurrencyPoint
-    clickhouse: ConcurrencyPoint
-  }> = []
+  const concurrency: ConcurrencyRow[] = []
   if (containerizedPintail) {
     log('restarting pintail with the result memo disabled (engine-speed track)')
     await docker('rm', '--force', pintailName).catch(() => undefined)
@@ -1574,38 +1653,78 @@ async function main() {
     // a server actually faces: two engines with the same median can diverge
     // completely here, one holding latency while adding throughput and the
     // other collapsing as its admission or memory accounting serialises.
-    const concurrencyQuery =
-      benchmarkQueries.find((query) => !query.coldOnly) ?? benchmarkQueries[0]
-    for (const clients of CONCURRENCY_CLIENTS) {
-      const pintailPoint = await measureConcurrency(
-        () =>
-          api<{ rows: unknown[][] }>(engineUrl, '/api/query', {
-            method: 'POST',
-            token: setup.token,
-            body: { db: databaseId, sql: concurrencyQuery.sql },
-          }),
-        clients,
-        CONCURRENCY_SECONDS,
-      )
-      const clickhousePoint = await measureConcurrency(
-        async () => {
-          const response = await fetch(`${clickhouseUrl}/?database=benchmark_rmt`, {
-            method: 'POST',
-            headers: clickhouseHeaders,
-            body: `${concurrencyQuery.clickhouseSql ?? concurrencyQuery.sql} SETTINGS final = 1 FORMAT JSONCompact`,
-          })
-          if (!response.ok) throw new Error(await response.text())
-          await response.text()
-        },
-        clients,
-        CONCURRENCY_SECONDS,
-      )
-      concurrency.push({ query: concurrencyQuery.name, pintail: pintailPoint, clickhouse: clickhousePoint })
-      log(
-        `concurrency ${clients}: pintail ${pintailPoint.throughput}/s p95 ${pintailPoint.p95Ms}ms ` +
-          `(${pintailPoint.errors} errors) | clickhouse ${clickhousePoint.throughput}/s ` +
-          `p95 ${clickhousePoint.p95Ms}ms (${clickhousePoint.errors} errors)`,
-      )
+    //
+    // Two workloads. The mixed one round-robins the canonical Q2 through Q8
+    // per call, which is what a server's concurrent load looks like; a
+    // single cheap query pinned to every client measured request rate and
+    // was read as more than that. The full-table count stays as its own
+    // row because it is cheap and it is the ceiling on request rate.
+    const warm = benchmarkQueries.filter((query) => !query.coldOnly)
+    const workloads: Array<{ name: string; queries: typeof warm }> = [
+      { name: 'mixed Q2–Q8', queries: warm.slice(1, 8) },
+      { name: warm[0]?.name ?? 'Q1', queries: warm.slice(0, 1) },
+    ].filter((workload) => workload.queries.length > 0)
+    for (const workload of workloads) {
+      for (const clients of CONCURRENCY_CLIENTS) {
+        const pintailNext = roundRobin(workload.queries)
+        const pintail = await measureConcurrency(
+          () => {
+            const query = pintailNext()
+            return {
+              label: query.name,
+              done: api<{ rows: unknown[][] }>(engineUrl, '/api/query', {
+                method: 'POST',
+                token: setup.token,
+                body: { db: databaseId, sql: query.sql },
+              }),
+            }
+          },
+          clients,
+          CONCURRENCY_SECONDS,
+        )
+        const clickhouseNext = roundRobin(workload.queries)
+        const clickhouse = await measureConcurrency(
+          () => {
+            const query = clickhouseNext()
+            return {
+              label: query.name,
+              done: (async () => {
+                const response = await fetch(`${clickhouseUrl}/?database=benchmark_rmt`, {
+                  method: 'POST',
+                  headers: clickhouseHeaders,
+                  body: `${query.clickhouseSql ?? query.sql} SETTINGS final = 1 FORMAT JSONCompact`,
+                })
+                if (!response.ok) throw new Error(await response.text())
+                await response.text()
+              })(),
+            }
+          },
+          clients,
+          CONCURRENCY_SECONDS,
+        )
+        const row: ConcurrencyRow = {
+          workload: workload.name,
+          pintail: pintail.point,
+          clickhouse: clickhouse.point,
+        }
+        if (workload.queries.length > 1) {
+          row.perQuery = Object.fromEntries(
+            workload.queries.map((query) => [
+              query.name,
+              {
+                pintail: pintail.shares[query.name] ?? summarise([], 0),
+                clickhouse: clickhouse.shares[query.name] ?? summarise([], 0),
+              },
+            ]),
+          )
+        }
+        concurrency.push(row)
+        log(
+          `concurrency ${workload.name} × ${clients}: pintail ${pintail.point.throughput}/s ` +
+            `p95 ${pintail.point.p95Ms}ms (${pintail.point.errors} errors) | clickhouse ` +
+            `${clickhouse.point.throughput}/s p95 ${clickhouse.point.p95Ms}ms (${clickhouse.point.errors} errors)`,
+        )
+      }
     }
   } else {
     log('SKIPPING the engine-speed track: it needs the containerized pintail')

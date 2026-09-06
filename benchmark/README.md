@@ -1,7 +1,7 @@
 # Analytical benchmark
 
 This is Pintail's deterministic port of Duckling's 20-million-order analytical
-suite. One run creates isolated MySQL 8.4 and ClickHouse 25.8 containers on the
+suite. One run creates isolated MySQL 8.4 and ClickHouse 26.8 containers on the
 configured Docker host, snapshots the same MySQL tables into Pintail, verifies
 row counts, and executes the same eight aggregate queries against all three
 engines.
@@ -21,8 +21,13 @@ carry deterministic tie-break keys so the comparison is well-posed).
 - **Two ClickHouse references**: plain MergeTree (the raw-speed ceiling) and
   ReplacingMergeTree read with `final = 1` — ClickHouse performing the same
   always-correct merge-on-read duty Pintail performs, the apples-to-apples
-  target. Note: on static fully-merged data the two converge; the FINAL
-  distinction matters under a live update tail.
+  target. FINAL is charged here WITHOUT a live update tail: the snapshot is
+  loaded once and fully merged before the timed queries, so the RMT+FINAL
+  column is a lower bound on ClickHouse's merge-on-read cost and the ratio
+  against it is the most favourable one ClickHouse can get (on static,
+  fully-merged data the two ClickHouse columns converge). A phase that keeps
+  updates and deletes flowing through MySQL during the timed queries, so
+  both engines carry versions, is issue #31.
 - **Timing**: the canonical eight report medians of 5 warm runs. The four
   ad-hoc shapes report medians of 5 distinct predicate variants, each executed
   once so Pintail's exact-result memo cannot serve a repeated query. MySQL
@@ -71,7 +76,9 @@ BENCHMARK_SCALE=0.001 bun run smoke
 
 Set `PINTAIL_BENCHMARK_BINARY` to reuse an existing release binary. Otherwise
 the harness builds `pintail` in release mode. Pintail runs with an explicit
-256 MiB per-query memory ceiling. Results are written to
+4 GiB per-query memory ceiling inside its 8 GiB container (the same figure
+the production harness uses, and the one that produced the banked
+evidence). Results are written to
 `results.md` and `results.json`; non-full runs use `results-smoke.*`.
 The full artifacts are checked in as release evidence and include exact row
 counts, per-query timings, aggregate speedup, and the gate outcome.
