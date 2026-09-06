@@ -145,8 +145,8 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
-# The recovery gate repeatedly scans large fixtures. Keep development checks
-# while optimizing the comparisons and fault-enabled engine.
+# Correctness gates repeatedly scan large fixtures. Keep development checks
+# while optimizing the test harnesses and engine.
 [profile.recovery]
 inherits = "dev"
 opt-level = 2

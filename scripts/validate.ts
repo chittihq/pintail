@@ -175,7 +175,12 @@ const STAGES: Stage[] = [
     // Serial discovery avoids macOS launching every fresh test binary into
     // concurrent provenance checks. The tests themselves are fast enough that
     // this is materially quicker and more reliable than loader fan-out.
-    command: ['cargo', 'nextest', 'run', '--test-threads', '1', '--workspace'],
+    // Share the recovery profile's optimized development build while keeping
+    // resource-sensitive tests serial. Debug assertions and overflow checks stay on.
+    command: [
+      'cargo', 'nextest', 'run', '--cargo-profile', 'recovery',
+      '--test-threads', '1', '--workspace',
+    ],
   },
   {
     name: 'oracle',
