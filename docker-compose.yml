@@ -14,7 +14,7 @@
 
 services:
   pintail:
-    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.1.2-rc5}
+    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.1.2-rc6}
     # A columnar scan opens the segment files it reads, and every
     # concurrent spilling query holds a bounded handful of run files.
     # Docker's default soft limit of 1024 is a desktop default, not a
@@ -81,7 +81,7 @@ services:
     environment:
       # Surfaces the deployed release through SELECT VERSION() and the
       # health endpoint, so a deployment identifies its build on the wire.
-      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.1.2-rc5}
+      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.1.2-rc6}
       PINTAIL_DATA_DIR: /var/lib/pintail
       # Spill defaults under the data directory, so it shares that mount
       # unless PINTAIL_SPILL_DATA below points it elsewhere.

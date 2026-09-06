@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc6] - 2026-09-07
+
 ### Performance
 
 - The scan decodes direct segments in block-aligned slices of 131,072 rows,
