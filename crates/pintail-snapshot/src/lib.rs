@@ -448,7 +448,30 @@ async fn run_snapshot_inner(
                 Arc::clone(&progress),
             )
         });
-    let worker_results = join_all(futures).await;
+    let worker_results = if std::env::var_os("PINTAIL_SNAPSHOT_THREADS").is_some() {
+        let receivers = futures.map(|future| {
+            let (sender, receiver) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
+                let result = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| SnapshotError::InvalidConfiguration(error.to_string()))
+                    .and_then(|runtime| runtime.block_on(future));
+                let _ = sender.send(result);
+            });
+            async move {
+                receiver
+                    .await
+                    .map_err(|error| SnapshotError::InvalidConfiguration(error.to_string()))
+            }
+        });
+        join_all(receivers)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        join_all(futures).await
+    };
     let mut populated = Vec::new();
     let mut failed = Vec::new();
     for result in worker_results {
@@ -684,25 +707,47 @@ async fn snapshot_table(
                 columns.join(", ")
             )
         } else if let Some(cursor) = &cursor {
-            parameters.extend(cursor.iter().cloned());
-            parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
-            let key_tuple = target
-                .source
-                .key
-                .columns
-                .iter()
-                .map(|column| quote_identifier(column))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let placeholders = std::iter::repeat_n("?", cursor.len())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "SELECT {} FROM {qualified_table} \
+            if std::env::var_os("PINTAIL_SNAPSHOT_EXPAND_KEYS").is_some() && cursor.len() > 1 {
+                let mut alternatives = Vec::new();
+                for index in 0..cursor.len() {
+                    let mut terms = Vec::new();
+                    for (prefix, value) in cursor.iter().enumerate().take(index + 1) {
+                        let operator = if prefix == index { ">" } else { "=" };
+                        terms.push(format!(
+                            "{} {operator} ?",
+                            quote_identifier(&target.source.key.columns[prefix])
+                        ));
+                        parameters.push(value.clone());
+                    }
+                    alternatives.push(format!("({})", terms.join(" AND ")));
+                }
+                parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
+                format!(
+                    "SELECT {} FROM {qualified_table} WHERE {} ORDER BY {order_by} LIMIT ?",
+                    columns.join(", "),
+                    alternatives.join(" OR ")
+                )
+            } else {
+                parameters.extend(cursor.iter().cloned());
+                parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
+                let key_tuple = target
+                    .source
+                    .key
+                    .columns
+                    .iter()
+                    .map(|column| quote_identifier(column))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let placeholders = std::iter::repeat_n("?", cursor.len())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "SELECT {} FROM {qualified_table} \
                  WHERE ({key_tuple}) > ({placeholders}) \
                  ORDER BY {order_by} LIMIT ?",
-                columns.join(", ")
-            )
+                    columns.join(", ")
+                )
+            }
         } else {
             parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
             format!(
@@ -710,9 +755,11 @@ async fn snapshot_table(
                 columns.join(", ")
             )
         };
+        let fetch_started = Instant::now();
         let rows: Vec<Row> = transaction
             .exec(sql, Params::Positional(parameters))
             .await?;
+        let fetch_seconds = fetch_started.elapsed().as_secs_f64();
         if rows.is_empty() {
             break;
         }
@@ -753,6 +800,7 @@ async fn snapshot_table(
                 hi_json.as_deref(),
             )?;
             let row_offset = page.saturating_mul(options.chunk_rows);
+            let convert_started = Instant::now();
             let stored_rows = rows
                 .into_iter()
                 .enumerate()
@@ -768,7 +816,15 @@ async fn snapshot_table(
                 .iter()
                 .map(StoredRow::estimated_bytes)
                 .sum::<usize>();
+            let convert_seconds = convert_started.elapsed().as_secs_f64();
+            let write_started = Instant::now();
             let outcome = target.store.bulk_ingest_snapshot(stored_rows)?;
+            if std::env::var_os("PINTAIL_SNAPSHOT_PROFILE").is_some() {
+                eprintln!(
+                    "SNAPSHOT-PROFILE fetch={fetch_seconds:.6} convert={convert_seconds:.6} write={:.6}",
+                    write_started.elapsed().as_secs_f64()
+                );
+            }
             pintail_failpoint::hit("snapshot.chunk.after_ingest").map_err(|source| {
                 StoreError::Io {
                     action: "recovery failpoint".to_owned(),

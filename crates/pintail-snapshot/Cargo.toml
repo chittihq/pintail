@@ -24,11 +24,11 @@ pintail-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 crc32fast.workspace = true
 tempfile.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true
