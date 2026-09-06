@@ -1717,9 +1717,17 @@ impl<'catalog> Binder<'catalog> {
         self.next_derived_id.set(table_id.saturating_sub(1));
         let table_id = pintail_catalog::TableId::new(table_id);
         let database_id = pintail_catalog::DatabaseId::new(u64::MAX);
+        // ORDER BY over an unprojected column appends hidden trailing sort
+        // columns that the sort trims after ordering; they are not part of
+        // the derived table's row, so they get no column here.
+        let visible = input
+            .projection
+            .len()
+            .saturating_sub(input.hidden_sort_columns);
         let columns = input
             .projection
             .iter()
+            .take(visible)
             .enumerate()
             .map(|(index, projection)| BoundColumn {
                 database_id,
@@ -6284,6 +6292,21 @@ mod tests {
             bind("SELECT e.id AS key_id FROM Events e ORDER BY e.id").expect("projected ref");
         assert_eq!(projected.hidden_sort_columns, 0);
         assert_eq!(projected.order_by[0].index, 0);
+        // A derived table exposes only the visible columns: the hidden sort
+        // column is trimmed after ordering and never reaches the outer query.
+        let derived = bind("SELECT d.label FROM (SELECT Name AS label FROM Events ORDER BY id) d")
+            .expect("derived hidden sort");
+        let table = derived
+            .tables
+            .iter()
+            .find(|t| t.input.is_some())
+            .expect("derived table");
+        assert_eq!(table.columns.len(), 1);
+        assert_eq!(table.columns[0].name, "label");
+        assert!(matches!(
+            bind("SELECT d.id FROM (SELECT Name AS label FROM Events ORDER BY id) d"),
+            Err(BindError::UnknownColumn(_))
+        ));
         // Aggregated queries keep the strict behavior: no hidden columns.
         assert!(matches!(
             bind("SELECT COUNT(*) AS n FROM Events GROUP BY Name ORDER BY id"),
