@@ -125,6 +125,11 @@ operators.
 - [x] **C1d. `two_pass.rs` does not spill at all.** Its partitions are
   in-memory buckets and maps, with no file creation. My earlier assumption
   that it shared the defect was wrong; nothing to do there.
+  Amended by D3: it holds no descriptors, but it holds its whole state,
+  and a per-entity DISTINCT count over a large table fails at a ceiling
+  smaller than that state instead of spilling. Recorded in
+  docs/limitations.md; converting its scattered rows into a spillable
+  form is the remaining engine item of this series.
 - [x] **C2. Replace the linear k-way merge scan with a heap** while that
   code is open, if it is free to do so. Not done, on purpose: the merge
   now sees at most the fan-in of sixteen runs, so the linear scan is a
@@ -182,13 +187,21 @@ observation into a gate.
   ceiling back in the sweep with the fan-in bound asserted at every
   ceiling, and a child process under a 128-descriptor soft limit running
   the ceiling that spills hundreds of runs.
-- [ ] **D2. Run one gate inside the shipped compose file.** Today
+- [x] **D2. Run one gate inside the shipped compose file.** Today
   `docker-compose.yml` gets `config --quiet`, `up --wait` and a curl of
   `/health`. Every functional gate launches the bare binary on the host, so
   the file that defines a deployment's resource envelope is never under
   test. Running an existing gate through the composed container catches
   both B1 and B2 by construction.
-- [ ] **D3. Gate production-shaped SQL at production scale.**
+  Done: `tests/compose/run.ts`, the `compose` stage of the rc and stable
+  profiles. It builds the image from the tree on the docker host, brings
+  the stack up through `docker-compose.yml` beside a MySQL source, checks
+  the limits line for the file's descriptor limit and the concurrency the
+  environment asked for, snapshots a table through the container, runs a
+  sixty-thousand-group aggregation under a 64 MiB ceiling, and compares
+  the answer with MySQL byte for byte while EXPLAIN ANALYZE proves the
+  spill ran within the descriptor bound.
+- [x] **D3. Gate production-shaped SQL at production scale.**
   `tests/e2e/bi-dogfood.ts` and `tests/corpus/bi-captured` exist for
   exactly this and are in no profile. The oracle's generated families stop
   at three-table joins with no CTE chains; the E2E corpus is about 1,300
@@ -197,6 +210,20 @@ observation into a gate.
   slowness fell through. Add invented-schema cases of the shape described
   at the top of this file, run them against a large replica under the
   shipped container's limits, and assert both answers and completion.
+  Done as an in-process suite, `tests/sqllogic/tests/report_shapes.rs`:
+  an invented eleven-table schema at 600K rows, six report shapes (a
+  ten-way LEFT JOIN chain from a filtered driving table, a window over
+  the grouped chain, a two-level CTE with NOT EXISTS, an organisation-wide
+  chain, a per-entity summary with distinct sets, a status-by-month
+  report with HAVING), each run at a roomy ceiling, unoptimized, at the
+  compose file's default ceiling and at a 24 MiB ceiling, all four
+  answers equal and the tight run spilling within the descriptor bound.
+  Its first runs found four defects: a direct-column aggregate path that
+  never spilled, a double-counted batch reservation in the buffered
+  aggregate, a join output batch refused for its own columnar copy, and
+  COUNT(DISTINCT) over text counting a value once per spill run. The
+  captured BI corpus stays out of the repository; this is the shape,
+  not the data.
 
 ## E. Sequence
 

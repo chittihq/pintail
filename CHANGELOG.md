@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The `compose` validation stage runs one functional check inside the
+  shipped `docker-compose.yml` on the docker host: the image built from
+  the tree, the stack up through the compose file, the startup limits
+  line checked for the descriptor limit and the concurrency the
+  environment asked for, and a spilling aggregation through the
+  container compared with MySQL. It is part of the rc and stable
+  profiles.
+- A production-shaped report suite: an invented eleven-table schema at
+  600K rows and six report shapes, each run at four ceilings with every
+  answer required to agree.
+
 ### Performance
 
 - A literal on one side of a join equality now reaches the other side's
@@ -32,6 +45,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exhausted a container's 1024-descriptor limit with
   `aggregate spill create: Too many open files`. `EXPLAIN ANALYZE` now
   reports the peak number of open spill files.
+- A grouped aggregation over one integer column with aggregates outside
+  the two-pass lanes ran on a path that never spilled and failed at the
+  ceiling; it now spills like the others. The buffered aggregate counted
+  its round's batches twice against a tight ceiling, refusing the first
+  round of a query it had already paid for. A join cut its output batches
+  where the columnar copy still fits instead of refusing them once
+  buffered.
+- `COUNT(DISTINCT)` over a text column counted a value once per spill run
+  or parallel partial when the same group met the same value in more than
+  one: merged distinct keys are collation sort keys, and re-normalizing a
+  sort key produced a different key. Merged keys are now absorbed as
+  they are.
+- A grace hash join buffers each partition's rows and appends them in
+  bursts, so its thirty-two partitions hold one descriptor between them
+  instead of one each, and it releases its files as soon as every
+  partition is served.
 - A hash join whose build side is refused by the process-wide memory
   budget now partitions to disk like one refused by its own ceiling,
   instead of failing the query with `server memory limit exceeded`. Under
