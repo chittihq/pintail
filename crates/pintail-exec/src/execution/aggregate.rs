@@ -1424,7 +1424,9 @@ pub(super) fn build_hash_aggregate(
     fn settled_scan(operator: &PullOperator) -> Option<&PullOperator> {
         match operator {
             PullOperator::Scan { .. } => Some(operator),
-            PullOperator::Filter { input, .. } => settled_scan(input),
+            PullOperator::Filter { input, .. } | PullOperator::Profiled { input, .. } => {
+                settled_scan(input)
+            }
             _ => None,
         }
     }
@@ -1439,7 +1441,9 @@ pub(super) fn build_hash_aggregate(
     fn settled_plan_key(operator: &PullOperator) -> Option<(std::path::PathBuf, u64, String)> {
         match operator {
             PullOperator::Scan { stream, .. } => stream.settled_identity(),
-            PullOperator::Filter { input, .. } => settled_plan_key(input),
+            PullOperator::Filter { input, .. } | PullOperator::Profiled { input, .. } => {
+                settled_plan_key(input)
+            }
             PullOperator::HashJoin {
                 left,
                 right,
@@ -3071,6 +3075,7 @@ fn build_fused_inner_join_aggregate(
     collation: Collation,
     group_collation: Collation,
 ) -> Result<Option<MaterializedRows>, ExecError> {
+    let input = super::unprofiled(input);
     let PullOperator::HashJoin {
         left,
         right,

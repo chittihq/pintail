@@ -87,3 +87,30 @@ modes, rotate keys and delete databases. Run it against a server you started
 for yourself. In particular, never point it at the deployed compose stack —
 `docs/limitations.md` describes the dashboard as a local control plane and not
 a multi-tenant security boundary, and that assumption is what makes it safe.
+
+## Profiling a query
+
+Every `EXPLAIN ANALYZE` prints, after the plan and the spill line, a profile
+of the execution it ran: one line per plan node in plan order, with the
+time spent inside the node (`total`, its inputs included, and `self`, its
+inputs excluded), the time to its first batch, the batches and rows it
+produced, and the highest query memory reservation seen after one of its
+pulls.
+
+```
+Profile total=612.4ms spill_files=0 spill_bytes=0 peak_spill_handles=0
+Sort keys=1 total=611.9ms self=0.3ms first=611.9ms batches=1 rows=40 peak_reserved=12.1MiB
+  HashAggregate keys=2 aggregates=5 total=611.6ms self=402.0ms first=611.6ms batches=1 rows=40 peak_reserved=12.1MiB
+    HashJoin kind=Left keys=1 residual=false total=209.6ms self=61.2ms first=3.1ms batches=3 rows=4412 peak_reserved=9.8MiB
+      KeyFilter ...
+```
+
+For development only, `PINTAIL_PROFILE=1` makes the server profile every
+query it runs and log the same block at info level, tagged with the
+database and the first characters of the statement. Never set it on a
+deployment: it logs a block per query, and the shipped compose file does
+not forward it. A settled aggregate memoizes its answer, so a repeated
+query profiles as a replay; `PINTAIL_DISABLE_SETTLED_MEMO=1` makes every
+run execute.
+
+An unprofiled execution builds no recorder and pays nothing for this.

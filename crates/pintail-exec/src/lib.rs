@@ -40,3 +40,4 @@ pub use optimizer::{Optimizer, set_session_time_zone};
 pub use storage::{PhysicalScanStats, SnapshotScanProvider};
 
 pub use execution::cancel_query_under_memory_pressure;
+pub use execution::{ExecutionProfile, OperatorProfile};

@@ -711,6 +711,17 @@ impl ReplicaEngine {
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
+        // Development profiling (PINTAIL_PROFILE): one block per query with
+        // every operator's time, rows and peak reservation.
+        if let Some(profile) = execution.profile() {
+            let statement = sql.trim();
+            let shown: String = statement.chars().take(160).collect();
+            pintail_log::log_info!(
+                "pintail profile db={database_name} rows={} sql={shown:?}\n{}",
+                rows.len(),
+                profile.render().trim_end()
+            );
+        }
         let mut stats = provider_stats(provider, table_count);
         stats.duration_ms = elapsed_ms(started);
         stats.rows = rows.len();

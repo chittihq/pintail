@@ -102,7 +102,7 @@ pub fn explain_analyze_statement_with_deadline(
     let collation = Collation::from_mysql_name(bound.text_collation).unwrap_or_default();
     let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
     let physical = PhysicalPlanner::plan(logical, collation)?;
-    let mut execution = Execution::start_with_deadline(
+    let mut execution = Execution::start_profiled(
         physical.clone(),
         provider,
         memory_limit,
@@ -121,6 +121,11 @@ pub fn explain_analyze_statement_with_deadline(
         spill.quota_failures,
         spill.peak_handles
     );
+    // The per-operator profile: where the time went, how many rows each
+    // operator produced, and what each held at its peak.
+    if let Some(profile) = execution.profile() {
+        output.push_str(&profile.render());
+    }
     Ok(output)
 }
 

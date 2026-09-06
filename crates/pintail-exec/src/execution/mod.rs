@@ -34,7 +34,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     hash::Hash,
     mem::{size_of, size_of_val},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 const HASH_ENTRY_OVERHEAD: usize = 3 * size_of::<usize>();
@@ -1113,6 +1113,224 @@ pub trait ScanProvider {
 }
 
 /// Hard per-query memory accounting.
+/// One operator's share of a profiled execution.
+#[derive(Clone, Debug, Default)]
+pub struct OperatorProfile {
+    /// The plan node, as `EXPLAIN` names it.
+    pub label: String,
+    /// Depth in the plan tree, root at zero; operators are in preorder.
+    pub depth: usize,
+    /// Batches this operator produced.
+    pub batches: u64,
+    /// Visible rows this operator produced.
+    pub rows: u64,
+    /// Time spent inside this operator's pulls, its inputs included.
+    pub inclusive: Duration,
+    /// Time from the first pull to the first batch, its inputs included.
+    pub first_batch: Option<Duration>,
+    /// The highest query reservation seen right after one of its pulls.
+    pub peak_reserved: usize,
+}
+
+/// Where a profiled execution's operators record what they did. Built once
+/// per execution when profiling is on; absent otherwise, so an unprofiled
+/// query pays nothing.
+#[derive(Debug, Default)]
+pub struct ProfileSink {
+    slots: std::sync::Mutex<Vec<OperatorProfile>>,
+    depth: std::sync::atomic::AtomicUsize,
+}
+
+impl ProfileSink {
+    fn enter(&self, label: String) -> usize {
+        let depth = self
+            .depth
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        slots.push(OperatorProfile {
+            label,
+            depth,
+            ..OperatorProfile::default()
+        });
+        slots.len() - 1
+    }
+
+    fn leave(&self) {
+        self.depth
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record(&self, slot: usize, elapsed: Duration, rows: Option<usize>, reserved: usize) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(entry) = slots.get_mut(slot) else {
+            return;
+        };
+        entry.inclusive += elapsed;
+        if let Some(rows) = rows {
+            entry.batches += 1;
+            entry.rows += u64::try_from(rows).unwrap_or(u64::MAX);
+            if entry.first_batch.is_none() {
+                entry.first_batch = Some(entry.inclusive);
+            }
+        }
+        entry.peak_reserved = entry.peak_reserved.max(reserved);
+    }
+
+    fn operators(&self) -> Vec<OperatorProfile> {
+        self.slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// What a profiled execution did, operator by operator.
+#[derive(Clone, Debug)]
+pub struct ExecutionProfile {
+    /// Operators in plan preorder.
+    pub operators: Vec<OperatorProfile>,
+    /// Wall time from the execution's start to the snapshot.
+    pub total: Duration,
+    /// The execution's spill counters at the snapshot.
+    pub spill: spill::QuerySpillMetrics,
+}
+
+impl ExecutionProfile {
+    /// Time inside one operator excluding its inputs: its inclusive time
+    /// less the inclusive time of its direct children.
+    #[must_use]
+    pub fn exclusive(&self, index: usize) -> Duration {
+        let Some(node) = self.operators.get(index) else {
+            return Duration::ZERO;
+        };
+        let children: Duration = self.operators[index + 1..]
+            .iter()
+            .take_while(|other| other.depth > node.depth)
+            .filter(|other| other.depth == node.depth + 1)
+            .map(|other| other.inclusive)
+            .sum();
+        node.inclusive.saturating_sub(children)
+    }
+
+    /// The profile as indented text, one operator per line.
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)] // display only
+    pub fn render(&self) -> String {
+        use std::fmt::Write as _;
+        let millis = |duration: Duration| duration.as_secs_f64() * 1_000.0;
+        let mib = |bytes: usize| bytes as f64 / (1024.0 * 1024.0);
+        let mut output = String::new();
+        let _ = writeln!(
+            output,
+            "Profile total={:.1}ms spill_files={} spill_bytes={} peak_spill_handles={}",
+            millis(self.total),
+            self.spill.files,
+            self.spill.written_bytes,
+            self.spill.peak_handles
+        );
+        for (index, node) in self.operators.iter().enumerate() {
+            for _ in 0..node.depth {
+                output.push_str("  ");
+            }
+            let _ = write!(
+                output,
+                "{} total={:.1}ms self={:.1}ms",
+                node.label,
+                millis(node.inclusive),
+                millis(self.exclusive(index))
+            );
+            if let Some(first) = node.first_batch {
+                let _ = write!(output, " first={:.1}ms", millis(first));
+            }
+            let _ = writeln!(
+                output,
+                " batches={} rows={} peak_reserved={:.1}MiB",
+                node.batches,
+                node.rows,
+                mib(node.peak_reserved)
+            );
+        }
+        output
+    }
+}
+
+/// Whether `PINTAIL_PROFILE` asks for every execution to be profiled. A
+/// development switch: the server logs each query's profile, which is
+/// far too much for production and is not forwarded by the compose file.
+fn profiling_requested() -> bool {
+    static REQUESTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REQUESTED.get_or_init(|| {
+        std::env::var_os("PINTAIL_PROFILE").is_some_and(|value| !value.is_empty() && value != "0")
+    })
+}
+
+/// The label a profile shows for a plan node: what `EXPLAIN` prints, less
+/// the detail that would not fit on one line.
+fn plan_label(plan: &PhysicalPlan) -> String {
+    match plan {
+        PhysicalPlan::Empty => "Empty".to_owned(),
+        PhysicalPlan::OneRow => "OneRow".to_owned(),
+        PhysicalPlan::Scan(scan) => format!(
+            "Scan {}.{} predicates={}",
+            scan.table.database_name,
+            scan.table.table_name,
+            scan.predicates.len()
+        ),
+        PhysicalPlan::Derived { .. } => "Derived".to_owned(),
+        PhysicalPlan::CrossJoin { inputs, .. } => format!("CrossJoin inputs={}", inputs.len()),
+        PhysicalPlan::UnionAll { inputs } => format!("UnionAll inputs={}", inputs.len()),
+        PhysicalPlan::SetOp {
+            keep_matching, all, ..
+        } => format!(
+            "SetOp {}{}",
+            if *keep_matching {
+                "intersect"
+            } else {
+                "except"
+            },
+            if *all { " all" } else { "" }
+        ),
+        PhysicalPlan::Recursive { .. } => "Recursive".to_owned(),
+        PhysicalPlan::HashJoin {
+            kind,
+            extra_keys,
+            residual,
+            ..
+        } => format!(
+            "HashJoin kind={kind:?} keys={} residual={}",
+            extra_keys.len() + 1,
+            residual.is_some()
+        ),
+        PhysicalPlan::NestedLoopJoin { kind, .. } => format!("NestedLoopJoin kind={kind:?}"),
+        PhysicalPlan::Filter { .. } => "Filter".to_owned(),
+        PhysicalPlan::HashAggregate {
+            group_by,
+            aggregates,
+            ..
+        } => format!(
+            "HashAggregate keys={} aggregates={}",
+            group_by.len(),
+            aggregates.len()
+        ),
+        PhysicalPlan::Project { expressions, .. } => {
+            format!("Project columns={}", expressions.len())
+        }
+        PhysicalPlan::Distinct { .. } => "Distinct".to_owned(),
+        PhysicalPlan::Sort { keys, top_k, .. } => match top_k {
+            Some(k) => format!("Sort keys={} top_k={k}", keys.len()),
+            None => format!("Sort keys={}", keys.len()),
+        },
+        PhysicalPlan::Window { windows, .. } => format!("Window functions={}", windows.len()),
+        PhysicalPlan::Limit { offset, count, .. } => format!("Limit offset={offset} count={count}"),
+    }
+}
+
 #[derive(Debug)]
 pub struct MemoryTracker {
     limit: usize,
@@ -1136,6 +1354,9 @@ pub struct MemoryTracker {
     /// is what stops two trackers from repaying one debt twice.
     shared_charged: std::sync::atomic::AtomicUsize,
     spill: spill::QuerySpill,
+    /// Present while the execution is profiled; operators built under this
+    /// tracker wrap themselves and record here.
+    profile: Option<std::sync::Arc<ProfileSink>>,
 }
 
 impl Clone for MemoryTracker {
@@ -1150,6 +1371,7 @@ impl Clone for MemoryTracker {
             // owes nothing and must not repay the original's debt.
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
+            profile: self.profile.clone(),
         }
     }
 }
@@ -1211,6 +1433,7 @@ impl MemoryTracker {
             charges_shared: true,
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
+            profile: None,
         }
     }
 
@@ -1225,6 +1448,7 @@ impl MemoryTracker {
             charges_shared: false,
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
+            profile: self.profile.clone(),
         }
     }
 
@@ -1383,6 +1607,8 @@ pub struct Execution {
     root: PullOperator,
     memory: MemoryTracker,
     output_fields: Vec<OutputField>,
+    /// When the execution was built, for the profile's total.
+    started: Instant,
     /// Held for the execution's life so a test measuring the process-wide
     /// budget can be sure no sibling test is charging it. Absent outside
     /// tests: nothing in production needs queries serialized.
@@ -1583,12 +1809,47 @@ impl Execution {
     /// Returns an execution error when setup fails or the deadline has
     /// already elapsed.
     pub fn start_with_deadline(
-        mut plan: PhysicalPlan,
+        plan: PhysicalPlan,
         provider: &dyn ScanProvider,
         memory_limit: usize,
         deadline: Option<Instant>,
         collation: Collation,
     ) -> Result<Self, ExecError> {
+        Self::start_inner(
+            plan,
+            provider,
+            memory_limit,
+            deadline,
+            collation,
+            profiling_requested(),
+        )
+    }
+
+    /// Starts an execution that records a per-operator profile, whatever
+    /// the environment says; `EXPLAIN ANALYZE` uses it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::start_with_deadline`].
+    pub fn start_profiled(
+        plan: PhysicalPlan,
+        provider: &dyn ScanProvider,
+        memory_limit: usize,
+        deadline: Option<Instant>,
+        collation: Collation,
+    ) -> Result<Self, ExecError> {
+        Self::start_inner(plan, provider, memory_limit, deadline, collation, true)
+    }
+
+    fn start_inner(
+        mut plan: PhysicalPlan,
+        provider: &dyn ScanProvider,
+        memory_limit: usize,
+        deadline: Option<Instant>,
+        collation: Collation,
+        profiled: bool,
+    ) -> Result<Self, ExecError> {
+        let started = Instant::now();
         // Taken before anything reserves: subquery resolution charges the
         // budget too, and a lock taken after it would leave that charge
         // outside the window a measuring test believes it owns.
@@ -1604,7 +1865,10 @@ impl Execution {
             collation,
         )?;
         let output_fields = plan.output_fields();
-        let memory = MemoryTracker::with_deadline(memory_limit, deadline);
+        let mut memory = MemoryTracker::with_deadline(memory_limit, deadline);
+        if profiled {
+            memory.profile = Some(std::sync::Arc::new(ProfileSink::default()));
+        }
         memory.check_interruption()?;
         memory.reserve(subquery_bytes.saturating_add(plan_regex_memory_upper_bound(&plan)))?;
         let (root, _) = build_operator(plan, provider, &memory, collation)?;
@@ -1612,8 +1876,20 @@ impl Execution {
             root,
             memory,
             output_fields,
+            started,
             #[cfg(test)]
             _budget_serial: serial,
+        })
+    }
+
+    /// The per-operator profile, when this execution records one.
+    #[must_use]
+    pub fn profile(&self) -> Option<ExecutionProfile> {
+        let sink = self.memory.profile.as_ref()?;
+        Some(ExecutionProfile {
+            operators: sink.operators(),
+            total: self.started.elapsed(),
+            spill: self.memory.spill_metrics(),
         })
     }
 
@@ -2717,6 +2993,13 @@ enum PullOperator {
         input: Box<Self>,
         predicate: CompiledExpr,
     },
+    /// Records what the operator beneath it does: wrapped around every
+    /// plan node of a profiled execution, absent otherwise.
+    Profiled {
+        input: Box<Self>,
+        slot: usize,
+        sink: std::sync::Arc<ProfileSink>,
+    },
     /// Drops build-side rows whose join key no probe row carries, before
     /// they reach the hash table. Wrapped around the build input when the
     /// probe side was read in full first.
@@ -2803,7 +3086,9 @@ impl PullOperator {
     fn restrict_probe_range(&mut self, position: usize, min: &Value, max: &Value) {
         match self {
             Self::Scan { stream, .. } => stream.restrict_key_position_range(position, min, max),
-            Self::Filter { input, .. } | Self::KeyFilter { input, .. } => {
+            Self::Filter { input, .. }
+            | Self::KeyFilter { input, .. }
+            | Self::Profiled { input, .. } => {
                 input.restrict_probe_range(position, min, max);
             }
             _ => {}
@@ -2841,9 +3126,9 @@ impl PullOperator {
     fn scan_transient_floor(&self) -> usize {
         match self {
             Self::Scan { stream, .. } => stream.next_batch_memory_upper_bound(usize::MAX),
-            Self::Filter { input, .. } | Self::KeyFilter { input, .. } => {
-                input.scan_transient_floor()
-            }
+            Self::Filter { input, .. }
+            | Self::KeyFilter { input, .. }
+            | Self::Profiled { input, .. } => input.scan_transient_floor(),
             _ => 0,
         }
     }
@@ -2980,6 +3265,16 @@ impl PullOperator {
                     state.as_mut().expect("initialized above"),
                     memory,
                 )
+            }
+            Self::Profiled { input, slot, sink } => {
+                let started = Instant::now();
+                let result = input.next_batch(memory);
+                let rows = match &result {
+                    Ok(Some(batch)) => Some(batch.visible_row_count()),
+                    _ => None,
+                };
+                sink.record(*slot, started.elapsed(), rows, memory.used());
+                result
             }
             Self::KeyFilter {
                 input,
@@ -3267,8 +3562,43 @@ impl PullOperator {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+/// Lowers one plan node, wrapped in a profile recorder when the execution
+/// is profiled. The recursion below goes through here, so every node of
+/// a profiled plan is measured and an unprofiled plan is built as before.
 fn build_operator(
+    plan: PhysicalPlan,
+    provider: &dyn ScanProvider,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
+    let Some(sink) = memory.profile.as_ref() else {
+        return build_operator_inner(plan, provider, memory, collation);
+    };
+    let slot = sink.enter(plan_label(&plan));
+    let built = build_operator_inner(plan, provider, memory, collation);
+    sink.leave();
+    let (operator, columns) = built?;
+    Ok((
+        PullOperator::Profiled {
+            input: Box::new(operator),
+            slot,
+            sink: std::sync::Arc::clone(sink),
+        },
+        columns,
+    ))
+}
+
+/// The operator beneath any profile recorders, for callers that inspect
+/// an input's shape rather than pull from it.
+fn unprofiled(operator: &mut PullOperator) -> &mut PullOperator {
+    match operator {
+        PullOperator::Profiled { input, .. } => unprofiled(input),
+        other => other,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn build_operator_inner(
     plan: PhysicalPlan,
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
