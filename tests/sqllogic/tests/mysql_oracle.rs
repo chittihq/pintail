@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1127;
+const EXPECTED_CASES: usize = 1159;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1056,6 +1056,82 @@ fn oracle_cases() -> Vec<OracleCase> {
     ] {
         cases.push(OracleCase {
             family: "join constant propagation",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // The derived constant must stop where pushdown stops. Each derived
+    // table here holds a LIMIT, a window, an aggregate or a set operation
+    // that would answer differently if a filter reached the scan beneath
+    // it, and each outer join, comma join, RIGHT join and subquery shape
+    // pins one rule of the propagation pass against MySQL.
+    for sql in [
+        "SELECT u.id, d.user_id FROM users u JOIN (SELECT user_id FROM orders ORDER BY id LIMIT 3) d \
+         ON d.user_id = u.id WHERE u.id = 2 ORDER BY d.user_id",
+        "SELECT u.id, d.rn FROM users u \
+         JOIN (SELECT user_id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM orders) d \
+         ON d.user_id = u.id WHERE u.id = 3 ORDER BY d.rn",
+        "SELECT u.id, d.n FROM users u JOIN (SELECT user_id, COUNT(*) OVER () AS n FROM orders) d \
+         ON d.user_id = u.id WHERE u.id = 3 ORDER BY d.n",
+        "SELECT u.id, d.c FROM users u JOIN (SELECT user_id, COUNT(*) AS c FROM orders GROUP BY user_id) d \
+         ON d.user_id = u.id WHERE u.id = 2",
+        "SELECT u.id FROM users u JOIN (SELECT DISTINCT user_id FROM orders) d ON d.user_id = u.id \
+         WHERE u.id = 2",
+        "SELECT u.id, d.total FROM users u \
+         JOIN (SELECT user_id, total FROM orders ORDER BY total DESC LIMIT 2) d \
+         ON d.user_id = u.id WHERE u.id = 4 ORDER BY d.total",
+        "WITH top AS (SELECT user_id FROM orders ORDER BY id LIMIT 2) \
+         SELECT u.id FROM users u JOIN top t ON t.user_id = u.id WHERE u.id = 1",
+        "SELECT u.id, d.k FROM users u \
+         JOIN (SELECT user_id AS k FROM orders UNION ALL SELECT id FROM events) d ON d.k = u.id \
+         WHERE u.id = 2 ORDER BY d.k",
+        "SELECT u.id, d.user_id FROM users u \
+         JOIN (SELECT user_id FROM orders WHERE status = 'shipped' ORDER BY id LIMIT 2) d \
+         ON d.user_id = u.id WHERE u.id = 1 ORDER BY d.user_id",
+        "SELECT u.id, o.id FROM users u, orders o WHERE o.user_id = u.id AND u.id = 2 ORDER BY o.id",
+        "SELECT u.id, o.id FROM orders o RIGHT JOIN users u ON o.user_id = u.id WHERE u.id = 8 \
+         ORDER BY o.id",
+        "SELECT u.id, o.id FROM orders o RIGHT JOIN users u ON o.user_id = u.id AND o.user_id = 2 \
+         ORDER BY u.id, o.id",
+        "SELECT u.id, o.id, e.id FROM users u JOIN orders o ON o.user_id = u.id \
+         JOIN events e ON e.id = o.user_id WHERE o.user_id = 3 ORDER BY o.id, e.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id AND o.status = 'shipped' \
+         WHERE u.id = 1 ORDER BY o.id",
+        "SELECT u.id, o.id, e.id FROM events e JOIN users u ON u.id = e.id \
+         JOIN orders o ON o.user_id = u.id WHERE e.id = 3 ORDER BY o.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 2 OR u.id = 3 \
+         ORDER BY u.id, o.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id IN (2, 3) \
+         ORDER BY u.id, o.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.id = NULL",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id <=> u.id WHERE u.id = 2 ORDER BY o.id",
+        "SELECT u.id, COUNT(*) FROM users u JOIN orders o ON o.user_id <> u.id WHERE u.id = 2 \
+         GROUP BY u.id",
+        "SELECT a.id, b.id FROM orders a JOIN orders b ON b.total = a.total \
+         WHERE a.total = 10.50 AND a.id <> b.id ORDER BY a.id, b.id",
+        "SELECT a.id, b.id FROM orders a JOIN orders b ON b.placed_at = a.placed_at \
+         WHERE a.placed_at = '2024-01-15 10:00:00' ORDER BY a.id, b.id",
+        "SELECT u.id, e.id FROM users u JOIN events e ON e.name = u.name WHERE u.name = 'user-01' \
+         ORDER BY e.id",
+        "SELECT a.id, b.id FROM orders a JOIN orders b ON b.status = a.status \
+         WHERE a.status = 'shipped' AND a.id < b.id ORDER BY a.id, b.id",
+        "SELECT u.id, COUNT(o.id) AS c FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+         WHERE u.id IN (2, 8) GROUP BY u.id HAVING c >= 0 ORDER BY u.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id \
+         WHERE u.id = 1 AND DATE(o.placed_at) = '2024-01-15' ORDER BY o.id",
+        "SELECT u.id, o.id, e.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+         JOIN events e ON e.id = u.id WHERE u.id = 5 ORDER BY o.id, e.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+         WHERE u.id = 8 AND o.id IS NULL",
+        "SELECT u.id FROM users u WHERE u.id = 2 \
+         AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'shipped')",
+        "SELECT u.id, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) FROM users u WHERE u.id = 2",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 1 \
+         ORDER BY o.id DESC LIMIT 1",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id + 0 = u.id WHERE u.id = 2 ORDER BY o.id",
+    ] {
+        cases.push(OracleCase {
+            family: "join constant propagation boundaries",
             sql: sql.to_owned(),
             ordered: true,
         });
