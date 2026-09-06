@@ -154,14 +154,14 @@ measure of what a dashboard refresh costs, and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,437 ms | 12 ms | 12 ms |
-| Filtered count | 587 ms | 12 ms | 31 ms |
-| Group by status | 34,398 ms | 13 ms | 69 ms |
-| Region × status breakdown | 13,054 ms | 12 ms | 177 ms |
-| Monthly revenue (2023) | 5,462 ms | 12 ms | 45 ms |
-| Top 10 spenders | 889,417 ms | 76 ms | 174 ms |
-| Regional analytics | 53,410 ms | 12 ms | 132 ms |
-| Join users + orders | 796,769 ms | 12 ms | 168 ms |
+| Full table count | 1,437 ms | 13 ms | 14 ms |
+| Filtered count | 587 ms | 12 ms | 29 ms |
+| Group by status | 34,398 ms | 13 ms | 61 ms |
+| Region × status breakdown | 13,054 ms | 14 ms | 195 ms |
+| Monthly revenue (2023) | 5,462 ms | 20 ms | 49 ms |
+| Top 10 spenders | 889,417 ms | 75 ms | 146 ms |
+| Regional analytics | 53,410 ms | 13 ms | 141 ms |
+| Join users + orders | 796,769 ms | 12 ms | 178 ms |
 
 **Novel queries — raw engine speed.** The same shapes with constants the memo
 has never seen, so both engines actually execute. **ClickHouse is faster here.**
@@ -170,10 +170,22 @@ win it.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,125 ms | 412 ms | 52 ms | 0.13× |
-| Group by region (novel group column) | 12,949 ms | 815 ms | 84 ms | 0.10× |
-| Monthly revenue, novel year | 8,226 ms | 133 ms | 46 ms | 0.35× |
-| Regional analytics, novel range | 56,145 ms | 460 ms | 147 ms | 0.32× |
+| Filtered count, novel constant | 1,125 ms | 256 ms | 60 ms | 0.23× |
+| Group by region (novel group column) | 12,949 ms | 436 ms | 165 ms | 0.38× |
+| Monthly revenue, novel year | 8,226 ms | 152 ms | 66 ms | 0.43× |
+| Regional analytics, novel range | 56,145 ms | 561 ms | 587 ms | 1.05× |
+
+**Concurrency — mixed Q2–Q8.** Simultaneous clients, each call taking the
+next of Q2 through Q8 in turn, against both engines executing (memo off,
+query cache off). Completed queries per second and the p95 latency, which
+together show whether an engine holds its latency while it adds throughput.
+
+| Clients | Pintail /s | Pintail p95 | CH /s | CH p95 |
+|---:|---:|---:|---:|---:|
+| 1 | 3.6 | 535 ms | 7.2 | 355 ms |
+| 4 | 5 | 1289 ms | 4.7 | 1495 ms |
+| 8 | 4.5 | 2767 ms | 4.3 | 2998 ms |
+| 16 | 4.5 | 6320 ms | 4.1 | 8263 ms |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -193,7 +205,7 @@ queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-09-05T19:03:27.814Z) by
+<sub>Generated from `benchmark/results.json` (2026-09-06T17:35:43.854Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->
