@@ -12,6 +12,7 @@ secrets.toml
 GOAL.md
 /tests/browser/artifacts/
 /tests/browser/node_modules/
+/tests/compose/node_modules/
 /tests/e2e/node_modules/
 /tests/e2e/orm-compat/generated/
 /node_modules/

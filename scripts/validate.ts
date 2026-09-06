@@ -270,6 +270,23 @@ const STAGES: Stage[] = [
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },
   {
+    // One functional check INSIDE the shipped compose file: the image is
+    // built from the tree on the docker host, the stack comes up through
+    // docker-compose.yml, and a spilling aggregation runs in the container
+    // under the file's descriptor and memory envelope. Every other gate
+    // launches the bare binary on this machine, which is how a dropped
+    // environment variable and a desktop descriptor default both reached
+    // production unseen.
+    name: 'compose',
+    remote: true,
+    timeoutMinutes: 60,
+    // The image build compiles the workspace on the docker host; cargo-chef
+    // caches the dependencies, the workspace crates rebuild every time.
+    stallMinutes: 30,
+    command: ['bun', 'run', 'run.ts'],
+    cwd: join(repository, 'tests', 'compose'),
+  },
+  {
     name: 'bench',
     remote: true,
     timeoutMinutes: 90,
@@ -326,7 +343,7 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser'],
+    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose'],
     claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
@@ -342,7 +359,7 @@ const PROFILES: Record<string, Profile> = {
   stable: {
     stages: [
       'fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80',
-      'recovery', 'browser', 'bench', 'accept',
+      'recovery', 'browser', 'compose', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',
     caveats: [
