@@ -884,9 +884,16 @@ impl ReplicaEngine {
                     source.columns = serde_json::from_str(&record.columns_json)
                         .map_err(|error| QueryError::Internal(error.to_string()))?;
                 }
-                let ready = table_records
-                    .get(&source.name.to_ascii_lowercase())
-                    .is_none_or(|record| table_copy_is_complete(record));
+                let record = table_records.get(&source.name.to_ascii_lowercase());
+                let ready = record.is_none_or(|record| table_copy_is_complete(record));
+                if let (false, Some(record)) = (ready, record) {
+                    pintail_log::log_info!(
+                        "replica.table_not_ready db={database_id} table={} state={} copy_complete={}",
+                        source.name,
+                        record.state,
+                        record.copy_complete
+                    );
+                }
                 let directory = table_directory(&root, &source.name);
                 let directory_name = directory
                     .file_name()

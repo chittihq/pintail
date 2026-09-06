@@ -138,6 +138,9 @@ let pintailWire: mysql.Connection | undefined
 let wireSecret = ''
 let mysqlServerVersion = ''
 
+/// Wire queries that met a table mid-copy and waited for it.
+let notReadyWaits = 0
+
 async function pintailQuery(sql: string): Promise<unknown[][]> {
   for (let attempt = 0; ; attempt += 1) {
     if (!pintailWire) {
@@ -166,6 +169,17 @@ async function pintailQuery(sql: string): Promise<unknown[][]> {
       const [rows] = await connection.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
       return rows as unknown as unknown[][]
     } catch (error) {
+      // A table whose copy is running answers "not ready" rather than a
+      // partial result. Copies here finish in seconds; a rebuild after a
+      // purged source position or a restart takes a little longer. Wait
+      // for the copy rather than judge the answer it refuses to give.
+      if (/still being copied/.test(String(error))) {
+        notReadyWaits += 1
+        if (attempt < 240) {
+          await Bun.sleep(500)
+          continue
+        }
+      }
       const transient = /ECONNREFUSED|ECONNRESET|EPIPE|closed state|Connection lost/i.test(
         String(error),
       )
@@ -4205,7 +4219,9 @@ function publish() {
   const suffix = partial ? '-partial' : leg
   writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
   writeFileSync(join(import.meta.dir, `results${suffix}.json`), JSON.stringify(results, null, 2))
-  log(`gate: ${failed.length === 0 ? 'PASS' : 'FAIL'} (${passed.length} passed, ${failed.length} failed, ${warned.length} warned)`)
+  log(
+    `gate: ${failed.length === 0 ? 'PASS' : 'FAIL'} (${passed.length} passed, ${failed.length} failed, ${warned.length} warned; ${notReadyWaits} wire queries waited for a table copy)`,
+  )
   for (const failure of failed) {
     log(`  FAIL ${failure.phase}/${failure.check}: ${failure.detail?.split('\n')[0]}`)
   }
