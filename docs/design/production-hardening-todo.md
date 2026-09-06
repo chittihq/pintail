@@ -33,7 +33,11 @@ per-query ceiling and a 9 GiB shared budget.
   default soft limit is 1024. `docker-compose.yml` set no `ulimits`, so the
   shipped deployment ran a columnar engine under it. Fixed in `f394111`
   and recorded in `docs/limitations.md`. Reaches a deployment only on its
-  next redeploy.
+  next redeploy. The review found that fix incomplete: `scripts/install.sh`
+  generates its own compose file, which also had no `ulimits`, and a
+  re-run only moves the image tag, so an existing install would never have
+  received it. The template now sets the limit and a re-run warns when an
+  older file lacks it.
 - [ ] **B2. `PINTAIL_MAX_CONCURRENT_QUERIES` never reached the server.**
   The compose file passes ten other `PINTAIL_*` keys through and silently
   dropped this one, so a deployment that configured it ran the default
@@ -45,20 +49,65 @@ per-query ceiling and a 9 GiB shared budget.
   the effective admission limit, per-query ceiling, shared budget, process
   memory ceiling, descriptor soft and hard limits, and spill directory and
   its ceilings. That line makes B1 and B2 self-evident in the first minute.
+- [ ] **B4. Raise the soft descriptor limit at startup, after the engine
+  fixes.** Best-effort, to a documented finite target capped by the
+  inherited hard limit, never lowering a higher soft limit and never
+  touching the hard limit, with an opt-out and an honest report on
+  failure. This does nothing under the updated compose file, where soft
+  and hard are already equal, but it covers direct-binary and other
+  deployment paths. Not a substitute for bounded spill behaviour.
 
 ## C. Engine: bound what a spilling query holds
 
-Blocked on the design review requested 2026-09-06: bounded fan-in
-multi-pass merge versus hash-partitioned spill; whether merging already
-merged partial aggregate states stays associative; spill reservation
-accounting across passes.
+Design settled by the review of 2026-09-06. Keep the existing sorted-run
+format, close each run after writing, and merge in bounded passes of at
+most K runs. Intermediate passes copy serialized records and do NOT
+combine aggregate states; only the final pass combines. That matters:
+combining is not idempotent and only conditionally associative. Replaying
+a partial COUNT counts it again, decimal accumulators can overflow under a
+different grouping, floating-point sums change with parenthesization,
+DISTINCT must preserve its `seen` set rather than add finished counts, and
+equal extrema can change which representative survives. Copying records
+preserves the existing final fold order, so no result changes.
 
-- [ ] **C1. Bound descriptors across every spilling operator.** Confirmed
-  unbounded in `merge_spilled_aggregate_groups`, which opens every run at
-  once. `sort.rs`, `join.rs` grace partitions and `two_pass.rs` are
-  unaudited and assumed to share the shape until shown otherwise. Whatever
-  design lands, the invariant is the same: peak open descriptors must be a
-  constant, not a function of run or partition count.
+Hash or radix partitioning was considered and rejected for now: the
+encoded key and sorted-run format already exist, and partitioning does not
+help a skewed group or one enormous DISTINCT set. It stays a later
+performance project.
+
+Reservation rule: closing an input descriptor must not release its spill
+reservation, because the file still occupies disk. Each intermediate
+output takes its own reservation, inputs and output are both charged while
+both exist, and consumed files are deleted before their accounting is
+released. A query that previously fit its spill quota can now fail on it,
+and the merge must not bypass the quota to succeed.
+
+Resulting descriptor bound: one writer during build, K+1 during
+intermediate passes, K during the final merge, excluding upstream
+operators.
+
+- [ ] **C1. Aggregate: closed runs and bounded merge passes.** Every
+  `AggregateSpillRun` owns an open reader; the build loop appends runs with
+  no bound, and the merge initializes and retains every head. Split the run
+  into closed metadata plus an active cursor, close after a checked flush,
+  and merge in chunks of K.
+- [ ] **C1b. Sort has the same defect.** `SpilledRun` retains its
+  `BufReader` after writing, `materialize_with_spill` appends without
+  bound, and `SpilledMerge::new` loads every head. Its comment treats input
+  bytes over the memory ceiling as a sufficient bound, which is exactly the
+  assumption this incident disproved. Same closed-run treatment.
+- [ ] **C1c. Grace join: a separate real bug, fix before bounding it.**
+  The serve loop calls `reader()` on a build partition, consuming the
+  writer; on overflow it drops that reader and `split_grace_partition`
+  calls `reader()` on the same run again, which returns
+  `"grace run read twice"`. The existing split unit test calls splitting
+  directly on unread runs and so never crosses that transition. Separately,
+  16 build plus 16 probe files are created up front and each split adds 32
+  more, with `MAX_GRACE_DEPTH` bounding recursion depth rather than pending
+  partitions. Pending sealed partitions should hold paths, not writers.
+- [x] **C1d. `two_pass.rs` does not spill at all.** Its partitions are
+  in-memory buckets and maps, with no file creation. My earlier assumption
+  that it shared the defect was wrong; nothing to do there.
 - [ ] **C2. Replace the linear k-way merge scan with a heap** while that
   code is open, if it is free to do so.
 - [ ] **C3. Understand the 30x reservation overestimate (A3).** The shared
@@ -80,14 +129,21 @@ Approved by the owner 2026-09-06. Each converts a known-but-dismissed
 observation into a gate.
 
 - [ ] **D1. Assert a descriptor bound where spilling is already forced.**
-  `docs/limitations.md` has recorded the "Too many open files" failure
-  since before this incident and dismissed it as a tight-ceiling test
-  artifact. The spill tests already force spilling and assert answers;
-  nothing asserts resources. Add a peak open-descriptor measurement and
-  assert it does not grow with run count. Open question: counting
-  `/dev/fd` entries versus lowering `RLIMIT_NOFILE` inside the test
-  process, and whether that needs a `libc` dependency the workspace does
-  not currently have.
+  Worse than "untested": `tests/sqllogic/tests/agg_spill.rs` explicitly
+  SKIPS the 16 MiB ceiling because of this exhaustion, so the suite
+  encodes the bug as expected. Two layers, per the review. First, track
+  active and peak spill handles per query in the shared file wrapper,
+  covering creation, reopen and close, and assert build peak <= 1,
+  intermediate <= K+1, final <= K, and zero active handles and bytes after
+  teardown, at two input sizes that produce very different run counts. The
+  existing spill `files` metric counts files created, not open, so it
+  cannot establish this. Second, run one representative case in a FRESH
+  CHILD PROCESS with the soft `RLIMIT_NOFILE` lowered to 128 or 256, which
+  catches retention the counters miss. Do not call `setrlimit` in an
+  ordinary parallel test: limits are process-wide and shared by threads, so
+  restoring afterwards does not prevent interference. Use a `rustix`
+  dev-dependency for the safe call, since the workspace forbids unsafe.
+  Then reinstate the skipped 16 MiB case as the integration regression.
 - [ ] **D2. Run one gate inside the shipped compose file.** Today
   `docker-compose.yml` gets `config --quiet`, `up --wait` and a curl of
   `/health`. Every functional gate launches the bare binary on the host, so
@@ -108,7 +164,8 @@ observation into a gate.
 
 1. B2 and B3, with D2 as their gate. Small, and D2 proves both.
 2. Redeploy so B1 takes effect.
-3. C1 and C2 behind the design review, with D1 as their gate.
+3. C1c first: grace join is a live bug, not just an unbounded one.
+   Then C1 and C1b, with D1 as their gate. C2 only if free.
 4. C3, which needs its own measurement before any change.
 5. D3 last: it is the broadest and will surface more of the same class.
 
