@@ -107,7 +107,27 @@ def main():
                                     raise RuntimeError("independent restored-file checksum mismatch")
                             subprocess.run([binaries[variant], "cleanup", *args], env=trial_env,
                                            stdout=subprocess.DEVNULL, check=True)
-            (run / "DONE").write_text("All operations and independent restored-file checks passed.\n")
+            # Exercise both directions with changed multipart objects and
+            # references inherited from the other implementation's manifest.
+            source = temporary / "interop"
+            subprocess.run([binaries["baseline"], "prepare", source, "4", "17", "prepare"], check=True)
+            expected = {
+                f"segment-{index:04}-base.pts": digest(source / f"segment-{index:04}-{'new' if index % 4 == 0 else 'base'}.pts")
+                for index in range(4)
+            }
+            for first, second in [("baseline", "streaming"), ("streaming", "baseline")]:
+                prefix = "interop-" + first
+                args = [str(source), "4", "17", prefix]
+                with open(run / (prefix + ".log"), "w") as output:
+                    for variant, operation in [(first, "full"), (second, "incremental"), (first, "restore")]:
+                        subprocess.run([binaries[variant], operation, *args], env=env,
+                                       stdout=output, stderr=subprocess.STDOUT, check=True)
+                restored = source / ("restore-" + prefix) / "tables/table-records"
+                for name, expected_hash in expected.items():
+                    if digest(restored / name) != expected_hash:
+                        raise RuntimeError("cross-version restore checksum mismatch")
+                subprocess.run([binaries[first], "cleanup", *args], env=env, check=True)
+            (run / "DONE").write_text("All operations, independent restored-file checks and bidirectional compatibility checks passed.\n")
             print("BACKUP-BENCH-DONE", run.name, flush=True)
         finally:
             service.terminate()

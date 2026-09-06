@@ -7,8 +7,8 @@ use anyhow::{Context as _, Result, ensure};
 use futures_util::TryStreamExt as _;
 use object_store::{ObjectStore, ObjectStoreExt as _, path::Path as ObjectPath};
 use pintail_backup::{
-    BackupSource, S3Destination, SourceSegment, SourceTable, build_s3, create_backup,
-    load_manifest, restore_backup,
+    BackupSource, S3Destination, SourceSegment, SourceTable, TransferOptions, build_s3,
+    create_backup_with_options, load_manifest, restore_backup_with_options,
 };
 use serde_json::json;
 
@@ -94,6 +94,11 @@ async fn main() -> Result<()> {
         secret_access_key: Some(env::var("BENCH_S3_SECRET_KEY")?),
     })?;
     let destination = root.join(format!("restore-{prefix}"));
+    let options = TransferOptions {
+        concurrency: env::var("BENCH_CONCURRENCY")
+            .unwrap_or_else(|_| "4".into())
+            .parse()?,
+    };
     let started = Instant::now();
     let counters = match mode.as_str() {
         "full" | "incremental" => {
@@ -103,11 +108,12 @@ async fn main() -> Result<()> {
             } else {
                 None
             };
-            let (_, summary) = create_backup(
+            let (_, summary) = create_backup_with_options(
                 store.clone(),
                 prefix,
                 source(root, count, incremental),
                 parent.as_ref(),
+                options,
             )
             .await?;
             let changed = count.div_ceil(4);
@@ -120,7 +126,9 @@ async fn main() -> Result<()> {
         }
         "restore" => {
             let manifest = load_manifest(store.as_ref(), prefix, "synthetic", "delta").await?;
-            let restored = restore_backup(store.as_ref(), manifest, &destination).await?;
+            let restored =
+                restore_backup_with_options(store.as_ref(), manifest, &destination, options)
+                    .await?;
             let expected = u64::try_from(count)? * u64::try_from(mib)? * 1024 * 1024
                 + u64::try_from(b"synthetic transport benchmark manifest".len())?;
             ensure!(
