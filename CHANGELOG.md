@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `EXPLAIN ANALYZE` prints a per-operator profile after the plan: each
+  plan node's total and self time, time to first batch, batches, rows and
+  peak query reservation. `PINTAIL_PROFILE=1`, a development switch, logs
+  the same block for every query the server runs.
 - The `compose` validation stage runs one functional check inside the
   shipped `docker-compose.yml` on the docker host: the image built from
   the tree, the stack up through the compose file, the startup limits
@@ -21,6 +25,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- A comparison between an unsigned column and a signed integer literal,
+  or the reverse, stays on the packed kernel. The binder types a small
+  literal as signed, so `id >= 1` on an unsigned key evaluated row by row
+  over every row of a predicate that excluded nothing; a filtered count
+  over ten million rows fell from about 170 ms to 55 ms.
 - A literal on one side of a join equality now reaches the other side's
   scan. `WHERE a.k = 5` with `ON b.k = a.k` derives `b.k = 5` onto the
   scan of `b`, so both sides prune segments and blocks instead of one.

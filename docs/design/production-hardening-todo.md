@@ -234,6 +234,34 @@ observation into a gate.
 4. C3, which needs its own measurement before any change.
 5. D3 last: it is the broadest and will surface more of the same class.
 
+## G. Found by the profiler, 2026-09-06
+
+Measured in-process on a ten-million-row, three-column table with the
+settled memo off, using the per-operator profile `EXPLAIN ANALYZE` now
+prints.
+
+- [ ] **G1. A scan retains every prefetched segment at once.** With no
+  LIMIT the stream adopts all prefetched chunks into ready batches in one
+  pull, so the scan's peak reservation is the scan width times the
+  segment size: 1.3 GiB for a plain `GROUP BY` over the table, 1.9 GiB
+  with one predicate. Under a 1 GiB ceiling that plain `GROUP BY` fails
+  with `query memory limit exceeded` on the first pull; the shipped
+  default ceiling is 512 MiB. The store's chunk budget is meant to bound
+  this and does not. Bound adoption to what the ceiling can hold, or
+  adopt chunks as they are consumed.
+- [ ] **G2. A second predicate on the same scan costs five times the
+  first.** `WHERE status = 2` scans in 25 ms; `WHERE id >= 1 AND
+  status = 2` in 132 ms with twice the peak reservation, even though the
+  extra predicate excludes nothing and now stays on the packed kernel.
+  Establish which of the two-predicate paths (no prewhere, since every
+  projected column is a predicate column) pays the difference.
+- [ ] **G3. Five-group aggregation spends 18 ns per row in the
+  aggregate.** `GROUP BY status` over ten million rows: 114 ms in the
+  scan, 179 ms of aggregate self time for five groups. That is the
+  direct-column path's per-row hash and index work on a key with five
+  values; a dictionary or dense-array fold would make it a memory
+  pass.
+
 ## F. Still open from earlier reviews
 
 - The rename orphan left in `snapshotting` (owner decision 2026-09-05:
