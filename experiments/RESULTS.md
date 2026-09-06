@@ -2405,3 +2405,148 @@ with waves sized to half the ceiling (no spill).
 **Verdict: keep.** Width no longer depends on how many batches a round
 holds; the wins are where rounds were short, and the ten-million-row
 two-pass paths are unchanged within the host's noise.
+
+## e67 — Historical memory and concurrent-query screening (2M rows, memo off)
+
+**Verdict: keep the findings and compact evidence; discard the experiment
+code.** These measurements were taken on `d267f05`, before the chunk-capacity
+fix (`73dc0fa`) and morsel aggregation (`abb79e2`). The fused-workspace finding
+is already fixed unconditionally on `dev`; the experimental alternative adds
+nothing to that implementation. No engine switches, Python harness, separate
+validation image, or compressed raw request stream land with this entry.
+
+**Every RSS comparison below is historical.** The measured tree still had the
+sliced-prefix capacity retention defect fixed by `73dc0fa`. In particular, the
+4.88 GB prefix-consumption result cannot establish a cost of prefix consumption
+on current `dev`. Re-measure on the corrected engine before using any of these
+memory, throughput, or latency observations to choose a policy. This entry makes
+no recommendation to enable or reject a policy on today's code.
+
+This section has its own protocol, distinct from the file header and the banked
+benchmark: a separate Linux host, two million synthetic fact rows over 20
+segments, 100 dimension rows, six physical engine cores, eight scan threads,
+and eight execution threads. The driver used other physical cores. These
+numbers are not comparable with the published benchmark host's results and
+make no ClickHouse claim.
+
+The mixed HTTP workload alternated an exact numeric primary-key lookup, a
+filtered low-cardinality aggregate, a 100,000-group aggregate with top-100
+output, and a dimension join with SUM/COUNT. MySQL 8.4.11 established ordered
+value-level reference answers. Settled-result memo was disabled. Each trial
+used a fresh process and copy of the same replica, with warmup and a three-second
+allocator purge allowance before each cell. Data and spill were disk-backed.
+
+Normal limits were an 8 GiB container, 2 GiB per query, and 6 GiB shared query
+budget; tight limits were 2 GiB, 256 MiB, and 1 GiB respectively, with swap
+disabled. The primary comparison used five alternating baseline/candidate
+trials at each concurrency, 128 requests per cell. Predeclared promotion
+required 15% more useful throughput or 20% lower peak memory, no more than 5%
+regression in the other primary metric or short p99, and no new wrong answers
+or increased failure rate. No candidate met every criterion.
+
+### Already-fixed finding: per-probe-row fused workspace
+
+The old fused join aggregate requested 620,800,000 bytes of local workspace
+despite having only 100 build-side groups. The experimental candidate estimated
+workspace from the known groups with allocation headroom. On current `dev`,
+`abb79e2` instead reserves per-morsel, per-plan-group storage based on what the
+builder allocates, with a per-row allowance for growing states. The old
+env-gated estimate and its regression test are not part of this change.
+
+Below are historical medians of five cells; failures are totals out of 640
+requests per row and variant. The candidate changes only that workspace
+estimate. RSS is in MiB and short-query p99 in milliseconds.
+
+| Memory | Clients | Baseline useful QPS | Candidate useful QPS | Baseline / candidate failures | Baseline / candidate RSS | Baseline / candidate short p99 |
+|---|---:|---:|---:|---:|---:|---:|
+| Normal | 1 | 20.54 | 20.86 | 0 / 0 | 365 / 371 | 6.7 / 6.8 |
+| Normal | 4 | 30.24 | 30.66 | 0 / 0 | 741 / 698 | 22.5 / 24.4 |
+| Normal | 8 | 31.81 | 32.14 | 0 / 0 | 1248 / 1300 | 33.2 / 29.5 |
+| Normal | 16 | 32.08 | 32.41 | 0 / 0 | 2341 / 2319 | 50.0 / 59.8 |
+| Normal | 32 | 32.07 | 32.41 | 160 / 0 | 3606 / 3705 | 207.2 / 349.2 |
+| Tight | 1 | 16.81 | 19.15 | 160 / 0 | 227 / 222 | 6.2 / 6.7 |
+| Tight | 4 | 25.21 | 28.79 | 160 / 0 | 455 / 447 | 18.6 / 20.7 |
+| Tight | 8 | 26.58 | 30.48 | 160 / 0 | 633 / 616 | 29.5 / 30.6 |
+| Tight | 16 | 27.06 | 30.98 | 160 / 0 | 963 / 964 | 52.8 / 59.4 |
+| Tight | 32 | 26.97 | 30.92 | 160 / 0 | 1489 / 1520 | 292.0 / 232.7 |
+
+Across tight-memory confirmation cells, the baseline failed 800/3,200 requests
+and the candidate failed none. At 32 clients useful throughput rose 14.7%, but
+there was no consistent RSS reduction and normal-memory short p99 worsened.
+Latency percentiles describe successful responses: early failures reduce the
+baseline's competing work. These were resource-admission findings, not proof
+of a general 15% executor speedup.
+
+Single-repetition screening also found a substantial solo-throughput loss with
+a 32 MiB scan chunk cap (20.41 to 15.04 QPS). Prefix consumption completed the
+normal 32-client cell but reported 4.88 GB RSS on the defective capacity path.
+Sharing scan width still produced allocation failures. A 512 MiB admission
+estimate lowered recorded RSS but raised short p99 to 1.38 seconds; a fixed
+eight-general-slot control reached about 1.56 seconds with seven failures.
+These observations explain why no experimental code was selected, but are
+not confirmed policy verdicts for the corrected engine.
+
+Scheduled arrivals used five cells per variant at 32 clients under tight limits.
+At 25 offered requests/s, baseline/candidate useful QPS was 18.60/24.70, with
+160/0 failures per 640 requests. At 50 offered requests/s, useful QPS was
+26.68/30.79, short p99 was 245/874 ms, and all-query p99 was 2,649/3,451 ms.
+Driver dispatch delay is included, reaching 879 ms for the candidate. Completing
+more useful work did not solve overload queueing. Unlike the primary comparison,
+these five cells ran sequentially within each variant rather than alternating.
+
+### Actionable follow-up: metadata writes defeat reserved admission
+
+User-query auditing and API-key last-used writes modify the shared metadata
+database/WAL stamp used by `ReplicaEngine::replica_stamp`. Reserved admission
+requires an exact match in `short_query_replica`, so unrelated metadata activity
+can send an otherwise eligible cached lookup back to general capacity. Both
+HTTP principal types showed poor reserved-slot behavior in screening. Per-request
+admission-class/cache-hit counters were not banked, so latency alone does not
+prove the rejection reason for each request.
+
+Track the independent fix in [issue #34](https://github.com/chittihq/pintail/issues/34).
+The reproduction must satisfy current short-query limits, including the tiny
+replica ceiling; it must not depend on the discarded large-replica classifier.
+Separate replica-affecting metadata from audit/auth bookkeeping while preserving
+schema/data invalidation, pinned snapshot correctness, auditing, and request
+authorization. Broadening admission eligibility is separate work.
+
+### Deferred observation: repeated decoding
+
+Eight identical concurrent scans each reported decoding the same 336 blocks,
+or 2,688 decodes. Sequential repetitions also repeated their decode counts.
+That establishes repeated work, not its overlapping allocation lifetime or an
+achievable cache speedup. An untimed profile put scan work at 7.4 ms of 48.2 ms,
+with most time in aggregation. Sharing needs immutable backing with appropriate
+schema/segment identity, bounded retention, and accounting that charges shared
+allocations once. Reset, replacement, compaction, and cancellation need coverage.
+No cache should be bolted onto the owned, destructively split `DecodedColumn`
+representation on the strength of these counters alone.
+
+### Evidence and scope
+
+Keep [cells.csv](e67-memory-concurrency/cells.csv) and
+[summary.json](e67-memory-concurrency/summary.json) unchanged from the historical
+bank at `a6d2e13`. They cover 200 cells and 25,600 requests: 23,201 successful
+responses, 2,399 failures counted as findings, and zero incorrect successful
+responses. The summary retains the raw stream's hash for provenance; that
+stream is not included in this writeup. Without it, individual request latency
+distributions cannot be recomputed from the compact evidence.
+
+Labels distinguish single-run screening (`screen-`, replacement tight runs
+`screen2-`), API-key screening (`key-`), five alternating confirmation trials
+(`confirm-`), scheduled arrivals (`arrival-`), and forced spilling (`spill`).
+`groups` means the historical workspace estimate, `cap32` a 32 MiB scan cap,
+`pull32` prefix consumption with that cap, `fair` active-scan width sharing,
+`demand512` estimated 512 MiB admission demand, and `fixed8` eight general slots
+plus two reserved slots. `reserve8` additionally enables the historical narrow
+lookup classifier; combined labels combine those controls. `fair32` combines
+width sharing and the cap. Unspecified controls are baseline behavior.
+
+The old branch's development profile passed 894 selected tests, with 25 skipped,
+at `52eb88b8`. Separate spill checks matched all 256 answers, wrote 6.4 GB per
+cell, and released active spill storage. A 300-row CDC update/delete/insert
+sequence converged to MySQL and survived restart. Those checks validate the
+historical experiment only; they are neither a validation of current `dev` nor
+a release gate. No new engine validation or performance remeasurement is
+claimed for this documentation-only entry.
