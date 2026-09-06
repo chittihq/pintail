@@ -36,6 +36,10 @@ impl Optimizer {
             unix: utc.timestamp(),
         }));
         let plan = fold_constants(plan);
+        // After folding so `DATE(c) = CURDATE()` sees a literal; before
+        // pushdown so the produced column ranges reach the scan's pruning
+        // bounds and vectorized filter mask.
+        let plan = crate::temporal_rewrite::rewrite_temporal_predicates(plan);
         let plan = push_predicates(plan);
         let plan = replace_metadata_counts(plan);
         let plan = reorder_cross_joins(plan);

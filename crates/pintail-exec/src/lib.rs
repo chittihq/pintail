@@ -11,6 +11,7 @@ mod logical;
 mod optimizer;
 pub mod spill;
 mod storage;
+mod temporal_rewrite;
 
 pub use batch::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SPILL_SERVE_BATCH_ROWS,

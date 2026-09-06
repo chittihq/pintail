@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1081;
+const EXPECTED_CASES: usize = 1114;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -959,6 +959,67 @@ fn oracle_cases() -> Vec<OracleCase> {
     ] {
         cases.push(OracleCase {
             family: "row constructor IN",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Date-function predicates the optimizer rewrites into column ranges
+    // (`DATE(c) = d` becomes `c >= d AND c < d + 1 day`). Every shape is
+    // checked against MySQL on both the rewritten path and the shapes the
+    // rewrite deliberately leaves alone: a literal with a time part, an
+    // impossible date, a NULL-producing outer join, and midnight rows that
+    // sit exactly on a boundary (order 3 is placed at 2024-03-01 00:00:00).
+    for sql in [
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) = '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) <> '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) < '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) <= '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) > '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) >= '2024-03-01' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE '2024-03-01' >= DATE(o.placed_at) ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) BETWEEN '2024-02-29' AND '2024-03-01' \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) NOT BETWEEN '2024-02-29' AND '2024-03-08' \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) IN ('2024-01-15', '2024-03-01', '2024-12-25') \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) NOT IN ('2024-01-15', '2024-03-01') \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE CAST(o.placed_at AS DATE) = '2024-02-29' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE YEAR(o.placed_at) = 2024 ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE YEAR(o.placed_at) > 2023 AND YEAR(o.placed_at) <= 2024 \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE YEAR(o.placed_at) BETWEEN 2020 AND 2023 ORDER BY o.id",
+        "SELECT COUNT(*), COUNT(o.meta), SUM(o.total) FROM orders o \
+         WHERE 1 = 1 AND DATE(o.placed_at) BETWEEN '2024-01-01' AND '2024-06-30'",
+        "SELECT COUNT(DISTINCT o.status) FROM orders o \
+         WHERE DATE(o.placed_at) BETWEEN '2024-01-01' AND '2024-06-30' AND o.status IS NOT NULL",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.id > 3 \
+         WHERE DATE(o.placed_at) = '2024-06-15' OR o.id IS NULL ORDER BY u.id, o.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.id > 3 \
+         WHERE DATE(o.placed_at) <> '2024-06-15' ORDER BY u.id, o.id",
+        "SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o \
+         ON o.user_id = u.id AND DATE(o.placed_at) >= '2024-03-01' GROUP BY u.id ORDER BY u.id",
+        "SELECT o.id FROM orders o WHERE NOT (DATE(o.placed_at) BETWEEN '2024-02-01' AND '2024-06-30') \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) = '2024-03-01 00:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) <> '2024-03-01 00:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) BETWEEN '2024-02-29 00:00:00' \
+         AND '2024-03-01 00:00:00.000' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) IN ('2024-03-01 00:00:00', '2024-06-15') \
+         ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) = '2024-01-15 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) <> '2024-01-15 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) < '2024-03-01 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) <= '2024-03-01 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) > '2024-03-01 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) >= '2024-03-01 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) BETWEEN '2024-02-29 10:00:00' \
+         AND '2024-03-08 10:00:00' ORDER BY o.id",
+        "SELECT o.id FROM orders o WHERE DATE(o.placed_at) = DATE('2024-03-01 18:30:00') ORDER BY o.id",
+    ] {
+        cases.push(OracleCase {
+            family: "temporal predicate rewrites",
             sql: sql.to_owned(),
             ordered: true,
         });
