@@ -13,6 +13,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+      # The job runs as root inside the container while the workspace is
+      # owned by the runner, so git refuses the checkout as dubious and
+      # `git rev-parse HEAD` (the recorder's provenance) exits 128.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: apt-get update && apt-get install --yes --no-install-recommends valgrind python3
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked --release -p pintail-exec --example instruction_workload
