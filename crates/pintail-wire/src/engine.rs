@@ -1,7 +1,7 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -166,6 +166,10 @@ pub enum SqlRejection {
     NotNull,
 }
 
+/// The metadata files a database's signature was last read against, and
+/// that signature.
+type SignatureMemo = (Vec<FileStamp>, u64);
+
 /// Opens reader-pinned table snapshots and runs Pintail's native SQL engine.
 #[derive(Clone)]
 pub struct ReplicaEngine {
@@ -182,6 +186,14 @@ pub struct ReplicaEngine {
     /// the fixed floor under the whole benchmark board - and one copy per
     /// connection was the floor under the process's memory.
     cache: Arc<ReplicaCache<LoadedReplica>>,
+    /// Per database, the metadata files last seen and the signature they
+    /// carried: when the files have not moved the signature is known
+    /// without opening the store.
+    signatures: Arc<Mutex<HashMap<String, SignatureMemo>>>,
+    /// A read connection kept open for the signature query, so a request
+    /// that follows a metadata write does not pay a store open and a
+    /// migration check to learn that nothing it reads has changed.
+    signature_reader: Arc<Mutex<Option<MetaStore>>>,
 }
 
 impl std::fmt::Debug for ReplicaEngine {
@@ -237,7 +249,48 @@ impl ReplicaEngine {
             memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
             admission: shared_admission(),
             cache: shared_replica_cache(),
+            signatures: Arc::new(Mutex::new(HashMap::new())),
+            signature_reader: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The metadata signature for `files`, from the memo when the files are
+    /// the ones last read, otherwise from the store. A store that cannot be
+    /// read falls back to a hash of the files themselves, which is the old
+    /// behaviour: safe, and no worse.
+    fn metadata_signature(&self, database_id: &str, files: &[FileStamp]) -> u64 {
+        if let Ok(memo) = self.signatures.lock()
+            && let Some((known_files, signature)) = memo.get(database_id)
+            && known_files == files
+        {
+            return *signature;
+        }
+        let signature = {
+            let mut reader = self
+                .signature_reader
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if reader.is_none() {
+                *reader = MetaStore::open(&self.metadata_path).ok();
+            }
+            let read = reader
+                .as_ref()
+                .and_then(|store| store.replica_signature(database_id).ok());
+            if read.is_none() {
+                // Reopen next time rather than keep a connection that failed.
+                *reader = None;
+            }
+            read
+        };
+        let signature = signature.unwrap_or_else(|| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            std::hash::Hash::hash(files, &mut hasher);
+            std::hash::Hasher::finish(&hasher)
+        });
+        if let Ok(mut memo) = self.signatures.lock() {
+            memo.insert(database_id.to_owned(), (files.to_vec(), signature));
+        }
+        signature
     }
 
     /// Every file whose content can change what a query sees: the metadata
@@ -253,13 +306,14 @@ impl ReplicaEngine {
             }
         }
         let mut stamp = ReplicaStamp::default();
-        record(&mut stamp.metadata, &self.metadata_path);
+        record(&mut stamp.metadata.files, &self.metadata_path);
         // Metadata writes land in SQLite's WAL, not the main file — without
         // it a replica cached between a table's files appearing and its
         // metadata rows committing stays stale until unrelated data churn.
         let mut wal = self.metadata_path.as_os_str().to_owned();
         wal.push("-wal");
-        record(&mut stamp.metadata, Path::new(&wal));
+        record(&mut stamp.metadata.files, Path::new(&wal));
+        stamp.metadata.signature = self.metadata_signature(database_id, &stamp.metadata.files);
         let Ok(entries) = std::fs::read_dir(self.tables_root(database_id)) else {
             return stamp;
         };
@@ -340,10 +394,13 @@ impl ReplicaEngine {
         if stamp.files() > 128 {
             return None;
         }
+        // The tables' files only: the metadata store grows with audit and
+        // auth history for the whole deployment and says nothing about how
+        // much this replica's queries will read.
         let bytes = stamp
-            .metadata
-            .iter()
-            .chain(stamp.tables.values().flatten())
+            .tables
+            .values()
+            .flatten()
             .fold(0_u64, |total, file| total.saturating_add(file.1));
         if bytes > 4 * 1024 * 1024 {
             return None;
@@ -1318,6 +1375,94 @@ fn write_error(error: &pintail_write::WriteError) -> QueryError {
 mod admission_tests {
     use super::*;
     use pintail_write::LocalDatabase;
+
+    /// Every authenticated request writes to the metadata store - an audit
+    /// record, an API-key touch - and the store's file stamp moved with each,
+    /// so a warm replica was judged stale on every request and an otherwise
+    /// eligible short query fell back to general admission. The stamp's
+    /// metadata half is now a signature of the rows a load reads: the files
+    /// move, the signature does not, and the replica stays warm. Schema,
+    /// table-state and mode changes still move it.
+    #[test]
+    fn bookkeeping_metadata_writes_keep_the_replica_warm_and_semantic_ones_do_not() {
+        const NOW: &str = "2026-09-06T00:00:00Z";
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let mut meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", NOW).unwrap();
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO a VALUES (1)",
+        ] {
+            writer.execute(&parse_statement(sql).unwrap()).unwrap();
+        }
+        let engine = ReplicaEngine::new(directory.path(), &metadata_path);
+        engine
+            .execute("db", "SELECT id FROM a WHERE id = 1", 10)
+            .unwrap();
+        let warm = engine.replica_stamp("db");
+        assert!(matches!(
+            engine.cache.lookup(&engine.cache_key("db"), &warm),
+            Lookup::Hit(_)
+        ));
+
+        meta.set_setting("probe.cadence", "5").unwrap();
+        meta.create_workspace("ws", "Workspace", "ws", NOW).unwrap();
+        meta.record_audit_event(&pintail_meta::NewAuditEvent {
+            id: "evt-1",
+            workspace_id: "ws",
+            actor_type: "user",
+            actor_id: "usr_1",
+            actor_label: "operator",
+            action: "query.execute",
+            target_type: Some("database"),
+            target_id: Some("db"),
+            detail_json: None,
+            created_at: NOW,
+            client_ip: None,
+        })
+        .unwrap();
+        let after_bookkeeping = engine.replica_stamp("db");
+        assert_ne!(
+            warm.metadata.files, after_bookkeeping.metadata.files,
+            "the metadata store's files moved"
+        );
+        assert_eq!(warm, after_bookkeeping, "the stamp did not");
+        assert!(matches!(
+            engine
+                .cache
+                .lookup(&engine.cache_key("db"), &after_bookkeeping),
+            Lookup::Hit(_)
+        ));
+
+        meta.record_schema_history(
+            "db",
+            "a",
+            2,
+            Some("ALTER TABLE a ADD COLUMN note TEXT"),
+            r#"[{"id":1,"name":"id"},{"id":2,"name":"note"}]"#,
+            NOW,
+        )
+        .unwrap();
+        let evolved = engine.replica_stamp("db");
+        assert_ne!(
+            after_bookkeeping, evolved,
+            "a schema generation is a change"
+        );
+        assert!(matches!(
+            engine.cache.lookup(&engine.cache_key("db"), &evolved),
+            Lookup::Stale(..)
+        ));
+        meta.set_database_mode("db", "paused", NOW).unwrap();
+        assert_ne!(
+            evolved,
+            engine.replica_stamp("db"),
+            "a mode change is a change"
+        );
+    }
 
     #[test]
     fn reserved_execution_rechecks_real_replica_size_and_freshness() {

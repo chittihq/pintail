@@ -29,12 +29,37 @@ use pintail_exec::MemoryBudget;
 /// A file's identity as far as change detection is concerned.
 pub(crate) type FileStamp = (PathBuf, u64, Option<SystemTime>);
 
+/// The metadata half of a stamp: the store's files, and a signature of the
+/// rows a replica load actually reads (`MetaStore::replica_signature`).
+///
+/// Equality is the signature's alone. The files are how the signature is
+/// found cheaply - unchanged files mean an unchanged signature and no read -
+/// but they cannot decide staleness: an audit record or an API-key touch
+/// moves them on every request without changing what a query sees, and
+/// comparing them evicted every warm replica and sent otherwise eligible
+/// short queries back to general admission.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MetadataStamp {
+    /// The metadata store and its write-ahead log.
+    pub(crate) files: Vec<FileStamp>,
+    /// Signature of the database, table and schema-history rows.
+    pub(crate) signature: u64,
+}
+
+impl PartialEq for MetadataStamp {
+    fn eq(&self, other: &Self) -> bool {
+        self.signature == other.signature
+    }
+}
+
+impl Eq for MetadataStamp {}
+
 /// Everything on disk that can change what a query sees, attributed so a
 /// change to one table's files is distinguishable from a metadata write.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ReplicaStamp {
-    /// The metadata store and its write-ahead log.
-    pub(crate) metadata: Vec<FileStamp>,
+    /// The metadata store: its files and their semantic signature.
+    pub(crate) metadata: MetadataStamp,
     /// Each table's files, keyed by the table's directory name.
     pub(crate) tables: BTreeMap<String, Vec<FileStamp>>,
 }
@@ -42,7 +67,7 @@ pub(crate) struct ReplicaStamp {
 impl ReplicaStamp {
     /// How many files were inspected, for the setup log line.
     pub(crate) fn files(&self) -> usize {
-        self.metadata.len() + self.tables.values().map(Vec::len).sum::<usize>()
+        self.metadata.files.len() + self.tables.values().map(Vec::len).sum::<usize>()
     }
 }
 

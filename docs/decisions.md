@@ -1157,6 +1157,24 @@ still matter. Broader planner estimates can extend eligibility without
 changing the two-pool admission contract. The shared total applies equally
 to HTTP and wire requests.
 
+The replica stamp's metadata half is a signature of the rows a load reads,
+not the store's file stamp (2026-09-06, issue #34). Every authenticated
+request writes to the metadata store - a user session's audit record after
+the query, an API key's last-used touch before it - and the store's file and
+WAL stamps moved with each, so a warm replica was judged stale on every
+request and an otherwise eligible short query fell back to general
+admission, which is the queue the reserve exists to avoid. The stamp now
+records the files only to know when the signature must be re-read;
+equality is the signature's, computed over the database row, its table rows
+and their schema history minus the bookkeeping columns (`updated_at`,
+`rows_synced`, `last_reconcile_at`, `last_error`, the encrypted DSN). A
+schema generation, a table state change, a mode change or a reprobe moves
+it; audit, sessions, API keys, settings and other databases cannot. The
+reserved path's 4 MiB size cap likewise counts the tables' files alone: the
+metadata store grows with the deployment's history and says nothing about
+what this replica's queries read. A store that cannot be read falls back to
+hashing the files, which is the old behaviour.
+
 ### Background compaction cannot outlive its writer generation
 
 A table keeps its writer lock until its background merge thread has joined.

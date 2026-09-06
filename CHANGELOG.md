@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A warm replica stays warm across audit records, API-key touches and other
+  metadata bookkeeping. The replica stamp compared the metadata store's file
+  and WAL, which every authenticated request moves, so a cached replica was
+  judged stale on every request and a short query eligible for reserved
+  admission fell back to the general queue. The stamp's metadata half is now
+  a signature of the rows a replica load reads (database, tables, schema
+  history), and the reserved path's size cap counts the tables' files alone
+  (issue #34).
+
 ## [0.1.2-rc5] - 2026-09-06
 
 ### Added

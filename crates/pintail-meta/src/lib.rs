@@ -6,7 +6,7 @@
 use std::{collections::BTreeSet, path::Path, time::Duration};
 
 use anyhow::{Context, Result, bail};
-use rusqlite::{Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, types::ValueRef};
 
 mod backup;
 mod control;
@@ -221,6 +221,83 @@ impl MetaStore {
             })
             .optional()
             .with_context(|| format!("failed to read metadata setting {key}"))
+    }
+
+    /// A signature of every metadata row a replica load reads: the database
+    /// row, its table rows and their schema history, minus the bookkeeping
+    /// columns that change without changing what a query sees. Two equal
+    /// signatures mean the metadata gives a cached replica no reason to
+    /// reload; the tables' own files decide the rest. Audit records, API-key
+    /// touches, sessions and every other table are outside it by
+    /// construction, which is the point: they used to move the metadata
+    /// store's file stamp on every request and evict every warm replica.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be read.
+    pub fn replica_signature(&self, database_id: &str) -> Result<u64> {
+        const EXCLUDED_COLUMNS: &[&str] = &[
+            "updated_at",
+            "mysql_dsn_encrypted",
+            "rows_synced",
+            "last_reconcile_at",
+            "last_error",
+        ];
+        const QUERIES: &[&str] = &[
+            "SELECT * FROM databases WHERE id = ?1",
+            "SELECT * FROM tables WHERE db_id = ?1 ORDER BY name",
+            "SELECT * FROM schema_history WHERE db_id = ?1 ORDER BY table_name, version",
+        ];
+        // FNV-1a over a self-delimiting byte stream: column name, value and
+        // a row marker each contribute, so a value moving between columns
+        // or rows cannot cancel out.
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut feed = |bytes: &[u8]| {
+            for byte in bytes {
+                hash ^= u64::from(*byte);
+                hash = hash.wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        for sql in QUERIES {
+            let mut statement = self
+                .connection
+                .prepare(sql)
+                .context("failed to prepare the replica signature query")?;
+            let names: Vec<String> = statement
+                .column_names()
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect();
+            let mut rows = statement
+                .query([database_id])
+                .context("failed to read the replica signature rows")?;
+            feed(sql.as_bytes());
+            while let Some(row) = rows
+                .next()
+                .context("failed to step a replica signature row")?
+            {
+                feed(b"\x01row");
+                for (index, name) in names.iter().enumerate() {
+                    if EXCLUDED_COLUMNS.contains(&name.as_str()) {
+                        continue;
+                    }
+                    feed(name.as_bytes());
+                    feed(b"=");
+                    match row
+                        .get_ref(index)
+                        .context("failed to read a replica signature column")?
+                    {
+                        ValueRef::Null => feed(b"\x00"),
+                        ValueRef::Integer(value) => feed(&value.to_le_bytes()),
+                        ValueRef::Real(value) => feed(&value.to_bits().to_le_bytes()),
+                        ValueRef::Text(text) => feed(text),
+                        ValueRef::Blob(blob) => feed(blob),
+                    }
+                    feed(b"\x02");
+                }
+            }
+        }
+        Ok(hash)
     }
 
     /// Writes or replaces one setting value.
