@@ -125,7 +125,13 @@ const sqlHash = (sql: string) => createHash('sha256').update(sql).digest('hex').
 const seedVolumeName = auditorRun ? `${runId}-seed` : `pintail-bench-seed-${benchmarkFingerprint.slice(0, 12)}`
 const runVolumeName = `${runId}-mysql-data`
 const pintailVolumeName = `${runId}-pintail-data`
-const baselinePath = join(benchmarkDir, 'mysql-baseline.json')
+// A smoke run caches its own baseline: a 0.001-scale run once overwrote the
+// full-scale ledger with twenty-thousand-row timings, and the next full run
+// would have re-measured an hour of cold MySQL queries to get it back.
+const baselinePath = join(
+  benchmarkDir,
+  scale === 1 ? 'mysql-baseline.json' : 'mysql-baseline-smoke.json',
+)
 type MysqlBaseline = {
   fingerprint: string
   // Cold timings are hardware-bound: a baseline from one docker host must

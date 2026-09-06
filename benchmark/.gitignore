@@ -3,3 +3,4 @@ results-smoke.json
 results-smoke.md
 .dataset-cache/
 .dataset-export/
+mysql-baseline-smoke.json

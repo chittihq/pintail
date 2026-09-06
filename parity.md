@@ -133,7 +133,7 @@ compatibility matrix is the artifact people migrate on:
 |---|---|
 | MySQL keywords | `information_schema.KEYWORDS` on MySQL 8.4 |
 | MySQL functions | `mysql.help_topic` joined to its Function/Operator categories — MySQL's own documentation catalogue |
-| ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:25.8`, matched case-insensitively so its MySQL-compatible aliases count |
+| ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:26.8`, matched case-insensitively so its MySQL-compatible aliases count |
 | Pintail functions | the binder's own match arms, the same source `scripts/function-surface.ts` reads |
 | Pintail keywords | **curated, not machine-read** — the binder has no keyword table, it either binds a construct or rejects it |
 
@@ -163,9 +163,9 @@ design — DDL, DML writes, replication and administration. Those are out of
 scope rather than missing, and counting them as gaps would make this table
 read as far worse than the engine is.
 
-**Functions:** 392 MySQL functions — Pintail 130, ClickHouse 151.
+**Functions:** 393 MySQL functions — Pintail 151, ClickHouse 161.
 
-**Keywords:** 734 MySQL keywords — Pintail 95 supported and 123 out of scope, ClickHouse 208.
+**Keywords:** 734 MySQL keywords — Pintail 95 supported and 123 out of scope, ClickHouse 225.
 
 ### Functions
 
@@ -174,7 +174,7 @@ read as far worse than the engine is.
 | `ABS` | ✅ | ✅ |
 | `ACOS` | ❌ | ✅ |
 | `ADDDATE` | ❌ | ✅ |
-| `ADDTIME` | ❌ | ❌ |
+| `ADDTIME` | ✅ | ❌ |
 | `AES_DECRYPT` | ❌ | ❌ |
 | `AES_ENCRYPT` | ❌ | ❌ |
 | `AND` | ❌ | ✅ |
@@ -214,7 +214,7 @@ read as far worse than the engine is.
 | `CONCAT` | ✅ | ✅ |
 | `CONCAT_WS` | ✅ | ✅ |
 | `CONNECTION_ID` | ❌ | ✅ |
-| `CONV` | ✅ | ❌ |
+| `CONV` | ✅ | ✅ |
 | `CONVERT` | ❌ | ❌ |
 | `CONVERT_TZ` | ✅ | ❌ |
 | `COS` | ❌ | ✅ |
@@ -224,7 +224,7 @@ read as far worse than the engine is.
 | `CREATE_ASYMMETRIC_PRIV_KEY` | ❌ | ❌ |
 | `CREATE_ASYMMETRIC_PUB_KEY` | ❌ | ❌ |
 | `CREATE_DIGEST` | ❌ | ❌ |
-| `CUME_DIST` | ❌ | ❌ |
+| `CUME_DIST` | ❌ | ✅ |
 | `CURDATE` | ✅ | ✅ |
 | `CURRENT_DATE` | ❌ | ✅ |
 | `CURRENT_ROLE` | ❌ | ❌ |
@@ -354,8 +354,8 @@ read as far worse than the engine is.
 | `LIKE` | ❌ | ✅ |
 | `LN` | ✅ | ✅ |
 | `LOAD_FILE` | ❌ | ❌ |
-| `LOCALTIME` | ❌ | ❌ |
-| `LOCALTIMESTAMP` | ❌ | ❌ |
+| `LOCALTIME` | ❌ | ✅ |
+| `LOCALTIMESTAMP` | ❌ | ✅ |
 | `LOCATE` | ✅ | ✅ |
 | `LOG` | ✅ | ✅ |
 | `LOG10` | ✅ | ✅ |
@@ -377,7 +377,7 @@ read as far worse than the engine is.
 | `MBRTOUCHES` | ❌ | ❌ |
 | `MBRWITHIN` | ❌ | ❌ |
 | `MD5` | ✅ | ✅ |
-| `MICROSECOND` | ❌ | ❌ |
+| `MICROSECOND` | ❌ | ✅ |
 | `MID` | ❌ | ✅ |
 | `MIN` | ✅ | ✅ |
 | `MINUTE` | ✅ | ✅ |
@@ -396,7 +396,7 @@ read as far worse than the engine is.
 | `PERCENT_RANK` | ❌ | ✅ |
 | `PERIOD_ADD` | ❌ | ❌ |
 | `PERIOD_DIFF` | ❌ | ❌ |
-| `PI` | ❌ | ✅ |
+| `PI` | ✅ | ✅ |
 | `POSITION` | ❌ | ✅ |
 | `POW` | ✅ | ✅ |
 | `POWER` | ✅ | ✅ |
@@ -409,10 +409,10 @@ read as far worse than the engine is.
 | `RANDOM_BYTES` | ❌ | ❌ |
 | `RANK` | ✅ | ✅ |
 | `REGEXP` | ❌ | ❌ |
-| `REGEXP_INSTR` | ✅ | ❌ |
+| `REGEXP_INSTR` | ✅ | ✅ |
 | `REGEXP_LIKE` | ✅ | ❌ |
 | `REGEXP_REPLACE` | ✅ | ✅ |
-| `REGEXP_SUBSTR` | ✅ | ❌ |
+| `REGEXP_SUBSTR` | ✅ | ✅ |
 | `RELEASE_ALL_LOCKS` | ❌ | ❌ |
 | `RELEASE_LOCK` | ❌ | ❌ |
 | `REVERSE` | ✅ | ✅ |
@@ -426,7 +426,7 @@ read as far worse than the engine is.
 | `SCHEMA` | ❌ | ✅ |
 | `SECOND` | ✅ | ✅ |
 | `SEC_TO_TIME` | ✅ | ❌ |
-| `SESSION_USER` | ❌ | ❌ |
+| `SESSION_USER` | ❌ | ✅ |
 | `SHA1` | ✅ | ✅ |
 | `SHA2` | ✅ | ❌ |
 | `SIGN` | ✅ | ✅ |
@@ -438,7 +438,7 @@ read as far worse than the engine is.
 | `STATEMENT_DIGEST` | ❌ | ❌ |
 | `STATEMENT_DIGEST_TEXT` | ❌ | ❌ |
 | `STD` | ✅ | ✅ |
-| `STDDEV` | ✅ | ❌ |
+| `STDDEV` | ✅ | ✅ |
 | `STDDEV_POP` | ✅ | ✅ |
 | `STDDEV_SAMP` | ✅ | ✅ |
 | `STRCMP` | ❌ | ❌ |
@@ -493,7 +493,7 @@ read as far worse than the engine is.
 | `ST_MLINEFROMTEXT` | ❌ | ❌ |
 | `ST_MLINEFROMWKB` | ❌ | ✅ |
 | `ST_MPOINTFROMTEXT` | ❌ | ❌ |
-| `ST_MPOINTFROMWKB` | ❌ | ❌ |
+| `ST_MPOINTFROMWKB` | ❌ | ✅ |
 | `ST_MPOLYFROMTEXT` | ❌ | ❌ |
 | `ST_MPOLYFROMWKB` | ❌ | ✅ |
 | `ST_NUMGEOMETRIES` | ❌ | ❌ |
@@ -523,12 +523,12 @@ read as far worse than the engine is.
 | `SUBSTR` | ✅ | ✅ |
 | `SUBSTRING` | ✅ | ✅ |
 | `SUBSTRING_INDEX` | ✅ | ✅ |
-| `SUBTIME` | ❌ | ❌ |
+| `SUBTIME` | ✅ | ❌ |
 | `SUM` | ✅ | ✅ |
 | `SYSDATE` | ❌ | ❌ |
 | `SYSTEM_USER` | ❌ | ❌ |
 | `TAN` | ❌ | ✅ |
-| `TIMEDIFF` | ❌ | ✅ |
+| `TIMEDIFF` | ✅ | ✅ |
 | `TIMESTAMPADD` | ✅ | ❌ |
 | `TIMESTAMPDIFF` | ✅ | ✅ |
 | `TIME_FORMAT` | ❌ | ❌ |
@@ -577,12 +577,12 @@ read as far worse than the engine is.
 | `ADMIN` |  | ❌ | ❌ |
 | `AFTER` |  | ❌ | ✅ |
 | `AGAINST` |  | ❌ | ❌ |
-| `AGGREGATE` |  | ❌ | ❌ |
+| `AGGREGATE` |  | ❌ | ✅ |
 | `ALGORITHM` |  | ❌ | ✅ |
 | `ALL` | ✅ | ✅ | ✅ |
 | `ALTER` | ✅ | ➖ | ✅ |
 | `ALWAYS` |  | ❌ | ❌ |
-| `ANALYZE` | ✅ | ➖ | ❌ |
+| `ANALYZE` | ✅ | ➖ | ✅ |
 | `AND` | ✅ | ✅ | ✅ |
 | `ANY` |  | ❌ | ✅ |
 | `ARRAY` |  | ❌ | ❌ |
@@ -591,7 +591,7 @@ read as far worse than the engine is.
 | `ASCII` |  | ❌ | ❌ |
 | `ASENSITIVE` | ✅ | ❌ | ❌ |
 | `ASSIGN_GTIDS_TO_ANONYMOUS_TRANSACTIONS` |  | ❌ | ❌ |
-| `AT` |  | ❌ | ❌ |
+| `AT` |  | ❌ | ✅ |
 | `ATTRIBUTE` |  | ➖ | ❌ |
 | `AUTHENTICATION` |  | ➖ | ❌ |
 | `AUTO` |  | ❌ | ❌ |
@@ -637,7 +637,7 @@ read as far worse than the engine is.
 | `CIPHER` |  | ❌ | ❌ |
 | `CLASS_ORIGIN` |  | ❌ | ❌ |
 | `CLIENT` |  | ❌ | ❌ |
-| `CLONE` |  | ➖ | ❌ |
+| `CLONE` |  | ➖ | ✅ |
 | `CLOSE` |  | ❌ | ❌ |
 | `COALESCE` |  | ✅ | ❌ |
 | `CODE` |  | ❌ | ❌ |
@@ -672,12 +672,12 @@ read as far worse than the engine is.
 | `CROSS` | ✅ | ✅ | ✅ |
 | `CUBE` | ✅ | ❌ | ✅ |
 | `CUME_DIST` | ✅ | ❌ | ❌ |
-| `CURRENT` |  | ✅ | ❌ |
+| `CURRENT` |  | ✅ | ✅ |
 | `CURRENT_DATE` | ✅ | ❌ | ❌ |
 | `CURRENT_TIME` | ✅ | ❌ | ❌ |
 | `CURRENT_TIMESTAMP` | ✅ | ❌ | ❌ |
 | `CURRENT_USER` | ✅ | ❌ | ✅ |
-| `CURSOR` | ✅ | ➖ | ❌ |
+| `CURSOR` | ✅ | ➖ | ✅ |
 | `CURSOR_NAME` |  | ❌ | ❌ |
 | `DATA` |  | ❌ | ✅ |
 | `DATABASE` | ✅ | ❌ | ✅ |
@@ -705,7 +705,7 @@ read as far worse than the engine is.
 | `DESC` | ✅ | ✅ | ✅ |
 | `DESCRIBE` | ✅ | ❌ | ✅ |
 | `DESCRIPTION` |  | ❌ | ❌ |
-| `DETERMINISTIC` | ✅ | ❌ | ❌ |
+| `DETERMINISTIC` | ✅ | ❌ | ✅ |
 | `DIAGNOSTICS` |  | ❌ | ❌ |
 | `DIRECTORY` |  | ❌ | ❌ |
 | `DISABLE` |  | ❌ | ❌ |
@@ -737,7 +737,7 @@ read as far worse than the engine is.
 | `ENUM` |  | ❌ | ❌ |
 | `ERROR` |  | ❌ | ❌ |
 | `ERRORS` |  | ❌ | ❌ |
-| `ESCAPE` |  | ✅ | ❌ |
+| `ESCAPE` |  | ✅ | ✅ |
 | `ESCAPED` | ✅ | ❌ | ❌ |
 | `EVENT` |  | ➖ | ✅ |
 | `EVENTS` |  | ➖ | ✅ |
@@ -801,7 +801,7 @@ read as far worse than the engine is.
 | `GROUPS` | ✅ | ✅ | ✅ |
 | `GTID_ONLY` |  | ➖ | ❌ |
 | `GTIDS` |  | ➖ | ❌ |
-| `HANDLER` |  | ➖ | ❌ |
+| `HANDLER` |  | ➖ | ✅ |
 | `HASH` |  | ❌ | ✅ |
 | `HAVING` | ✅ | ✅ | ✅ |
 | `HELP` |  | ❌ | ❌ |
@@ -865,7 +865,7 @@ read as far worse than the engine is.
 | `KEYS` | ✅ | ❌ | ✅ |
 | `KILL` | ✅ | ❌ | ✅ |
 | `LAG` | ✅ | ❌ | ❌ |
-| `LANGUAGE` |  | ❌ | ❌ |
+| `LANGUAGE` |  | ❌ | ✅ |
 | `LAST` |  | ❌ | ✅ |
 | `LAST_VALUE` | ✅ | ❌ | ❌ |
 | `LATERAL` | ✅ | ❌ | ❌ |
@@ -935,7 +935,7 @@ read as far worse than the engine is.
 | `NAME` |  | ❌ | ✅ |
 | `NAMES` |  | ❌ | ❌ |
 | `NATIONAL` |  | ❌ | ❌ |
-| `NATURAL` | ✅ | ✅ | ❌ |
+| `NATURAL` | ✅ | ✅ | ✅ |
 | `NCHAR` |  | ✅ | ❌ |
 | `NDB` |  | ❌ | ❌ |
 | `NDBCLUSTER` |  | ❌ | ❌ |
@@ -994,7 +994,7 @@ read as far worse than the engine is.
 | `PARTITIONS` |  | ➖ | ✅ |
 | `PASSWORD` |  | ➖ | ❌ |
 | `PASSWORD_LOCK_TIME` |  | ❌ | ❌ |
-| `PATH` |  | ❌ | ❌ |
+| `PATH` |  | ❌ | ✅ |
 | `PERCENT_RANK` | ✅ | ❌ | ❌ |
 | `PERSIST` |  | ❌ | ❌ |
 | `PERSIST_ONLY` |  | ❌ | ❌ |
@@ -1081,13 +1081,13 @@ read as far worse than the engine is.
 | `RETURN` | ✅ | ❌ | ❌ |
 | `RETURNED_SQLSTATE` |  | ❌ | ❌ |
 | `RETURNING` |  | ❌ | ❌ |
-| `RETURNS` |  | ❌ | ❌ |
+| `RETURNS` |  | ❌ | ✅ |
 | `REUSE` |  | ❌ | ❌ |
 | `REVERSE` |  | ❌ | ❌ |
 | `REVOKE` | ✅ | ➖ | ✅ |
 | `RIGHT` | ✅ | ✅ | ✅ |
 | `RLIKE` | ✅ | ✅ | ❌ |
-| `ROLE` |  | ➖ | ❌ |
+| `ROLE` |  | ➖ | ✅ |
 | `ROLLBACK` |  | ➖ | ✅ |
 | `ROLLUP` |  | ❌ | ✅ |
 | `ROTATE` |  | ❌ | ❌ |
@@ -1130,9 +1130,9 @@ read as far worse than the engine is.
 | `SLAVE` |  | ➖ | ❌ |
 | `SLOW` |  | ❌ | ❌ |
 | `SMALLINT` | ✅ | ❌ | ❌ |
-| `SNAPSHOT` |  | ❌ | ❌ |
+| `SNAPSHOT` |  | ❌ | ✅ |
 | `SOCKET` |  | ❌ | ❌ |
-| `SOME` |  | ❌ | ❌ |
+| `SOME` |  | ❌ | ✅ |
 | `SONAME` |  | ➖ | ❌ |
 | `SOUNDS` |  | ❌ | ❌ |
 | `SOURCE` |  | ➖ | ✅ |
@@ -1200,7 +1200,7 @@ read as far worse than the engine is.
 | `STORAGE` |  | ❌ | ✅ |
 | `STORED` | ✅ | ❌ | ❌ |
 | `STRAIGHT_JOIN` | ✅ | ✅ | ❌ |
-| `STREAM` |  | ❌ | ❌ |
+| `STREAM` |  | ❌ | ✅ |
 | `STRING` |  | ❌ | ❌ |
 | `SUBCLASS_ORIGIN` |  | ❌ | ❌ |
 | `SUBJECT` |  | ❌ | ❌ |
@@ -1303,7 +1303,3 @@ read as far worse than the engine is.
 | `YEAR_MONTH` | ✅ | ❌ | ❌ |
 | `ZEROFILL` | ✅ | ❌ | ❌ |
 | `ZONE` |  | ❌ | ❌ |
-
-The [function coverage ledger](docs/mysql-parity/functions.md) distinguishes linked
-MySQL differential cases from implementation-only names and reviewed gaps. A
-binder tick here does not establish semantic test coverage.

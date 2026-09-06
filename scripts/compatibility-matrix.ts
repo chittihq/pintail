@@ -149,7 +149,7 @@ const section = [
   '|---|---|',
   '| MySQL keywords | `information_schema.KEYWORDS` on MySQL 8.4 |',
   '| MySQL functions | `mysql.help_topic` joined to its Function/Operator categories — MySQL\'s own documentation catalogue |',
-  '| ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:25.8`, matched case-insensitively so its MySQL-compatible aliases count |',
+  '| ClickHouse | `system.functions` and `system.keywords` on `clickhouse/clickhouse-server:26.8`, matched case-insensitively so its MySQL-compatible aliases count |',
   '| Pintail functions | the binder\'s own match arms, the same source `scripts/function-surface.ts` reads |',
   '| Pintail keywords | **curated, not machine-read** — the binder has no keyword table, it either binds a construct or rejects it |',
   '',
