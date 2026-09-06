@@ -1130,6 +1130,15 @@ pub struct OperatorProfile {
     pub first_batch: Option<Duration>,
     /// The highest query reservation seen right after one of its pulls.
     pub peak_reserved: usize,
+    /// Time spent building the operator, its inputs included. Some
+    /// operators do their work here: a nested-loop join and a dependent or
+    /// recursive query run when they are built, and a subquery resolves
+    /// before the tree exists, so a profile that counted pulls alone
+    /// showed their scans and nothing above them.
+    pub construction: Duration,
+    /// What became of the operator beyond its pulls, when anything did:
+    /// a join fused into the aggregate above it, for one.
+    pub note: Option<String>,
 }
 
 /// Where a profiled execution's operators record what they did. Built once
@@ -1158,9 +1167,27 @@ impl ProfileSink {
         slots.len() - 1
     }
 
-    fn leave(&self) {
+    fn leave(&self, slot: usize, construction: Duration) {
         self.depth
             .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entry) = slots.get_mut(slot) {
+            entry.construction += construction;
+            entry.inclusive += construction;
+        }
+    }
+
+    fn annotate(&self, slot: usize, note: &str) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entry) = slots.get_mut(slot) {
+            entry.note = Some(note.to_owned());
+        }
     }
 
     fn record(&self, slot: usize, elapsed: Duration, rows: Option<usize>, reserved: usize) {
@@ -1203,19 +1230,37 @@ pub struct ExecutionProfile {
 
 impl ExecutionProfile {
     /// Time inside one operator excluding its inputs: its inclusive time
-    /// less the inclusive time of its direct children.
+    /// less the inclusive time of the nearest inputs that ran. An input
+    /// that never ran on its own, because the operator above took its
+    /// inputs directly, contributes what those inputs took instead, so a
+    /// fused join does not leave its scans on the aggregate's account.
     #[must_use]
     pub fn exclusive(&self, index: usize) -> Duration {
         let Some(node) = self.operators.get(index) else {
             return Duration::ZERO;
         };
-        let children: Duration = self.operators[index + 1..]
-            .iter()
-            .take_while(|other| other.depth > node.depth)
-            .filter(|other| other.depth == node.depth + 1)
-            .map(|other| other.inclusive)
-            .sum();
-        node.inclusive.saturating_sub(children)
+        node.inclusive
+            .saturating_sub(self.active_descendants(index))
+    }
+
+    fn active_descendants(&self, index: usize) -> Duration {
+        let node = &self.operators[index];
+        let mut total = Duration::ZERO;
+        for (offset, child) in self.operators[index + 1..].iter().enumerate() {
+            if child.depth <= node.depth {
+                break;
+            }
+            if child.depth != node.depth + 1 {
+                continue;
+            }
+            let ran = child.batches > 0 || !child.inclusive.is_zero();
+            total += if ran {
+                child.inclusive
+            } else {
+                self.active_descendants(index + 1 + offset)
+            };
+        }
+        total
     }
 
     /// The profile as indented text, one operator per line.
@@ -1248,13 +1293,20 @@ impl ExecutionProfile {
             if let Some(first) = node.first_batch {
                 let _ = write!(output, " first={:.1}ms", millis(first));
             }
-            let _ = writeln!(
+            if !node.construction.is_zero() {
+                let _ = write!(output, " build={:.1}ms", millis(node.construction));
+            }
+            let _ = write!(
                 output,
                 " batches={} rows={} peak_reserved={:.1}MiB",
                 node.batches,
                 node.rows,
                 mib(node.peak_reserved)
             );
+            if let Some(note) = &node.note {
+                let _ = write!(output, " ({note})");
+            }
+            output.push('\n');
         }
         output
     }
@@ -3575,8 +3627,9 @@ fn build_operator(
         return build_operator_inner(plan, provider, memory, collation);
     };
     let slot = sink.enter(plan_label(&plan));
+    let started = Instant::now();
     let built = build_operator_inner(plan, provider, memory, collation);
-    sink.leave();
+    sink.leave(slot, started.elapsed());
     let (operator, columns) = built?;
     Ok((
         PullOperator::Profiled {
@@ -3594,6 +3647,22 @@ fn unprofiled(operator: &mut PullOperator) -> &mut PullOperator {
     match operator {
         PullOperator::Profiled { input, .. } => unprofiled(input),
         other => other,
+    }
+}
+
+/// The same, read-only.
+fn unprofiled_ref(operator: &PullOperator) -> &PullOperator {
+    match operator {
+        PullOperator::Profiled { input, .. } => unprofiled_ref(input),
+        other => other,
+    }
+}
+
+/// Records on an operator's profile that something other than its own
+/// pulls decided its fate; a no-op when the execution is not profiled.
+fn annotate_profile(operator: &PullOperator, note: &str) {
+    if let PullOperator::Profiled { slot, sink, .. } = operator {
+        sink.annotate(*slot, note);
     }
 }
 

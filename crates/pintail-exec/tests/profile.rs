@@ -160,3 +160,146 @@ fn a_profiled_execution_reports_every_plan_node_with_its_rows_and_time() {
         "an unprofiled execution records nothing"
     );
 }
+
+/// Runs `sql` profiled and returns the rows and the profile.
+fn profiled(
+    fixture: &Fixture,
+    provider: &SnapshotScanProvider<'_>,
+    sql: &str,
+) -> (Vec<String>, pintail_exec::ExecutionProfile) {
+    let bound = Binder::new(&fixture.catalog, Some("app"))
+        .bind(&parse_statement(sql).expect("parse"))
+        .expect("bind");
+    let physical = PhysicalPlanner::plan(
+        Optimizer::optimize(LogicalPlanner::plan(bound)),
+        Collation::default(),
+    )
+    .expect("plan");
+    let mut execution =
+        Execution::start_profiled(physical, provider, 64 << 20, None, Collation::default())
+            .expect("start");
+    let mut rows = Vec::new();
+    while let Some(batch) = execution.next_batch().expect("batch") {
+        for index in batch.selection().selected_rows() {
+            let values: Vec<_> = batch
+                .columns()
+                .iter()
+                .map(|column| column.value(index).expect("value"))
+                .collect();
+            rows.push(format!("{values:?}"));
+        }
+    }
+    rows.sort();
+    (rows, execution.profile().expect("profile"))
+}
+
+fn plain(fixture: &Fixture, provider: &SnapshotScanProvider<'_>, sql: &str) -> Vec<String> {
+    let bound = Binder::new(&fixture.catalog, Some("app"))
+        .bind(&parse_statement(sql).expect("parse"))
+        .expect("bind");
+    let physical = PhysicalPlanner::plan(
+        Optimizer::optimize(LogicalPlanner::plan(bound)),
+        Collation::default(),
+    )
+    .expect("plan");
+    let mut execution =
+        Execution::start(physical, provider, 64 << 20, Collation::default()).expect("start");
+    let mut rows = Vec::new();
+    while let Some(batch) = execution.next_batch().expect("batch") {
+        for index in batch.selection().selected_rows() {
+            let values: Vec<_> = batch
+                .columns()
+                .iter()
+                .map(|column| column.value(index).expect("value"))
+                .collect();
+            rows.push(format!("{values:?}"));
+        }
+    }
+    rows.sort();
+    rows
+}
+
+#[test]
+fn profiling_does_not_change_the_execution_path() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.table.snapshot();
+    let provider = SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
+        .expect("provider");
+    // A bare-scan sum folds from the segment summaries and decodes nothing;
+    // the recorder around the scan must not turn it into a scan.
+    let sql = "SELECT SUM(amount), MIN(grp), MAX(grp) FROM events";
+    let (rows, profile) = profiled(&fixture, &provider, sql);
+    assert_eq!(rows, plain(&fixture, &provider, sql));
+    let scan = profile
+        .operators
+        .iter()
+        .find(|node| node.label.starts_with("Scan"))
+        .expect("scan");
+    assert_eq!(
+        scan.batches,
+        0,
+        "the fold must not pull the scan: {}",
+        profile.render()
+    );
+    let stats = provider
+        .scan_stats(DatabaseId::new(1), TableId::new(1))
+        .unwrap_or_default();
+    assert_eq!(
+        stats.blocks_decoded, 0,
+        "the fold decoded blocks under profiling"
+    );
+}
+
+#[test]
+fn a_fused_join_and_a_built_join_keep_the_accounting_consistent() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.table.snapshot();
+    let provider = SnapshotScanProvider::new([(DatabaseId::new(1), TableId::new(1), &snapshot)])
+        .expect("provider");
+    // The fused inner join: the aggregate pulls the join's inputs directly,
+    // so the join records nothing of its own and says so, and self times
+    // still add up to no more than the root.
+    let sql = "SELECT b.grp, COUNT(*) FROM events a JOIN events b ON b.id = a.id GROUP BY b.grp";
+    let (rows, profile) = profiled(&fixture, &provider, sql);
+    assert_eq!(rows, plain(&fixture, &provider, sql));
+    let join = profile
+        .operators
+        .iter()
+        .position(|node| node.label.starts_with("HashJoin"))
+        .expect("join");
+    if profile.operators[join].batches == 0 {
+        assert!(
+            profile.operators[join].note.is_some(),
+            "a join that never ran on its own must say why: {}",
+            profile.render()
+        );
+    }
+    let root = profile.operators[0].inclusive;
+    let self_sum: std::time::Duration = (0..profile.operators.len())
+        .map(|index| profile.exclusive(index))
+        .sum();
+    assert!(
+        self_sum <= root + std::time::Duration::from_millis(1),
+        "self times {self_sum:?} exceed the root {root:?}:\n{}",
+        profile.render()
+    );
+
+    // A nested-loop join runs while it is built: its time lands on the
+    // join's own line, not only on the scans beneath it.
+    let sql = "SELECT COUNT(*) FROM (SELECT grp FROM events LIMIT 40) a \
+               JOIN (SELECT grp FROM events LIMIT 40) b ON a.grp > b.grp";
+    let (rows, profile) = profiled(&fixture, &provider, sql);
+    assert_eq!(rows, plain(&fixture, &provider, sql));
+    let nested = profile
+        .operators
+        .iter()
+        .find(|node| node.label.starts_with("NestedLoopJoin"))
+        .expect("nested loop");
+    assert!(
+        !nested.construction.is_zero() && nested.inclusive >= nested.construction,
+        "construction time is attributed: {}",
+        profile.render()
+    );
+    let rendered = profile.render();
+    assert!(rendered.contains("build="), "{rendered}");
+}

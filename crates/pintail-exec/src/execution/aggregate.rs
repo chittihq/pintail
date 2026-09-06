@@ -1648,8 +1648,9 @@ fn try_sma_fold(
     memory: &MemoryTracker,
 ) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
     // Only a direct bare Scan qualifies: any Filter above it implies
-    // residual predicates, and the stream then carries no SMA input.
-    let PullOperator::Scan { stream, .. } = &*input else {
+    // residual predicates, and the stream then carries no SMA input. A
+    // profile recorder around the scan is not a Filter.
+    let PullOperator::Scan { stream, .. } = super::unprofiled_ref(input) else {
         return Ok(None);
     };
     let Some(sma) = stream.sma_fold_input() else {
@@ -3075,6 +3076,10 @@ fn build_fused_inner_join_aggregate(
     collation: Collation,
     group_collation: Collation,
 ) -> Result<Option<MaterializedRows>, ExecError> {
+    super::annotate_profile(
+        input,
+        "fused into the aggregate above; its inputs ran directly",
+    );
     let input = super::unprofiled(input);
     let PullOperator::HashJoin {
         left,
