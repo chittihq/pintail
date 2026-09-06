@@ -123,15 +123,29 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
 }
 
 /// Writes length-prefixed packets, splitting oversized payloads.
+///
+/// Packets accumulate in a buffer and reach the stream in one write when
+/// the response is flushed or the buffer fills. Written straight through,
+/// every packet cost two writes (header, body) and every row of a result
+/// set its own segments on the wire.
 pub struct PacketWriter<W> {
     inner: W,
     sequence: u8,
+    buffer: Vec<u8>,
 }
+
+/// Buffered bytes beyond which a response is written out before it is
+/// complete, so a large result set is not held in memory twice.
+const WRITE_BUFFER_HIGH_WATER: usize = 64 * 1024;
 
 impl<W: AsyncWrite + Unpin> PacketWriter<W> {
     /// Wraps a stream at sequence zero.
     pub const fn new(inner: W) -> Self {
-        Self { inner, sequence: 0 }
+        Self {
+            inner,
+            sequence: 0,
+            buffer: Vec::new(),
+        }
     }
 
     /// Sets the sequence id for the next packet.
@@ -140,8 +154,24 @@ impl<W: AsyncWrite + Unpin> PacketWriter<W> {
     }
 
     /// Returns the stream so the connection can be upgraded to TLS.
-    pub fn into_inner(self) -> (W, u8) {
-        (self.inner, self.sequence)
+    /// Writes out anything still buffered and hands back the stream with
+    /// the next sequence id, so a caller can continue the same packet
+    /// sequence over another transport.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of writing the remaining bytes.
+    pub async fn into_inner(mut self) -> std::io::Result<(W, u8)> {
+        self.write_buffered().await?;
+        Ok((self.inner, self.sequence))
+    }
+
+    async fn write_buffered(&mut self) -> std::io::Result<()> {
+        if !self.buffer.is_empty() {
+            self.inner.write_all(&self.buffer).await?;
+            self.buffer.clear();
+        }
+        Ok(())
     }
 
     /// Writes one payload, splitting it across packets when needed.
@@ -158,22 +188,22 @@ impl<W: AsyncWrite + Unpin> PacketWriter<W> {
             let take = payload.len().saturating_sub(offset).min(MAX_PAYLOAD);
             let chunk = &payload[offset..offset + take];
             let length = u32::try_from(take).unwrap_or(0).to_le_bytes();
-            self.inner
-                .write_all(&[length[0], length[1], length[2], self.sequence])
-                .await?;
-            self.inner.write_all(chunk).await?;
+            self.buffer
+                .extend_from_slice(&[length[0], length[1], length[2], self.sequence]);
+            self.buffer.extend_from_slice(chunk);
             self.sequence = self.sequence.wrapping_add(1);
             offset += take;
+            if self.buffer.len() >= WRITE_BUFFER_HIGH_WATER {
+                self.write_buffered().await?;
+            }
             if take < MAX_PAYLOAD {
                 return Ok(());
             }
             if offset == payload.len() {
                 // Exact multiple of the maximum: terminate with an empty
                 // packet so the peer stops expecting more.
-                self.inner
-                    .write_all(&[0, 0, 0, self.sequence])
-                    .await
-                    .map(|()| self.sequence = self.sequence.wrapping_add(1))?;
+                self.buffer.extend_from_slice(&[0, 0, 0, self.sequence]);
+                self.sequence = self.sequence.wrapping_add(1);
                 return Ok(());
             }
         }
@@ -184,6 +214,7 @@ impl<W: AsyncWrite + Unpin> PacketWriter<W> {
     /// # Errors
     /// Propagates I/O failures from the underlying stream.
     pub async fn flush(&mut self) -> std::io::Result<()> {
+        self.write_buffered().await?;
         self.inner.flush().await
     }
 }
@@ -263,6 +294,7 @@ mod tests {
         let mut encoded = Vec::new();
         let mut writer = PacketWriter::new(&mut encoded);
         writer.write_payload(payload).await.expect("write");
+        writer.flush().await.expect("flush");
         let mut reader = PacketReader::new(encoded.as_slice());
         reader
             .next_payload()
@@ -280,6 +312,7 @@ mod tests {
         let mut encoded = Vec::new();
         let mut writer = PacketWriter::new(&mut encoded);
         writer.write_payload(b"tail").await.expect("write");
+        writer.flush().await.expect("flush");
 
         // The header's first two bytes were "unavoidably" read elsewhere.
         let stolen = encoded[..2].to_vec();
@@ -318,6 +351,7 @@ mod tests {
             .write_payload(&vec![7_u8; MAX_PAYLOAD])
             .await
             .expect("write");
+        writer.flush().await.expect("flush");
         // Header + full body, then a bare header with zero length.
         assert_eq!(encoded.len(), 4 + MAX_PAYLOAD + 4);
         assert_eq!(&encoded[encoded.len() - 4..], &[0, 0, 0, 1]);

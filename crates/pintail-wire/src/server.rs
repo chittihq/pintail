@@ -505,7 +505,7 @@ async fn serve_connection(
             run_connection(connection, response, backend, scramble, watch, idle_timeout).await
         }
         (pintail_protocol::InitialResponse::Ssl, Some(tls)) => {
-            let (reader, writer, read_sequence, write_sequence) = connection.into_parts();
+            let (reader, writer, read_sequence, write_sequence) = connection.into_parts().await?;
             let stream = reader.reunite(writer).map_err(io_other)?;
             let acceptor = tokio_rustls::TlsAcceptor::from(tls.config);
             let tls_stream = before_login(acceptor.accept(stream)).await?;

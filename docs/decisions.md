@@ -410,12 +410,11 @@ untested — e13). Length-classed string hash tables (tie with hashbrown).
 The simplified Umbra unchained join table (lost to hashbrown on all-hit inner
 probes on both machines; revisit only for miss-heavy workloads). Normalized
 memcmp keys in heap merges (see above). Disabling Nagle's algorithm on
-accepted wire connections (`TCP_NODELAY`): the packet writer issues two
-unbuffered writes per packet, so without coalescing every result row costs
-two segments, and the round-trip harness measured the single-row and
-small-result queries 2-4x slower. The right lever is buffering the response
-stream before the socket, which stays a follow-up; the socket option alone
-is not it.
+accepted wire connections (`TCP_NODELAY`): measured first on the unbuffered
+packet writer, which issued two writes per packet, it made single-row and
+small-result queries 2-4x slower; measured again once the writer buffered a
+whole response into one write (e72), it was neutral within noise. The
+buffering was the lever, and the socket option stays off.
 
 ### String columns execute as 16-byte views
 

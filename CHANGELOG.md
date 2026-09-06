@@ -28,6 +28,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   at once. A dashboard that fires a burst of reports can trade errors for
   latency without raising the ceiling. The startup limits line reports it.
 
+### Performance
+
+- Wire responses reach the socket as one buffered write per response. The
+  packet writer issued two unbuffered writes per packet (header, body), so
+  every row of a result set cost its own system calls and segments.
+  Measured on loopback against a release build: a 200-row result 2.7×
+  faster, a 100K-row result 4× faster, a one-row query about 20% faster.
+
 ### Fixed
 
 - A table whose copy from its source has not completed is refused as not

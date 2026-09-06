@@ -402,11 +402,14 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     /// encrypted connection via [`Self::new_at_sequence`]. `MySQL` does not
     /// reset numbering across the upgrade, so losing the sequence here
     /// desynchronises the very next packet.
-    #[must_use]
-    pub fn into_parts(self) -> (R, W, u8, u8) {
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of writing out a response still buffered.
+    pub async fn into_parts(self) -> std::io::Result<(R, W, u8, u8)> {
         let (reader, read_sequence) = self.reader.into_inner();
-        let (writer, write_sequence) = self.writer.into_inner();
-        (reader, writer, read_sequence, write_sequence)
+        let (writer, write_sequence) = self.writer.into_inner().await?;
+        Ok((reader, writer, read_sequence, write_sequence))
     }
 
     /// Wraps a stream pair at specific sequence ids, the counterpart to
@@ -1054,7 +1057,8 @@ mod tests {
             InitialResponse::Ssl
         ));
 
-        let (_reader, writer, read_sequence, write_sequence) = connection.into_parts();
+        let (_reader, writer, read_sequence, write_sequence) =
+            connection.into_parts().await.expect("split");
         assert_eq!(read_sequence, 2, "next read continues from the SSL request");
 
         // Simulate the encrypted stream by feeding the deferred full

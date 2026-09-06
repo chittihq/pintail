@@ -2648,3 +2648,21 @@ scan before the fix. On the narrow benchmark-shaped table
 noise: the columns a query leaves out are cheap to read there.
 
 **Verdict: keep.** Narrow reads now cost what they decode.
+
+## e72 — One buffered write per wire response (loopback, release build, mysql2 client)
+
+A local database of 100K three-column rows served over the wire on
+loopback; three runs each, milliseconds for the whole batch. Before = the
+packet writer wrote each packet's header and body straight to the socket;
+after = packets accumulate and reach the socket in one write when the
+response is flushed (or at 64 KiB); nodelay = the same plus `TCP_NODELAY`.
+
+| batch | before | after | after + nodelay |
+|---|---:|---:|---:|
+| 2,000 × one-row query | 279–343 | 220–255 | 239–287 |
+| 500 × 200-row range | 280–304 | 96–120 | 107–115 |
+| 10 × 100K-row full result | 225–230 | 53–59 | 54–55 |
+
+**Verdict: keep the buffering, leave `TCP_NODELAY` off.** The per-row
+system calls were the cost; with one write per response there is nothing
+left for Nagle to delay, and the option is neutral within noise.
