@@ -515,7 +515,7 @@ pub(super) fn build_hash_join_state(
             )?;
             if let Some(grace) = grace.as_mut() {
                 let values = batch_row(&batch, row)?;
-                grace.build_files[grace_partition(&key, 0)].append(&key, &values)?;
+                grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
                 continue;
             }
             build.reserve_for_key(
@@ -540,11 +540,11 @@ pub(super) fn build_hash_join_state(
         // drain the resident map into partition files and route the rest
         // of the build (and later the probe) through them.
         if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
-            let mut partitions = GraceJoin::create(memory)?;
+            let mut partitions = GraceJoin::create();
             for (key, bucket) in build.drain() {
                 let target = grace_partition(&key, 0);
                 for values in bucket {
-                    partitions.build_files[target].append(&key, &values)?;
+                    partitions.build_files[target].append(&key, &values, memory)?;
                 }
             }
             memory.release(build_reserved);
@@ -573,35 +573,49 @@ pub(super) fn build_hash_join_state(
 pub(super) const GRACE_PARTITIONS: usize = 16;
 
 /// One append-mode spill file of `(join key, row values)` pairs.
+///
+/// The file is created on the first append, so a partition that never
+/// receives a row costs no descriptor; sixteen build and sixteen probe
+/// partitions used to open thirty-two files up front, and every split
+/// another thirty-two, most of them for rows that never came.
 pub(super) struct GraceRun {
-    writer: Option<std::io::BufWriter<std::fs::File>>,
-    path: tempfile::TempPath,
-    reservation: spill::SpillReservation,
+    writer: Option<spill::RunWriter>,
+    closed: Option<spill::ClosedRun>,
+    sealed: bool,
     entries: u64,
 }
 
 impl GraceRun {
-    fn create(memory: &MemoryTracker) -> Result<Self, ExecError> {
-        let file = spill::spill_file("pintail-join-spill-", memory.spill())
-            .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?;
-        let (file, path, reservation) = file.into_parts();
-        Ok(Self {
-            writer: Some(std::io::BufWriter::new(file)),
-            path,
-            reservation,
+    const fn create() -> Self {
+        Self {
+            writer: None,
+            closed: None,
+            sealed: false,
             entries: 0,
-        })
+        }
     }
 
-    fn append(&mut self, key: &JoinHashKey, row: &[Value]) -> Result<(), ExecError> {
-        let writer = self
-            .writer
-            .as_mut()
-            .ok_or(ExecError::InvalidPhysicalPlan("grace run already sealed"))?;
+    fn append(
+        &mut self,
+        key: &JoinHashKey,
+        row: &[Value],
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        if self.sealed {
+            return Err(ExecError::InvalidPhysicalPlan("grace run already sealed"));
+        }
+        if self.writer.is_none() {
+            self.writer = Some(
+                spill::RunWriter::create("pintail-join-spill-", memory.spill())
+                    .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?,
+            );
+        }
+        let writer = self.writer.as_mut().expect("created above");
         let mut encoder = spill::Encoder::with_capacity(64);
         encode_join_key(&mut encoder, key);
         encoder.values(row);
-        spill::write_record_quota(writer, &encoder.finish(), &mut self.reservation)
+        writer
+            .write(&encoder.finish())
             .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
         self.entries += 1;
         Ok(())
@@ -615,45 +629,55 @@ impl GraceRun {
     /// read into "grace run read twice", so a build side that overflowed
     /// while being served could never be re-partitioned and the depth bound
     /// was unreachable from the path that needs it. Sealing also means a run
-    /// that has been read holds no descriptor of its own: the path keeps the
-    /// file alive, and the reader is the only handle for as long as it lives.
+    /// that has been read holds no descriptor of its own: the closed run
+    /// keeps the file alive, and the reader is the only handle for as long
+    /// as it lives.
     fn reader(&mut self) -> Result<GraceRunReader, ExecError> {
         self.seal()?;
-        let file = std::fs::File::open(&self.path)
-            .map_err(|error| ExecError::Source(format!("join spill reopen: {error}")))?;
-        Ok(GraceRunReader {
-            reader: std::io::BufReader::new(file),
-            payload: Vec::new(),
-        })
+        let reader = match &self.closed {
+            Some(closed) => Some(
+                closed
+                    .open()
+                    .map_err(|error| ExecError::Source(format!("join spill reopen: {error}")))?,
+            ),
+            None => None,
+        };
+        Ok(GraceRunReader { reader })
     }
 
     /// Flushes and closes the writer. Idempotent; a sealed run refuses
     /// further appends and holds no descriptor until read.
     fn seal(&mut self) -> Result<(), ExecError> {
+        self.sealed = true;
         if let Some(writer) = self.writer.take() {
-            let file = writer
-                .into_inner()
-                .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?;
-            drop(file);
+            self.closed = Some(
+                writer
+                    .finish()
+                    .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?,
+            );
         }
         Ok(())
     }
 }
 
-/// Streams back one grace-join spill file.
+/// Streams back one grace-join spill file; `None` is a run nothing was
+/// ever appended to.
 struct GraceRunReader {
-    reader: std::io::BufReader<std::fs::File>,
-    payload: Vec<u8>,
+    reader: Option<spill::RunReader>,
 }
 
 impl GraceRunReader {
     fn next_entry(&mut self) -> Result<Option<(JoinHashKey, Vec<Value>)>, ExecError> {
-        if !spill::read_record(&mut self.reader, &mut self.payload)
-            .map_err(|error| ExecError::Source(format!("join spill read: {error}")))?
-        {
+        let Some(reader) = self.reader.as_mut() else {
             return Ok(None);
-        }
-        let mut decoder = spill::Decoder::new(&self.payload);
+        };
+        let Some(payload) = reader
+            .next()
+            .map_err(|error| ExecError::Source(format!("join spill read: {error}")))?
+        else {
+            return Ok(None);
+        };
+        let mut decoder = spill::Decoder::new(payload);
         let entry = decode_join_key(&mut decoder)
             .and_then(|key| Ok((key, decoder.values()?)))
             .map_err(|error| ExecError::Source(format!("join spill decode: {error}")))?;
@@ -748,14 +772,14 @@ pub(super) struct GraceJoin {
 }
 
 impl GraceJoin {
-    fn create(memory: &MemoryTracker) -> Result<Self, ExecError> {
+    fn create() -> Self {
         let mut build_files = Vec::with_capacity(GRACE_PARTITIONS);
         let mut probe_files = Vec::with_capacity(GRACE_PARTITIONS);
         for _ in 0..GRACE_PARTITIONS {
-            build_files.push(GraceRun::create(memory)?);
-            probe_files.push(GraceRun::create(memory)?);
+            build_files.push(GraceRun::create());
+            probe_files.push(GraceRun::create());
         }
-        Ok(Self {
+        Self {
             build_files,
             probe_files,
             depths: vec![0; GRACE_PARTITIONS],
@@ -763,7 +787,7 @@ impl GraceJoin {
             current: 0,
             replay: None,
             partition_reserved: 0,
-        })
+        }
     }
 }
 
@@ -789,24 +813,24 @@ pub(super) fn split_grace_partition(
     }
     let first = grace.build_files.len();
     for _ in 0..GRACE_PARTITIONS {
-        grace.build_files.push(GraceRun::create(memory)?);
-        grace.probe_files.push(GraceRun::create(memory)?);
+        grace.build_files.push(GraceRun::create());
+        grace.probe_files.push(GraceRun::create());
         grace.depths.push(depth + 1);
     }
     let seed = u64::try_from(depth).unwrap_or(0).saturating_add(1);
     // Move each source file out so its replacement can be written to while
     // the original is read; the emptied slot is never served again.
-    let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create(memory)?);
+    let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create());
     let mut entries = build.reader()?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
-        grace.build_files[target].append(&key, &values)?;
+        grace.build_files[target].append(&key, &values, memory)?;
     }
-    let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create(memory)?);
+    let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create());
     let mut entries = probe.reader()?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
-        grace.probe_files[target].append(&key, &values)?;
+        grace.probe_files[target].append(&key, &values, memory)?;
     }
     Ok(())
 }
@@ -1060,7 +1084,7 @@ pub(super) fn next_grace_join_batch(
         match key {
             Some(key) => {
                 let grace = state.grace.as_mut().expect("grace state engaged");
-                grace.probe_files[grace_partition(&key, 0)].append(&key, &left_values)?;
+                grace.probe_files[grace_partition(&key, 0)].append(&key, &left_values, memory)?;
             }
             None => match kind {
                 // NULL keys never match: inner/semi drop the row, left
@@ -1552,13 +1576,17 @@ mod tests {
         use super::MemoryTracker;
         use super::{GRACE_PARTITIONS, GraceJoin, JoinHashKey, split_grace_partition};
         let memory = MemoryTracker::new(usize::MAX);
-        let mut grace = GraceJoin::create(&memory).expect("grace state");
+        let mut grace = GraceJoin::create();
         let ids = (0..500_u64).collect::<Vec<_>>();
         for id in &ids {
             let key = JoinHashKey::NonNegativeInteger(*id);
             let row = vec![pintail_types::Value::UInt64(*id)];
-            grace.build_files[0].append(&key, &row).expect("build");
-            grace.probe_files[0].append(&key, &row).expect("probe");
+            grace.build_files[0]
+                .append(&key, &row, &memory)
+                .expect("build");
+            grace.probe_files[0]
+                .append(&key, &row, &memory)
+                .expect("probe");
         }
 
         split_grace_partition(&mut grace, 0, &memory).expect("split");
@@ -1585,13 +1613,17 @@ mod tests {
             GRACE_PARTITIONS, GraceJoin, JoinHashKey, MemoryTracker, split_grace_partition,
         };
         let memory = MemoryTracker::new(usize::MAX);
-        let mut grace = GraceJoin::create(&memory).expect("grace state");
+        let mut grace = GraceJoin::create();
         let ids = (0..300_u64).collect::<Vec<_>>();
         for id in &ids {
             let key = JoinHashKey::NonNegativeInteger(*id);
             let row = vec![pintail_types::Value::UInt64(*id)];
-            grace.build_files[0].append(&key, &row).expect("build");
-            grace.probe_files[0].append(&key, &row).expect("probe");
+            grace.build_files[0]
+                .append(&key, &row, &memory)
+                .expect("build");
+            grace.probe_files[0]
+                .append(&key, &row, &memory)
+                .expect("probe");
         }
         // Exactly the serve loop's sequence: read the build side, decide it
         // does not fit, drop the reader, ask for a split of the same slot.
@@ -1616,11 +1648,12 @@ mod tests {
     fn a_sealed_run_reads_repeatably_holds_no_writer_and_refuses_appends() {
         use super::{ExecError, GraceRun, JoinHashKey, MemoryTracker};
         let memory = MemoryTracker::new(usize::MAX);
-        let mut run = GraceRun::create(&memory).expect("run");
+        let mut run = GraceRun::create();
         for id in 0..10_u64 {
             run.append(
                 &JoinHashKey::NonNegativeInteger(id),
                 &[pintail_types::Value::UInt64(id)],
+                &memory,
             )
             .expect("append");
         }
@@ -1641,6 +1674,7 @@ mod tests {
             .append(
                 &JoinHashKey::NonNegativeInteger(99),
                 &[pintail_types::Value::UInt64(99)],
+                &memory,
             )
             .expect_err("a sealed run takes no more rows");
         assert!(matches!(
@@ -1654,7 +1688,7 @@ mod tests {
         use super::{ExecError, MemoryTracker};
         use super::{GraceJoin, MAX_GRACE_DEPTH, split_grace_partition};
         let memory = MemoryTracker::new(usize::MAX);
-        let mut grace = GraceJoin::create(&memory).expect("grace state");
+        let mut grace = GraceJoin::create();
         grace.depths[0] = MAX_GRACE_DEPTH;
         let error = split_grace_partition(&mut grace, 0, &memory).expect_err("depth bound");
         let ExecError::Source(message) = error else {

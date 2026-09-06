@@ -114,8 +114,12 @@ pub fn explain_analyze_statement_with_deadline(
     let mut output = format_physical_plan_with_stats(&physical, provider);
     let _ = writeln!(
         output,
-        "Spill files={} bytes={} active_bytes={} quota_failures={}",
-        spill.files, spill.written_bytes, spill.active_bytes, spill.quota_failures
+        "Spill files={} bytes={} active_bytes={} quota_failures={} peak_handles={}",
+        spill.files,
+        spill.written_bytes,
+        spill.active_bytes,
+        spill.quota_failures,
+        spill.peak_handles
     );
     Ok(output)
 }

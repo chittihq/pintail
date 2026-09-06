@@ -352,6 +352,7 @@ static GLOBAL_ACTIVE_BYTES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_WRITTEN_BYTES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_FILES: AtomicU64 = AtomicU64::new(0);
 static GLOBAL_QUOTA_FAILURES: AtomicU64 = AtomicU64::new(0);
+static GLOBAL_ACTIVE_HANDLES: AtomicU64 = AtomicU64::new(0);
 
 /// Process-wide spill counters suitable for metrics export.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -364,6 +365,8 @@ pub struct SpillMetrics {
     pub files: u64,
     /// Writes rejected by a query or process disk ceiling.
     pub quota_failures: u64,
+    /// Spill file descriptors open right now across every query.
+    pub active_handles: u64,
 }
 
 /// Returns process-wide spill counters.
@@ -374,6 +377,7 @@ pub fn metrics() -> SpillMetrics {
         written_bytes: GLOBAL_WRITTEN_BYTES.load(Ordering::Relaxed),
         files: GLOBAL_FILES.load(Ordering::Relaxed),
         quota_failures: GLOBAL_QUOTA_FAILURES.load(Ordering::Relaxed),
+        active_handles: GLOBAL_ACTIVE_HANDLES.load(Ordering::Relaxed),
     }
 }
 
@@ -388,6 +392,15 @@ pub struct QuerySpillMetrics {
     pub files: u64,
     /// Writes rejected by this query's or the process disk ceiling.
     pub quota_failures: u64,
+    /// Spill file descriptors this query holds open right now.
+    pub active_handles: u64,
+    /// The most spill file descriptors this query has held open at once.
+    ///
+    /// This is the number a descriptor limit sees. `files` counts creations
+    /// and says nothing about retention; a query that creates a thousand
+    /// runs and holds one open at a time is fine, one that holds all of
+    /// them is what exhausted a container's descriptor limit.
+    pub peak_handles: u64,
 }
 
 struct QuerySpillInner {
@@ -397,6 +410,8 @@ struct QuerySpillInner {
     written_bytes: AtomicU64,
     files: AtomicU64,
     quota_failures: AtomicU64,
+    active_handles: AtomicU64,
+    peak_handles: AtomicU64,
 }
 
 /// One isolated spill scope shared by every operator in a query.
@@ -419,6 +434,8 @@ impl QuerySpill {
                 written_bytes: AtomicU64::new(0),
                 files: AtomicU64::new(0),
                 quota_failures: AtomicU64::new(0),
+                active_handles: AtomicU64::new(0),
+                peak_handles: AtomicU64::new(0),
             }),
         }
     }
@@ -429,6 +446,8 @@ impl QuerySpill {
             written_bytes: self.inner.written_bytes.load(Ordering::Relaxed),
             files: self.inner.files.load(Ordering::Relaxed),
             quota_failures: self.inner.quota_failures.load(Ordering::Relaxed),
+            active_handles: self.inner.active_handles.load(Ordering::Relaxed),
+            peak_handles: self.inner.peak_handles.load(Ordering::Relaxed),
         }
     }
 }
@@ -657,6 +676,464 @@ pub(crate) fn write_record_quota(
         return Err(error);
     }
     Ok(())
+}
+
+/// How many closed runs one merge pass reads at once.
+///
+/// This, not the number of runs a query produced, is what bounds the
+/// descriptors a spilling operator holds: one writer while it builds runs,
+/// `MERGE_FAN_IN + 1` while a pass merges, `MERGE_FAN_IN` in the final
+/// merge. Sixteen keeps a saturated server well inside a 1024-descriptor
+/// soft limit and makes a second pass rare: a query needs more than 256
+/// runs before the reduction takes two.
+pub const MERGE_FAN_IN: usize = 16;
+
+/// Counts one open spill descriptor for as long as it lives.
+struct HandleGuard {
+    query: Arc<QuerySpillInner>,
+}
+
+impl HandleGuard {
+    fn new(query: &Arc<QuerySpillInner>) -> Self {
+        let active = query
+            .active_handles
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
+        query.peak_handles.fetch_max(active, Ordering::Relaxed);
+        GLOBAL_ACTIVE_HANDLES.fetch_add(1, Ordering::Relaxed);
+        Self {
+            query: Arc::clone(query),
+        }
+    }
+}
+
+impl Drop for HandleGuard {
+    fn drop(&mut self) {
+        self.query.active_handles.fetch_sub(1, Ordering::Relaxed);
+        GLOBAL_ACTIVE_HANDLES.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// A run being written. The descriptor it holds is the only one an
+/// operator needs while it builds runs; [`RunWriter::finish`] closes it.
+pub(crate) struct RunWriter {
+    writer: std::io::BufWriter<std::fs::File>,
+    path: tempfile::TempPath,
+    reservation: SpillReservation,
+    records: u64,
+    query: Arc<QuerySpillInner>,
+    _handle: HandleGuard,
+}
+
+impl RunWriter {
+    /// Creates an empty run in the query's spill directory.
+    pub(crate) fn create(prefix: &str, query: &QuerySpill) -> std::io::Result<Self> {
+        let (file, path, reservation) = spill_file(prefix, query)?.into_parts();
+        Ok(Self {
+            writer: std::io::BufWriter::new(file),
+            path,
+            reservation,
+            records: 0,
+            query: Arc::clone(&query.inner),
+            _handle: HandleGuard::new(&query.inner),
+        })
+    }
+
+    /// Appends one framed record, charged against the disk quotas first.
+    pub(crate) fn write(&mut self, payload: &[u8]) -> std::io::Result<()> {
+        write_record_quota(&mut self.writer, payload, &mut self.reservation)?;
+        self.records = self.records.saturating_add(1);
+        Ok(())
+    }
+
+    /// Flushes and closes the file. The returned run holds no descriptor;
+    /// the checked flush is what makes "closed" mean every byte reached
+    /// the kernel rather than a buffer a later error would lose. Nothing
+    /// syncs: a spill file outlives neither the query nor the process, and
+    /// a forced flush to the platter per run cost more than the run itself.
+    pub(crate) fn finish(self) -> std::io::Result<ClosedRun> {
+        let Self {
+            writer,
+            path,
+            reservation,
+            records,
+            query,
+            _handle,
+        } = self;
+        let file = writer
+            .into_inner()
+            .map_err(std::io::IntoInnerError::into_error)?;
+        drop(file);
+        Ok(ClosedRun {
+            path,
+            reservation,
+            records,
+            query,
+        })
+    }
+}
+
+/// A finished run on disk. It holds no descriptor: the path keeps the
+/// file alive and the reservation keeps its bytes charged. Dropping it
+/// deletes the file first and releases the accounting second, so the disk
+/// is never credited before it is free.
+pub(crate) struct ClosedRun {
+    path: tempfile::TempPath,
+    reservation: SpillReservation,
+    records: u64,
+    query: Arc<QuerySpillInner>,
+}
+
+impl ClosedRun {
+    /// Opens a reader positioned at the first record. Every call reopens.
+    pub(crate) fn open(&self) -> std::io::Result<RunReader> {
+        let file = std::fs::File::open(&self.path)?;
+        Ok(RunReader {
+            reader: std::io::BufReader::new(file),
+            payload: Vec::new(),
+            _handle: HandleGuard::new(&self.query),
+        })
+    }
+
+    /// Records the run holds.
+    pub(crate) const fn records(&self) -> u64 {
+        self.records
+    }
+
+    /// Bytes the run occupies on disk.
+    pub(crate) const fn bytes(&self) -> u64 {
+        self.reservation.bytes
+    }
+}
+
+impl std::fmt::Debug for ClosedRun {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ClosedRun")
+            .field("records", &self.records())
+            .field("bytes", &self.bytes())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Streams the records of one closed run.
+pub(crate) struct RunReader {
+    reader: std::io::BufReader<std::fs::File>,
+    payload: Vec<u8>,
+    _handle: HandleGuard,
+}
+
+impl RunReader {
+    /// The next record's payload, or `None` at a clean end of file.
+    pub(crate) fn next(&mut self) -> std::io::Result<Option<&[u8]>> {
+        if read_record(&mut self.reader, &mut self.payload)? {
+            Ok(Some(&self.payload))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// The current record of one run under merge: its comparison key and the
+/// bytes it was read from, which an intermediate pass copies verbatim.
+pub(crate) struct Head<K> {
+    pub(crate) key: K,
+    pub(crate) payload: Vec<u8>,
+}
+
+/// A k-way merge over closed runs, at most [`MERGE_FAN_IN`] of them.
+///
+/// Ties go to the lowest run index, so records with equal keys come out
+/// in run order, and a run produced by an earlier pass keeps that order
+/// inside it. Callers that combine equal keys rely on this: the fold order
+/// is the order the runs were written in, whatever the pass structure.
+pub(crate) struct RunMerge<K> {
+    runs: Vec<ClosedRun>,
+    readers: Vec<RunReader>,
+    heads: Vec<Option<Head<K>>>,
+    decode: fn(&[u8]) -> Result<K, String>,
+}
+
+impl<K> RunMerge<K> {
+    /// Opens every run and loads its first record.
+    pub(crate) fn open(
+        runs: Vec<ClosedRun>,
+        decode: fn(&[u8]) -> Result<K, String>,
+    ) -> std::io::Result<Self> {
+        let mut merge = Self {
+            readers: Vec::with_capacity(runs.len()),
+            heads: Vec::with_capacity(runs.len()),
+            runs,
+            decode,
+        };
+        for index in 0..merge.runs.len() {
+            let mut reader = merge.runs[index].open()?;
+            let head = Self::read_head(&mut reader, decode)?;
+            merge.readers.push(reader);
+            merge.heads.push(head);
+        }
+        Ok(merge)
+    }
+
+    /// A merge over nothing, for a drained merge to release its files.
+    pub(crate) fn empty(decode: fn(&[u8]) -> Result<K, String>) -> Self {
+        Self {
+            runs: Vec::new(),
+            readers: Vec::new(),
+            heads: Vec::new(),
+            decode,
+        }
+    }
+
+    fn read_head(
+        reader: &mut RunReader,
+        decode: fn(&[u8]) -> Result<K, String>,
+    ) -> std::io::Result<Option<Head<K>>> {
+        let Some(payload) = reader.next()? else {
+            return Ok(None);
+        };
+        let key = decode(payload).map_err(std::io::Error::other)?;
+        Ok(Some(Head {
+            key,
+            payload: payload.to_vec(),
+        }))
+    }
+
+    /// Number of runs under merge.
+    pub(crate) fn len(&self) -> usize {
+        self.runs.len()
+    }
+
+    /// The current record of one run, if it has any left.
+    pub(crate) fn head(&self, index: usize) -> Option<&Head<K>> {
+        self.heads.get(index).and_then(Option::as_ref)
+    }
+
+    /// Takes one run's current record and advances that run.
+    pub(crate) fn take(&mut self, index: usize) -> std::io::Result<Option<Head<K>>> {
+        let replacement = Self::read_head(&mut self.readers[index], self.decode)?;
+        Ok(std::mem::replace(&mut self.heads[index], replacement))
+    }
+
+    /// The smallest current record under `less`, or `None` when every run
+    /// is exhausted.
+    pub(crate) fn next(
+        &mut self,
+        less: &dyn Fn(&K, &K) -> bool,
+    ) -> std::io::Result<Option<Head<K>>> {
+        let mut winner: Option<usize> = None;
+        for (index, head) in self.heads.iter().enumerate() {
+            let Some(candidate) = head else { continue };
+            let better = match winner {
+                None => true,
+                Some(current) => {
+                    let current_head = self.heads[current]
+                        .as_ref()
+                        .expect("winner head is always occupied");
+                    less(&candidate.key, &current_head.key)
+                }
+            };
+            if better {
+                winner = Some(index);
+            }
+        }
+        match winner {
+            Some(index) => self.take(index),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Reduces `runs` to at most `fan_in` runs by merging groups of `fan_in`
+/// adjacent runs into one, copying records in merged order.
+///
+/// Records are never combined here, only ordered: combining is the final
+/// pass's job, because for aggregates it is neither idempotent nor freely
+/// associative. Each output takes the place of its inputs, so the run
+/// order the final pass sees is the order the runs were first written.
+/// Inputs are deleted, and their disk accounting released, as soon as
+/// their output is closed; while a group merges, its inputs and output
+/// are both charged, and the quota applies to the output like any run.
+///
+/// Descriptors held: `fan_in` readers plus one writer.
+pub(crate) fn reduce_runs<K>(
+    mut runs: Vec<ClosedRun>,
+    fan_in: usize,
+    prefix: &str,
+    query: &QuerySpill,
+    decode: fn(&[u8]) -> Result<K, String>,
+    less: &dyn Fn(&K, &K) -> bool,
+) -> std::io::Result<Vec<ClosedRun>> {
+    let fan_in = fan_in.max(2);
+    while runs.len() > fan_in {
+        let mut reduced = Vec::with_capacity(runs.len().div_ceil(fan_in));
+        let mut pending = runs.into_iter().peekable();
+        while pending.peek().is_some() {
+            let group: Vec<ClosedRun> = pending.by_ref().take(fan_in).collect();
+            if group.len() == 1 {
+                reduced.extend(group);
+                continue;
+            }
+            let mut merge = RunMerge::open(group, decode)?;
+            let mut writer = RunWriter::create(prefix, query)?;
+            while let Some(head) = merge.next(less)? {
+                writer.write(&head.payload)?;
+            }
+            drop(merge);
+            reduced.push(writer.finish()?);
+        }
+        runs = reduced;
+    }
+    Ok(runs)
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::{ClosedRun, Encoder, MERGE_FAN_IN, QuerySpill, RunMerge, RunWriter, reduce_runs};
+
+    fn decode_u64(payload: &[u8]) -> Result<u64, String> {
+        super::Decoder::new(payload).u64()
+    }
+
+    fn write_run(query: &QuerySpill, values: &[u64]) -> ClosedRun {
+        let mut writer = RunWriter::create("pintail-test-run-", query).expect("writer");
+        for value in values {
+            let mut encoder = Encoder::with_capacity(8);
+            encoder.u64(*value);
+            writer.write(&encoder.finish()).expect("write");
+        }
+        writer.finish().expect("finish")
+    }
+
+    fn drain(runs: Vec<ClosedRun>) -> Vec<u64> {
+        let mut merge = RunMerge::open(runs, decode_u64).expect("open");
+        let mut out = Vec::new();
+        while let Some(head) = merge.next(&|left, right| left < right).expect("next") {
+            out.push(head.key);
+        }
+        out
+    }
+
+    #[test]
+    fn a_closed_run_holds_no_descriptor_and_reads_repeatably() {
+        let query = QuerySpill::with_limit(u64::MAX);
+        let run = write_run(&query, &[3, 1, 2]);
+        assert_eq!(query.metrics().active_handles, 0);
+        assert_eq!(query.metrics().peak_handles, 1);
+        assert_eq!(run.records(), 3);
+        assert!(run.bytes() > 0);
+        for _ in 0..2 {
+            let mut reader = run.open().expect("open");
+            assert_eq!(query.metrics().active_handles, 1);
+            let mut seen = Vec::new();
+            while let Some(payload) = reader.next().expect("read") {
+                seen.push(decode_u64(payload).expect("decode"));
+            }
+            assert_eq!(seen, [3, 1, 2]);
+        }
+        assert_eq!(query.metrics().active_handles, 0);
+        drop(run);
+        assert_eq!(
+            query.metrics().active_bytes,
+            0,
+            "deleting the file releases its bytes"
+        );
+    }
+
+    #[test]
+    fn reduction_keeps_run_order_for_equal_keys_and_stays_within_the_fan_in() {
+        // 40 runs of sorted values with heavy overlap; equal keys must come
+        // out in the order their runs were written, which the payload
+        // encodes as a second field the key ignores.
+        let query = QuerySpill::with_limit(u64::MAX);
+        let mut runs = Vec::new();
+        let mut expected = Vec::new();
+        for run in 0..40_u64 {
+            let mut writer = RunWriter::create("pintail-test-run-", &query).expect("writer");
+            for value in [run % 3, run % 3 + 1, 10] {
+                let mut encoder = Encoder::with_capacity(16);
+                encoder.u64(value);
+                encoder.u64(run);
+                writer.write(&encoder.finish()).expect("write");
+                expected.push((value, run));
+            }
+            runs.push(writer.finish().expect("finish"));
+        }
+        expected.sort_unstable();
+        let reduced = reduce_runs(
+            runs,
+            4,
+            "pintail-test-merge-",
+            &query,
+            decode_u64,
+            &|left, right| left < right,
+        )
+        .expect("reduce");
+        assert!(reduced.len() <= 4, "{} runs remain", reduced.len());
+        assert!(
+            query.metrics().peak_handles <= 4 + 1,
+            "peak {} exceeds fan-in + 1",
+            query.metrics().peak_handles
+        );
+        assert_eq!(query.metrics().active_handles, 0);
+        let mut merge = RunMerge::open(reduced, |payload| {
+            let mut decoder = super::Decoder::new(payload);
+            Ok((decoder.u64()?, decoder.u64()?))
+        })
+        .expect("open");
+        let mut out = Vec::new();
+        while let Some(head) = merge.next(&|left, right| left.0 < right.0).expect("next") {
+            out.push(head.key);
+        }
+        assert_eq!(out, expected);
+        drop(merge);
+        assert_eq!(query.metrics().active_bytes, 0);
+    }
+
+    #[test]
+    fn a_reduction_that_already_fits_touches_nothing() {
+        let query = QuerySpill::with_limit(u64::MAX);
+        let runs = (0..MERGE_FAN_IN as u64)
+            .map(|run| write_run(&query, &[run, run + 100]))
+            .collect();
+        let files_before = query.metrics().files;
+        let reduced = reduce_runs(
+            runs,
+            MERGE_FAN_IN,
+            "pintail-test-merge-",
+            &query,
+            decode_u64,
+            &|left, right| left < right,
+        )
+        .expect("reduce");
+        assert_eq!(query.metrics().files, files_before, "no pass ran");
+        let mut expected: Vec<u64> = (0..MERGE_FAN_IN as u64)
+            .flat_map(|run| [run, run + 100])
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(drain(reduced), expected);
+    }
+
+    #[test]
+    fn the_quota_applies_to_an_intermediate_output() {
+        // Inputs stay charged while their output is written, so a query
+        // near its disk quota can fail in the pass rather than bypass it.
+        let query = QuerySpill::with_limit(80);
+        let runs = (0..6_u64).map(|run| write_run(&query, &[run])).collect();
+        let before = query.metrics().active_bytes;
+        let error = reduce_runs(
+            runs,
+            2,
+            "pintail-test-merge-",
+            &query,
+            decode_u64,
+            &|left, right| left < right,
+        )
+        .expect_err("six inputs plus an output cannot fit in 80 bytes");
+        assert!(error.to_string().contains("quota"), "{error}");
+        assert!(query.metrics().quota_failures > 0);
+        assert!(before > 0);
+    }
 }
 
 #[cfg(test)]

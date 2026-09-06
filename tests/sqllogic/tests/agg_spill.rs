@@ -7,6 +7,7 @@ use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
 use pintail_exec::collation::Collation;
+use pintail_exec::spill::{MERGE_FAN_IN, QuerySpillMetrics};
 use pintail_exec::{Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider};
 use pintail_sql::{Binder, parse_statement};
 use pintail_store::{StoreOptions, TableStore};
@@ -51,6 +52,12 @@ fn row(id: u64) -> StoredRow {
 }
 
 fn run_aggregated(memory_limit: usize) -> Result<Vec<Vec<Value>>, String> {
+    run_aggregated_with_metrics(memory_limit).map(|(rows, _)| rows)
+}
+
+fn run_aggregated_with_metrics(
+    memory_limit: usize,
+) -> Result<(Vec<Vec<Value>>, QuerySpillMetrics), String> {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open table");
@@ -103,7 +110,10 @@ fn run_aggregated(memory_limit: usize) -> Result<Vec<Vec<Value>>, String> {
             rows.push(row);
         }
     }
-    Ok(rows)
+    // Read after the last batch: an operator that has produced its final
+    // row must already have let go of its files.
+    let metrics = execution.spill_metrics();
+    Ok((rows, metrics))
 }
 
 #[test]
@@ -121,22 +131,45 @@ fn spilled_aggregation_matches_the_in_memory_groups_exactly() {
     assert_eq!(spilled, reference);
 }
 
-/// Every ceiling between "spills" and "fits" must produce the same groups.
-/// The gate once caught a 5 MiB ceiling refusing a 136-byte reservation the
-/// partial-group build made on a budget the batch had already filled; a
-/// sweep in unit time is what keeps that class of knife-edge from reaching
-/// the gate again. This corpus's single scan batch is 13 MiB, so below that
-/// the query is right to refuse; and at 16 MiB the map spills so often that
-/// its run files exceed macOS's default descriptor limit (recorded in
-/// docs/limitations.md), so the sweep runs the ceilings above both.
+/// Every ceiling between "spills" and "fits" must produce the same groups,
+/// and hold descriptors bounded by the merge fan-in however many runs it
+/// spilled. The gate once caught a 5 MiB ceiling refusing a 136-byte
+/// reservation the partial-group build made on a budget the batch had
+/// already filled; a sweep in unit time is what keeps that class of
+/// knife-edge from reaching the gate again. This corpus's single scan
+/// batch is 13 MiB, so below that the query is right to refuse, and the
+/// sweep starts just above it. The 16 MiB ceiling spills the map hundreds
+/// of times; it used to exhaust macOS's default descriptor limit and was
+/// skipped for that reason, which left the suite encoding the defect as
+/// expected. Now it is the ceiling that proves the bound: one writer
+/// while building, fan-in plus one while a pass merges, nothing once the
+/// last row is out, at run counts that differ by an order of magnitude
+/// across the sweep.
 #[test]
 fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
     let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
+    let bound = u64::try_from(MERGE_FAN_IN + 1).expect("small");
     let mut failures = Vec::new();
-    let mut limit = 20 * 1024 * 1024;
+    let mut run_counts = Vec::new();
+    let mut limit = 16 * 1024 * 1024;
     while limit <= 32 * 1024 * 1024 {
-        match run_aggregated(limit) {
-            Ok(rows) if rows == reference => {}
+        match run_aggregated_with_metrics(limit) {
+            Ok((rows, metrics)) if rows == reference => {
+                if metrics.peak_handles > bound {
+                    failures.push(format!(
+                        "{limit}: peak {} open spill files exceeds fan-in + 1 = {bound} \
+                         (created {})",
+                        metrics.peak_handles, metrics.files
+                    ));
+                }
+                if metrics.active_handles != 0 || metrics.active_bytes != 0 {
+                    failures.push(format!(
+                        "{limit}: {} files and {} bytes still held after the last row",
+                        metrics.active_handles, metrics.active_bytes
+                    ));
+                }
+                run_counts.push(metrics.files);
+            }
             Ok(_) => failures.push(format!("{limit}: wrong groups")),
             Err(error) => failures.push(format!("{limit}: {error}")),
         }
@@ -144,7 +177,61 @@ fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
     }
     assert!(
         failures.is_empty(),
-        "ceilings that did not aggregate exactly:\n  {}",
+        "ceilings that did not aggregate exactly within the descriptor bound:\n  {}",
         failures.join("\n  ")
+    );
+    let (first, last) = (run_counts[0], run_counts[run_counts.len() - 1]);
+    assert!(
+        first > bound && first > last.saturating_mul(4),
+        "the sweep must span very different run counts, got {run_counts:?}"
+    );
+}
+
+/// Set in the child process that runs under a lowered descriptor limit.
+const DESCRIPTOR_PROBE: &str = "PINTAIL_DESCRIPTOR_PROBE";
+const DESCRIPTOR_LIMIT: u64 = 128;
+
+/// Handle counters can miss a descriptor something else holds; the kernel
+/// cannot. A fresh child process lowers its own soft `RLIMIT_NOFILE` to 128
+/// and runs the ceiling that spills hundreds of runs. The limit is
+/// process-wide and shared by every thread, so it is never lowered in the
+/// test process itself, where restoring it would not undo interference with
+/// the tests running alongside.
+#[test]
+fn a_spilling_aggregation_completes_under_a_low_descriptor_limit() {
+    const NAME: &str = "a_spilling_aggregation_completes_under_a_low_descriptor_limit";
+    if std::env::var_os(DESCRIPTOR_PROBE).is_some() {
+        use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+        let current = getrlimit(Resource::Nofile);
+        setrlimit(
+            Resource::Nofile,
+            Rlimit {
+                current: Some(DESCRIPTOR_LIMIT),
+                maximum: current.maximum,
+            },
+        )
+        .expect("lower the soft descriptor limit of this process");
+        let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
+        let (spilled, metrics) =
+            run_aggregated_with_metrics(16 * 1024 * 1024).expect("spilled aggregation");
+        assert_eq!(spilled, reference);
+        assert!(
+            metrics.files > DESCRIPTOR_LIMIT,
+            "the case must create more runs than the process may hold open, created {}",
+            metrics.files
+        );
+        return;
+    }
+    let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args(["--exact", NAME, "--nocapture", "--test-threads=1"])
+        .env(DESCRIPTOR_PROBE, "1")
+        .output()
+        .expect("spawn the probe child");
+    assert!(
+        output.status.success(),
+        "probe child failed ({}):\n{}\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
 }

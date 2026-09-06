@@ -2261,7 +2261,7 @@ fn build_buffered_hash_aggregate(
     // measured through used() snapshots around the sequential merge section
     // so state-internal reserves (distinct sets) are included.
     let mut groups_reserved = 0_usize;
-    let mut spill_runs: Vec<AggregateSpillRun> = Vec::new();
+    let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     let mut first_batch = Some(first_batch);
     let per_row_upper = group_by
         .len()
@@ -2513,7 +2513,7 @@ fn reserve_or_spill_groups(
     bytes: usize,
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
     groups_reserved: &mut usize,
-    spill_runs: &mut Vec<AggregateSpillRun>,
+    spill_runs: &mut Vec<spill::ClosedRun>,
     memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
     match memory.reserve(bytes) {
@@ -2526,15 +2526,6 @@ fn reserve_or_spill_groups(
         }
         Err(error) => Err(error),
     }
-}
-
-/// One spilled aggregation run: entries sorted by their encoded group key,
-/// one length-framed record each, streamed back in write order.
-struct AggregateSpillRun {
-    reader: std::io::BufReader<std::fs::File>,
-    payload: Vec<u8>,
-    _path: tempfile::TempPath,
-    _reservation: spill::SpillReservation,
 }
 
 struct SpilledGroupEntry {
@@ -2711,11 +2702,12 @@ fn revive_aggregate_state(
     Ok(state)
 }
 
-/// Drains the live group map into one sorted on-disk run.
+/// Drains the live group map into one closed, sorted on-disk run: entries
+/// ordered by their encoded group key, one length-framed record each.
 fn write_aggregate_spill_run(
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
     memory: &MemoryTracker,
-) -> Result<AggregateSpillRun, ExecError> {
+) -> Result<spill::ClosedRun, ExecError> {
     let mut entries = groups
         .drain()
         .map(|(key, group)| {
@@ -2733,10 +2725,8 @@ fn write_aggregate_spill_run(
         })
         .collect::<Result<Vec<_>, ExecError>>()?;
     entries.sort_unstable_by(|left, right| left.key.cmp(&right.key));
-    let file = spill::spill_file("pintail-aggregate-spill-", memory.spill())
+    let mut writer = spill::RunWriter::create("pintail-aggregate-spill-", memory.spill())
         .map_err(|error| ExecError::Source(format!("aggregate spill create: {error}")))?;
-    let (file, path, mut reservation) = file.into_parts();
-    let mut writer = std::io::BufWriter::new(file);
     for entry in entries {
         let mut encoder = spill::Encoder::with_capacity(entry.key.len() + 64);
         encoder.bytes(&entry.key);
@@ -2745,47 +2735,38 @@ fn write_aggregate_spill_run(
         for state in &entry.states {
             encode_aggregate_state(&mut encoder, state);
         }
-        spill::write_record_quota(&mut writer, &encoder.finish(), &mut reservation)
+        writer
+            .write(&encoder.finish())
             .map_err(|error| ExecError::Source(format!("aggregate spill write: {error}")))?;
     }
-    let mut file = writer
-        .into_inner()
-        .map_err(|error| ExecError::Source(format!("aggregate spill flush: {error}")))?;
-    std::io::Seek::rewind(&mut file)
-        .map_err(|error| ExecError::Source(format!("aggregate spill rewind: {error}")))?;
-    Ok(AggregateSpillRun {
-        reader: std::io::BufReader::new(file),
-        payload: Vec::new(),
-        _path: path,
-        _reservation: reservation,
-    })
+    writer
+        .finish()
+        .map_err(|error| ExecError::Source(format!("aggregate spill flush: {error}")))
 }
 
-impl AggregateSpillRun {
-    fn next_entry(&mut self) -> Result<Option<SpilledGroupEntry>, ExecError> {
-        if !spill::read_record(&mut self.reader, &mut self.payload)
-            .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?
-        {
-            return Ok(None);
+/// The encoded group key, which leads every spilled record so a merge
+/// pass can order records without decoding their states.
+fn decode_group_key(payload: &[u8]) -> Result<Vec<u8>, String> {
+    spill::Decoder::new(payload).bytes().map(<[u8]>::to_vec)
+}
+
+fn decode_group_entry(payload: &[u8]) -> Result<SpilledGroupEntry, ExecError> {
+    let mut decoder = spill::Decoder::new(payload);
+    (|| {
+        let key = decoder.bytes()?.to_vec();
+        let values = decoder.values()?;
+        let count = decoder.count()?;
+        let mut states = Vec::with_capacity(count.min(64));
+        for _ in 0..count {
+            states.push(decode_aggregate_state(&mut decoder)?);
         }
-        let mut decoder = spill::Decoder::new(&self.payload);
-        let entry = (|| {
-            let key = decoder.bytes()?.to_vec();
-            let values = decoder.values()?;
-            let count = decoder.count()?;
-            let mut states = Vec::with_capacity(count.min(64));
-            for _ in 0..count {
-                states.push(decode_aggregate_state(&mut decoder)?);
-            }
-            Ok::<_, String>(SpilledGroupEntry {
-                key,
-                values,
-                states,
-            })
-        })()
-        .map_err(|error| ExecError::Source(format!("aggregate spill decode: {error}")))?;
-        Ok(Some(entry))
-    }
+        Ok::<_, String>(SpilledGroupEntry {
+            key,
+            values,
+            states,
+        })
+    })()
+    .map_err(|error| ExecError::Source(format!("aggregate spill decode: {error}")))
 }
 
 const AGGREGATE_COUNT: u8 = 0;
@@ -2919,12 +2900,17 @@ fn decode_aggregate_state(
     Ok(SpilledAggregateState { value, seen })
 }
 
-/// K-way merges the spilled runs (plus the resident remainder written as a
-/// final run) into finished output rows. Runs are keyed and sorted by the
+/// Merges the spilled runs (plus the resident remainder written as a final
+/// run) into finished output rows. Runs are keyed and sorted by the
 /// serialized group key, so equal groups are adjacent across run heads and
 /// partial states combine through the existing merge path.
+///
+/// More runs than the merge fan-in are first reduced in passes that copy
+/// records without combining them: a partial state is combined exactly
+/// once, here, in the order the runs were written. The descriptors this
+/// holds are bounded by the fan-in, not by how often the map spilled.
 fn merge_spilled_aggregate_groups(
-    mut runs: Vec<AggregateSpillRun>,
+    mut runs: Vec<spill::ClosedRun>,
     mut groups: HashMap<Vec<Value>, AggregateGroup>,
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
@@ -2932,32 +2918,24 @@ fn merge_spilled_aggregate_groups(
     if !groups.is_empty() {
         runs.push(write_aggregate_spill_run(&mut groups, memory)?);
     }
-    let mut heads = Vec::with_capacity(runs.len());
-    for run in &mut runs {
-        heads.push(run.next_entry()?);
-    }
+    let less = |left: &Vec<u8>, right: &Vec<u8>| left < right;
+    let runs = spill::reduce_runs(
+        runs,
+        spill::MERGE_FAN_IN,
+        "pintail-aggregate-merge-",
+        memory.spill(),
+        decode_group_key,
+        &less,
+    )
+    .map_err(|error| ExecError::Source(format!("aggregate spill merge: {error}")))?;
+    let mut merge = spill::RunMerge::open(runs, decode_group_key)
+        .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?;
     let mut rows: Vec<Vec<Value>> = Vec::new();
-    loop {
-        let mut winner: Option<usize> = None;
-        for (index, head) in heads.iter().enumerate() {
-            let Some(candidate) = head else { continue };
-            let better = match winner {
-                None => true,
-                Some(current) => {
-                    let current_head = heads[current]
-                        .as_ref()
-                        .expect("winner head is always occupied");
-                    candidate.key < current_head.key
-                }
-            };
-            if better {
-                winner = Some(index);
-            }
-        }
-        let Some(winner) = winner else { break };
-        let replacement = runs[winner].next_entry()?;
-        let entry =
-            std::mem::replace(&mut heads[winner], replacement).expect("winner head is occupied");
+    while let Some(head) = merge
+        .next(&less)
+        .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?
+    {
+        let entry = decode_group_entry(&head.payload)?;
         if entry.states.len() != aggregates.len() {
             return Err(ExecError::Source(
                 "aggregate spill decode: state arity mismatch".to_owned(),
@@ -2973,15 +2951,16 @@ fn merge_spilled_aggregate_groups(
             .zip(aggregates)
             .map(|(state, aggregate)| revive_aggregate_state(state, aggregate, memory))
             .collect::<Result<Vec<_>, _>>()?;
-        // Fold every other run's entry for the same key into this group.
-        for index in 0..heads.len() {
-            while heads[index]
-                .as_ref()
-                .is_some_and(|head| head.key == entry.key)
-            {
-                let replacement = runs[index].next_entry()?;
-                let duplicate = std::mem::replace(&mut heads[index], replacement)
+        // Fold every further record for the same key into this group, in
+        // run order. A reduced run can hold several records for one key,
+        // one per run it absorbed, so the winner's own run is included.
+        for index in 0..merge.len() {
+            while merge.head(index).is_some_and(|head| head.key == entry.key) {
+                let duplicate = merge
+                    .take(index)
+                    .map_err(|error| ExecError::Source(format!("aggregate spill read: {error}")))?
                     .expect("matching head is occupied");
+                let duplicate = decode_group_entry(&duplicate.payload)?;
                 if duplicate.states.len() != aggregates.len() {
                     return Err(ExecError::Source(
                         "aggregate spill decode: state arity mismatch".to_owned(),

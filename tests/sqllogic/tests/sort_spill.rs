@@ -44,7 +44,15 @@ fn row(id: u64) -> StoredRow {
     )
 }
 
-fn run_sorted(memory_limit: usize) -> Result<Vec<(i64, String, u64)>, String> {
+fn run_sorted(memory_limit: usize) -> Result<Vec<SortedRow>, String> {
+    run_sorted_with_metrics(memory_limit).map(|(rows, _)| rows)
+}
+
+type SortedRow = (i64, String, u64);
+
+fn run_sorted_with_metrics(
+    memory_limit: usize,
+) -> Result<(Vec<SortedRow>, pintail_exec::spill::QuerySpillMetrics), String> {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open table");
@@ -97,7 +105,8 @@ fn run_sorted(memory_limit: usize) -> Result<Vec<(i64, String, u64)>, String> {
             rows.push((score, label, id));
         }
     }
-    Ok(rows)
+    let metrics = execution.spill_metrics();
+    Ok((rows, metrics))
 }
 
 #[test]
@@ -111,4 +120,29 @@ fn spilled_sort_matches_the_in_memory_order_exactly() {
     let spilled = run_sorted(8 * 1024 * 1024).expect("spilled sort");
     assert_eq!(spilled.len(), reference.len());
     assert_eq!(spilled, reference);
+}
+
+/// A spilling sort holds at most the merge fan-in of run files plus one
+/// writer, and releases every file once its last row is out, even though
+/// the operator itself lives until the query is dropped.
+#[test]
+fn a_spilling_sort_holds_descriptors_bounded_by_the_merge_fan_in() {
+    let reference = run_sorted(256 * 1024 * 1024).expect("in-memory sort");
+    let (spilled, metrics) = run_sorted_with_metrics(8 * 1024 * 1024).expect("spilled sort");
+    assert_eq!(spilled, reference);
+    let bound = u64::try_from(pintail_exec::spill::MERGE_FAN_IN + 1).expect("small");
+    assert!(metrics.files > 0, "the ceiling must spill");
+    assert!(
+        metrics.peak_handles <= bound,
+        "peak {} open spill files exceeds fan-in + 1 = {bound}",
+        metrics.peak_handles
+    );
+    assert_eq!(
+        metrics.active_handles, 0,
+        "files still open after the last row"
+    );
+    assert_eq!(
+        metrics.active_bytes, 0,
+        "bytes still charged after the last row"
+    );
 }

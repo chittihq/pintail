@@ -357,8 +357,8 @@ pub(super) fn build_sort(
         }
         return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
     }
-    let mut merge = SpilledMerge::new(runs, keys.to_vec(), trim_to, collation)?;
-    merge.push_final_run(&rows, memory)?;
+    let merge = SpilledMerge::new(runs, &rows, keys.to_vec(), trim_to, collation, memory)?;
+    drop(rows);
     memory.release(rows_reserved);
     Ok(SortedRows::Spilled(merge))
 }
@@ -368,7 +368,7 @@ pub(super) fn build_sort(
 /// fit in memory take exactly the old path and produce no runs.
 struct SpillMaterialization {
     rows: Vec<Vec<Value>>,
-    runs: Vec<SpilledRun>,
+    runs: Vec<spill::ClosedRun>,
     reserved: usize,
 }
 
@@ -381,7 +381,7 @@ fn materialize_with_spill(
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut retained = 0_usize;
     let mut vector_reserved = 0_usize;
-    let mut runs: Vec<SpilledRun> = Vec::new();
+    let mut runs: Vec<spill::ClosedRun> = Vec::new();
     while let Some(batch) = input.next_batch(memory)? {
         let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
@@ -392,7 +392,7 @@ fn materialize_with_spill(
             Ok(reserved) => vector_reserved = vector_reserved.saturating_add(reserved),
             Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
                 rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                runs.push(SpilledRun::write(&rows, memory)?);
+                runs.push(write_sorted_run(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
                 retained = 0;
@@ -417,7 +417,7 @@ fn materialize_with_spill(
                     // releasing both the row payloads and the vector's
                     // capacity reservation frees the sort's whole footprint.
                     rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                    runs.push(SpilledRun::write(&rows, memory)?);
+                    runs.push(write_sorted_run(&rows, memory)?);
                     rows = Vec::new();
                     memory.release(retained.saturating_add(vector_reserved));
                     retained = 0;
@@ -442,7 +442,7 @@ fn materialize_with_spill(
             // that hoards the budget until hard failure starves the scan.
             if retained.saturating_add(vector_reserved) > memory.limit() / 2 && rows.len() > 1 {
                 rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                runs.push(SpilledRun::write(&rows, memory)?);
+                runs.push(write_sorted_run(&rows, memory)?);
                 rows = Vec::new();
                 memory.release(retained.saturating_add(vector_reserved));
                 retained = 0;
@@ -457,123 +457,94 @@ fn materialize_with_spill(
     })
 }
 
-/// One sorted run on disk: length-framed binary rows in a self-deleting
-/// temp file, streamed back in write order.
-struct SpilledRun {
-    reader: std::io::BufReader<std::fs::File>,
-    payload: Vec<u8>,
-    _path: tempfile::TempPath,
-    _reservation: spill::SpillReservation,
-}
-
-impl SpilledRun {
-    fn write(rows: &[Vec<Value>], memory: &MemoryTracker) -> Result<Self, ExecError> {
-        let file = spill::spill_file("pintail-sort-spill-", memory.spill())
-            .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
-        let (file, path, mut reservation) = file.into_parts();
-        let mut writer = std::io::BufWriter::new(file);
+/// Writes sorted rows as one closed run: length-framed binary rows in a
+/// self-deleting temp file, read back in write order.
+fn write_sorted_run(
+    rows: &[Vec<Value>],
+    memory: &MemoryTracker,
+) -> Result<spill::ClosedRun, ExecError> {
+    let mut writer = spill::RunWriter::create("pintail-sort-spill-", memory.spill())
+        .map_err(|error| ExecError::Source(format!("sort spill create: {error}")))?;
+    for row in rows {
         let mut encoder = spill::Encoder::new();
-        for row in rows {
-            encoder.values(row);
-            let payload = std::mem::replace(&mut encoder, spill::Encoder::new()).finish();
-            spill::write_record_quota(&mut writer, &payload, &mut reservation)
-                .map_err(|error| ExecError::Source(format!("sort spill write: {error}")))?;
-        }
-        let mut file = writer
-            .into_inner()
-            .map_err(|error| ExecError::Source(format!("sort spill flush: {error}")))?;
-        std::io::Seek::rewind(&mut file)
-            .map_err(|error| ExecError::Source(format!("sort spill rewind: {error}")))?;
-        Ok(Self {
-            reader: std::io::BufReader::new(file),
-            payload: Vec::new(),
-            _path: path,
-            _reservation: reservation,
-        })
+        encoder.values(row);
+        writer
+            .write(&encoder.finish())
+            .map_err(|error| ExecError::Source(format!("sort spill write: {error}")))?;
     }
-
-    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
-        if !spill::read_record(&mut self.reader, &mut self.payload)
-            .map_err(|error| ExecError::Source(format!("sort spill read: {error}")))?
-        {
-            return Ok(None);
-        }
-        spill::Decoder::new(&self.payload)
-            .values()
-            .map(Some)
-            .map_err(|error| ExecError::Source(format!("sort spill decode: {error}")))
-    }
+    writer
+        .finish()
+        .map_err(|error| ExecError::Source(format!("sort spill flush: {error}")))
 }
 
-/// K-way merge over sorted spilled runs; run count is bounded by
-/// input-bytes / memory-ceiling, so a linear minimum scan per row is fine.
+fn decode_sort_row(payload: &[u8]) -> Result<Vec<Value>, String> {
+    spill::Decoder::new(payload).values()
+}
+
+/// Merge over sorted spilled runs, at most the merge fan-in of them at
+/// once: more runs than that are reduced in passes that copy rows in
+/// merged order, so the descriptors a spilling sort holds are bounded by
+/// the fan-in and not by input bytes over the memory ceiling. With the
+/// fan-in that small a linear minimum scan per row is fine.
 pub(super) struct SpilledMerge {
     /// The plan's collation, for the merge comparison.
     collation: Collation,
-    runs: Vec<SpilledRun>,
-    heads: Vec<Option<Vec<Value>>>,
+    merge: spill::RunMerge<Vec<Value>>,
     keys: Vec<BoundOrderKey>,
     trim_to: Option<usize>,
 }
 
 impl SpilledMerge {
+    /// Closes the resident rows as the final run, reduces to the fan-in
+    /// and opens the merge.
     fn new(
-        runs: Vec<SpilledRun>,
+        mut runs: Vec<spill::ClosedRun>,
+        resident: &[Vec<Value>],
         keys: Vec<BoundOrderKey>,
         trim_to: Option<usize>,
         collation: Collation,
+        memory: &MemoryTracker,
     ) -> Result<Self, ExecError> {
-        let mut merge = Self {
-            heads: Vec::with_capacity(runs.len()),
+        if !resident.is_empty() {
+            runs.push(write_sorted_run(resident, memory)?);
+        }
+        let less = |left: &Vec<Value>, right: &Vec<Value>| {
+            compare_sort_rows(left, right, &keys, collation) == Ordering::Less
+        };
+        let runs = spill::reduce_runs(
             runs,
+            spill::MERGE_FAN_IN,
+            "pintail-sort-merge-",
+            memory.spill(),
+            decode_sort_row,
+            &less,
+        )
+        .map_err(|error| ExecError::Source(format!("sort spill merge: {error}")))?;
+        let merge = spill::RunMerge::open(runs, decode_sort_row)
+            .map_err(|error| ExecError::Source(format!("sort spill read: {error}")))?;
+        Ok(Self {
+            collation,
+            merge,
             keys,
             trim_to,
-            collation,
-        };
-        for index in 0..merge.runs.len() {
-            let head = merge.runs[index].next_row()?;
-            merge.heads.push(head);
-        }
-        Ok(merge)
-    }
-
-    fn push_final_run(
-        &mut self,
-        rows: &[Vec<Value>],
-        memory: &MemoryTracker,
-    ) -> Result<(), ExecError> {
-        if rows.is_empty() {
-            return Ok(());
-        }
-        let mut run = SpilledRun::write(rows, memory)?;
-        let head = run.next_row()?;
-        self.runs.push(run);
-        self.heads.push(head);
-        Ok(())
+        })
     }
 
     fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
-        let mut best: Option<usize> = None;
-        for (index, head) in self.heads.iter().enumerate() {
-            let Some(candidate) = head else { continue };
-            let better = match best {
-                None => true,
-                Some(current) => {
-                    let current_head = self.heads[current]
-                        .as_ref()
-                        .expect("best head is always occupied");
-                    compare_sort_rows(candidate, current_head, &self.keys, self.collation)
-                        == Ordering::Less
-                }
-            };
-            if better {
-                best = Some(index);
-            }
-        }
-        let Some(winner) = best else { return Ok(None) };
-        let replacement = self.runs[winner].next_row()?;
-        let mut row = std::mem::replace(&mut self.heads[winner], replacement)
-            .expect("winner head is occupied");
+        let less = |left: &Vec<Value>, right: &Vec<Value>| {
+            compare_sort_rows(left, right, &self.keys, self.collation) == Ordering::Less
+        };
+        let Some(head) = self
+            .merge
+            .next(&less)
+            .map_err(|error| ExecError::Source(format!("sort spill read: {error}")))?
+        else {
+            // Drained: release the run files now rather than when the
+            // operator is dropped, which for a streamed sort is much later.
+            self.merge = spill::RunMerge::empty(decode_sort_row);
+            return Ok(None);
+        };
+        let mut row = head.key;
         if let Some(width) = self.trim_to {
             row.truncate(width);
         }

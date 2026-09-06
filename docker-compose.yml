@@ -15,12 +15,11 @@
 services:
   pintail:
     image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.1.2-rc4}
-    # A columnar scan opens the segment files it reads, and a grouped
-    # aggregation that spills holds one run file open per spill until its
-    # final merge. Docker's default soft limit of 1024 is a desktop
-    # default, not a database one: a grouped report joining ten tables
-    # exhausted it and failed with "Too many open files".
-    # Every database ships this requirement; 1048576 is the usual value.
+    # A columnar scan opens the segment files it reads, and every
+    # concurrent spilling query holds a bounded handful of run files.
+    # Docker's default soft limit of 1024 is a desktop default, not a
+    # database one; every database ships this setting, and 1048576 is the
+    # usual value.
     ulimits:
       nofile:
         soft: 1048576

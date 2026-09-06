@@ -90,9 +90,8 @@ if [ -f "$COMPOSE" ]; then
   say "Keeping the existing $COMPOSE; setting the image to ${IMAGE}:${PINTAIL_VERSION}"
   $SUDO sed -i "s#image: ${IMAGE}:.*#image: ${IMAGE}:${PINTAIL_VERSION}#" "$COMPOSE"
   # An install predating the descriptor limit keeps Docker's 1024 soft
-  # limit, under which a spilling aggregation fails with "Too many open
-  # files". The operator's edits are theirs, so say it rather than rewrite
-  # their file.
+  # limit, a desktop default that a busy database can still run into. The
+  # operator's edits are theirs, so say it rather than rewrite their file.
   if ! grep -q "nofile" "$COMPOSE"; then
     say "WARNING: $COMPOSE sets no descriptor limit. Add this under the"
     say "         pintail service, then \`docker compose up -d\`:"
@@ -112,10 +111,10 @@ name: pintail
 services:
   pintail:
     image: ${IMAGE}:${PINTAIL_VERSION}
-    # A columnar scan opens the segment files it reads, and a spilling
-    # grouped aggregation holds one run file open per run until its final
-    # merge. Docker's default soft limit of 1024 is a desktop default, not
-    # a database one.
+    # A columnar scan opens the segment files it reads, and every
+    # concurrent spilling query holds a bounded handful of run files.
+    # Docker's default soft limit of 1024 is a desktop default, not a
+    # database one.
     ulimits:
       nofile:
         soft: 1048576
