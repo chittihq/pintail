@@ -607,22 +607,36 @@ impl GraceRun {
         Ok(())
     }
 
+    /// Seals the run on first use and opens a fresh reader over its file.
+    ///
+    /// Every call reopens. The serve loop reads a partition's build side to
+    /// find out whether it fits and, when it does not, splits that same
+    /// partition by reading it again; a single-use reader turned the second
+    /// read into "grace run read twice", so a build side that overflowed
+    /// while being served could never be re-partitioned and the depth bound
+    /// was unreachable from the path that needs it. Sealing also means a run
+    /// that has been read holds no descriptor of its own: the path keeps the
+    /// file alive, and the reader is the only handle for as long as it lives.
     fn reader(&mut self) -> Result<GraceRunReader, ExecError> {
-        use std::io::Seek as _;
-        let writer = self
-            .writer
-            .take()
-            .ok_or(ExecError::InvalidPhysicalPlan("grace run read twice"))?;
-        let mut file = writer
-            .into_inner()
-            .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?;
-        file.rewind()
-            .map_err(|error| ExecError::Source(format!("join spill rewind: {error}")))?;
-        let _ = &self.path;
+        self.seal()?;
+        let file = std::fs::File::open(&self.path)
+            .map_err(|error| ExecError::Source(format!("join spill reopen: {error}")))?;
         Ok(GraceRunReader {
             reader: std::io::BufReader::new(file),
             payload: Vec::new(),
         })
+    }
+
+    /// Flushes and closes the writer. Idempotent; a sealed run refuses
+    /// further appends and holds no descriptor until read.
+    fn seal(&mut self) -> Result<(), ExecError> {
+        if let Some(writer) = self.writer.take() {
+            let file = writer
+                .into_inner()
+                .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?;
+            drop(file);
+        }
+        Ok(())
     }
 }
 
@@ -1026,6 +1040,16 @@ pub(super) fn next_grace_join_batch(
         {
             let grace = state.grace.as_mut().expect("grace state engaged");
             grace.probing_done = true;
+            // Routing is over, so no run receives another row. Closing every
+            // writer now drops the join's largest descriptor holding - two
+            // per partition - before serving opens them again one at a time.
+            for run in grace
+                .build_files
+                .iter_mut()
+                .chain(grace.probe_files.iter_mut())
+            {
+                run.seal()?;
+            }
             break;
         }
         let left_values = state
@@ -1553,6 +1577,76 @@ mod tests {
             drain_partitions(&mut grace.build_files[0..1]).is_empty(),
             "the split partition is left empty"
         );
+    }
+
+    #[test]
+    fn a_partition_read_once_by_the_serve_loop_can_still_be_split() {
+        use super::{
+            GRACE_PARTITIONS, GraceJoin, JoinHashKey, MemoryTracker, split_grace_partition,
+        };
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut grace = GraceJoin::create(&memory).expect("grace state");
+        let ids = (0..300_u64).collect::<Vec<_>>();
+        for id in &ids {
+            let key = JoinHashKey::NonNegativeInteger(*id);
+            let row = vec![pintail_types::Value::UInt64(*id)];
+            grace.build_files[0].append(&key, &row).expect("build");
+            grace.probe_files[0].append(&key, &row).expect("probe");
+        }
+        // Exactly the serve loop's sequence: read the build side, decide it
+        // does not fit, drop the reader, ask for a split of the same slot.
+        let mut first = grace.build_files[0].reader().expect("first read");
+        let mut seen = 0;
+        while first.next_entry().expect("entry").is_some() {
+            seen += 1;
+        }
+        assert_eq!(seen, ids.len());
+        drop(first);
+        split_grace_partition(&mut grace, 0, &memory)
+            .expect("a partition the serve loop already read must still split");
+        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..]);
+        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..]);
+        build.sort_unstable();
+        probe.sort_unstable();
+        assert_eq!(build, ids, "the second read must see every build row");
+        assert_eq!(probe, ids, "probe rows follow their keys through the split");
+    }
+
+    #[test]
+    fn a_sealed_run_reads_repeatably_holds_no_writer_and_refuses_appends() {
+        use super::{ExecError, GraceRun, JoinHashKey, MemoryTracker};
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut run = GraceRun::create(&memory).expect("run");
+        for id in 0..10_u64 {
+            run.append(
+                &JoinHashKey::NonNegativeInteger(id),
+                &[pintail_types::Value::UInt64(id)],
+            )
+            .expect("append");
+        }
+        assert!(run.writer.is_some(), "open for appends until first read");
+        for _ in 0..3 {
+            let mut reader = run.reader().expect("reader");
+            let mut count = 0;
+            while reader.next_entry().expect("entry").is_some() {
+                count += 1;
+            }
+            assert_eq!(count, 10, "each read starts from the first record");
+            assert!(
+                run.writer.is_none(),
+                "sealed: no writer, no descriptor of its own"
+            );
+        }
+        let refused = run
+            .append(
+                &JoinHashKey::NonNegativeInteger(99),
+                &[pintail_types::Value::UInt64(99)],
+            )
+            .expect_err("a sealed run takes no more rows");
+        assert!(matches!(
+            refused,
+            ExecError::InvalidPhysicalPlan("grace run already sealed")
+        ));
     }
 
     #[test]
