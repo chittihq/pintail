@@ -257,7 +257,13 @@ impl AppConfig {
     where
         I: IntoIterator<Item = (OsString, OsString)>,
     {
-        let environment: HashMap<OsString, OsString> = environment.into_iter().collect();
+        // A compose file passes every knob through as `${NAME:-}`, so an
+        // operator who leaves one unset hands the process an empty string,
+        // not an absent variable. Empty means unset.
+        let environment: HashMap<OsString, OsString> = environment
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .collect();
         let config_path = cli
             .config
             .clone()
@@ -817,6 +823,24 @@ mod tests {
         )
         .expect("environment config");
         assert_eq!(configured.query_memory_limit_bytes(), 268_435_456);
+    }
+
+    #[test]
+    fn an_empty_environment_value_means_unset() {
+        let config = AppConfig::load_from(
+            &cli(),
+            [
+                ("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "".into()),
+                ("PINTAIL_MAX_CONCURRENT_QUERIES".into(), "".into()),
+                ("PINTAIL_QUERY_MEMORY_LIMIT_BYTES".into(), "".into()),
+            ],
+        )
+        .expect("empty values fall back to defaults");
+        assert_eq!(config.query_queue_wait(), Duration::from_secs(2));
+        assert_eq!(
+            config.query_memory_limit_bytes(),
+            DEFAULT_QUERY_MEMORY_LIMIT
+        );
     }
 
     #[test]
