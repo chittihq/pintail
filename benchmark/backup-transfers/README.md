@@ -4,6 +4,8 @@ Date: 2026-09-06. Baseline: `fdd7222`; candidate: `7cf219e`.
 
 Streaming with four concurrent objects substantially improved full-backup and restore throughput in this local S3 experiment. Upload memory is bounded by concurrency and part size, but can exceed the current serial implementation for small and medium segments. Incremental results varied by shape and concurrency.
 
+A follow-up [10 GiB experiment](10gib/README.md) measures the same binaries with larger working sets.
+
 ## Four concurrent objects versus baseline
 
 Times and peak client RSS below are medians of three fresh-process trials after one warm-up. RSS includes the Rust process, not the S3 service. Speedup is baseline time divided by candidate time.
