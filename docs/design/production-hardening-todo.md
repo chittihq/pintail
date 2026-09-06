@@ -252,6 +252,13 @@ prints.
   default ceiling is 512 MiB. The store's chunk budget is meant to bound
   this and does not. Bound adoption to what the ceiling can hold, or
   adopt chunks as they are consumed.
+  Progress 2026-09-06: most of the figure was capacity, not data - a
+  chunk sliced into batches left every prefix holding the whole chunk's
+  allocation (118 MB retained for 16 MB of data on a two-column 1M-row
+  segment); prefixes are now right-sized and the plain GROUP BY runs
+  under the shipped ceiling. What remains is the adopt-everything pull
+  itself, bounded only by the whole remaining ceiling; see the morsel
+  entry in `docs/decisions.md`.
 - [ ] **G2. A second predicate on the same scan costs five times the
   first.** `WHERE status = 2` scans in 25 ms; `WHERE id >= 1 AND
   status = 2` in 132 ms with twice the peak reservation, even though the

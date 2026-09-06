@@ -2374,3 +2374,34 @@ stay at the CPU count; the fused probe loop and the API path are the
 next two things to profile inside, in that order. Numbers are not banked;
 the shared host puts a 2x spread between runs of the same
 configuration.
+
+## e66 — Aggregate rounds as row-range morsels (10M rows in-process, 10 threads, memo off)
+
+`crates/pintail-exec/tests/morsel_bench.rs`, minimum of seven runs, two
+rounds interleaved with the previous build (base = after the chunk
+capacity fix, new = morsel rounds at two morsels per thread). Milliseconds;
+"fail" is a query memory limit error under the 512 MiB default ceiling.
+
+| query | base 1 | new 1 | base 2 | new 2 |
+|---|---:|---:|---:|---:|
+| two-pass int key (50 groups) | 145 | 136 | 132 | 137 |
+| two-pass text key (5 groups) | 99 | 101 | 89 | 105 |
+| general int+text keys (50 groups) | 496 | 525 | 493 | 517 |
+| general expression key (10 groups) | 412 | 262 | 404 | 277 |
+| general 200K groups | 7,540 | 5,476 | 7,684 | 5,684 |
+| fused join + group (8 groups) | fail | 85 | fail | 84 |
+| 150K rows: two-pass int key | 3.7 | 3.0 | 4.3 | 3.0 |
+| 150K rows: general int+text keys | 11.4 | 8.2 | 11.4 | 8.1 |
+| 150K rows: general expression key | 9.7 | 4.2 | 11.1 | 4.9 |
+| 150K rows: general 150K groups | 136 | 99 | 146 | 96 |
+| 150K rows: fused join + group | 3.4 | 1.9 | 3.3 | 2.1 |
+
+The int+text row above was measured at four morsels per thread; at two it
+read 422 ms in a later single run, which is the setting kept. The general
+int+text query at a 64 MiB ceiling failed on the base, took 31.6 s with
+waves sized to the spill pressure line (one spill per wave), and 0.8 s
+with waves sized to half the ceiling (no spill).
+
+**Verdict: keep.** Width no longer depends on how many batches a round
+holds; the wins are where rounds were short, and the ten-million-row
+two-pass paths are unchanged within the host's noise.

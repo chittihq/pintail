@@ -108,6 +108,21 @@ when judging diversity. Optional production BI capture and dual-engine
 replay is documented under `tests/corpus/bi-captured/README.md` (not a
 release requirement).
 
+The store's recovery has two generated layers of its own, both in the unit
+gate. The crash fuzz (`crates/pintail-store/tests/crash_fuzz.rs`) kills a
+fixed write loop at a random moment and checks the reopened tables against
+the acknowledged-commit oracle. The recovery sequences
+(`crates/pintail-store/tests/recovery_sequences.rs`) generate the shape of
+the run as well as the moment: random interleavings of versioned writes and
+tombstones, flushes, compactions, reclaims, checkpoints, ADD COLUMN,
+at-least-once replays and one process abort, checked against an in-memory
+model after the crash, after replaying the tail into the restarted table,
+after the rest of the sequence and after a clean reopen. A failing sequence
+is shrunk to the shortest one that still fails and printed one op per line;
+`PINTAIL_RECOVERY_SEQUENCE_FILE` replays such a file, and
+`PINTAIL_RECOVERY_SEQUENCE_SEED` moves the seed range. A `failpoints` build
+adds the same sequences with the abort inside a WAL write.
+
 The end-to-end differential gate (`tests/e2e`) boots a real MySQL source
 (image selectable via `PINTAIL_E2E_MYSQL_IMAGE`; 8.4 primary, 8.0 as a
 second leg) under `binlog_row_metadata=MINIMAL` — MySQL's default — and the

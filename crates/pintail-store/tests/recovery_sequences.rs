@@ -561,13 +561,26 @@ fn reopen(directory: &Path, ops: &[Op], count: usize) -> Result<(TableStore, usi
 }
 
 fn run_sequence(ops: &[Op]) -> Result<(), String> {
+    run_sequence_with(ops, None).map(|_| ())
+}
+
+/// Runs one sequence; `fault` is a `PINTAIL_FAILPOINT` value for the
+/// worker (a `failpoints` build only), so the crash strikes INSIDE a WAL
+/// write rather than between two ops. Returns whether the worker died by
+/// a signal (the abort), so a caller can tell a fault that fired from one
+/// whose hit count the sequence never reached.
+fn run_sequence_with(ops: &[Op], fault: Option<&str>) -> Result<bool, String> {
     let workspace = tempfile::tempdir().map_err(|error| error.to_string())?;
     let directory = workspace.path().join("table");
     let ops_path = workspace.path().join("ops.txt");
     let ack_path = workspace.path().join("ack.txt");
     std::fs::write(&ops_path, render_sequence(ops)).map_err(|error| error.to_string())?;
 
-    let status = Command::new(std::env::current_exe().expect("test executable"))
+    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    if let Some(fault) = fault {
+        command.env("PINTAIL_FAILPOINT", fault);
+    }
+    let status = command
         .args([
             "--ignored",
             "--exact",
@@ -583,7 +596,8 @@ fn run_sequence(ops: &[Op]) -> Result<(), String> {
         .stderr(Stdio::piped())
         .output()
         .map_err(|error| format!("spawn worker: {error}"))?;
-    let crashed = ops.contains(&Op::Crash);
+    let crashed = ops.contains(&Op::Crash) || fault.is_some();
+    let aborted = !status.status.success() && status.status.code().is_none();
     if !crashed && !status.status.success() {
         return Err(format!(
             "worker failed without a crash op: {}",
@@ -643,15 +657,16 @@ fn run_sequence(ops: &[Op]) -> Result<(), String> {
     // A clean close and reopen must show the same table again.
     let store = TableStore::open(&directory, model.schema(), options())
         .map_err(|error| format!("final reopen: {error}"))?;
-    check(&store, &model, "after a clean reopen")
+    check(&store, &model, "after a clean reopen")?;
+    Ok(aborted)
 }
 
 // ---------------------------------------------------------------------------
 // Shrinking: the smallest sub-sequence that still fails.
 
-fn shrink(ops: &[Op]) -> (Vec<Op>, String) {
+fn shrink(ops: &[Op], fault: Option<&str>) -> (Vec<Op>, String) {
     let mut current = ops.to_vec();
-    let mut failure = run_sequence(&current).expect_err("the sequence fails");
+    let mut failure = run_sequence_with(&current, fault).expect_err("the sequence fails");
     let mut attempts = 0;
     let mut pieces = 2;
     while current.len() > 1 && attempts < SHRINK_BUDGET {
@@ -674,7 +689,7 @@ fn shrink(ops: &[Op]) -> (Vec<Op>, String) {
                 continue;
             }
             attempts += 1;
-            if let Err(error) = run_sequence(&candidate) {
+            if let Err(error) = run_sequence_with(&candidate, fault) {
                 current = candidate;
                 failure = error;
                 reduced = true;
@@ -693,13 +708,18 @@ fn shrink(ops: &[Op]) -> (Vec<Op>, String) {
     (current, failure)
 }
 
-fn report(seed: Option<u64>, ops: &[Op], failure: &str) -> String {
-    let (minimal, minimal_failure) = shrink(ops);
+fn report(seed: Option<u64>, ops: &[Op], fault: Option<&str>, failure: &str) -> String {
+    let (minimal, minimal_failure) = shrink(ops, fault);
     format!(
         "recovery sequence{} failed: {failure}\n\
          shrunk to {} ops (from {}), failing with: {minimal_failure}\n\
          --- minimal sequence (save as a file and set {REPRODUCE_ENV}) ---\n{}---",
-        seed.map_or(String::new(), |seed| format!(" (seed {seed})")),
+        match (seed, fault) {
+            (Some(seed), Some(fault)) => format!(" (seed {seed}, fault {fault})"),
+            (Some(seed), None) => format!(" (seed {seed})"),
+            (None, Some(fault)) => format!(" (fault {fault})"),
+            (None, None) => String::new(),
+        },
         minimal.len(),
         ops.len(),
         render_sequence(&minimal)
@@ -712,7 +732,7 @@ fn generated_sequences_of_writes_ddl_replay_and_crashes_recover_exactly() {
         let ops = parse_sequence(&std::fs::read_to_string(path).expect("read sequence"))
             .expect("parse sequence");
         if let Err(failure) = run_sequence(&ops) {
-            panic!("{}", report(None, &ops, &failure));
+            panic!("{}", report(None, &ops, None, &failure));
         }
         return;
     }
@@ -723,9 +743,57 @@ fn generated_sequences_of_writes_ddl_replay_and_crashes_recover_exactly() {
     for seed in base..base + SEQUENCES {
         let ops = generate(seed);
         if let Err(failure) = run_sequence(&ops) {
-            panic!("{}", report(Some(seed), &ops, &failure));
+            panic!("{}", report(Some(seed), &ops, None, &failure));
         }
     }
+}
+
+/// The same sequences with the crash INSIDE a WAL write: a `failpoints`
+/// build aborts the worker at the n-th append or sync, so the op in
+/// flight may have landed whole or not at all, and the recovered table
+/// must equal one of those two models.
+#[cfg(feature = "failpoints")]
+#[test]
+fn generated_sequences_recover_from_a_fault_inside_a_wal_write() {
+    const SITES: [&str; 3] = [
+        "store.wal.append",
+        "store.wal.before_sync",
+        "store.wal.sync",
+    ];
+    let base = std::env::var("PINTAIL_RECOVERY_SEQUENCE_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0x5eed_1000);
+    let mut fired = 0;
+    for seed in base..base + SEQUENCES {
+        let ops: Vec<Op> = generate(seed)
+            .into_iter()
+            .filter(|op| *op != Op::Crash)
+            .collect();
+        let writes = ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    op,
+                    Op::Insert { .. } | Op::Update { .. } | Op::Delete { .. } | Op::Replay { .. }
+                )
+            })
+            .count()
+            .max(1);
+        let mut random = StdRng::seed_from_u64(seed ^ 0xfa17);
+        let site = SITES[random.random_range(0..SITES.len())];
+        let hit = random.random_range(1..=writes);
+        let fault = format!("{site}@{hit}=abort");
+        match run_sequence_with(&ops, Some(&fault)) {
+            Ok(true) => fired += 1,
+            Ok(false) => {}
+            Err(failure) => panic!("{}", report(Some(seed), &ops, Some(&fault), &failure)),
+        }
+    }
+    assert!(
+        fired > SEQUENCES / 4,
+        "the fault must strike inside a WAL write in a fair share of sequences, fired {fired} of {SEQUENCES}"
+    );
 }
 
 /// The generator's own contract: every op kind appears across the seeds,

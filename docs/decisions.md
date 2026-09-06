@@ -1166,3 +1166,81 @@ and discards pending work before resetting the WAL or reclaiming input files;
 otherwise a ready result could republish pre-reset rows into the new manifest.
 Completed unpublished output files remain orphans for the next open to sweep.
 Closing or resetting a table may therefore wait for its one bounded merge pass.
+
+### Aggregate rounds run as row-range morsels, in waves the ceiling can hold
+
+A parallel aggregate round handed each worker one whole batch, so its
+width was the number of batches it held: a round cut short by the memory
+ceiling, the last round of a scan, or a table of two batches ran on two
+threads of a ten-thread pool. The general, fused-join and two-pass paths
+now cut a round's batches into row-range morsels - two per pool thread,
+never below 4,096 rows, equal cuts rather than a target and a remainder -
+and the pool takes them dynamically. This is the within-batch parallelism
+the batch-size entry above named as the change that decouples rows in
+flight from width, applied to the engine rather than modelled in the
+experiment programme.
+
+The first thing the measurement harness found was not scheduling. A plain
+GROUP BY over ten 1M-row segments asked 1.28 GB on its first pull under
+the shipped ceiling and failed. Most of that figure was capacity, not
+data: `Vec::split_off` leaves the head holding the whole original
+allocation, so a segment sliced into sixteen 64K-row batches retained one
+prefix per batch at the full chunk's capacity - 118 MB for 16 MB of data on
+a two-column segment. The prefix is now shrunk to its rows and the adopted
+string column is pre-sized from its arena offsets. This is most of G1 in
+the hardening todo; what remains of it is below.
+
+Two bounds then changed shape. The fused join reserved a per-probe-row
+figure for every row of a round (776 bytes each), which refused a
+ten-thread round of 64K-row batches under the shipped ceiling for an
+eight-group query; its groups are fixed by the build side, so the bound is
+now per morsel and per plan group, and the morsel count bends to a quarter
+of the ceiling when the plan is wide. The general path reserved the
+pessimistic every-row-is-a-group bound for a whole round at once: a 64 MiB
+query whose scan already held 21 MB of ready batches asked 55 MB for one
+round and failed. It now runs its morsels in waves whose bound fits half
+the ceiling (never below a thousand rows' worth, never to the brim); sized
+to the spill pressure line instead it spilled a fifty-group map once per
+wave and took 31 s where half the ceiling takes 0.8 s with no spill. The
+spill suite's run-count thresholds moved with it: the same ceilings spill
+a quarter as often, and the descriptor bound it proves is unchanged.
+
+Measured in-process on a ten-million-row, four-column table with ten
+threads and the settled memo off, minimum of seven runs, two rounds
+interleaved with the previous build (`crates/pintail-exec/tests/morsel_bench.rs`,
+e66): an expression-keyed GROUP BY 412/404 to 262/277 ms; a 200K-group
+GROUP BY 7.5/7.7 to 5.5/5.7 s; the fused join from a memory failure to
+85/84 ms; the int-and-text keyed GROUP BY within noise (496/493 against
+525/517 at four morsels per thread, 422 at two, which is why two). On a
+150K-row table, where a round holds two or three batches, the general
+paths halve: 11.4 to 8.2, 9.7 to 4.2 and 136 to 97 ms, the fused join 3.4
+to 1.9 ms, the two-pass int key 3.7 to 3.0 ms. The two-pass paths at ten
+million rows are unchanged within noise.
+
+What remains. The scan still adopts every prefetched segment at once and
+the store's per-chunk budget bounds that decode to the whole remaining
+ceiling, so ten scan threads over compaction-sized segments hand the
+aggregate a budget the scan has mostly spent; the row-range morsel for the
+scan is a segment slice, and the filtered decode path takes whole segments
+today. And ceilings below about three scan batches (12 MiB on the spill
+suite's corpus) still fail on a 728-byte reserve with an empty group map -
+the knife-edge the sweep starts above - because the scan's ready batches
+already hold the budget before the first group lands; a wave rule cannot
+help there.
+
+### Recovery is tested by generated sequences, shrunk on failure
+
+The crash fuzz kills a fixed write loop at a random moment; nothing
+generated the shape of a run. `crates/pintail-store/tests/recovery_sequences.rs`
+draws random sequences of versioned inserts, updates and tombstones over a
+dozen keys, flushes, compactions, reclaims, checkpoints, ADD COLUMN,
+at-least-once replays of the recent tail, and one process abort, and checks
+the table against an in-memory model after the crash, after replaying the
+tail into the restarted table, after the rest of the sequence, and after a
+clean reopen. Every acknowledged op is durable under `WalSync::Always`, so
+the recovered table must equal the model after the last acknowledged op,
+or one op later when a `failpoints` build aborts inside a WAL write. A
+failing sequence is delta-debugged to the shortest sub-sequence that still
+fails and reported one op per line for replay. The harness was checked by
+injecting a fault that ingested tombstones as live rows: found on the
+first seed and shrunk from 48 ops to two.

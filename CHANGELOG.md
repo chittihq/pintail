@@ -8,6 +8,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Generated recovery sequences for the store: random interleavings of
+  versioned writes and tombstones, flushes, compactions, reclaims,
+  checkpoints, ADD COLUMN, at-least-once replays and one process abort,
+  checked against an in-memory model after the crash, after replaying the
+  tail into the restarted table, after the rest of the sequence and after
+  a clean reopen. A failing sequence is shrunk to the shortest one that
+  still fails and printed for replay. A `failpoints` build adds the same
+  sequences with the abort inside a WAL write.
+
 - `EXPLAIN ANALYZE` prints a per-operator profile after the plan: each
   plan node's total and self time, time to first batch, batches, rows and
   peak query reservation. `PINTAIL_PROFILE=1`, a development switch, logs
@@ -25,6 +34,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- Parallel aggregate rounds run as row-range morsels: the general,
+  fused-join and two-pass paths cut a round's batches into bounded row
+  ranges the pool takes dynamically, so a round of one or two batches - a
+  small table, the tail of a scan, a round cut short by the memory
+  ceiling - runs on every thread instead of one or two. The general path
+  runs its morsels in waves whose memory bound fits half the ceiling, and
+  the fused join bounds a round by its plan's groups rather than per probe
+  row. On a ten-million-row table with ten threads an expression-keyed
+  GROUP BY fell from about 410 to 270 ms, a 200K-group GROUP BY from 7.5 to
+  5.5 s, and a join-and-group that failed under the shipped ceiling
+  answers in 85 ms; on a 150K-row table the general paths halve.
 - A comparison between an unsigned column and a signed integer literal,
   or the reverse, stays on the packed kernel. The binder types a small
   literal as signed, so `id >= 1` on an unsigned key evaluated row by row
@@ -43,6 +63,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A decoded segment sliced into batches retained the whole segment's
+  allocation once per batch: `Vec::split_off` leaves the head holding the
+  original capacity, so a 1M-row segment cut into sixteen batches held
+  about eight times its data for as long as those batches lived, and a
+  plain GROUP BY over ten such segments asked 1.28 GB on its first pull
+  under the 512 MiB default ceiling. Prefixes are now right-sized and the
+  adopted string column is pre-sized from its arena.
 - A spilling aggregation or sort holds a bounded number of open files
   however many runs it spilled: one while writing runs, seventeen while a
   merge pass runs, sixteen in the final merge. Runs close as soon as they
