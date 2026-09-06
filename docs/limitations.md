@@ -141,14 +141,6 @@ stays readable as a list of things to fix.
   is refused rather than accepted and ignored, so a client cannot believe it
   has asked for the invalid ones back.
 
-- A grouped aggregation over one integer or one text column whose
-  aggregates the streaming two-pass path can take (plain COUNT, SUM, AVG,
-  MIN, MAX and a DISTINCT count over integers) holds its whole state in
-  memory and does not spill: under a ceiling smaller than that state the
-  query fails with `query memory limit exceeded` rather than going to
-  disk. Every other aggregate shape spills. A per-entity DISTINCT count
-  over a large table is the shape that reaches this; raising the
-  per-query ceiling is the workaround.
 - `TIME` values are stored and compared as their canonical text. Ordering
   and comparison are exact for non-negative times under 100 hours; negative
   times and hours of three digits order as text, not as durations. A

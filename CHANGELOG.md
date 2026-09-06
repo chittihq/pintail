@@ -54,6 +54,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   exhausted a container's 1024-descriptor limit with
   `aggregate spill create: Too many open files`. `EXPLAIN ANALYZE` now
   reports the peak number of open spill files.
+- The streaming two-pass aggregate, which takes single-column GROUP BY
+  with plain counts, sums, extremes and integer DISTINCT counts, spills
+  its group maps to sorted runs under memory pressure instead of holding
+  its whole state; a per-entity DISTINCT count over a large table now
+  completes under a ceiling smaller than its state.
 - A grouped aggregation over one integer column with aggregates outside
   the two-pass lanes ran on a path that never spilled and failed at the
   ceiling; it now spills like the others. The buffered aggregate counted

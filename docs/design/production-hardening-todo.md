@@ -125,11 +125,14 @@ operators.
 - [x] **C1d. `two_pass.rs` does not spill at all.** Its partitions are
   in-memory buckets and maps, with no file creation. My earlier assumption
   that it shared the defect was wrong; nothing to do there.
-  Amended by D3: it holds no descriptors, but it holds its whole state,
-  and a per-entity DISTINCT count over a large table fails at a ceiling
-  smaller than that state instead of spilling. Recorded in
-  docs/limitations.md; converting its scattered rows into a spillable
-  form is the remaining engine item of this series.
+  Amended by D3: it holds no descriptors, but it held its whole state,
+  and a per-entity DISTINCT count over a large table failed at a ceiling
+  smaller than that state instead of spilling. Done since: the partition
+  maps spill as sorted runs through the shared machinery before any flush
+  that finds the query past half its ceiling, the scatter window is sized
+  so one flush's growth fits in the other half, and the maps are charged
+  by measured growth so a spill hands back the distinct sets too. The
+  remainder merges with the runs exactly as the other aggregate paths do.
 - [x] **C2. Replace the linear k-way merge scan with a heap** while that
   code is open, if it is free to do so. Not done, on purpose: the merge
   now sees at most the fan-in of sixteen runs, so the linear scan is a

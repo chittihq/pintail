@@ -8,14 +8,15 @@ use pintail_types::{DataType, Value};
 
 use super::aggregate::GroupKeyMap;
 use super::aggregate::{
-    AggregateState, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
-    decimal_units_from_int,
+    AggregateGroup, AggregateState, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
+    decimal_units_from_int, merge_spilled_aggregate_groups, write_aggregate_spill_run,
 };
-use super::join::normalized_collation_text;
+use super::join::{normalized_collation_text, normalized_hash_key};
 use super::{
     ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator,
     estimated_row_payload_bytes,
 };
+use crate::spill;
 use rayon::prelude::*;
 
 use crate::collation::Collation;
@@ -236,6 +237,218 @@ pub(super) enum TwoPassKeySource {
 /// into per-partition typed hashmaps in parallel whenever the scatter
 /// window fills, so memory is bounded by the group states plus one flush
 /// window regardless of input size.
+/// Declared labels and members per text key column, for rebuilding a
+/// group key the way the finalize does.
+type KeyDeclarations = [Option<(std::sync::Arc<Vec<String>>, bool)>; 2];
+type KeyMembers = [Option<std::sync::Arc<Vec<String>>>; 2];
+
+/// One interned text key as a value: an ENUM group key rebuilds with its
+/// declaration index and a SET key with its member bitmask, so an ORDER BY
+/// above sorts by `MySQL`'s rule; anything undeclared stays a plain string.
+fn interned_key_value(
+    intern: &StringIntern,
+    id: u64,
+    labels: Option<&(std::sync::Arc<Vec<String>>, bool)>,
+    members: Option<&std::sync::Arc<Vec<String>>>,
+) -> Value {
+    let text = intern.values[usize::try_from(id).expect("intern id fits usize")].clone();
+    let ordinal = if let Some((labels, exhaustive)) = labels {
+        // An empty label resolves only against a complete table: a gappy
+        // reconstruction keeps unseen slots as empty strings, and neither
+        // the empty SET ("", mask 0) nor a declared '' member may take a
+        // gap's ordinal (see StrColumn::enum_index_of).
+        (!text.is_empty() || *exhaustive)
+            .then(|| {
+                labels
+                    .iter()
+                    .position(|declared| declared == &text)
+                    .and_then(|position| u64::try_from(position + 1).ok())
+            })
+            .flatten()
+    } else if let Some(members) = members {
+        let mut mask = Some(0_u64);
+        for member in text.split(',').filter(|member| !member.is_empty()) {
+            mask = mask.and_then(|mask| {
+                members
+                    .iter()
+                    .position(|declared| declared == member)
+                    .filter(|position| *position < 64)
+                    .map(|position| mask | (1_u64 << position))
+            });
+        }
+        mask
+    } else {
+        None
+    };
+    ordinal.map_or_else(
+        || Value::Utf8(text.clone()),
+        |index| Value::Enum {
+            index,
+            label: text.clone(),
+        },
+    )
+}
+
+/// The group key values of one map entry, in output order.
+fn two_pass_key_values(
+    keys: TwoPassKeySource,
+    bits: u64,
+    null: bool,
+    intern: Option<&StringIntern>,
+    labels: &KeyDeclarations,
+    members: &KeyMembers,
+) -> Vec<Value> {
+    let intern = || intern.expect("text keys carry an intern table");
+    match keys {
+        TwoPassKeySource::Int { group_type, .. } => {
+            vec![two_pass_key_value(bits, null, group_type)]
+        }
+        TwoPassKeySource::Text { .. } => vec![if null {
+            Value::Null
+        } else {
+            interned_key_value(intern(), bits, labels[0].as_ref(), members[0].as_ref())
+        }],
+        TwoPassKeySource::TextPair { .. } => [bits >> 32, bits & 0xFFFF_FFFF]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, id)| {
+                if id == 0 {
+                    Value::Null
+                } else {
+                    interned_key_value(
+                        intern(),
+                        id - 1,
+                        labels[slot].as_ref(),
+                        members[slot].as_ref(),
+                    )
+                }
+            })
+            .collect(),
+        TwoPassKeySource::DateParts { parts } => {
+            let count = parts.iter().flatten().count();
+            (0..count)
+                .map(|index| {
+                    let shift = 20 * (count - 1 - index);
+                    let id = (bits >> shift) & 0xF_FFFF;
+                    if id == 0 {
+                        Value::Null
+                    } else {
+                        // Date parts are signed (Int64), like the scalar and
+                        // units paths that feed them; a 20-bit id always fits.
+                        Value::Int64(i64::try_from(id - 1).expect("20-bit date-part id fits i64"))
+                    }
+                })
+                .collect()
+        }
+    }
+}
+
+/// The partition maps as the buffered path keys its runs: by normalized
+/// group values, so a run from here merges with the resident remainder on
+/// identical encoded keys.
+fn two_pass_groups_map(
+    maps: &mut [GroupKeyMap],
+    keys: TwoPassKeySource,
+    intern: Option<&StringIntern>,
+    labels: &KeyDeclarations,
+    members: &KeyMembers,
+    collation: Collation,
+) -> HashMap<Vec<Value>, AggregateGroup> {
+    let mut groups = HashMap::with_capacity(maps.iter().map(HashMap::len).sum());
+    for map in maps.iter_mut() {
+        for ((bits, null), states) in map.drain() {
+            let values = two_pass_key_values(keys, bits, null, intern, labels, members);
+            let key = values
+                .iter()
+                .cloned()
+                .map(|value| normalized_hash_key(value, collation).unwrap_or(Value::Null))
+                .collect::<Vec<_>>();
+            groups.insert(key, AggregateGroup { values, states });
+        }
+    }
+    groups
+}
+
+/// Everything the two-pass aggregate holds between flushes, so a spill can
+/// take it whole: the partition maps, the dense slots not yet unified into
+/// them, and the bytes charged for both.
+struct TwoPassState<'a> {
+    maps: &'a mut [GroupKeyMap],
+    dense: &'a mut Option<DenseGroupSlots>,
+    group_reserved: &'a mut usize,
+    spill_runs: &'a mut Vec<spill::ClosedRun>,
+}
+
+/// Writes every group held so far as one closed, sorted run and starts
+/// over with empty maps. The path holds its whole state otherwise, and a
+/// per-entity DISTINCT count over a large table used to fail at a ceiling
+/// smaller than that state instead of going to disk.
+#[allow(clippy::too_many_arguments)]
+fn two_pass_spill(
+    state: &mut TwoPassState<'_>,
+    keys: TwoPassKeySource,
+    aggregates: &[CompiledAggregate],
+    partitions: usize,
+    intern: Option<&StringIntern>,
+    labels: &KeyDeclarations,
+    members: &KeyMembers,
+    collation: Collation,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    if let Some(slots) = state.dense.take() {
+        fold_dense_into_maps(
+            slots,
+            keys,
+            aggregates,
+            partitions,
+            state.maps,
+            memory,
+            state.group_reserved,
+        )?;
+    }
+    let mut groups = two_pass_groups_map(state.maps, keys, intern, labels, members, collation);
+    if groups.is_empty() {
+        return Ok(());
+    }
+    state
+        .spill_runs
+        .push(write_aggregate_spill_run(&mut groups, memory)?);
+    memory.release(*state.group_reserved);
+    *state.group_reserved = 0;
+    Ok(())
+}
+
+/// Whether the groups held so far should go to disk before the next flush
+/// applies its window: the query past half the ceiling with groups to
+/// spill. The maps' charge is only part of what they hold, since distinct
+/// sets reserve through the states, so this looks at the whole query.
+fn two_pass_under_pressure(maps: &[GroupKeyMap], memory: &MemoryTracker) -> bool {
+    memory.used() > memory.limit() / 2 && maps.iter().any(|map| !map.is_empty())
+}
+
+/// Spills before a flush when the budget is already under pressure, so
+/// the flush applies its rows into empty maps instead of failing on the
+/// first small charge a full budget refuses.
+#[allow(clippy::too_many_arguments)]
+fn two_pass_relieve(
+    state: &mut TwoPassState<'_>,
+    keys: TwoPassKeySource,
+    aggregates: &[CompiledAggregate],
+    partitions: usize,
+    intern: Option<&StringIntern>,
+    labels: &KeyDeclarations,
+    members: &KeyMembers,
+    collation: Collation,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    if two_pass_under_pressure(state.maps, memory) {
+        two_pass_spill(
+            state, keys, aggregates, partitions, intern, labels, members, collation, memory,
+        )?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 pub(super) fn build_streaming_two_pass_aggregate(
     input: &mut PullOperator,
@@ -265,15 +478,27 @@ pub(super) fn build_streaming_two_pass_aggregate(
         .saturating_mul(PARTITIONS_PER_WORKER);
     let lane_count = lanes.len();
     let scatter_row_bytes = size_of::<u64>() * (1 + lane_count) + 1;
-    // Flush the scatter window at a quarter of the budget (bounded to
-    // 1-64 MB) so the scan always keeps its transient headroom.
-    let flush_bytes = (memory.limit() / 4).clamp(1 << 20, 64 << 20);
+    // The scatter window is sized so that one flush of it, every row a new
+    // group with its own distinct entry, fits in half the ceiling. A flush
+    // applies its rows into the group maps and their distinct sets, which
+    // grow by an order of magnitude more than the scattered bytes, and a
+    // flush that runs out part-way cannot be replayed: the spill valve runs
+    // BEFORE a flush, at half the ceiling, and the window guarantees the
+    // other half is enough.
+    let per_row_growth = size_of::<(u64, bool)>()
+        .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+        .saturating_add(HASH_ENTRY_OVERHEAD)
+        .saturating_add(128);
+    let flush_bytes = ((memory.limit() / 2) / per_row_growth.max(1))
+        .saturating_mul(scatter_row_bytes)
+        .clamp(128 << 10, 64 << 20);
     let scan_floor = input.scan_transient_floor().saturating_mul(2);
     let mut buckets: Vec<TwoPassBucket> =
         (0..partitions).map(|_| TwoPassBucket::default()).collect();
     let mut maps: Vec<GroupKeyMap> = (0..partitions).map(|_| GroupKeyMap::default()).collect();
     let mut bucket_reserved = 0_usize;
     let mut group_reserved = 0_usize;
+    let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     let mut flushes = 0_u32;
     let mut intern = matches!(
         keys,
@@ -358,7 +583,23 @@ pub(super) fn build_streaming_two_pass_aggregate(
             let need = rows
                 .saturating_mul(scatter_row_bytes)
                 .saturating_add(current.estimated_bytes());
-            if let Err(error) = memory.reserve(need) {
+            if memory.reserve(need).is_err() {
+                two_pass_relieve(
+                    &mut TwoPassState {
+                        maps: &mut maps,
+                        dense: &mut dense,
+                        group_reserved: &mut group_reserved,
+                        spill_runs: &mut spill_runs,
+                    },
+                    keys,
+                    aggregates,
+                    partitions,
+                    intern.as_ref(),
+                    &key_enum_labels,
+                    &key_set_members,
+                    collation,
+                    memory,
+                )?;
                 drain_two_pass_window(
                     &mut window,
                     keys,
@@ -375,7 +616,25 @@ pub(super) fn build_streaming_two_pass_aggregate(
                 window_rows = 0;
                 flushes += 1;
                 if memory.reserve(need).is_err() {
-                    return Err(error);
+                    // The window is gone; the groups themselves are what
+                    // fill the budget, so they go to disk.
+                    two_pass_spill(
+                        &mut TwoPassState {
+                            maps: &mut maps,
+                            dense: &mut dense,
+                            group_reserved: &mut group_reserved,
+                            spill_runs: &mut spill_runs,
+                        },
+                        keys,
+                        aggregates,
+                        partitions,
+                        intern.as_ref(),
+                        &key_enum_labels,
+                        &key_set_members,
+                        collation,
+                        memory,
+                    )?;
+                    memory.reserve(need)?;
                 }
             }
             window_reserved = window_reserved.saturating_add(need);
@@ -384,6 +643,22 @@ pub(super) fn build_streaming_two_pass_aggregate(
             if window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
                 || (scan_floor > 0 && memory.remaining() < scan_floor)
             {
+                two_pass_relieve(
+                    &mut TwoPassState {
+                        maps: &mut maps,
+                        dense: &mut dense,
+                        group_reserved: &mut group_reserved,
+                        spill_runs: &mut spill_runs,
+                    },
+                    keys,
+                    aggregates,
+                    partitions,
+                    intern.as_ref(),
+                    &key_enum_labels,
+                    &key_set_members,
+                    collation,
+                    memory,
+                )?;
                 drain_two_pass_window(
                     &mut window,
                     keys,
@@ -399,15 +674,49 @@ pub(super) fn build_streaming_two_pass_aggregate(
                 )?;
                 window_rows = 0;
                 flushes += 1;
+                if two_pass_under_pressure(&maps, memory) {
+                    two_pass_spill(
+                        &mut TwoPassState {
+                            maps: &mut maps,
+                            dense: &mut dense,
+                            group_reserved: &mut group_reserved,
+                            spill_runs: &mut spill_runs,
+                        },
+                        keys,
+                        aggregates,
+                        partitions,
+                        intern.as_ref(),
+                        &key_enum_labels,
+                        &key_set_members,
+                        collation,
+                        memory,
+                    )?;
+                }
             }
             batch = input.next_batch(memory)?;
             continue;
         }
         let rows = current.visible_row_count();
         let bytes = rows.saturating_mul(scatter_row_bytes);
-        if let Err(error) = memory.reserve(bytes) {
-            // Free the scatter window and retry once; a second failure
-            // means the group states themselves exceed the budget.
+        if memory.reserve(bytes).is_err() {
+            // Free the scatter window and retry; a second failure means the
+            // group states themselves fill the budget, so they go to disk.
+            two_pass_relieve(
+                &mut TwoPassState {
+                    maps: &mut maps,
+                    dense: &mut dense,
+                    group_reserved: &mut group_reserved,
+                    spill_runs: &mut spill_runs,
+                },
+                keys,
+                aggregates,
+                partitions,
+                intern.as_ref(),
+                &key_enum_labels,
+                &key_set_members,
+                collation,
+                memory,
+            )?;
             two_pass_flush(
                 &mut buckets,
                 &mut maps,
@@ -419,9 +728,24 @@ pub(super) fn build_streaming_two_pass_aggregate(
             memory.release(bucket_reserved);
             bucket_reserved = 0;
             flushes += 1;
-            match memory.reserve(bytes) {
-                Ok(()) => {}
-                Err(_) => return Err(error),
+            if memory.reserve(bytes).is_err() {
+                two_pass_spill(
+                    &mut TwoPassState {
+                        maps: &mut maps,
+                        dense: &mut dense,
+                        group_reserved: &mut group_reserved,
+                        spill_runs: &mut spill_runs,
+                    },
+                    keys,
+                    aggregates,
+                    partitions,
+                    intern.as_ref(),
+                    &key_enum_labels,
+                    &key_set_members,
+                    collation,
+                    memory,
+                )?;
+                memory.reserve(bytes)?;
             }
         }
         bucket_reserved = bucket_reserved.saturating_add(bytes);
@@ -457,6 +781,22 @@ pub(super) fn build_streaming_two_pass_aggregate(
         }
         drop(current);
         if bucket_reserved >= flush_bytes || (scan_floor > 0 && memory.remaining() < scan_floor) {
+            two_pass_relieve(
+                &mut TwoPassState {
+                    maps: &mut maps,
+                    dense: &mut dense,
+                    group_reserved: &mut group_reserved,
+                    spill_runs: &mut spill_runs,
+                },
+                keys,
+                aggregates,
+                partitions,
+                intern.as_ref(),
+                &key_enum_labels,
+                &key_set_members,
+                collation,
+                memory,
+            )?;
             two_pass_flush(
                 &mut buckets,
                 &mut maps,
@@ -468,9 +808,43 @@ pub(super) fn build_streaming_two_pass_aggregate(
             memory.release(bucket_reserved);
             bucket_reserved = 0;
             flushes += 1;
+            if two_pass_under_pressure(&maps, memory) {
+                two_pass_spill(
+                    &mut TwoPassState {
+                        maps: &mut maps,
+                        dense: &mut dense,
+                        group_reserved: &mut group_reserved,
+                        spill_runs: &mut spill_runs,
+                    },
+                    keys,
+                    aggregates,
+                    partitions,
+                    intern.as_ref(),
+                    &key_enum_labels,
+                    &key_set_members,
+                    collation,
+                    memory,
+                )?;
+            }
         }
         batch = input.next_batch(memory)?;
     }
+    two_pass_relieve(
+        &mut TwoPassState {
+            maps: &mut maps,
+            dense: &mut dense,
+            group_reserved: &mut group_reserved,
+            spill_runs: &mut spill_runs,
+        },
+        keys,
+        aggregates,
+        partitions,
+        intern.as_ref(),
+        &key_enum_labels,
+        &key_set_members,
+        collation,
+        memory,
+    )?;
     drain_two_pass_window(
         &mut window,
         keys,
@@ -483,6 +857,22 @@ pub(super) fn build_streaming_two_pass_aggregate(
         memory,
         &mut group_reserved,
         &mut window_reserved,
+    )?;
+    two_pass_relieve(
+        &mut TwoPassState {
+            maps: &mut maps,
+            dense: &mut dense,
+            group_reserved: &mut group_reserved,
+            spill_runs: &mut spill_runs,
+        },
+        keys,
+        aggregates,
+        partitions,
+        intern.as_ref(),
+        &key_enum_labels,
+        &key_set_members,
+        collation,
+        memory,
     )?;
     two_pass_flush(
         &mut buckets,
@@ -507,115 +897,43 @@ pub(super) fn build_streaming_two_pass_aggregate(
     if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
         let groups: usize = maps.iter().map(HashMap::len).sum();
         eprintln!(
-            "[agg] streaming two-pass: {groups} groups, {} flushes",
-            flushes + 1
+            "[agg] streaming two-pass: {groups} groups, {} flushes, {} spill runs",
+            flushes + 1,
+            spill_runs.len()
         );
+    }
+    if !spill_runs.is_empty() {
+        // Groups went to disk along the way: the remainder joins them and
+        // the shared merge combines each group once, in run order.
+        let resident = two_pass_groups_map(
+            &mut maps,
+            keys,
+            intern.as_ref(),
+            &key_enum_labels,
+            &key_set_members,
+            collation,
+        );
+        memory.release(group_reserved);
+        return merge_spilled_aggregate_groups(spill_runs, resident, aggregates, memory);
     }
 
     // Finalize each partition in parallel; ORDER BY above owns ordering.
+    let intern_ref = intern.as_ref();
     let finalized = maps
         .into_par_iter()
         .map(|map| -> Result<(Vec<Vec<Value>>, usize), ExecError> {
-            let interned =
-                |id: u64,
-                 labels: Option<&(std::sync::Arc<Vec<String>>, bool)>,
-                 members: Option<&std::sync::Arc<Vec<String>>>| {
-                    let text = intern
-                        .as_ref()
-                        .expect("text keys carry an intern table")
-                        .values[usize::try_from(id).expect("intern id fits usize")]
-                    .clone();
-                    // An ENUM group key rebuilds with its declaration index and
-                    // a SET key with its member bitmask, so the ORDER BY above
-                    // sorts by MySQL's rule; anything undeclared stays a plain
-                    // string.
-                    let ordinal = if let Some((labels, exhaustive)) = labels {
-                        // An empty label resolves only against a complete
-                        // table: a gappy reconstruction keeps unseen slots
-                        // as empty strings, and neither the empty SET
-                        // ("", mask 0) nor a declared '' member may take a
-                        // gap's ordinal (see StrColumn::enum_index_of).
-                        (!text.is_empty() || *exhaustive)
-                            .then(|| {
-                                labels
-                                    .iter()
-                                    .position(|declared| declared == &text)
-                                    .and_then(|position| u64::try_from(position + 1).ok())
-                            })
-                            .flatten()
-                    } else if let Some(members) = members {
-                        let mut mask = Some(0_u64);
-                        for member in text.split(',').filter(|member| !member.is_empty()) {
-                            mask = mask.and_then(|mask| {
-                                members
-                                    .iter()
-                                    .position(|declared| declared == member)
-                                    .filter(|position| *position < 64)
-                                    .map(|position| mask | (1_u64 << position))
-                            });
-                        }
-                        mask
-                    } else {
-                        None
-                    };
-                    ordinal.map_or_else(
-                        || Value::Utf8(text.clone()),
-                        |index| Value::Enum {
-                            index,
-                            label: text.clone(),
-                        },
-                    )
-                };
             let mut rows = Vec::with_capacity(map.len());
             let mut payload = 0_usize;
             for ((bits, null), states) in map {
-                let mut row = Vec::with_capacity(2 + states.len());
-                match keys {
-                    TwoPassKeySource::Int { group_type, .. } => {
-                        row.push(two_pass_key_value(bits, null, group_type));
-                    }
-                    TwoPassKeySource::Text { .. } => {
-                        row.push(if null {
-                            Value::Null
-                        } else {
-                            interned(
-                                bits,
-                                key_enum_labels[0].as_ref(),
-                                key_set_members[0].as_ref(),
-                            )
-                        });
-                    }
-                    TwoPassKeySource::TextPair { .. } => {
-                        for (slot, id) in [bits >> 32, bits & 0xFFFF_FFFF].into_iter().enumerate() {
-                            row.push(if id == 0 {
-                                Value::Null
-                            } else {
-                                interned(
-                                    id - 1,
-                                    key_enum_labels[slot].as_ref(),
-                                    key_set_members[slot].as_ref(),
-                                )
-                            });
-                        }
-                    }
-                    TwoPassKeySource::DateParts { parts } => {
-                        let count = parts.iter().flatten().count();
-                        for index in 0..count {
-                            let shift = 20 * (count - 1 - index);
-                            let id = (bits >> shift) & 0xF_FFFF;
-                            row.push(if id == 0 {
-                                Value::Null
-                            } else {
-                                // Date parts are signed (Int64), like the
-                                // scalar and units paths that feed them; a
-                                // 20-bit id always fits.
-                                Value::Int64(
-                                    i64::try_from(id - 1).expect("20-bit date-part id fits i64"),
-                                )
-                            });
-                        }
-                    }
-                }
+                let mut row = two_pass_key_values(
+                    keys,
+                    bits,
+                    null,
+                    intern_ref,
+                    &key_enum_labels,
+                    &key_set_members,
+                );
+                row.reserve(states.len());
                 for state in states {
                     row.push(state.finish(memory)?);
                 }
@@ -1747,6 +2065,13 @@ fn two_pass_flush_sets(
     let per_group_bytes = size_of::<(u64, bool)>()
         .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
         .saturating_add(32);
+    // Everything reserved while the rows are applied belongs to the maps:
+    // the entries charged below and the distinct sets the states grow
+    // through their own reservations. Measured as a difference so a spill
+    // hands all of it back; charging the entries alone left the sets on
+    // the books forever and a second flush ran into a ceiling the first
+    // spill had supposedly freed.
+    let used_before = memory.used();
     let sets_ref: &[Vec<TwoPassBucket>] = sets;
     let added = maps
         .par_iter_mut()
@@ -1781,7 +2106,10 @@ fn two_pass_flush_sets(
             memory.reserve(bytes)?;
             Ok(bytes)
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Vec<Result<usize, ExecError>>>();
+    // The rows are in the maps whether or not their charge went through;
+    // clearing the buckets first is what keeps a refused charge from
+    // applying them a second time on the next flush.
     for set in sets.iter_mut() {
         for bucket in set.iter_mut() {
             bucket.keys.clear();
@@ -1789,8 +2117,9 @@ fn two_pass_flush_sets(
             bucket.lanes.clear();
         }
     }
-    *group_reserved = group_reserved.saturating_add(added.into_iter().sum());
-    Ok(())
+    *group_reserved = group_reserved.saturating_add(memory.used().saturating_sub(used_before));
+    let failure = added.into_iter().find_map(Result::err);
+    failure.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]

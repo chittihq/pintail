@@ -111,9 +111,9 @@ impl CompiledAggregate {
     }
 }
 
-struct AggregateGroup {
-    values: Vec<Value>,
-    states: Vec<AggregateState>,
+pub(super) struct AggregateGroup {
+    pub(super) values: Vec<Value>,
+    pub(super) states: Vec<AggregateState>,
 }
 
 #[derive(Clone)]
@@ -2783,7 +2783,7 @@ fn revive_aggregate_state(
 
 /// Drains the live group map into one closed, sorted on-disk run: entries
 /// ordered by their encoded group key, one length-framed record each.
-fn write_aggregate_spill_run(
+pub(super) fn write_aggregate_spill_run(
     groups: &mut HashMap<Vec<Value>, AggregateGroup>,
     memory: &MemoryTracker,
 ) -> Result<spill::ClosedRun, ExecError> {
@@ -2988,7 +2988,7 @@ fn decode_aggregate_state(
 /// records without combining them: a partial state is combined exactly
 /// once, here, in the order the runs were written. The descriptors this
 /// holds are bounded by the fan-in, not by how often the map spilled.
-fn merge_spilled_aggregate_groups(
+pub(super) fn merge_spilled_aggregate_groups(
     mut runs: Vec<spill::ClosedRun>,
     mut groups: HashMap<Vec<Value>, AggregateGroup>,
     aggregates: &[CompiledAggregate],

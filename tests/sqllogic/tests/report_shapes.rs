@@ -367,10 +367,8 @@ impl Fixture {
 
 /// The report shapes. Each starts from a driving table narrowed by a
 /// literal, walks the chain through keys no literal reaches, and groups.
-/// The flag says whether the tight ceiling applies: a per-entity DISTINCT
-/// count over a large table runs on the two-pass aggregate path, which
-/// holds its whole state and does not spill (docs/limitations.md), so
-/// that shape is held to the container's default ceiling only.
+/// The flag says whether the tight ceiling applies; every shape takes it
+/// now that the two-pass aggregate path spills as well.
 const REPORTS: &[(&str, &str, bool)] = &[
     (
         "ten-way left join chain grouped by cohort",
@@ -452,7 +450,7 @@ const REPORTS: &[(&str, &str, bool)] = &[
          LEFT JOIN member_task mt ON mt.member_id = m.id \
          LEFT JOIN attendance a ON a.member_id = m.id AND a.present = 1 \
          GROUP BY m.id, m.cohort_id ORDER BY score DESC, m.id LIMIT 500",
-        false,
+        true,
     ),
     (
         "grouped by status and month with a having clause",
