@@ -102,8 +102,19 @@ All 144 warm-up/measured operations completed, all 48 independent restored-file 
 Build the baseline example at `fdd7222`, save its release executable as `EXPERIMENT_ROOT/bin/baseline`, then build the candidate at `7cf219e` and save it as `EXPERIMENT_ROOT/bin/streaming`. Put the pinned service binary named in `metadata.json` at `EXPERIMENT_ROOT/bin/minio`. Use the same toolchain for both builds. Ensure ports 39091 and 39092 are free and allow roughly 12 GiB for temporary benchmark data plus build artifacts.
 
 ```sh
-CARGO_TARGET_DIR=target ~/.cargo/bin/cargo build --locked --release -p pintail-backup --example s3_transfer_bench
+RUSTUP_TOOLCHAIN=1.97.1 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo build --locked --release -p pintail-backup --example s3_transfer_bench
 python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT
 ```
 
 The runner generates fresh credentials, starts its own S3 service, records binary hashes, alternates configurations, verifies results and removes its temporary data. Raw measurements are in [measurements.jsonl](measurements.jsonl); toolchain, binary hashes and scope are in [metadata.json](metadata.json).
+
+## Development validation
+
+`bun run scripts/validate.ts --profile development` passed on clean commit
+`80a09360`: formatting, workspace Clippy with warnings denied, dashboard
+typechecking, and 893 unit tests passed; 25 normally ignored tests were skipped.
+This used the repository-pinned Rust 1.97.0, independently of the benchmark's
+matched Rust 1.97.1 builds. The test temporary directory was placed on the
+system filesystem to satisfy an existing storage test's shared-volume assumption.
+No test assertions or selection were changed. See [validation.json](validation.json).
+This is development validation plus a dedicated transport experiment, not a release gate.

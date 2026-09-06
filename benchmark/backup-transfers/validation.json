@@ -1,0 +1,28 @@
+{
+  "profile": "development",
+  "verdict": "PASS",
+  "complete": true,
+  "head": "80a093605ef10135cb8d0e51e3ddb95a428b20d6",
+  "finished_at": "2026-09-06T15:42:56.589Z",
+  "command": "bun run scripts/validate.ts --profile development",
+  "stages": {
+    "fmt": "PASS",
+    "typecheck": "PASS",
+    "unit": "PASS"
+  },
+  "unit": {
+    "passed": 893,
+    "failed": 0,
+    "skipped": 25,
+    "seconds": 381.982
+  },
+  "toolchain": {
+    "rustc": "1.97.0",
+    "cargo": "1.97.0",
+    "bun": "1.4.2",
+    "node": "24.20.0",
+    "nextest": "0.9.143"
+  },
+  "environment": "TMPDIR placed on the system filesystem to satisfy an existing storage test that assumes both paths share a volume; no assertions or test selection changed.",
+  "scope": "Development gate only. The separate S3 transfer experiment is recorded in measurements.jsonl; no release gate is claimed."
+}
