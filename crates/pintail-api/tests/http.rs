@@ -183,6 +183,9 @@ fn seed_mirrored_table(data_dir: &std::path::Path, database_id: &str, database_n
         .complete_snapshot_chunk(database_id, "events", "all", 2)
         .unwrap();
     metadata
+        .complete_snapshot_table(database_id, "events")
+        .expect("copy complete");
+    metadata
         .set_database_replication_state(database_id, "cdc", "2026-07-30T00:00:01Z")
         .unwrap();
 

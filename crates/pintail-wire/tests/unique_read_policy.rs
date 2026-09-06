@@ -162,6 +162,9 @@ fn seed(mode: &str, requires_reconciliation: bool, collision: bool) -> Replica {
         .complete_snapshot_chunk(DATABASE, "reports", "all", ROWS)
         .expect("chunk complete");
     metadata
+        .complete_snapshot_table(DATABASE, "reports")
+        .expect("copy complete");
+    metadata
         .set_database_replication_state(DATABASE, mode, "2026-09-05T00:00:02Z")
         .expect("state");
     drop(metadata);

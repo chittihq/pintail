@@ -66,6 +66,12 @@ pub enum ExecError {
         /// Stable table identity.
         table_id: TableId,
     },
+    /// The table's copy from its source has not completed, so its reader
+    /// would answer from a partial or empty store.
+    TableNotReady {
+        /// The table's name as the source knows it.
+        table: String,
+    },
     /// The scan provider has no pinned reader for a stable table.
     MissingSnapshot {
         /// Stable database identity.
@@ -152,6 +158,10 @@ impl fmt::Display for ExecError {
                 "snapshot provider repeats database {} table {}",
                 database_id.get(),
                 table_id.get()
+            ),
+            Self::TableNotReady { table } => write!(
+                formatter,
+                "table {table} is still being copied from its source; retry once its snapshot completes"
             ),
             Self::MissingSnapshot {
                 database_id,

@@ -32,6 +32,11 @@ pub struct SnapshotScanProvider<'snapshot> {
     collation: Collation,
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
     unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
+    /// Tables whose copy from the source has not completed. They stay in
+    /// the catalog so metadata queries see them, but opening a scan fails
+    /// with [`ExecError::TableNotReady`] rather than answering from a
+    /// partial store.
+    not_ready: BTreeMap<(DatabaseId, TableId), String>,
     stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
 }
 
@@ -115,8 +120,16 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
             collation: Collation::default(),
             snapshots: indexed,
             unique_visibility: BTreeMap::new(),
+            not_ready: BTreeMap::new(),
             stats: Arc::new(Mutex::new(BTreeMap::new())),
         })
+    }
+
+    /// Marks one table as still being copied: every scan of it fails with
+    /// [`ExecError::TableNotReady`] naming `table` until the provider is
+    /// rebuilt without the mark.
+    pub fn mark_not_ready(&mut self, database_id: DatabaseId, table_id: TableId, table: String) {
+        self.not_ready.insert((database_id, table_id), table);
     }
 
     /// Opts one table into higher-version visibility for transient secondary
@@ -194,6 +207,11 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError> {
         let key = (scan.table.database_id, scan.table.table_id);
+        if let Some(table) = self.not_ready.get(&key) {
+            return Err(ExecError::TableNotReady {
+                table: table.clone(),
+            });
+        }
         let snapshot = self.snapshots.get(&key).ok_or(ExecError::MissingSnapshot {
             database_id: key.0,
             table_id: key.1,

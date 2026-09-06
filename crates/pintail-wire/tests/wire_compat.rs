@@ -1114,6 +1114,9 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
         .complete_snapshot_chunk("db-1", "events", "all", 2)
         .unwrap();
     metadata
+        .complete_snapshot_table("db-1", "events")
+        .expect("copy complete");
+    metadata
         .upsert_snapshot_table(
             "db-1",
             "type_fidelity",
@@ -1127,6 +1130,9 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
     metadata
         .complete_snapshot_chunk("db-1", "type_fidelity", "all", 2)
         .unwrap();
+    metadata
+        .complete_snapshot_table("db-1", "type_fidelity")
+        .expect("copy complete");
     metadata
         .set_database_replication_state("db-1", "polling", "2026-07-30T00:00:02Z")
         .unwrap();

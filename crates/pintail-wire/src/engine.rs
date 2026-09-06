@@ -219,6 +219,11 @@ struct ReaderTarget {
     /// the table must be reopened even if its files did not move.
     version: u32,
     snapshot: TableSnapshot,
+    /// Whether the table holds a complete copy of its source. A table whose
+    /// snapshot is still running, or whose first copy failed before it
+    /// finished, has a store that is empty or partial; answering from it
+    /// would be silently wrong, so its scans are refused as not ready.
+    ready: bool,
 }
 
 static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
@@ -879,6 +884,9 @@ impl ReplicaEngine {
                     source.columns = serde_json::from_str(&record.columns_json)
                         .map_err(|error| QueryError::Internal(error.to_string()))?;
                 }
+                let ready = table_records
+                    .get(&source.name.to_ascii_lowercase())
+                    .is_none_or(|record| table_copy_is_complete(record));
                 let directory = table_directory(&root, &source.name);
                 let directory_name = directory
                     .file_name()
@@ -913,6 +921,7 @@ impl ReplicaEngine {
                     source,
                     version,
                     snapshot,
+                    ready,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -970,9 +979,19 @@ fn collect_rows(
     Ok((rows, batches, false))
 }
 
+/// Whether a table's store holds everything its source had when the copy
+/// ran. A snapshot in progress, or a first copy that failed part-way, leaves
+/// a store the engine must not answer from. A table flagged for a resync it
+/// has not started, a table under replication, and a local table all keep
+/// serving: their stores are complete, if possibly behind.
+fn table_copy_is_complete(record: &pintail_meta::TableRecord) -> bool {
+    record.copy_complete || !matches!(record.state.as_str(), "snapshotting" | "error" | "pending")
+}
+
 fn query_execution_error(error: ExecError) -> QueryError {
     match error {
         ExecError::QueryTimedOut | ExecError::QueryCancelled => QueryError::Interrupted,
+        ExecError::TableNotReady { .. } => QueryError::NotReady(error.to_string()),
         // MySQL answers a row-wise numeric overflow with 1690/22003, not
         // an internal error - clients branch on the code.
         ExecError::NumericOverflow => QueryError::Rejected {
@@ -1013,6 +1032,9 @@ fn query_explain_error(error: ExplainError) -> QueryError {
     match error {
         ExplainError::Exec(ExecError::QueryTimedOut | ExecError::QueryCancelled) => {
             QueryError::Interrupted
+        }
+        ExplainError::Exec(ExecError::TableNotReady { .. }) => {
+            QueryError::NotReady(error.to_string())
         }
         error => QueryError::Invalid(error.to_string()),
     }
@@ -1266,6 +1288,9 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
     let mut provider = SnapshotScanProvider::new(indexed)
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     for (index, target) in replica.targets.iter().enumerate() {
+        if !target.ready {
+            provider.mark_not_ready(database_id, table_id(index)?, target.source.name.clone());
+        }
         let storage_key = target.source.key_column_ids();
         let unique_keys = target
             .source
@@ -1462,6 +1487,55 @@ mod admission_tests {
             engine.replica_stamp("db"),
             "a mode change is a change"
         );
+    }
+
+    #[test]
+    fn a_table_whose_copy_is_running_is_not_ready_rather_than_empty() {
+        const NOW: &str = "2026-09-07T00:00:00Z";
+        let directory = tempfile::tempdir().unwrap();
+        let metadata_path = directory.path().join("meta.db");
+        let meta = MetaStore::open(&metadata_path).unwrap();
+        meta.create_local_database("db", "scratch", NOW).unwrap();
+        std::fs::create_dir_all(directory.path().join("databases/db/tables")).unwrap();
+        let writer = LocalDatabase::new(directory.path(), &metadata_path, "db");
+        writer.recover().unwrap();
+        for sql in [
+            "CREATE TABLE a (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO a VALUES (1), (2)",
+            "CREATE TABLE b (id BIGINT UNSIGNED NOT NULL, PRIMARY KEY (id))",
+            "INSERT INTO b VALUES (7)",
+        ] {
+            writer.execute(&parse_statement(sql).unwrap()).unwrap();
+        }
+        let engine = ReplicaEngine::new(directory.path(), &metadata_path);
+        let served = engine.execute("db", "SELECT COUNT(*) FROM a", 10).unwrap();
+        assert_eq!(served.rows, vec![vec![Value::UInt64(2)]]);
+
+        // The copy of `a` starts over: its store is no longer an answer.
+        meta.begin_table_resnapshot("db", "a").unwrap();
+        let refused = engine.execute("db", "SELECT COUNT(*) FROM a", 10);
+        let Err(QueryError::NotReady(message)) = refused else {
+            panic!("a table mid-copy must be refused, got {refused:?}");
+        };
+        assert!(message.contains("table a"), "{message}");
+        assert!(
+            matches!(
+                engine.execute("db", "EXPLAIN ANALYZE SELECT id FROM a", 10),
+                Err(QueryError::NotReady(_))
+            ),
+            "profiling opens the same scan"
+        );
+        // Other tables of the database still answer, and so does metadata.
+        assert_eq!(
+            engine.execute("db", "SELECT id FROM b", 10).unwrap().rows,
+            vec![vec![Value::UInt64(7)]]
+        );
+        assert!(engine.execute("db", "SHOW TABLES", 10).is_ok());
+
+        // The copy completes and the table serves again.
+        meta.finish_table_resnapshot("db", "a", "ready").unwrap();
+        let served = engine.execute("db", "SELECT COUNT(*) FROM a", 10).unwrap();
+        assert_eq!(served.rows, vec![vec![Value::UInt64(2)]]);
     }
 
     #[test]
