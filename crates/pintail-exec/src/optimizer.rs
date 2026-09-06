@@ -1870,31 +1870,18 @@ fn derive_into(plan: &mut LogicalPlan, target: &BoundColumn, source: &BoundColum
     add_scan_predicate(plan, table, &predicate);
 }
 
-/// Scans of one table inside a subtree.
+/// Scans of one table that [`add_scan_predicate`] could reach in a subtree.
 fn count_scans(plan: &LogicalPlan, table: TableKey) -> usize {
     match plan {
         LogicalPlan::Scan(scan) => usize::from(table_key(&scan.table) == table),
         LogicalPlan::Join { left, right, .. } => {
             count_scans(left, table) + count_scans(right, table)
         }
-        LogicalPlan::SetOp { left, right, .. }
-        | LogicalPlan::Recursive {
-            anchor: left,
-            member: right,
-            ..
-        } => count_scans(left, table) + count_scans(right, table),
-        LogicalPlan::Filter { input, .. }
-        | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Aggregate { input, .. }
-        | LogicalPlan::Window { input, .. }
-        | LogicalPlan::Distinct { input, .. }
-        | LogicalPlan::Sort { input, .. }
-        | LogicalPlan::Limit { input, .. }
-        | LogicalPlan::Derived { input, .. } => count_scans(input, table),
-        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+        LogicalPlan::Filter { input, .. } => count_scans(input, table),
+        LogicalPlan::CrossJoin { inputs } => {
             inputs.iter().map(|input| count_scans(input, table)).sum()
         }
-        LogicalPlan::Empty | LogicalPlan::OneRow => 0,
+        _ => 0,
     }
 }
 
@@ -1917,19 +1904,20 @@ fn add_scan_predicate(plan: &mut LogicalPlan, table: TableKey, predicate: &Bound
                 add_scan_predicate(right, table, predicate);
             }
         }
-        LogicalPlan::Filter { input, .. }
-        | LogicalPlan::Project { input, .. }
-        | LogicalPlan::Aggregate { input, .. }
-        | LogicalPlan::Window { input, .. }
-        | LogicalPlan::Distinct { input, .. }
-        | LogicalPlan::Sort { input, .. }
-        | LogicalPlan::Limit { input, .. }
-        | LogicalPlan::Derived { input, .. } => add_scan_predicate(input, table, predicate),
-        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+        // A filter above a scan is one more conjunct beside this one.
+        LogicalPlan::Filter { input, .. } => add_scan_predicate(input, table, predicate),
+        LogicalPlan::CrossJoin { inputs } => {
             for input in inputs {
                 add_scan_predicate(input, table, predicate);
             }
         }
+        // Everything else changes what a row means before the join sees it:
+        // a LIMIT, a window, an aggregate, DISTINCT, a sort with a trim, a
+        // derived table, a set operation. A predicate that is true of the
+        // join's input is not necessarily true of the scan beneath one of
+        // these, so the walk stops here, exactly where pushdown stops. A
+        // derived table also carries its own synthetic table id, so a base
+        // scan under it is never the one a join equality names.
         _ => {}
     }
 }
@@ -2060,6 +2048,20 @@ mod tests {
         let plan = optimized(
             "SELECT e.name FROM events e WHERE e.id = 7 \
              AND EXISTS (SELECT 1 FROM users u WHERE u.id = e.id)",
+        );
+        assert_eq!(predicates_on(&plan, "events"), 1);
+        assert_eq!(predicates_on(&plan, "users"), 0);
+    }
+
+    #[test]
+    fn a_scan_under_a_derived_limit_gains_nothing() {
+        // `d.id = e.id` names the derived table, whose id is synthetic, so
+        // the constant cannot be attributed to the users scan beneath the
+        // LIMIT - and must not be: filtering before LIMIT 1 changes which
+        // row the derived table yields.
+        let plan = optimized(
+            "SELECT e.name FROM events e \
+             JOIN (SELECT id FROM users ORDER BY id LIMIT 1) d ON d.id = e.id WHERE e.id = 7",
         );
         assert_eq!(predicates_on(&plan, "events"), 1);
         assert_eq!(predicates_on(&plan, "users"), 0);
