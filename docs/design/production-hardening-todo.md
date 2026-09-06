@@ -274,6 +274,23 @@ prints.
   values; a dictionary or dense-array fold would make it a memory
   pass.
 
+- [x] **G4. A narrow read paid for the whole segment.** The block readers
+  loaded and checksummed every block of every column before deciding
+  whether the scan wanted it, so a key lookup on a table with wide text
+  columns read the entire segment (56 ms for ten rows on a laptop, about
+  half a second on a deployment host). Closed 2026-09-07: blocks a reader
+  has ruled out are skipped with a seek; see "A segment reader skips the
+  blocks it will not decode" in `docs/decisions.md`.
+- [ ] **G5. The row-header pass reads the whole key column.** A range
+  lookup still loads and checksums every block of the key column to find
+  the blocks the range touches, and reserves header memory for every row
+  of the segment, although the footer's sparse index names each block's
+  first key. Bounded by the key column's size, not the table's width; on a
+  compaction-sized segment that is tens of megabytes per lookup.
+- [ ] **G6. The merge path streams from the first row.** `ScanPart::Merge`
+  opens each overlapping segment's key, version and tombstone columns from
+  row zero and walks them to the merged range rather than seeking to it.
+
 ## F. Still open from earlier reviews
 
 - The rename orphan left in `snapshotting` (owner decision 2026-09-05:

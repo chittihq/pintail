@@ -21,6 +21,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A segment reader skips the blocks it will not decode. The readers behind
+  key lookups, ranged projections and late materialization walked every
+  column of a segment through the file and loaded and checksummed each
+  block payload before deciding it was not wanted, so a narrow read over a
+  table with wide text or JSON columns paid for the whole segment. On a copy
+  of a production-shaped table (a few hundred megabytes across two
+  segments) a ten-row key lookup took 56 ms on a laptop and about half a
+  second on the deployment's host, the same for any projection. Blocks a
+  reader has already ruled out are now passed over with a seek after their
+  length and row count are read: the same lookup takes 1.4 ms and a
+  three-column filtered scan of the table fell from 57 ms to 1.5 ms. Block
+  checksums still cover every payload a scan decodes.
 - A warm replica stays warm across audit records, API-key touches and other
   metadata bookkeeping. The replica stamp compared the metadata store's file
   and WAL, which every authenticated request moves, so a cached replica was

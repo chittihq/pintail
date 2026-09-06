@@ -129,7 +129,12 @@ impl FileDecoder {
             .position
             .checked_add(length)
             .ok_or_else(|| "file offset overflow".to_owned())?;
-        self.seek_to(position)
+        let offset = i64::try_from(length).map_err(|_| "file offset exceeds i64".to_owned())?;
+        self.reader
+            .seek_relative(offset)
+            .map_err(|error| error.to_string())?;
+        self.position = position;
+        Ok(())
     }
 }
 
@@ -1904,10 +1909,13 @@ pub(crate) fn read_row_headers_range(
         let decode_column = system_column != 0;
         let mut column_cells = Vec::new();
         for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
-            let block =
+            let block = if selected && decode_column {
                 read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
-                    Ok(selected && decode_column)
-                })?;
+                    Ok(true)
+                })?
+            } else {
+                skip_file_block(&path, &mut decoder)?
+            };
             if block.row_count != block_row_counts[block_index] {
                 return Err(corrupt_here(
                     &path,
@@ -2064,10 +2072,13 @@ pub(crate) fn read_projected_rows(
                 && row_indices
                     .iter()
                     .any(|index| *index >= block_start && *index < block_limit);
-            let block =
+            let block = if selected {
                 read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
-                    Ok(selected)
-                })?;
+                    Ok(true)
+                })?
+            } else {
+                skip_file_block(&path, &mut decoder)?
+            };
             reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             let block_end = block_start
                 .checked_add(block.row_count)
@@ -2965,10 +2976,12 @@ pub(crate) fn read_projected_column_ranges(
                 memory.reserve(appended)?;
                 reserved_bytes = reserved_bytes.saturating_add(appended);
                 block
-            } else {
+            } else if selected {
                 read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
-                    Ok(selected)
+                    Ok(true)
                 })?
+            } else {
+                skip_file_block(&path, &mut decoder)?
             };
             reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
             let block_end = block_start
@@ -3438,6 +3451,38 @@ where
         None,
         None,
     )
+}
+
+/// Passes over one block the caller has already decided not to decode.
+/// Only the block's length prefix and the row count that opens every
+/// payload are read; the payload and its checksum are skipped with a seek,
+/// so a column the scan does not need costs a few bytes per block rather
+/// than its full width. Block checksums cover what a scan decodes; a
+/// skipped payload is verified when a scan that needs it reads it.
+fn skip_file_block(path: &Path, decoder: &mut FileDecoder) -> Result<BlockRead, StoreError> {
+    let block_offset = decoder.decode_position();
+    let payload_length = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    if payload_length < 4 {
+        return Err(corrupt(
+            path,
+            block_offset,
+            "block payload shorter than its row count",
+        ));
+    }
+    let row_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    // The rest of the payload, then the 8-byte checksum.
+    decoder
+        .skip(payload_length - 4 + 8)
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    Ok(BlockRead {
+        row_count,
+        cells: None,
+        reserved_bytes: 0,
+    })
 }
 
 fn read_file_block_if_bounded<F>(
@@ -4593,6 +4638,177 @@ mod range_read_tests {
             )
             .is_err(),
             "unsorted ranges are rejected"
+        );
+    }
+
+    /// Three columns, the last one wide (`body_bytes` of incompressible text
+    /// per row), 256 rows in 32-row blocks: the fixture for the tests that
+    /// prove a column the scan does not need is passed over rather than read.
+    fn write_wide_segment(
+        directory: &std::path::Path,
+        body_bytes: u64,
+    ) -> (TableSchema, super::SegmentMeta) {
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "code", DataType::Utf8, true),
+                Column::new(3, "body", DataType::Utf8, true),
+            ],
+        )
+        .expect("schema");
+        let rows = (0..256_u64)
+            .map(|id| {
+                let body: String = (0..body_bytes)
+                    .map(|i| {
+                        let mixed = (id + 1).wrapping_mul(0x9E37_79B9).wrapping_add(i * 7919);
+                        char::from(b'a' + u8::try_from(mixed % 26).expect("letter"))
+                    })
+                    .collect();
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                    vec![
+                        Value::UInt64(id),
+                        Value::Utf8(format!("c{id}")),
+                        Value::Utf8(body),
+                    ],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let meta = write(directory, 1, &schema, &rows, 32, Compression::None, true)
+            .expect("write segment");
+        (schema, meta)
+    }
+
+    /// A column the scan does not project is passed over, not read: its
+    /// blocks are neither loaded nor checksummed. A wide column (large
+    /// text) therefore costs a key lookup or a narrow projection nothing
+    /// beyond a few bytes per block, and only a scan that decodes it sees
+    /// its checksum.
+    #[test]
+    fn unprojected_columns_are_skipped_not_read() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (schema, meta) = write_wide_segment(directory.path(), 2048);
+
+        // Flip bytes in the middle of the file: the wide column holds well
+        // over 90% of it, so the damage lands in one of its payloads.
+        let path = directory.path().join(&meta.file_name);
+        let mut bytes = std::fs::read(&path).expect("read segment");
+        let middle = bytes.len() / 2;
+        for byte in &mut bytes[middle..middle + 64] {
+            *byte ^= 0xFF;
+        }
+        std::fs::write(&path, &bytes).expect("rewrite segment");
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, usize::MAX);
+        let start = PrimaryKey::new(vec![KeyPart::UInt64(40)]).expect("key");
+        let end = PrimaryKey::new(vec![KeyPart::UInt64(45)]).expect("key");
+        let headers =
+            super::read_row_headers_range(directory.path(), &meta, &schema, &start, &end, &budget)
+                .expect("row headers never touch user columns");
+        assert_eq!(headers.rows.len(), 6);
+        assert_eq!(headers.stats.read, 1, "one key block holds 40..=45");
+
+        let narrow = read_projected_column_ranges(
+            directory.path(),
+            &meta,
+            &schema,
+            &[0, 1],
+            std::slice::from_ref(&(40..46_usize)),
+            &budget,
+        )
+        .expect("a narrow projection skips the damaged column");
+        assert_eq!(narrow.columns[0].len(), 6);
+        assert_eq!(
+            narrow.blocks_pruned,
+            7 * 2,
+            "the other blocks of both columns"
+        );
+
+        let wide = read_projected_column_ranges(
+            directory.path(),
+            &meta,
+            &schema,
+            &[2],
+            std::slice::from_ref(&(0..256_usize)),
+            &budget,
+        );
+        let Err(error) = wide else {
+            panic!("decoding the damaged column must fail its checksum");
+        };
+        assert!(
+            error.to_string().contains("block checksum mismatch"),
+            "{error}"
+        );
+    }
+
+    /// The memory budget sees only what is read. With a budget smaller than
+    /// a single block of the wide column, the key lookup, the narrow ranged
+    /// projection and late materialization of narrow columns all succeed,
+    /// while decoding one wide block is refused: a skipped block reserves
+    /// nothing.
+    #[test]
+    fn skipped_blocks_reserve_no_scan_memory() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        // 32 rows of 8 KiB per block: one wide block is 256 KiB of payload.
+        let (schema, meta) = write_wide_segment(directory.path(), 8192);
+        let limit = 160 * 1024;
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, limit);
+        let start = PrimaryKey::new(vec![KeyPart::UInt64(100)]).expect("key");
+        let end = PrimaryKey::new(vec![KeyPart::UInt64(103)]).expect("key");
+        let headers =
+            super::read_row_headers_range(directory.path(), &meta, &schema, &start, &end, &budget)
+                .expect("a key lookup fits a budget smaller than one wide block");
+        assert_eq!(headers.rows.len(), 4);
+        assert!(headers.reserved_bytes <= limit);
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, limit);
+        let narrow = read_projected_column_ranges(
+            directory.path(),
+            &meta,
+            &schema,
+            &[0, 1],
+            std::slice::from_ref(&(100..104_usize)),
+            &budget,
+        )
+        .expect("a narrow ranged projection fits");
+        assert_eq!(narrow.columns[1].len(), 4);
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, limit);
+        let late = super::read_projected_rows(
+            directory.path(),
+            &meta,
+            &schema,
+            &[1, 0],
+            &[101, 102, 250],
+            &budget,
+        )
+        .expect("late materialization of narrow columns fits");
+        assert_eq!(
+            late.columns[0],
+            vec![
+                Value::Utf8("c101".to_owned()),
+                Value::Utf8("c102".to_owned()),
+                Value::Utf8("c250".to_owned()),
+            ]
+        );
+        assert_eq!(late.columns[1][2], Value::UInt64(250));
+        assert_eq!(late.blocks_decoded, 4, "two blocks for each of two columns");
+
+        let budget_cell = std::sync::atomic::AtomicUsize::new(0);
+        let budget = ScanMemoryBudget::new(&budget_cell, limit);
+        let wide =
+            super::read_projected_rows(directory.path(), &meta, &schema, &[2], &[101], &budget);
+        assert!(
+            matches!(wide, Err(crate::StoreError::MemoryLimitExceeded { .. })),
+            "one wide block exceeds the budget"
         );
     }
 }

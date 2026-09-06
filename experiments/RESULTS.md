@@ -2626,3 +2626,25 @@ memory bound: the old scan pulled all ten million rows at once under the
 scan keeps its width on large segments, and the one regression is the
 bound itself; overlapping the next round's decode with the consumer is the
 follow-up that would recover it.
+
+## e71 — Skipping unread blocks (production-shaped wide table, in-process, memo off)
+
+A copy of a two-segment table whose rows carry several wide text and JSON
+columns (a few hundred megabytes on disk), opened read-only through the
+exec harness; three runs each, milliseconds, warm page cache, laptop.
+
+| query | before | after |
+|---|---:|---:|
+| ten-row primary-key range, key only | 58–96 (first 432) | 1.4 |
+| equality on an unindexed integer column, three columns | 56–57 | 1.5 |
+| range pruned by the manifest | 0.0 | 0.0 |
+
+The sampler put the time in `read`, xxh3 hashing and zeroing of freshly
+allocated payload buffers under the row-header and projected-row readers:
+every block of every column was loaded and checksummed, whether or not the
+scan wanted it. The same table on the deployment's host cost 225–495 ms per
+scan before the fix. On the narrow benchmark-shaped table
+(`morsel_bench`, four small columns, ten threads) the change is within
+noise: the columns a query leaves out are cheap to read there.
+
+**Verdict: keep.** Narrow reads now cost what they decode.

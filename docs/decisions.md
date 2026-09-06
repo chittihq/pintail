@@ -1324,3 +1324,24 @@ batch: the answer is thirty thousand groups, about six megabytes, and a
 ceiling of six to ten megabytes cannot hold the group map and its own
 result at once. That is a ceiling smaller than the answer, not a defect,
 and the spill sweep's 12 MiB floor stands.
+
+### A segment reader skips the blocks it will not decode
+
+The block readers used to load every block payload in file order and
+checksum it before asking whether the block was wanted, for every column
+in the segment. Narrow reads over wide tables therefore cost the whole
+segment: a key lookup on a table with large text columns read hundreds of
+megabytes to return ten rows. A block whose fate is known before the read
+(a column the projection does not name, a block no requested range or row
+touches, a user column in the row-header pass) is now skipped with a seek
+after its length prefix and its leading row count are read, so the column
+walk still checks row counts against the key column's and stays aligned.
+The consequence accepted is that a skipped payload is not checksummed on
+that read; block checksums guard what a scan decodes, and a later scan that
+decodes the block verifies it. The footer verification at open is
+unchanged. Two follow-ups stay open from the same audit: the row-header
+pass still reads and checksums every block of the key column to find the
+ones a range touches although the footer's sparse index could seek to
+them, and the merge path streams a segment's key, version and tombstone
+columns from the first row whatever the merged range is. Both are bounded
+by the key column's size, not the table's width.
