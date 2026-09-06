@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1114;
+const EXPECTED_CASES: usize = 1127;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1020,6 +1020,42 @@ fn oracle_cases() -> Vec<OracleCase> {
     ] {
         cases.push(OracleCase {
             family: "temporal predicate rewrites",
+            sql: sql.to_owned(),
+            ordered: true,
+        });
+    }
+    // Literals carried across join equalities so the other side's scan can
+    // prune: `WHERE u.id = 2 ... JOIN orders o ON o.user_id = u.id` derives
+    // `o.user_id = 2`. Every direction rule has a case that would answer
+    // wrongly if the rule were relaxed: a LEFT join must keep and null-extend
+    // its preserved rows, an ON-clause constant on the null-supplying side
+    // must not filter the preserved side, ANTI must not gain matches, a
+    // self-join must not confuse its two instances, and mismatched types
+    // must not share a literal.
+    for sql in [
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = 2 ORDER BY o.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE o.user_id = 2 ORDER BY o.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.id = 8 ORDER BY o.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE u.id IN (2, 8) \
+         ORDER BY u.id, o.id",
+        "SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o \
+         ON o.user_id = u.id AND o.user_id = 2 GROUP BY u.id ORDER BY u.id",
+        "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE o.user_id = 2 \
+         ORDER BY o.id",
+        "SELECT u.id, o.id, e.id FROM users u JOIN orders o ON o.user_id = u.id \
+         LEFT JOIN events e ON e.id = u.id WHERE u.id = 4 ORDER BY o.id, e.id",
+        "SELECT a.id, b.id FROM orders a JOIN orders b ON b.user_id = a.user_id \
+         WHERE a.user_id = 2 AND a.id < b.id ORDER BY a.id, b.id",
+        "SELECT u.id FROM users u WHERE u.id = 3 AND EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id)",
+        "SELECT u.id FROM users u WHERE u.id IN (3, 8) \
+         AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id) ORDER BY u.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.id = u.id WHERE u.id = 3 ORDER BY o.id",
+        "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id = u.id WHERE u.id = '2' ORDER BY o.id",
+        "SELECT u.name, o.status, COUNT(*) FROM users u JOIN orders o ON o.user_id = u.id \
+         JOIN events e ON e.id = o.user_id WHERE e.id = 1 GROUP BY u.name, o.status ORDER BY o.status",
+    ] {
+        cases.push(OracleCase {
+            family: "join constant propagation",
             sql: sql.to_owned(),
             ordered: true,
         });

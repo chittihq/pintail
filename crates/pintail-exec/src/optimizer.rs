@@ -1,9 +1,9 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_sql::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
-    BoundProjection, BoundQuery, ScalarFunction, WindowFunction,
+    BoundJoinKind, BoundProjection, BoundQuery, ScalarFunction, WindowFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -40,7 +40,13 @@ impl Optimizer {
         // pushdown so the produced column ranges reach the scan's pruning
         // bounds and vectorized filter mask.
         let plan = crate::temporal_rewrite::rewrite_temporal_predicates(plan);
-        let plan = push_predicates(plan);
+        let mut plan = push_predicates(plan);
+        // After pushdown, because it reads the constants pushdown placed on
+        // scans and writes new ones back onto other scans. Twice, so a
+        // constant derived at one join can cross a second one.
+        for _ in 0..2 {
+            plan = propagate_join_constants(plan);
+        }
         let plan = replace_metadata_counts(plan);
         let plan = reorder_cross_joins(plan);
         let plan = push_aggregates_through_identity_joins(plan);
@@ -1569,6 +1575,365 @@ fn collect_bound_query_columns(query: &BoundQuery, columns: &mut BTreeSet<Column
 type TableKey = (DatabaseId, TableId);
 type ColumnKey = (DatabaseId, TableId, u32);
 
+/// Carries a literal across a join equality so the other side can prune.
+///
+/// `WHERE a.x = 8 ... LEFT JOIN b ON b.x = a.x` says nothing to `b`'s scan,
+/// which then reads every segment and discards almost all of it: a column
+/// compared to another column yields no bound, so storage has nothing to
+/// prune on. The same query with `b.x = 8` written out prunes normally. An
+/// operational report joining ten tables on ids is entirely made of this
+/// shape, and measured as eleven full scans to answer a question about a
+/// hundred rows.
+///
+/// Only equal types and equal collations propagate: comparison semantics
+/// must be identical on both sides or the derived predicate is not the same
+/// question. Direction is bounded by join kind - see [`propagates_into`].
+#[allow(clippy::too_many_lines)] // structural walk, one arm per plan node
+fn propagate_join_constants(plan: LogicalPlan) -> LogicalPlan {
+    match plan {
+        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => plan,
+        LogicalPlan::Derived { input, columns } => LogicalPlan::Derived {
+            input: Box::new(propagate_join_constants(*input)),
+            columns,
+        },
+        LogicalPlan::CrossJoin { inputs } => LogicalPlan::CrossJoin {
+            inputs: inputs.into_iter().map(propagate_join_constants).collect(),
+        },
+        LogicalPlan::UnionAll { inputs } => LogicalPlan::UnionAll {
+            inputs: inputs.into_iter().map(propagate_join_constants).collect(),
+        },
+        LogicalPlan::SetOp {
+            keep_matching,
+            all,
+            left,
+            right,
+        } => LogicalPlan::SetOp {
+            keep_matching,
+            all,
+            left: Box::new(propagate_join_constants(*left)),
+            right: Box::new(propagate_join_constants(*right)),
+        },
+        LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor,
+            member,
+        } => LogicalPlan::Recursive {
+            working_database,
+            working_table,
+            distinct,
+            anchor: Box::new(propagate_join_constants(*anchor)),
+            member: Box::new(propagate_join_constants(*member)),
+        },
+        LogicalPlan::Join {
+            left,
+            right,
+            kind,
+            condition,
+        } => {
+            let mut left = Box::new(propagate_join_constants(*left));
+            let mut right = Box::new(propagate_join_constants(*right));
+            if let Some(predicate) = &condition {
+                let (into_left, into_right) = propagates_into(kind);
+                let mut left_constants = BTreeMap::new();
+                collect_constants(&left, &mut left_constants);
+                let mut right_constants = BTreeMap::new();
+                collect_constants(&right, &mut right_constants);
+                for (first, second) in join_equalities(predicate) {
+                    if into_right && let Some(value) = left_constants.get(&column_key(&first)) {
+                        derive_into(&mut right, &second, &first, value);
+                    }
+                    if into_right && let Some(value) = left_constants.get(&column_key(&second)) {
+                        derive_into(&mut right, &first, &second, value);
+                    }
+                    if into_left && let Some(value) = right_constants.get(&column_key(&first)) {
+                        derive_into(&mut left, &second, &first, value);
+                    }
+                    if into_left && let Some(value) = right_constants.get(&column_key(&second)) {
+                        derive_into(&mut left, &first, &second, value);
+                    }
+                }
+            }
+            LogicalPlan::Join {
+                left,
+                right,
+                kind,
+                condition,
+            }
+        }
+        LogicalPlan::Filter { input, predicate } => LogicalPlan::Filter {
+            input: Box::new(propagate_join_constants(*input)),
+            predicate,
+        },
+        LogicalPlan::Aggregate {
+            input,
+            group_by,
+            aggregates,
+        } => LogicalPlan::Aggregate {
+            input: Box::new(propagate_join_constants(*input)),
+            group_by,
+            aggregates,
+        },
+        LogicalPlan::Window {
+            input,
+            windows,
+            outputs,
+        } => LogicalPlan::Window {
+            input: Box::new(propagate_join_constants(*input)),
+            windows,
+            outputs,
+        },
+        LogicalPlan::Project { input, expressions } => LogicalPlan::Project {
+            input: Box::new(propagate_join_constants(*input)),
+            expressions,
+        },
+        LogicalPlan::Distinct {
+            input,
+            key_collations,
+        } => LogicalPlan::Distinct {
+            input: Box::new(propagate_join_constants(*input)),
+            key_collations,
+        },
+        LogicalPlan::Sort { input, keys, trim } => LogicalPlan::Sort {
+            input: Box::new(propagate_join_constants(*input)),
+            keys,
+            trim,
+        },
+        LogicalPlan::Limit { input, limit } => LogicalPlan::Limit {
+            input: Box::new(propagate_join_constants(*input)),
+            limit,
+        },
+    }
+}
+
+/// Which sides of a join may receive a constant derived from the other.
+///
+/// INNER constrains both inputs equally, so a constant travels either way.
+/// LEFT preserves its left input: a right row whose key cannot match is
+/// dropped by the join anyway, so filtering the right early changes nothing,
+/// while filtering the LEFT would delete rows the join promised to keep and
+/// null-extend. ANTI is the reverse trap - removing right rows creates
+/// matches that were not there - and SCALAR counts its matches, so neither
+/// takes a derived filter. SEMI is safe in principle and excluded for now
+/// because nothing measured needs it.
+const fn propagates_into(kind: BoundJoinKind) -> (bool, bool) {
+    match kind {
+        BoundJoinKind::Inner => (true, true),
+        BoundJoinKind::Left => (false, true),
+        BoundJoinKind::Scalar
+        | BoundJoinKind::Semi
+        | BoundJoinKind::Anti
+        | BoundJoinKind::Cross => (false, false),
+    }
+}
+
+/// Equality pairs of plain columns in a conjunction, ignoring everything else.
+fn join_equalities(predicate: &BoundExpr) -> Vec<(BoundColumn, BoundColumn)> {
+    let mut pairs = Vec::new();
+    let mut pending = vec![predicate];
+    while let Some(expr) = pending.pop() {
+        match &expr.kind {
+            BoundExprKind::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+            } => {
+                pending.push(left);
+                pending.push(right);
+            }
+            BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                left,
+                right,
+            } => {
+                if let (BoundExprKind::Column(first), BoundExprKind::Column(second)) =
+                    (&left.kind, &right.kind)
+                {
+                    pairs.push((first.clone(), second.clone()));
+                }
+            }
+            _ => {}
+        }
+    }
+    pairs
+}
+
+/// Column-equals-literal facts already resting on the scans of a subtree.
+fn collect_constants(plan: &LogicalPlan, out: &mut BTreeMap<ColumnKey, Value>) {
+    let mut record = |predicate: &BoundExpr| {
+        for conjunct in conjuncts_of(predicate) {
+            let BoundExprKind::Binary {
+                op: BinaryOp::Equal,
+                left,
+                right,
+            } = &conjunct.kind
+            else {
+                continue;
+            };
+            let ((BoundExprKind::Column(column), BoundExprKind::Literal(value))
+            | (BoundExprKind::Literal(value), BoundExprKind::Column(column))) =
+                (&left.kind, &right.kind)
+            else {
+                continue;
+            };
+            // A NULL literal never equals anything, so it establishes no fact
+            // worth carrying: the row is already gone.
+            if !matches!(value, Value::Null) {
+                out.insert(column_key(column), value.clone());
+            }
+        }
+    };
+    match plan {
+        LogicalPlan::Scan(scan) => {
+            for predicate in &scan.predicates {
+                record(predicate);
+            }
+        }
+        LogicalPlan::Filter { input, predicate } => {
+            record(predicate);
+            collect_constants(input, out);
+        }
+        LogicalPlan::Join {
+            left, right, kind, ..
+        } => {
+            // Only sides that survive unconditionally establish facts: the
+            // null-supplying side of a LEFT join contributes NULLs instead.
+            collect_constants(left, out);
+            if matches!(kind, BoundJoinKind::Inner) {
+                collect_constants(right, out);
+            }
+        }
+        LogicalPlan::Project { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::Distinct { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Derived { input, .. } => collect_constants(input, out),
+        _ => {}
+    }
+}
+
+fn conjuncts_of(predicate: &BoundExpr) -> Vec<&BoundExpr> {
+    let mut found = Vec::new();
+    let mut pending = vec![predicate];
+    while let Some(expr) = pending.pop() {
+        if let BoundExprKind::Binary {
+            op: BinaryOp::And,
+            left,
+            right,
+        } = &expr.kind
+        {
+            pending.push(left);
+            pending.push(right);
+        } else {
+            found.push(expr);
+        }
+    }
+    found
+}
+
+/// Adds `target = value` to the scan of `target`'s table, when the two
+/// columns really do compare by the same rules.
+fn derive_into(plan: &mut LogicalPlan, target: &BoundColumn, source: &BoundColumn, value: &Value) {
+    if target.data_type != source.data_type || target.collation != source.collation {
+        return;
+    }
+    // An ENUM compares by its declared ordinal, so a literal that is merely
+    // equal as text to one side is not the same predicate on the other.
+    if target.enum_labels.is_some() || source.enum_labels.is_some() {
+        return;
+    }
+    let predicate = BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable: target.nullable,
+        kind: BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left: Box::new(BoundExpr {
+                data_type: Some(target.data_type),
+                nullable: target.nullable,
+                kind: BoundExprKind::Column(target.clone()),
+            }),
+            right: Box::new(literal_expr(value.clone())),
+        },
+    };
+    let table = (target.database_id, target.table_id);
+    // A self-join puts two instances of one table under the same key, and
+    // only one of them is the side the constant was derived for. Nothing
+    // distinguishes them here - the alias is not part of the key - so a
+    // subtree holding more than one scan of the table is left alone rather
+    // than filtered on a fact that holds for only one instance.
+    if count_scans(plan, table) != 1 {
+        return;
+    }
+    add_scan_predicate(plan, table, &predicate);
+}
+
+/// Scans of one table inside a subtree.
+fn count_scans(plan: &LogicalPlan, table: TableKey) -> usize {
+    match plan {
+        LogicalPlan::Scan(scan) => usize::from(table_key(&scan.table) == table),
+        LogicalPlan::Join { left, right, .. } => {
+            count_scans(left, table) + count_scans(right, table)
+        }
+        LogicalPlan::SetOp { left, right, .. }
+        | LogicalPlan::Recursive {
+            anchor: left,
+            member: right,
+            ..
+        } => count_scans(left, table) + count_scans(right, table),
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Project { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::Distinct { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Derived { input, .. } => count_scans(input, table),
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+            inputs.iter().map(|input| count_scans(input, table)).sum()
+        }
+        LogicalPlan::Empty | LogicalPlan::OneRow => 0,
+    }
+}
+
+fn add_scan_predicate(plan: &mut LogicalPlan, table: TableKey, predicate: &BoundExpr) {
+    match plan {
+        LogicalPlan::Scan(scan) => {
+            if table_key(&scan.table) == table
+                && !scan.predicates.iter().any(|existing| existing == predicate)
+            {
+                scan.predicates.push(predicate.clone());
+            }
+        }
+        LogicalPlan::Join {
+            left, right, kind, ..
+        } => {
+            add_scan_predicate(left, table, predicate);
+            // Never reach through into the preserved side of a LEFT join
+            // from outside: the caller's direction rule decided that.
+            if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Left) {
+                add_scan_predicate(right, table, predicate);
+            }
+        }
+        LogicalPlan::Filter { input, .. }
+        | LogicalPlan::Project { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::Distinct { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Limit { input, .. }
+        | LogicalPlan::Derived { input, .. } => add_scan_predicate(input, table, predicate),
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+            for input in inputs {
+                add_scan_predicate(input, table, predicate);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn table_key(table: &pintail_sql::BoundTable) -> TableKey {
     (table.database_id, table.table_id)
 }
@@ -1618,6 +1983,106 @@ mod tests {
             TableStatistics::with_row_count(rows),
         )
         .expect("table")
+    }
+
+    /// Every scan in the plan as (table name, predicate count).
+    fn scans(plan: &LogicalPlan) -> Vec<(String, usize)> {
+        fn walk(plan: &LogicalPlan, found: &mut Vec<(String, usize)>) {
+            match plan {
+                LogicalPlan::Scan(scan) => {
+                    found.push((scan.table.table_name.clone(), scan.predicates.len()));
+                }
+                LogicalPlan::Join { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
+                    walk(left, found);
+                    walk(right, found);
+                }
+                LogicalPlan::Filter { input, .. }
+                | LogicalPlan::Project { input, .. }
+                | LogicalPlan::Aggregate { input, .. }
+                | LogicalPlan::Window { input, .. }
+                | LogicalPlan::Distinct { input, .. }
+                | LogicalPlan::Sort { input, .. }
+                | LogicalPlan::Limit { input, .. }
+                | LogicalPlan::Derived { input, .. } => walk(input, found),
+                LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+                    for input in inputs {
+                        walk(input, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        walk(plan, &mut found);
+        found
+    }
+
+    fn predicates_on(plan: &LogicalPlan, table: &str) -> usize {
+        scans(plan)
+            .into_iter()
+            .filter(|(name, _)| name == table)
+            .map(|(_, count)| count)
+            .sum()
+    }
+
+    #[test]
+    fn a_constant_crosses_an_inner_join_equality_in_both_directions() {
+        // users learns `u.id = 7` from `e.id = 7`, so its scan can prune.
+        let plan =
+            optimized("SELECT e.name FROM events e JOIN users u ON u.id = e.id WHERE e.id = 7");
+        assert_eq!(predicates_on(&plan, "events"), 1);
+        assert_eq!(predicates_on(&plan, "users"), 1);
+        // And the other way: the constant sits on the right this time.
+        let plan =
+            optimized("SELECT e.name FROM events e JOIN users u ON u.id = e.id WHERE u.id = 7");
+        assert_eq!(predicates_on(&plan, "events"), 1);
+        assert_eq!(predicates_on(&plan, "users"), 1);
+    }
+
+    #[test]
+    fn a_left_join_carries_a_constant_only_into_its_null_supplying_side() {
+        // Safe: a users row whose id is not 7 could never have matched, so
+        // dropping it early cannot change which events rows survive.
+        let plan = optimized(
+            "SELECT e.name FROM events e LEFT JOIN users u ON u.id = e.id WHERE e.id = 7",
+        );
+        assert_eq!(predicates_on(&plan, "users"), 1);
+        // Unsafe in reverse, and refused: filtering events on a fact that
+        // holds only for matched rows would delete rows the LEFT join
+        // promised to keep and null-extend.
+        let plan =
+            optimized("SELECT e.name FROM events e LEFT JOIN users u ON u.id = e.id AND u.id = 7");
+        assert_eq!(predicates_on(&plan, "events"), 0);
+    }
+
+    #[test]
+    fn a_semi_join_takes_no_derived_predicate() {
+        let plan = optimized(
+            "SELECT e.name FROM events e WHERE e.id = 7 \
+             AND EXISTS (SELECT 1 FROM users u WHERE u.id = e.id)",
+        );
+        assert_eq!(predicates_on(&plan, "events"), 1);
+        assert_eq!(predicates_on(&plan, "users"), 0);
+    }
+
+    #[test]
+    fn a_self_join_is_left_alone() {
+        let plan =
+            optimized("SELECT a.name FROM events a JOIN events b ON b.id = a.id WHERE a.id = 7");
+        // Two instances of one table share a key here - the alias is not
+        // part of it - so pushdown cannot attribute `a.id = 7` to either
+        // scan and it stays above the join. Nothing to read, nothing to
+        // derive, and the count guard refuses the case pushdown does not.
+        assert_eq!(predicates_on(&plan, "events"), 0);
+    }
+
+    #[test]
+    fn a_derived_predicate_never_duplicates_across_repeated_passes() {
+        let plan = optimized(
+            "SELECT e.name FROM events e JOIN users u ON u.id = e.id WHERE e.id = 7 AND u.id = 7",
+        );
+        assert_eq!(predicates_on(&plan, "users"), 1);
+        assert_eq!(predicates_on(&plan, "events"), 1);
     }
 
     fn project_input(plan: LogicalPlan) -> LogicalPlan {
