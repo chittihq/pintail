@@ -1004,7 +1004,9 @@ async function runQueries(
       const explain = await api<{ rows: unknown[][] }>(pintailUrl, '/api/query', {
         method: 'POST',
         token,
-        body: { db: databaseId, sql: `EXPLAIN ANALYZE ${query.sql}` },
+        // The plan of what was TIMED: a cold-only query times its variants,
+        // whose extra predicate the base statement does not carry.
+        body: { db: databaseId, sql: `EXPLAIN ANALYZE ${query.coldOnly ? (variants[0]?.sql ?? query.sql) : query.sql}` },
       })
       pintailExplain = explain.rows.map((row) => row.join(' ')).join('\n')
     } catch {
