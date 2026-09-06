@@ -220,6 +220,10 @@ pub enum PhysicalPlan {
         /// decides whether the probe side is read ahead of the build so
         /// its keys can filter the build.
         probe_estimate: Option<u64>,
+        /// Row estimate of the build input, when statistics give one. The
+        /// read-ahead pays only when the probe is much smaller than the
+        /// build; a probe as large as the build filters nothing.
+        build_estimate: Option<u64>,
         /// ON conjuncts that compare both inputs with something other than
         /// equality, applied to each candidate pair after the hash match.
         residual: Option<BoundExpr>,
@@ -600,6 +604,7 @@ impl PhysicalPlanner {
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
                 let probe_estimate = left.estimated_rows();
+                let build_estimate = right.estimated_rows();
                 let left_input = filtered(Self::plan(*left, collation)?, left_filter);
                 let right_input = filtered(Self::plan(*right, collation)?, right_filter);
                 Ok(PhysicalPlan::HashJoin {
@@ -610,6 +615,7 @@ impl PhysicalPlanner {
                     extra_keys: pairs,
                     right_key,
                     probe_estimate,
+                    build_estimate,
                     residual,
                 })
             }
@@ -3826,9 +3832,10 @@ fn build_operator_inner(
             right_key,
             extra_keys,
             probe_estimate,
+            build_estimate,
             residual,
         } => {
-            let probe_prefetch = probe_prefetch_applies(kind, probe_estimate);
+            let probe_prefetch = probe_prefetch_applies(kind, probe_estimate, build_estimate);
             let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
             let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
             // Each join key decides its own collation from the columns it

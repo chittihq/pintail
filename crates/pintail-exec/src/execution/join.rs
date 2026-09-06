@@ -666,6 +666,14 @@ pub(super) const PROBE_PREFETCH_ROWS: u64 = 65_536;
 /// Distinct probe keys the build-side filter will hold.
 const PROBE_FILTER_KEYS: usize = 65_536;
 
+/// The build side must be estimated at least this many times the probe's
+/// rows before the probe is read ahead to filter it. Reading ahead costs a
+/// key per probe row and a test per build row; a probe near the build's
+/// size can drop few build rows for that, and a probe the build's equal
+/// drops none. The instruction gate's 4,096-row self-join measured the
+/// read-ahead at a seventh of the whole query while filtering nothing.
+pub(super) const PROBE_PREFETCH_BUILD_RATIO: u64 = 4;
+
 /// Whether the probe side is read ahead of the build.
 ///
 /// A left or anti join keeps every probe row and never restricts the probe
@@ -673,11 +681,19 @@ const PROBE_FILTER_KEYS: usize = 65_536;
 /// itself. An inner or semi join restricts its probe scan to the build's
 /// key span once the build exists, and a probe scan that has started
 /// cannot be restricted, so those read ahead only when statistics say the
-/// probe side is small enough to end within the read-ahead.
+/// probe side is small enough to end within the read-ahead. When both
+/// sides are estimated, every kind reads ahead only if the build is at
+/// least [`PROBE_PREFETCH_BUILD_RATIO`] times the probe.
 pub(super) const fn probe_prefetch_applies(
     kind: BoundJoinKind,
     probe_estimate: Option<u64>,
+    build_estimate: Option<u64>,
 ) -> bool {
+    if let (Some(probe), Some(build)) = (probe_estimate, build_estimate)
+        && probe.saturating_mul(PROBE_PREFETCH_BUILD_RATIO) > build
+    {
+        return false;
+    }
     match kind {
         BoundJoinKind::Left | BoundJoinKind::Anti => true,
         BoundJoinKind::Inner | BoundJoinKind::Semi => {
@@ -1973,23 +1989,61 @@ mod tests {
 
     #[test]
     fn the_probe_reads_ahead_for_left_and_anti_joins_and_for_small_inner_probes() {
-        use super::{PROBE_PREFETCH_ROWS, probe_prefetch_applies};
+        use super::{PROBE_PREFETCH_BUILD_RATIO, PROBE_PREFETCH_ROWS, probe_prefetch_applies};
         use pintail_sql::BoundJoinKind;
-        assert!(probe_prefetch_applies(BoundJoinKind::Left, None));
-        assert!(probe_prefetch_applies(BoundJoinKind::Anti, Some(u64::MAX)));
+        assert!(probe_prefetch_applies(BoundJoinKind::Left, None, None));
+        assert!(probe_prefetch_applies(
+            BoundJoinKind::Anti,
+            Some(u64::MAX),
+            None
+        ));
         assert!(probe_prefetch_applies(
             BoundJoinKind::Inner,
-            Some(PROBE_PREFETCH_ROWS)
+            Some(PROBE_PREFETCH_ROWS),
+            None
         ));
-        assert!(probe_prefetch_applies(BoundJoinKind::Semi, Some(1)));
+        assert!(probe_prefetch_applies(BoundJoinKind::Semi, Some(1), None));
         // An inner probe with no statistics, or too many rows, keeps its
         // scan unstarted so the build's key span can still restrict it.
-        assert!(!probe_prefetch_applies(BoundJoinKind::Inner, None));
+        assert!(!probe_prefetch_applies(BoundJoinKind::Inner, None, None));
         assert!(!probe_prefetch_applies(
             BoundJoinKind::Inner,
-            Some(PROBE_PREFETCH_ROWS + 1)
+            Some(PROBE_PREFETCH_ROWS + 1),
+            None
         ));
-        assert!(!probe_prefetch_applies(BoundJoinKind::Scalar, Some(1)));
+        assert!(!probe_prefetch_applies(
+            BoundJoinKind::Scalar,
+            Some(1),
+            None
+        ));
+        // With both sides estimated, a probe the build's size filters
+        // nothing and is not read ahead, whatever the join kind; a probe
+        // the ratio smaller is.
+        assert!(!probe_prefetch_applies(
+            BoundJoinKind::Inner,
+            Some(4_096),
+            Some(4_096)
+        ));
+        assert!(!probe_prefetch_applies(
+            BoundJoinKind::Left,
+            Some(4_096),
+            Some(4_096)
+        ));
+        assert!(!probe_prefetch_applies(
+            BoundJoinKind::Inner,
+            Some(1_025),
+            Some(1_024 * PROBE_PREFETCH_BUILD_RATIO)
+        ));
+        assert!(probe_prefetch_applies(
+            BoundJoinKind::Inner,
+            Some(1_024),
+            Some(1_024 * PROBE_PREFETCH_BUILD_RATIO)
+        ));
+        assert!(probe_prefetch_applies(
+            BoundJoinKind::Semi,
+            Some(128),
+            Some(20_000_000)
+        ));
     }
 
     #[test]
