@@ -704,10 +704,13 @@ pub(super) fn prefetch_probe(
     let mut rows = 0_u64;
     let mut held = 0_usize;
     let mut last_bytes = 0_usize;
-    // The read-ahead never takes more than a quarter of the ceiling: the
-    // build side and the probe's own working set still have to fit.
-    let ceiling = memory.limit() / 4;
     let complete = loop {
+        // The read-ahead never takes more than a quarter of the ceiling,
+        // nor more than half of what is free right now: the build side and
+        // the probe's own working set still have to fit, and in a chain of
+        // joins each level's read-ahead pulls the level below it, so the
+        // nested holdings have to converge rather than each take a quarter.
+        let ceiling = (memory.limit() / 4).min(memory.remaining() / 2);
         if rows >= PROBE_PREFETCH_ROWS
             || keys.len() >= PROBE_FILTER_KEYS
             || held.saturating_add(last_bytes) > ceiling
@@ -791,21 +794,36 @@ pub(super) const GRACE_PARTITIONS: usize = 16;
 
 /// One append-mode spill file of `(join key, row values)` pairs.
 ///
-/// The file is created on the first append, so a partition that never
-/// receives a row costs no descriptor; sixteen build and sixteen probe
-/// partitions used to open thirty-two files up front, and every split
-/// another thirty-two, most of them for rows that never came.
+/// Rows are framed into a small in-memory buffer and reach the file in
+/// bursts, each an open, append and close, so the thirty-two partitions a
+/// grace join feeds round-robin hold one descriptor between them rather
+/// than one each. The file is created on the first flush, so a partition
+/// that never receives a row costs nothing.
 pub(super) struct GraceRun {
-    writer: Option<spill::RunWriter>,
+    run: Option<spill::AppendRun>,
+    /// Framed records not yet on disk.
+    buffer: Vec<u8>,
+    buffered: u64,
+    /// Whether the buffer's capacity is charged to the query. A partition
+    /// the ceiling could not afford a buffer for flushes every append.
+    charged: bool,
     closed: Option<spill::ClosedRun>,
     sealed: bool,
     entries: u64,
 }
 
+/// Bytes a partition buffers before it flushes. Small enough that a
+/// join's two sets of sixteen partitions buffer one megabyte between
+/// them, large enough that a flush writes whole rows by the hundred.
+const GRACE_BUFFER: usize = 32 * 1024;
+
 impl GraceRun {
     const fn create() -> Self {
         Self {
-            writer: None,
+            run: None,
+            buffer: Vec::new(),
+            buffered: 0,
+            charged: false,
             closed: None,
             sealed: false,
             entries: 0,
@@ -821,20 +839,50 @@ impl GraceRun {
         if self.sealed {
             return Err(ExecError::InvalidPhysicalPlan("grace run already sealed"));
         }
-        if self.writer.is_none() {
-            self.writer = Some(
-                spill::RunWriter::create("pintail-join-spill-", memory.spill())
-                    .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?,
-            );
+        if !self.charged && self.buffer.capacity() == 0 {
+            match memory.reserve(GRACE_BUFFER) {
+                Ok(()) => {
+                    self.buffer.reserve_exact(GRACE_BUFFER);
+                    self.charged = true;
+                }
+                // No room for a buffer: every append goes straight to disk,
+                // slower and still correct, rather than failing a join
+                // that is spilling precisely because memory is short.
+                Err(ExecError::MemoryLimitExceeded { .. }) => {}
+                Err(error) => return Err(error),
+            }
         }
-        let writer = self.writer.as_mut().expect("created above");
         let mut encoder = spill::Encoder::with_capacity(64);
         encode_join_key(&mut encoder, key);
         encoder.values(row);
-        writer
-            .write(&encoder.finish())
-            .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
+        spill::write_record(&mut self.buffer, &encoder.finish())
+            .map_err(|error| ExecError::Source(format!("join spill frame: {error}")))?;
+        self.buffered += 1;
         self.entries += 1;
+        if !self.charged || self.buffer.len() >= GRACE_BUFFER {
+            self.flush(memory)?;
+        }
+        Ok(())
+    }
+
+    /// Writes the buffered rows in one open-append-close.
+    fn flush(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        if self.buffer.is_empty() {
+            return Ok(());
+        }
+        if self.run.is_none() {
+            self.run = Some(
+                spill::AppendRun::create("pintail-join-spill-", memory.spill())
+                    .map_err(|error| ExecError::Source(format!("join spill create: {error}")))?,
+            );
+        }
+        self.run
+            .as_mut()
+            .expect("created above")
+            .flush(&self.buffer, self.buffered)
+            .map_err(|error| ExecError::Source(format!("join spill write: {error}")))?;
+        self.buffer.clear();
+        self.buffered = 0;
         Ok(())
     }
 
@@ -845,12 +893,11 @@ impl GraceRun {
     /// partition by reading it again; a single-use reader turned the second
     /// read into "grace run read twice", so a build side that overflowed
     /// while being served could never be re-partitioned and the depth bound
-    /// was unreachable from the path that needs it. Sealing also means a run
-    /// that has been read holds no descriptor of its own: the closed run
-    /// keeps the file alive, and the reader is the only handle for as long
-    /// as it lives.
-    fn reader(&mut self) -> Result<GraceRunReader, ExecError> {
-        self.seal()?;
+    /// was unreachable from the path that needs it. A sealed run holds no
+    /// descriptor of its own: the closed run keeps the file alive, and the
+    /// reader is the only handle for as long as it lives.
+    fn reader(&mut self, memory: &MemoryTracker) -> Result<GraceRunReader, ExecError> {
+        self.seal(memory)?;
         let reader = match &self.closed {
             Some(closed) => Some(
                 closed
@@ -862,16 +909,18 @@ impl GraceRun {
         Ok(GraceRunReader { reader })
     }
 
-    /// Flushes and closes the writer. Idempotent; a sealed run refuses
-    /// further appends and holds no descriptor until read.
-    fn seal(&mut self) -> Result<(), ExecError> {
+    /// Flushes what is buffered and closes the run. Idempotent; a sealed
+    /// run refuses further appends.
+    fn seal(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
         self.sealed = true;
-        if let Some(writer) = self.writer.take() {
-            self.closed = Some(
-                writer
-                    .finish()
-                    .map_err(|error| ExecError::Source(format!("join spill flush: {error}")))?,
-            );
+        self.flush(memory)?;
+        if let Some(run) = self.run.take() {
+            self.closed = Some(run.seal());
+        }
+        self.buffer = Vec::new();
+        if self.charged {
+            memory.release(GRACE_BUFFER);
+            self.charged = false;
         }
         Ok(())
     }
@@ -1038,13 +1087,13 @@ pub(super) fn split_grace_partition(
     // Move each source file out so its replacement can be written to while
     // the original is read; the emptied slot is never served again.
     let mut build = std::mem::replace(&mut grace.build_files[index], GraceRun::create());
-    let mut entries = build.reader()?;
+    let mut entries = build.reader(memory)?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
         grace.build_files[target].append(&key, &values, memory)?;
     }
     let mut probe = std::mem::replace(&mut grace.probe_files[index], GraceRun::create());
-    let mut entries = probe.reader()?;
+    let mut entries = probe.reader(memory)?;
     while let Some((key, values)) = entries.next_entry()? {
         let target = first + grace_partition(&key, seed);
         grace.probe_files[target].append(&key, &values, memory)?;
@@ -1174,6 +1223,12 @@ pub(super) fn next_hash_join_batch(
     let mut rows = Vec::<Vec<Value>>::with_capacity(SPILL_SERVE_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
     while rows.len() < SPILL_SERVE_BATCH_ROWS {
+        // Turning the buffered rows into a batch needs about as much again
+        // for the columns, so under a tight ceiling the batch is cut where
+        // that copy still fits rather than refused once it is buffered.
+        if !rows.is_empty() && buffered_bytes.saturating_mul(2) > memory.remaining() {
+            break;
+        }
         if state.left_values.is_none()
             && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
         {
@@ -1289,7 +1344,7 @@ pub(super) fn next_grace_join_batch(
                 .iter_mut()
                 .chain(grace.probe_files.iter_mut())
             {
-                run.seal()?;
+                run.seal(memory)?;
             }
             break;
         }
@@ -1329,12 +1384,25 @@ pub(super) fn next_grace_join_batch(
 
     // Phase C: serve partitions.
     while rows.len() < SPILL_SERVE_BATCH_ROWS {
+        // Turning the buffered rows into a batch needs about as much again
+        // for the columns, so under a tight ceiling the batch is cut where
+        // that copy still fits rather than refused once it is buffered.
+        if !rows.is_empty() && buffered_bytes.saturating_mul(2) > memory.remaining() {
+            break;
+        }
         let grace = state.grace.as_mut().expect("grace state engaged");
         if !grace.probing_done {
             break;
         }
         if grace.replay.is_none() {
             if grace.current >= grace.build_files.len() {
+                // Served: the partition files go now rather than when the
+                // operator is dropped, which for a streamed join is later.
+                let held = state
+                    .grace
+                    .take()
+                    .map_or(0, |grace| grace.partition_reserved);
+                memory.release(held);
                 break;
             }
             let index = grace.current;
@@ -1345,7 +1413,7 @@ pub(super) fn next_grace_join_batch(
             grace.partition_reserved = 0;
             let used_before = memory.used();
             let mut overflowed = false;
-            let mut entries = grace.build_files[index].reader()?;
+            let mut entries = grace.build_files[index].reader(memory)?;
             while let Some((key, values)) = entries.next_entry()? {
                 // The partition this key lands in decides whether anything
                 // grows; comparing the summed length against the summed
@@ -1388,7 +1456,7 @@ pub(super) fn next_grace_join_batch(
                 continue;
             }
             grace.partition_reserved = memory.used().saturating_sub(used_before);
-            grace.replay = Some(grace.probe_files[index].reader()?);
+            grace.replay = Some(grace.probe_files[index].reader(memory)?);
         }
         let Some(replay) = grace.replay.as_mut() else {
             break;
@@ -1421,9 +1489,12 @@ pub(super) fn next_grace_join_batch(
     }
 
     if rows.is_empty() {
-        let grace = state.grace.as_mut().expect("grace state engaged");
-        memory.release(grace.partition_reserved);
-        grace.partition_reserved = 0;
+        // Served to the end, or nothing to serve: the grace state is gone
+        // once every partition has been read.
+        if let Some(grace) = state.grace.as_mut() {
+            memory.release(grace.partition_reserved);
+            grace.partition_reserved = 0;
+        }
         state.build.clear();
         state.clear_batch(memory);
         return Ok(None);
@@ -1763,10 +1834,10 @@ fn push_nested_join_row(
 mod tests {
     use crate::collation::Collation;
 
-    fn drain_partitions(runs: &mut [super::GraceRun]) -> Vec<u64> {
+    fn drain_partitions(runs: &mut [super::GraceRun], memory: &super::MemoryTracker) -> Vec<u64> {
         let mut ids = Vec::new();
         for run in runs {
-            let mut reader = run.reader().expect("partition reader");
+            let mut reader = run.reader(memory).expect("partition reader");
             while let Some((_, values)) = reader.next_entry().expect("partition entry") {
                 match values.first() {
                     Some(pintail_types::Value::UInt64(id)) => ids.push(*id),
@@ -1822,8 +1893,8 @@ mod tests {
         assert_eq!(grace.build_files.len(), GRACE_PARTITIONS * 2);
         assert_eq!(grace.depths[GRACE_PARTITIONS], 1);
 
-        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..]);
-        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..]);
+        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..], &memory);
+        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..], &memory);
         build.sort_unstable();
         probe.sort_unstable();
         assert_eq!(build, ids, "no build row may be lost in a split");
@@ -1831,7 +1902,7 @@ mod tests {
 
         // The emptied original must never be served again.
         assert!(
-            drain_partitions(&mut grace.build_files[0..1]).is_empty(),
+            drain_partitions(&mut grace.build_files[0..1], &memory).is_empty(),
             "the split partition is left empty"
         );
     }
@@ -1922,7 +1993,7 @@ mod tests {
         }
         // Exactly the serve loop's sequence: read the build side, decide it
         // does not fit, drop the reader, ask for a split of the same slot.
-        let mut first = grace.build_files[0].reader().expect("first read");
+        let mut first = grace.build_files[0].reader(&memory).expect("first read");
         let mut seen = 0;
         while first.next_entry().expect("entry").is_some() {
             seen += 1;
@@ -1931,8 +2002,8 @@ mod tests {
         drop(first);
         split_grace_partition(&mut grace, 0, &memory)
             .expect("a partition the serve loop already read must still split");
-        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..]);
-        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..]);
+        let mut build = drain_partitions(&mut grace.build_files[GRACE_PARTITIONS..], &memory);
+        let mut probe = drain_partitions(&mut grace.probe_files[GRACE_PARTITIONS..], &memory);
         build.sort_unstable();
         probe.sort_unstable();
         assert_eq!(build, ids, "the second read must see every build row");
@@ -1952,17 +2023,20 @@ mod tests {
             )
             .expect("append");
         }
-        assert!(run.writer.is_some(), "open for appends until first read");
+        assert!(
+            !run.buffer.is_empty() || run.run.is_some(),
+            "open for appends until first read"
+        );
         for _ in 0..3 {
-            let mut reader = run.reader().expect("reader");
+            let mut reader = run.reader(&memory).expect("reader");
             let mut count = 0;
             while reader.next_entry().expect("entry").is_some() {
                 count += 1;
             }
             assert_eq!(count, 10, "each read starts from the first record");
             assert!(
-                run.writer.is_none(),
-                "sealed: no writer, no descriptor of its own"
+                run.run.is_none() && run.buffer.is_empty(),
+                "sealed: no writer, no buffer, no descriptor of its own"
             );
         }
         let refused = run

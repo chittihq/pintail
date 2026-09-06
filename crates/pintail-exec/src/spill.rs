@@ -816,6 +816,62 @@ impl std::fmt::Debug for ClosedRun {
     }
 }
 
+/// A run written in bursts. Records accumulate in the caller's buffer and
+/// reach the file in one open-append-close per flush, so a set of runs fed
+/// round-robin, like the grace join's partitions, holds one descriptor at
+/// a time rather than one per run. Every flush is charged against the disk
+/// quotas before it is written.
+pub(crate) struct AppendRun {
+    path: tempfile::TempPath,
+    reservation: SpillReservation,
+    records: u64,
+    query: Arc<QuerySpillInner>,
+}
+
+impl AppendRun {
+    /// Creates the empty file and closes it again at once.
+    pub(crate) fn create(prefix: &str, query: &QuerySpill) -> std::io::Result<Self> {
+        let (file, path, reservation) = spill_file(prefix, query)?.into_parts();
+        drop(file);
+        Ok(Self {
+            path,
+            reservation,
+            records: 0,
+            query: Arc::clone(&query.inner),
+        })
+    }
+
+    /// Appends `records` already-framed records held in `framed`.
+    pub(crate) fn flush(&mut self, framed: &[u8], records: u64) -> std::io::Result<()> {
+        if framed.is_empty() {
+            return Ok(());
+        }
+        let bytes = u64::try_from(framed.len()).unwrap_or(u64::MAX);
+        self.reservation.reserve(bytes)?;
+        let _handle = HandleGuard::new(&self.query);
+        let written = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&self.path)
+            .and_then(|mut file| file.write_all(framed));
+        if let Err(error) = written {
+            self.reservation.release(bytes);
+            return Err(error);
+        }
+        self.records = self.records.saturating_add(records);
+        Ok(())
+    }
+
+    /// The run as a closed, readable whole.
+    pub(crate) fn seal(self) -> ClosedRun {
+        ClosedRun {
+            path: self.path,
+            reservation: self.reservation,
+            records: self.records,
+            query: self.query,
+        }
+    }
+}
+
 /// Streams the records of one closed run.
 pub(crate) struct RunReader {
     reader: std::io::BufReader<std::fs::File>,
@@ -1088,6 +1144,27 @@ mod run_tests {
         assert_eq!(out, expected);
         drop(merge);
         assert_eq!(query.metrics().active_bytes, 0);
+    }
+
+    #[test]
+    fn an_append_run_holds_a_descriptor_only_while_it_flushes() {
+        use super::{AppendRun, write_record};
+        let query = QuerySpill::with_limit(u64::MAX);
+        let mut run = AppendRun::create("pintail-test-append-", &query).expect("create");
+        assert_eq!(query.metrics().active_handles, 0, "created closed");
+        let mut framed = Vec::new();
+        for value in [5_u64, 6, 7] {
+            let mut encoder = Encoder::with_capacity(8);
+            encoder.u64(value);
+            write_record(&mut framed, &encoder.finish()).expect("frame");
+        }
+        run.flush(&framed, 3).expect("first flush");
+        run.flush(&framed, 3).expect("second flush appends");
+        assert_eq!(query.metrics().active_handles, 0, "closed between flushes");
+        assert_eq!(query.metrics().peak_handles, 1);
+        let closed = run.seal();
+        assert_eq!(closed.records(), 6);
+        assert_eq!(drain(vec![closed]), [5, 6, 7, 5, 6, 7], "appended in order");
     }
 
     #[test]
