@@ -3,7 +3,7 @@
   "logical_cpus": 32,
   "binary_sha256": {
     "baseline": "4a1f3a5c93c2ae4771624ce4c99ca968be602e8b3f937747b4541382dd2db3db",
-    "streaming": "5b08834c8ccc573b435e072d6a98af59fb139a680d10fcfdf77daac46dd13c33"
+    "streaming": "2239922e3254724e2ec12ac65866e2f155c5e3c6c12fdf2ec9a1469d1893ef1b"
   },
   "s3_service": "minio version RELEASE.2025-09-07T16-13-09Z (commit-id=07c3a429bfed433e49018cb0f78a52145d4bedeb)\nRuntime: go1.24.6 linux/amd64\nLicense: GNU AGPLv3 - https://www.gnu.org/licenses/agpl-3.0.html\nCopyright: 2015-2025 MinIO, Inc.\n",
   "transport": "loopback HTTP; local NVMe; warm filesystem cache; no injected latency",
@@ -13,10 +13,10 @@
   "incremental": "one in four segments changed; all source bytes checked",
   "data": "synthetic byte payloads; repeated pseudorandom 1 MiB blocks; no compression",
   "baseline_commit": "fdd7222dcdcf8e053ac97b85dbc1435219c00371",
-  "candidate_commit": "ffc585808de66aee957c7c0e3480f8dd0ccdf803",
+  "candidate_commit": "7cf219effb38088cceeee24c3dc281b3c6640096",
   "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
   "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
   "build": "cargo build --release -p pintail-backup --example s3_transfer_bench; standard workspace release profile; default system allocator",
   "runtime_workers": 4,
-  "correctness": "144 measured/warm-up operations passed; 48 independent restored-file comparisons passed; bidirectional mixed-version backup chains passed"
+  "correctness": "144 warm-up/measured operations, 48 independent restored-file comparisons, and bidirectional mixed-version backup chains passed"
 }
