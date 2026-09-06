@@ -3010,6 +3010,7 @@ fn build_fused_inner_join_aggregate(
         residual,
         residual_columns: _,
         collation: _,
+        probe_prefetch: _,
     } = input
     else {
         return Ok(None);

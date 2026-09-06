@@ -19,8 +19,9 @@ pub use join::compare_collated_text;
 
 use aggregate::{AggregateState, CompiledAggregate, build_hash_aggregate};
 use join::{
-    HashJoinState, build_hash_join_state, execute_nested_loop_join, next_hash_join_batch,
-    normalized_collation_value,
+    HashJoinState, JoinHashKey, ProbePrefetch, build_hash_join_state, execute_nested_loop_join,
+    next_hash_join_batch, normalized_collation_value, normalized_join_key, prefetch_probe,
+    probe_prefetch_applies,
 };
 use memo::DependentMemo;
 use sort::{
@@ -214,6 +215,10 @@ pub enum PhysicalPlan {
         extra_keys: Vec<(BoundExpr, BoundExpr)>,
         /// Build-side key.
         right_key: BoundExpr,
+        /// Row estimate of the probe input when statistics give one; it
+        /// decides whether the probe side is read ahead of the build so
+        /// its keys can filter the build.
+        probe_estimate: Option<u64>,
         /// ON conjuncts that compare both inputs with something other than
         /// equality, applied to each candidate pair after the hash match.
         residual: Option<BoundExpr>,
@@ -593,6 +598,7 @@ impl PhysicalPlanner {
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right, collation)
                     .ok_or(ExecError::UnsupportedJoinCondition)?;
                 let (left_key, right_key) = pairs.remove(0);
+                let probe_estimate = left.estimated_rows();
                 let left_input = filtered(Self::plan(*left, collation)?, left_filter);
                 let right_input = filtered(Self::plan(*right, collation)?, right_filter);
                 Ok(PhysicalPlan::HashJoin {
@@ -602,6 +608,7 @@ impl PhysicalPlanner {
                     left_key,
                     extra_keys: pairs,
                     right_key,
+                    probe_estimate,
                     residual,
                 })
             }
@@ -2702,10 +2709,22 @@ enum PullOperator {
         /// The plan's collation. The key mode carries it for hashing; this is
         /// for the row-level work either side of the probe.
         collation: Collation,
+        /// Whether to read the probe side ahead of the build, so that when
+        /// it is small its keys can filter the build side.
+        probe_prefetch: bool,
     },
     Filter {
         input: Box<Self>,
         predicate: CompiledExpr,
+    },
+    /// Drops build-side rows whose join key no probe row carries, before
+    /// they reach the hash table. Wrapped around the build input when the
+    /// probe side was read in full first.
+    KeyFilter {
+        input: Box<Self>,
+        key: CompiledExpr,
+        key_mode: JoinKeyMode,
+        keys: std::sync::Arc<std::collections::HashSet<JoinHashKey>>,
     },
     HashAggregate {
         input: Box<Self>,
@@ -2784,9 +2803,36 @@ impl PullOperator {
     fn restrict_probe_range(&mut self, position: usize, min: &Value, max: &Value) {
         match self {
             Self::Scan { stream, .. } => stream.restrict_key_position_range(position, min, max),
-            Self::Filter { input, .. } => input.restrict_probe_range(position, min, max),
+            Self::Filter { input, .. } | Self::KeyFilter { input, .. } => {
+                input.restrict_probe_range(position, min, max);
+            }
             _ => {}
         }
+    }
+
+    /// Keeps only build rows whose key is in `keys`, the set the probe side
+    /// carries. A row whose key no probe row has can match nothing, so for
+    /// inner, left, semi and anti joins it contributes nothing to the
+    /// output and need not be built. The key span goes to the scan first,
+    /// so storage can prune on it where the key is the table's own key.
+    fn restrict_build_keys(
+        &mut self,
+        key: CompiledExpr,
+        key_mode: JoinKeyMode,
+        keys: std::sync::Arc<std::collections::HashSet<JoinHashKey>>,
+    ) {
+        if let Some(position) = key.column_index()
+            && let Some((minimum, maximum)) = join::integer_key_span(&keys)
+        {
+            self.restrict_probe_range(position, &minimum, &maximum);
+        }
+        let input = std::mem::replace(self, Self::Empty);
+        *self = Self::KeyFilter {
+            input: Box::new(input),
+            key,
+            key_mode,
+            keys,
+        };
     }
 
     /// Transient headroom the underlying scan needs to pull one more batch.
@@ -2795,7 +2841,9 @@ impl PullOperator {
     fn scan_transient_floor(&self) -> usize {
         match self {
             Self::Scan { stream, .. } => stream.next_batch_memory_upper_bound(usize::MAX),
-            Self::Filter { input, .. } => input.scan_transient_floor(),
+            Self::Filter { input, .. } | Self::KeyFilter { input, .. } => {
+                input.scan_transient_floor()
+            }
             _ => 0,
         }
     }
@@ -2884,9 +2932,26 @@ impl PullOperator {
                 residual,
                 residual_columns,
                 collation,
+                probe_prefetch,
             } => {
                 if state.is_none() {
-                    let built = build_hash_join_state(
+                    // A small probe side is read in full first: its keys
+                    // then filter the build side before the hash table is
+                    // built, which is what turns a join against a large
+                    // table into one against the rows that can match.
+                    let prefetch = if *probe_prefetch {
+                        prefetch_probe(left, left_key, *key_mode, memory)?
+                    } else {
+                        ProbePrefetch::default()
+                    };
+                    if let Some(keys) = &prefetch.keys {
+                        right.restrict_build_keys(
+                            right_key.clone(),
+                            *key_mode,
+                            std::sync::Arc::clone(keys),
+                        );
+                    }
+                    let mut built = build_hash_join_state(
                         right, right_key, *key_mode, extra_keys, memory, *collation,
                     )?;
                     // Inner and semi joins cannot match probe rows outside
@@ -2899,6 +2964,7 @@ impl PullOperator {
                     {
                         left.restrict_probe_range(position, minimum, maximum);
                     }
+                    built.adopt_prefetch(prefetch);
                     *state = Some(Box::new(built));
                 }
                 next_hash_join_batch(
@@ -2915,6 +2981,33 @@ impl PullOperator {
                     memory,
                 )
             }
+            Self::KeyFilter {
+                input,
+                key,
+                key_mode,
+                keys,
+            } => loop {
+                let Some(mut batch) = input.next_batch(memory)? else {
+                    return Ok(None);
+                };
+                let batch_bytes = batch.estimated_bytes();
+                for row in 0..batch.row_count() {
+                    if !batch.selection().is_selected(row) {
+                        continue;
+                    }
+                    memory.ensure_transient(
+                        batch_bytes.saturating_add(key.allocation_upper_bound(&batch, row)),
+                    )?;
+                    let keep = normalized_join_key(key.evaluate(&batch, row)?, *key_mode)?
+                        .is_some_and(|candidate| keys.contains(&candidate));
+                    if !keep {
+                        batch.selection_mut().set(row, false)?;
+                    }
+                }
+                if batch.visible_row_count() > 0 {
+                    return Ok(Some(batch));
+                }
+            },
             Self::Filter { input, predicate } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
@@ -3290,8 +3383,10 @@ fn build_operator(
             left_key,
             right_key,
             extra_keys,
+            probe_estimate,
             residual,
         } => {
+            let probe_prefetch = probe_prefetch_applies(kind, probe_estimate);
             let (left, left_columns) = build_operator(*left, provider, memory, collation)?;
             let (right, right_columns) = build_operator(*right, provider, memory, collation)?;
             // Each join key decides its own collation from the columns it
@@ -3356,6 +3451,7 @@ fn build_operator(
                     residual,
                     residual_columns,
                     collation,
+                    probe_prefetch,
                 },
                 output_columns,
             ))

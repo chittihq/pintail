@@ -1,7 +1,11 @@
 //! Hash join, grace-partitioned join with spill, join key
 //! normalization, and the nested-loop fallback.
 
-use std::{cmp::Ordering, collections::HashMap};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 use pintail_sql::{BoundColumn, BoundExpr, BoundJoinKind, BoundOrderKey};
 use pintail_types::{DataType, Value};
@@ -393,6 +397,12 @@ pub(super) struct HashJoinState {
     /// Build-side rows for the current left row that survived the residual ON
     /// predicate, when there is one.
     residual_matches: Option<Vec<Vec<Value>>>,
+    /// Probe batches read ahead of the build, each with the bytes it holds
+    /// against the ceiling; served before the probe input is pulled again.
+    prefetched: VecDeque<(RecordBatch, usize)>,
+    /// Bytes the build-side key filter's set holds, released once the
+    /// probe is exhausted.
+    filter_reserved: usize,
 }
 
 impl HashJoinState {
@@ -401,6 +411,13 @@ impl HashJoinState {
     /// it directly has to ask first.
     pub(super) const fn spilled(&self) -> bool {
         self.grace.is_some()
+    }
+
+    /// Takes over the probe batches read ahead of the build and the bytes
+    /// the build-side key filter holds.
+    pub(super) fn adopt_prefetch(&mut self, prefetch: ProbePrefetch) {
+        self.prefetched = prefetch.batches;
+        self.filter_reserved = prefetch.keys_reserved;
     }
 
     fn clear_left(&mut self, memory: &MemoryTracker) {
@@ -625,7 +642,146 @@ pub(super) fn build_hash_join_state(
         left_key: None,
         left_reserved: 0,
         residual_matches: None,
+        prefetched: VecDeque::new(),
+        filter_reserved: 0,
     })
+}
+
+/// Probe rows the join reads before building, and, when the probe side
+/// ended within the caps, the set of keys it carries.
+#[derive(Default)]
+pub(super) struct ProbePrefetch {
+    pub(super) batches: VecDeque<(RecordBatch, usize)>,
+    pub(super) keys: Option<Arc<HashSet<JoinHashKey>>>,
+    pub(super) keys_reserved: usize,
+}
+
+/// Probe rows read ahead of the build before the join gives up on
+/// filtering the build side. A probe side that ends within this many rows
+/// is small enough that reading it twice over would cost nothing worth
+/// having; one that does not is served from the read-ahead first and
+/// streamed after, and the build side is taken whole.
+pub(super) const PROBE_PREFETCH_ROWS: u64 = 65_536;
+
+/// Distinct probe keys the build-side filter will hold.
+const PROBE_FILTER_KEYS: usize = 65_536;
+
+/// Whether the probe side is read ahead of the build.
+///
+/// A left or anti join keeps every probe row and never restricts the probe
+/// scan, so reading ahead costs it nothing beyond the bounded read-ahead
+/// itself. An inner or semi join restricts its probe scan to the build's
+/// key span once the build exists, and a probe scan that has started
+/// cannot be restricted, so those read ahead only when statistics say the
+/// probe side is small enough to end within the read-ahead.
+pub(super) const fn probe_prefetch_applies(
+    kind: BoundJoinKind,
+    probe_estimate: Option<u64>,
+) -> bool {
+    match kind {
+        BoundJoinKind::Left | BoundJoinKind::Anti => true,
+        BoundJoinKind::Inner | BoundJoinKind::Semi => {
+            matches!(probe_estimate, Some(rows) if rows <= PROBE_PREFETCH_ROWS)
+        }
+        BoundJoinKind::Scalar | BoundJoinKind::Cross => false,
+    }
+}
+
+/// Reads the probe side ahead of the build, up to the row, key and memory
+/// caps, collecting the normalized join key of every row. The batches are
+/// kept for the probe in their original order; the key set exists only if
+/// the probe side ended within the caps, since a partial set would drop
+/// build rows that later probe rows need.
+pub(super) fn prefetch_probe(
+    left: &mut PullOperator,
+    left_key: &CompiledExpr,
+    key_mode: JoinKeyMode,
+    memory: &MemoryTracker,
+) -> Result<ProbePrefetch, ExecError> {
+    let mut prefetch = ProbePrefetch::default();
+    let mut keys: HashSet<JoinHashKey> = HashSet::new();
+    let mut keys_reserved = 0_usize;
+    let mut rows = 0_u64;
+    let mut held = 0_usize;
+    let mut last_bytes = 0_usize;
+    // The read-ahead never takes more than a quarter of the ceiling: the
+    // build side and the probe's own working set still have to fit.
+    let ceiling = memory.limit() / 4;
+    let complete = loop {
+        if rows >= PROBE_PREFETCH_ROWS
+            || keys.len() >= PROBE_FILTER_KEYS
+            || held.saturating_add(last_bytes) > ceiling
+        {
+            break false;
+        }
+        let Some(batch) = left.next_batch(memory)? else {
+            break true;
+        };
+        let bytes = batch.estimated_bytes();
+        memory.reserve(bytes)?;
+        held = held.saturating_add(bytes);
+        last_bytes = bytes;
+        rows = rows.saturating_add(u64::try_from(batch.visible_row_count()).unwrap_or(u64::MAX));
+        for row in batch.selection().selected_rows() {
+            memory.ensure_transient(
+                bytes.saturating_add(left_key.allocation_upper_bound(&batch, row)),
+            )?;
+            let Some(key) = normalized_join_key(left_key.evaluate(&batch, row)?, key_mode)? else {
+                continue;
+            };
+            if keys.contains(&key) {
+                continue;
+            }
+            let cost = key
+                .heap_bytes()
+                .saturating_add(size_of::<JoinHashKey>())
+                .saturating_add(HASH_ENTRY_OVERHEAD);
+            memory.reserve(cost)?;
+            keys_reserved = keys_reserved.saturating_add(cost);
+            keys.insert(key);
+        }
+        prefetch.batches.push_back((batch, bytes));
+    };
+    if complete {
+        prefetch.keys = Some(Arc::new(keys));
+        prefetch.keys_reserved = keys_reserved;
+    } else {
+        memory.release(keys_reserved);
+    }
+    Ok(prefetch)
+}
+
+/// The smallest and largest integer key in the set, as values a scan can
+/// restrict on; `None` when any key is not an integer.
+pub(super) fn integer_key_span(keys: &HashSet<JoinHashKey>) -> Option<(Value, Value)> {
+    let mut negatives: Option<(i64, i64)> = None;
+    let mut naturals: Option<(u64, u64)> = None;
+    for key in keys {
+        match key {
+            JoinHashKey::NegativeInteger(value) => {
+                negatives = Some(negatives.map_or((*value, *value), |(low, high)| {
+                    (low.min(*value), high.max(*value))
+                }));
+            }
+            JoinHashKey::NonNegativeInteger(value) => {
+                naturals = Some(naturals.map_or((*value, *value), |(low, high)| {
+                    (low.min(*value), high.max(*value))
+                }));
+            }
+            _ => return None,
+        }
+    }
+    let minimum = match (negatives, naturals) {
+        (Some((low, _)), _) => Value::Int64(low),
+        (None, Some((low, _))) => Value::UInt64(low),
+        (None, None) => return None,
+    };
+    let maximum = match (naturals, negatives) {
+        (Some((_, high)), _) => Value::UInt64(high),
+        (None, Some((_, high))) => Value::Int64(high),
+        (None, None) => return None,
+    };
+    Some((minimum, maximum))
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1294,7 +1450,19 @@ fn prepare_hash_join_left(
             .is_some_and(|batch| state.row >= batch.row_count());
         if state.batch.is_none() || exhausted {
             state.clear_batch(memory);
-            let Some(batch) = left.next_batch(memory)? else {
+            // Batches read ahead of the build come first, in order; their
+            // read-ahead reservation is handed back before the probe takes
+            // its own, so the bytes are charged once.
+            let next = match state.prefetched.pop_front() {
+                Some((batch, bytes)) => {
+                    memory.release(bytes);
+                    Some(batch)
+                }
+                None => left.next_batch(memory)?,
+            };
+            let Some(batch) = next else {
+                memory.release(state.filter_reserved);
+                state.filter_reserved = 0;
                 return Ok(false);
             };
             let batch_bytes = batch.estimated_bytes();
@@ -1666,6 +1834,72 @@ mod tests {
             drain_partitions(&mut grace.build_files[0..1]).is_empty(),
             "the split partition is left empty"
         );
+    }
+
+    #[test]
+    fn the_probe_reads_ahead_for_left_and_anti_joins_and_for_small_inner_probes() {
+        use super::{PROBE_PREFETCH_ROWS, probe_prefetch_applies};
+        use pintail_sql::BoundJoinKind;
+        assert!(probe_prefetch_applies(BoundJoinKind::Left, None));
+        assert!(probe_prefetch_applies(BoundJoinKind::Anti, Some(u64::MAX)));
+        assert!(probe_prefetch_applies(
+            BoundJoinKind::Inner,
+            Some(PROBE_PREFETCH_ROWS)
+        ));
+        assert!(probe_prefetch_applies(BoundJoinKind::Semi, Some(1)));
+        // An inner probe with no statistics, or too many rows, keeps its
+        // scan unstarted so the build's key span can still restrict it.
+        assert!(!probe_prefetch_applies(BoundJoinKind::Inner, None));
+        assert!(!probe_prefetch_applies(
+            BoundJoinKind::Inner,
+            Some(PROBE_PREFETCH_ROWS + 1)
+        ));
+        assert!(!probe_prefetch_applies(BoundJoinKind::Scalar, Some(1)));
+    }
+
+    #[test]
+    fn an_integer_key_span_covers_both_signs_and_refuses_other_keys() {
+        use super::{JoinHashKey, integer_key_span};
+        use pintail_types::Value;
+        let keys = [
+            JoinHashKey::NonNegativeInteger(7),
+            JoinHashKey::NegativeInteger(-3),
+            JoinHashKey::NonNegativeInteger(42),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            integer_key_span(&keys),
+            Some((Value::Int64(-3), Value::UInt64(42)))
+        );
+        let naturals = [
+            JoinHashKey::NonNegativeInteger(9),
+            JoinHashKey::NonNegativeInteger(2),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            integer_key_span(&naturals),
+            Some((Value::UInt64(2), Value::UInt64(9)))
+        );
+        let negatives = [
+            JoinHashKey::NegativeInteger(-9),
+            JoinHashKey::NegativeInteger(-2),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            integer_key_span(&negatives),
+            Some((Value::Int64(-9), Value::Int64(-2)))
+        );
+        let mixed = [
+            JoinHashKey::NonNegativeInteger(1),
+            JoinHashKey::MysqlNumber(pintail_types::Float64::new(1.5)),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(integer_key_span(&mixed), None);
+        assert_eq!(integer_key_span(&std::collections::HashSet::new()), None);
     }
 
     #[test]
