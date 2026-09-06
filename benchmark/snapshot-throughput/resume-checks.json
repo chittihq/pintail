@@ -1,0 +1,26 @@
+[
+  {
+    "checksum": "all-columns",
+    "estimated_mb_per_second": 292.63647321357536,
+    "estimated_row_bytes": 725475925,
+    "mode": "multi",
+    "resumed": true,
+    "rows": 1000000,
+    "rows_per_second": 403371.7221058375,
+    "seconds": 2.479102885,
+    "verified": true,
+    "workers": 4
+  },
+  {
+    "checksum": "all-columns",
+    "estimated_mb_per_second": 125.69087898348519,
+    "estimated_row_bytes": 888674077,
+    "mode": "composite",
+    "resumed": true,
+    "rows": 1000000,
+    "rows_per_second": 141436.41885875017,
+    "seconds": 7.070314761,
+    "verified": true,
+    "workers": 1
+  }
+]

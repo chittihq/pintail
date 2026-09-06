@@ -1,0 +1,11 @@
+{
+  "single": 6.778194947,
+  "multi_serial": 6.444823611,
+  "multi_threads": 2.220283251,
+  "ranges_threads": 2.391851576,
+  "composite_tuple": 23.574765268,
+  "composite_expanded": 6.766086351,
+  "thread_speedup": 2.902703341160321,
+  "range_speedup": 2.83386938178475,
+  "predicate_speedup": 3.484254271232549
+}
