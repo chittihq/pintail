@@ -2377,8 +2377,13 @@ fn build_buffered_hash_aggregate(
             batches.push(batch);
             // Tight ceilings cap the round instead of reserving a
             // conservative upper bound larger than the whole budget; the
-            // default ceiling keeps full 8-batch rounds.
-            if selected_rows.saturating_mul(per_row_upper) > memory.limit() / 4 {
+            // default ceiling keeps full 8-batch rounds. The round also
+            // stops once its batches hold half the ceiling: gathering to
+            // the brim left the first group nothing to reserve against,
+            // and an empty map has nothing to spill for it.
+            if selected_rows.saturating_mul(per_row_upper) > memory.limit() / 4
+                || memory.used() > memory.limit() / 2
+            {
                 break;
             }
         }
@@ -3348,6 +3353,10 @@ fn build_fused_inner_join_aggregate(
             memory.reserve(bytes)?;
             batch_reserved = batch_reserved.saturating_add(bytes);
             batches.push(batch);
+            // The round leaves half the ceiling for the groups it builds.
+            if memory.used() > memory.limit() / 2 {
+                break;
+            }
         }
         if batches.is_empty() {
             break;

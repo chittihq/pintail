@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- The scan decodes direct segments in block-aligned slices of 131,072 rows,
+  up to four per scan thread per round, within half of the query's
+  remaining memory ceiling (one slice at a time under 64 MiB). A round
+  used to take one whole segment per thread bounded only by the whole
+  ceiling, so ten threads over compaction-sized segments either held most
+  of the ceiling or halved their width; rows in flight are now bounded by
+  width times a slice whatever the segment size. The filter-first decode
+  works per slice. A 200K-group GROUP BY over ten million rows fell about
+  6%; a scan-bound five-group text key costs about 10% more, the price of
+  the scan holding half the ceiling instead of all of it.
+
 ### Fixed
 
 - A warm replica stays warm across audit records, API-key touches and other

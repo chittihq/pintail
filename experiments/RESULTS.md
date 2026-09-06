@@ -2599,3 +2599,30 @@ datasets overstated the gain (3.29× against 1.83× here).
 **Verdict: keep.** Format, incremental reuse, manifest-last publication and
 staged restore are unchanged; the concurrency is a code default of four with
 no operator knob yet.
+
+## e70 — Segment slices as the scan's work unit (10M rows in 1M-row segments, 10 threads, memo off)
+
+`crates/pintail-exec/tests/morsel_bench.rs`, two rounds interleaved with the
+previous build, minimum of five runs, milliseconds. Before = whole segments
+per scan thread bounded by the whole remaining ceiling; after = 131,072-row
+slices, four per scan thread, half the remaining ceiling per round.
+
+| query | before 1 | after 1 | before 2 | after 2 |
+|---|---:|---:|---:|---:|
+| two-pass int key (50 groups) | 135 | 129 | 128 | 127 |
+| two-pass text key (5 groups) | 95 | 106 | 92 | 107 |
+| general int+text keys (50 groups) | 460 | 457 | 446 | 462 |
+| general int+text keys, 64 MiB | 887 | 881 | 884 | 865 |
+| general expression key (10 groups) | 255 | 253 | 240 | 260 |
+| general 200K groups | 4,974 | 4,851 | 4,775 | 4,473 |
+| fused join + group (8 groups) | 111 | 95 | 86 | 101 |
+
+One slice per scan thread read 119/119 ms on the text key and 144/147 on
+the int key; four per thread is the setting kept. The text-key loss is the
+memory bound: the old scan pulled all ten million rows at once under the
+512 MiB ceiling, the sliced scan takes two rounds and idles between them.
+
+**Verdict: keep.** Rows in flight no longer scale with segment size, the
+scan keeps its width on large segments, and the one regression is the
+bound itself; overlapping the next round's decode with the consumer is the
+follow-up that would recover it.

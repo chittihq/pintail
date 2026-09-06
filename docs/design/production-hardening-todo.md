@@ -243,7 +243,7 @@ Measured in-process on a ten-million-row, three-column table with the
 settled memo off, using the per-operator profile `EXPLAIN ANALYZE` now
 prints.
 
-- [ ] **G1. A scan retains every prefetched segment at once.** With no
+- [x] **G1. A scan retains every prefetched segment at once.** With no
   LIMIT the stream adopts all prefetched chunks into ready batches in one
   pull, so the scan's peak reservation is the scan width times the
   segment size: 1.3 GiB for a plain `GROUP BY` over the table, 1.9 GiB
@@ -256,9 +256,11 @@ prints.
   chunk sliced into batches left every prefix holding the whole chunk's
   allocation (118 MB retained for 16 MB of data on a two-column 1M-row
   segment); prefixes are now right-sized and the plain GROUP BY runs
-  under the shipped ceiling. What remains is the adopt-everything pull
-  itself, bounded only by the whole remaining ceiling; see the morsel
-  entry in `docs/decisions.md`.
+  under the shipped ceiling. Closed 2026-09-07: the scan's work unit is a
+  block-aligned 131,072-row segment slice, a round takes at most half the
+  remaining ceiling (one slice under 64 MiB), and rows in flight are bounded
+  by width times a slice whatever the segment size; see "The scan's work
+  unit is a segment slice" in `docs/decisions.md`.
 - [ ] **G2. A second predicate on the same scan costs five times the
   first.** `WHERE status = 2` scans in 25 ms; `WHERE id >= 1 AND
   status = 2` in 132 ms with twice the peak reservation, even though the

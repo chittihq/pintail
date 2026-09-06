@@ -790,6 +790,11 @@ struct SnapshotStream {
     sma: Option<crate::execution::SmaFoldInput>,
 }
 
+/// Direct-segment slices a prefetch round asks for per scan thread.
+const SLICES_PER_SCAN_THREAD: usize = 4;
+/// Below this much remaining budget a prefetch round takes one slice.
+const TIGHT_CEILING_BYTES: usize = 64 * 1024 * 1024;
+
 impl SnapshotStream {
     /// Folds one chunk's counters into the provider's per-table totals.
     fn accumulate(&self, stats: ScanStats) {
@@ -863,8 +868,25 @@ impl BatchStream for SnapshotStream {
                 // and halves the width and retries when a share proves too
                 // small, so a wide projection under a tight ceiling still
                 // lands rather than failing.
-                let prefetch_width = pintail_store::projected_scan_width();
-                let chunk_budget = available_memory.saturating_sub(batch_overhead);
+                // Several slices per scan thread: a slice is a bounded work
+                // unit, and one per thread made a prefetch round short
+                // enough that the scan and the consumer took turns idling.
+                // The budget below still bounds what a round decodes.
+                // Under a tight ceiling the scan takes one slice at a time,
+                // as it took one segment before slicing: the operators
+                // above need the room more than the scan needs width.
+                let prefetch_width = if available_memory < TIGHT_CEILING_BYTES {
+                    1
+                } else {
+                    pintail_store::projected_scan_width().saturating_mul(SLICES_PER_SCAN_THREAD)
+                };
+                // Half of what is left, not all of it: the prefetch is one
+                // scan's working set and the operators above it reserve
+                // against the same ceiling. A scan that took the whole
+                // remainder handed the aggregate a budget already spent,
+                // which is what made a query under a tight ceiling fail on
+                // a few hundred bytes with an empty group map.
+                let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
                 let (chunks, abandon_prewhere) = if let Some(spec) = &self.prewhere {
                     let unproductive = AtomicUsize::new(0);
                     let select = |columns: &[DecodedColumn], row_count: usize| {

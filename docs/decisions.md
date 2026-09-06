@@ -1262,3 +1262,51 @@ failing sequence is delta-debugged to the shortest sub-sequence that still
 fails and reported one op per line for replay. The harness was checked by
 injecting a fault that ingested tombstones as live rows: found on the
 first seed and shrunk from 48 ops to two.
+
+### The scan's work unit is a segment slice, not a segment
+
+A prefetch round handed each scan thread one whole segment and the store
+bounded that decode only by the whole remaining query ceiling, so ten scan
+threads over compaction-sized segments (up to four million rows) either
+held most of the ceiling or, when they could not, halved their width to two
+or three - the scan lost parallelism exactly on large tables, and the
+operators above it started with a budget the scan had spent. This was the
+rest of hardening item G1 after the chunk-capacity fix.
+
+A direct segment wholly inside the scanned key range is now cut into
+block-aligned slices of 131,072 rows - the executor's largest pass-through
+batch, so a slice becomes one batch - and the slices are the store's work
+units: a round decodes up to four per scan thread in parallel, each within
+its share of the budget, halving the count on a memory refusal and falling
+to block-sized rows for a single slice that still does not fit. Width comes
+from the pool and the rows in flight are bounded by width times a slice,
+whatever the segment size. The filter-first path decodes a slice's
+predicate columns for its range alone, offsets the selector's survivors by
+the slice start, and reads only those rows; segments only partly inside the
+range, merge parts and memtable cursors are untouched. A sliced segment
+still counts once in the scan statistics. The executor asks a round for
+half of the remaining ceiling, not all of it, and under 64 MiB for one slice
+at a time, which is what the store did for whole segments before.
+
+Measured on the morsel harness (ten million rows in 1M-row segments, ten
+threads, memo off, two interleaved rounds, minimum of five): the 200K-group
+GROUP BY 4.97/4.77 to 4.85/4.47 s, the fused join within noise, and the
+two-pass text key 98/95 to 106/107 ms, the one loss. That loss is the bound
+working: the old scan retained all ten million rows from one pull under the
+512 MiB ceiling and the aggregate then ran uninterrupted; the sliced scan
+holds at most half the ceiling and takes two rounds, and between rounds the
+scan and its consumer take turns. One slice per thread cost 27% on that
+query; four per thread cost 13%. Overlapping the next round's decode with
+the consumer would recover the rest and is the next scan change worth
+making; the earlier objection to a prefetching decorator (it cannot answer
+the memory-planning calls) does not apply to a prefetch that reserves its
+round's budget before it starts.
+
+The low-ceiling knife-edge is not the scan. A ceiling below 12 MiB on the
+spill suite's corpus still fails on a 728-byte transient check with the
+tracker at the brim, and with the scan held to half the budget and the
+aggregate's round gather stopped at half as well, the site is the output
+batch: the answer is thirty thousand groups, about six megabytes, and a
+ceiling of six to ten megabytes cannot hold the group map and its own
+result at once. That is a ceiling smaller than the answer, not a defect,
+and the spill sweep's 12 MiB floor stands.

@@ -668,6 +668,7 @@ impl TableSnapshot {
             memtable_cursor: None,
             direct_range: None,
             direct_slice_rows: None,
+            slices: std::collections::VecDeque::new(),
             merge: None,
         }))
     }

@@ -2,7 +2,7 @@
 //! decoding, and the merged multi-source scan stream.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     sync::{Arc, atomic::AtomicUsize},
 };
 
@@ -201,6 +201,28 @@ fn bounds_contain(
     })
 }
 
+/// Rows a direct segment is handed to the decoders in. A slice is the
+/// scan's work unit: parallel width comes from how many slices are in
+/// flight, not from how many segments there are, and the rows in flight
+/// are bounded by width times this whatever the segment size. It matches
+/// the executor's largest pass-through batch, so a slice becomes one batch.
+pub(super) const DIRECT_SLICE_ROWS: u64 = 131_072;
+
+/// One unit of direct-segment decode work.
+#[derive(Clone, Debug)]
+pub(super) enum DirectSlice {
+    /// A segment decoded as it was before slicing: small enough to be one
+    /// slice, or only partly inside the scanned key range.
+    Whole(segment::SegmentMeta),
+    /// A block-aligned row range of a segment that lies wholly inside the
+    /// scanned key range.
+    Range {
+        segment: segment::SegmentMeta,
+        start_row: u64,
+        end_row: u64,
+    },
+}
+
 /// Pull-based projected scan over immutable segments and WAL-backed rows.
 ///
 /// The scanned key range is partitioned into [`ScanPart`]s at open time;
@@ -222,6 +244,9 @@ pub struct ProjectedScanStream {
     pub(super) direct_range: Option<(segment::SegmentMeta, u64, u64)>,
     /// Rows per slice that last fit the budget for the pending direct range.
     pub(super) direct_slice_rows: Option<u64>,
+    /// Direct-segment work units not yet decoded, cut from the segments of
+    /// the current part as they are reached.
+    pub(super) slices: VecDeque<DirectSlice>,
     pub(super) merge: Option<MergedProjectedStream>,
 }
 
@@ -972,6 +997,7 @@ impl ProjectedScanStream {
         self.memtable_cursor = None;
         self.direct_range = None;
         self.direct_slice_rows = None;
+        self.slices.clear();
         match part {
             ScanPart::Direct { segments } => {
                 self.segments = segments;
@@ -1180,57 +1206,216 @@ impl ProjectedScanStream {
         if self.merge.is_some() || self.memtable_cursor.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
-        if self.next_segment >= self.segments.len() {
+        self.fill_direct_slices(max_chunks.max(1))?;
+        if self.slices.is_empty() {
             if !self.advance_part()? {
                 return Ok(Vec::new());
             }
             return self.next_column_chunks_inner(max_chunks, memory_limit, prewhere);
         }
-        let max_chunks = if memory_limit < 64 * 1024 * 1024 {
-            1
-        } else {
-            max_chunks
-        };
-        let chunk_count = max_chunks
-            .max(1)
-            .min(self.segments.len().saturating_sub(self.next_segment));
-        if chunk_count == 0 {
-            return Ok(Vec::new());
-        }
-        let first_segment = self.next_segment;
-        let segments = self.segments
-            [self.next_segment..self.next_segment.saturating_add(chunk_count)]
-            .to_vec();
-        self.next_segment = self.next_segment.saturating_add(chunk_count);
+        let chunk_count = max_chunks.max(1).min(self.slices.len());
+        let taken: Vec<DirectSlice> = self.slices.drain(..chunk_count).collect();
         if chunk_count == 1 {
-            let segment = segments.into_iter().next().expect("one segment");
-            return match self.decode_column_chunk_maybe_filtered(
-                segment.clone(),
-                memory_limit,
-                prewhere,
-            ) {
-                // Too large for the budget whole: row slices, unfiltered,
-                // and the caller's predicate still runs over every row.
-                Err(StoreError::MemoryLimitExceeded { .. }) if segment.row_count > 1 => self
-                    .decode_direct_range_within(segment.clone(), 0, segment.row_count, memory_limit)
+            let slice = taken.into_iter().next().expect("one slice");
+            let (segment, start_row, end_row) = match &slice {
+                DirectSlice::Whole(segment) => (segment.clone(), 0, segment.row_count),
+                DirectSlice::Range {
+                    segment,
+                    start_row,
+                    end_row,
+                } => (segment.clone(), *start_row, *end_row),
+            };
+            return match self.decode_slice(&slice, memory_limit, prewhere) {
+                // Too large for the budget whole: block-sized row slices,
+                // unfiltered, and the caller's predicate still runs over
+                // every row.
+                Err(StoreError::MemoryLimitExceeded { .. }) if end_row - start_row > 1 => self
+                    .decode_direct_range_within(segment, start_row, end_row, memory_limit)
                     .map(|chunk| vec![chunk]),
                 other => other.map(|chunk| vec![chunk]),
             };
         }
         let per_chunk_limit = memory_limit / chunk_count;
         let decoded = projected_scan_pool()?.install(|| {
-            segments
-                .into_par_iter()
-                .map(|segment| {
-                    self.decode_column_chunk_maybe_filtered(segment, per_chunk_limit, prewhere)
-                })
+            taken
+                .par_iter()
+                .map(|slice| self.decode_slice(slice, per_chunk_limit, prewhere))
                 .collect()
         });
         if matches!(decoded, Err(StoreError::MemoryLimitExceeded { .. })) {
-            self.next_segment = first_segment;
+            // Hand the slices back in order and try half as many at once.
+            for slice in taken.into_iter().rev() {
+                self.slices.push_front(slice);
+            }
             return self.next_column_chunks_inner(chunk_count.div_ceil(2), memory_limit, prewhere);
         }
         decoded
+    }
+
+    /// Cuts direct segments into slices until at least `wanted` are queued
+    /// or the part's segments run out. A segment wholly inside the scanned
+    /// key range and larger than a slice becomes block-aligned ranges; any
+    /// other segment stays one unit and decodes as it always did.
+    fn fill_direct_slices(&mut self, wanted: usize) -> Result<(), StoreError> {
+        while self.slices.len() < wanted {
+            let Some(segment) = self.segments.get(self.next_segment).cloned() else {
+                return Ok(());
+            };
+            self.next_segment += 1;
+            let full_direct = self.start <= segment.min_key && self.end >= segment.max_key;
+            if !full_direct || segment.row_count <= DIRECT_SLICE_ROWS {
+                self.slices.push_back(DirectSlice::Whole(segment));
+                continue;
+            }
+            let block = u64::try_from(segment::block_rows(
+                &self.snapshot.directory,
+                &segment,
+                &self.snapshot.schema,
+            )?)
+            .unwrap_or(u64::MAX)
+            .max(1);
+            let rows = (DIRECT_SLICE_ROWS / block).max(1).saturating_mul(block);
+            let mut start_row = 0;
+            while start_row < segment.row_count {
+                let end_row = start_row.saturating_add(rows).min(segment.row_count);
+                self.slices.push_back(DirectSlice::Range {
+                    segment: segment.clone(),
+                    start_row,
+                    end_row,
+                });
+                start_row = end_row;
+            }
+        }
+        Ok(())
+    }
+
+    fn decode_slice(
+        &self,
+        slice: &DirectSlice,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        match slice {
+            DirectSlice::Whole(segment) => {
+                self.decode_column_chunk_maybe_filtered(segment.clone(), memory_limit, prewhere)
+            }
+            DirectSlice::Range {
+                segment,
+                start_row,
+                end_row,
+            } => self.decode_range_maybe_filtered(
+                segment,
+                *start_row,
+                *end_row,
+                memory_limit,
+                prewhere,
+            ),
+        }
+    }
+
+    /// The filter-first path for one row range of a direct segment: the
+    /// predicate columns decode for the range alone, the selector picks the
+    /// surviving sub-ranges relative to it, and those decode in full at
+    /// their absolute positions. Without a selector, or when it keeps
+    /// everything, the range decodes whole.
+    fn decode_range_maybe_filtered(
+        &self,
+        segment: &segment::SegmentMeta,
+        start_row: u64,
+        end_row: u64,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        let Some((predicate_ids, select)) = prewhere.filter(|(ids, _)| !ids.is_empty()) else {
+            return self.decode_column_chunk_rows(segment, start_row, end_row, memory_limit);
+        };
+        let map_projection = |ids: &[u32]| -> Result<Vec<usize>, StoreError> {
+            ids.iter()
+                .map(|id| {
+                    self.snapshot
+                        .schema
+                        .columns()
+                        .iter()
+                        .position(|column| column.id() == *id)
+                        .ok_or_else(|| {
+                            StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                        })
+                })
+                .collect()
+        };
+        let start = usize::try_from(start_row)
+            .map_err(|_| StoreError::FormatLimit("range start exceeds usize".into()))?;
+        let end = usize::try_from(end_row)
+            .map_err(|_| StoreError::FormatLimit("range end exceeds usize".into()))?;
+        let row_count = end.saturating_sub(start);
+        let scan_memory = AtomicUsize::new(0);
+        let scan_budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+        let fetch = segment::read_projected_columns(
+            &self.snapshot.directory,
+            segment,
+            &self.snapshot.schema,
+            &map_projection(predicate_ids)?,
+            start,
+            end,
+            &scan_budget,
+        )?;
+        let predicate_blocks_read = fetch.blocks_read;
+        let predicate_blocks_pruned = fetch.blocks_pruned;
+        let predicate_blocks_decoded = fetch.blocks_decoded;
+        let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+        let predicate_reserved = fetch.reserved_bytes;
+        drop(fetch);
+        scan_budget.release(predicate_reserved);
+        let Some(ranges) = ranges else {
+            let mut chunk =
+                self.decode_column_chunk_rows(segment, start_row, end_row, memory_limit)?;
+            chunk.stats.blocks_read += predicate_blocks_read;
+            chunk.stats.blocks_pruned += predicate_blocks_pruned;
+            chunk.stats.blocks_decoded += predicate_blocks_decoded;
+            return Ok(chunk);
+        };
+        // The selector saw the range's rows from zero; the segment reader
+        // wants their positions in the segment.
+        let absolute = ranges
+            .iter()
+            .map(|range| range.start + start..range.end + start)
+            .collect::<Vec<_>>();
+        let fetch = segment::read_projected_column_ranges(
+            &self.snapshot.directory,
+            segment,
+            &self.snapshot.schema,
+            &map_projection(&self.column_ids)?,
+            &absolute,
+            &scan_budget,
+        )?;
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                fetch
+                    .columns
+                    .capacity()
+                    .saturating_mul(size_of::<DecodedColumn>()),
+            )
+            .saturating_add(
+                fetch
+                    .columns
+                    .iter()
+                    .map(DecodedColumn::retained_bytes)
+                    .sum(),
+            );
+        scan_budget.release(fetch.reserved_bytes);
+        scan_budget.reserve(retained_bytes)?;
+        Ok(ProjectedColumnChunk {
+            columns: fetch.columns,
+            row_count: absolute.iter().map(std::iter::ExactSizeIterator::len).sum(),
+            stats: ScanStats {
+                segments_read: usize::from(start_row == 0),
+                blocks_read: predicate_blocks_read + fetch.blocks_read,
+                blocks_pruned: predicate_blocks_pruned + fetch.blocks_pruned,
+                blocks_decoded: predicate_blocks_decoded + fetch.blocks_decoded,
+                ..ScanStats::default()
+            },
+            retained_bytes,
+        })
     }
 
     /// Routes one segment through the filter-first path when a predicate
@@ -1641,7 +1826,8 @@ impl ProjectedScanStream {
             columns: fetch.columns,
             row_count,
             stats: ScanStats {
-                segments_read: 1,
+                // A segment read in ranges is still one segment read.
+                segments_read: usize::from(start_row == 0),
                 blocks_decoded: fetch.blocks_decoded,
                 blocks_read: fetch.blocks_read,
                 blocks_pruned: fetch.blocks_pruned,
