@@ -2207,7 +2207,6 @@ dependencies = [
  "pintail-wire",
  "rand 0.9.5",
  "rusqlite",
- "rustix",
  "serde",
  "tempfile",
  "tikv-jemallocator",

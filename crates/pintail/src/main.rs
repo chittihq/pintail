@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
     // surfaces draws from one bound.
     pintail_wire::init_shared_admission(config.max_concurrent_queries());
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
+    raise_open_file_limit();
     report_effective_limits(&config);
 
     let api_state = ApiState::new(
@@ -262,24 +263,52 @@ fn report_effective_limits(config: &pintail::config::AppConfig) {
     );
 }
 
-/// The descriptor soft and hard limits, when the platform reports them.
+/// The descriptor soft limit the process raises itself to when it inherits
+/// a lower one. A columnar scan opens the segment files it reads and every
+/// concurrent spilling query holds a bounded handful of run files, so a
+/// desktop default of 1024 runs out under load while this does not.
+const OPEN_FILE_TARGET: u64 = 65_536;
+
+/// Raises the soft descriptor limit toward [`OPEN_FILE_TARGET`], capped by
+/// the inherited hard limit.
 ///
-/// Read from `/proc`, so no libc dependency and no unsafe: Linux is where
-/// the container runs and where the limit has bitten. Elsewhere this is
-/// one honest word rather than a number the process did not check.
-fn open_file_limit() -> String {
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(limits) = std::fs::read_to_string("/proc/self/limits")
-            && let Some(line) = limits
-                .lines()
-                .find(|line| line.starts_with("Max open files"))
-        {
-            let mut fields = line["Max open files".len()..].split_whitespace();
-            if let (Some(soft), Some(hard)) = (fields.next(), fields.next()) {
-                return format!("{soft}/{hard}");
-            }
-        }
+/// Best effort and conservative: a soft limit already at or above the
+/// target is left alone, the hard limit is never touched, and a refusal is
+/// reported rather than treated as fatal, since the process can run under
+/// the inherited limit and the limits line that follows says what it got.
+/// `PINTAIL_KEEP_OPEN_FILE_LIMIT=1` opts out for an operator who set the
+/// soft limit deliberately. The shipped compose file already sets soft and
+/// hard equal, so this matters for the bare binary and other packagings.
+fn raise_open_file_limit() {
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+    if std::env::var_os("PINTAIL_KEEP_OPEN_FILE_LIMIT").is_some_and(|value| value == "1") {
+        return;
     }
-    "unknown".to_owned()
+    let current = getrlimit(Resource::Nofile);
+    let target = current
+        .maximum
+        .map_or(OPEN_FILE_TARGET, |hard| hard.min(OPEN_FILE_TARGET));
+    if current.current.is_some_and(|soft| soft >= target) {
+        return;
+    }
+    let raised = Rlimit {
+        current: Some(target),
+        maximum: current.maximum,
+    };
+    if let Err(error) = setrlimit(Resource::Nofile, raised) {
+        pintail_log::log_error!(
+            "could not raise the open file soft limit from {} to {target}: {error}",
+            current
+                .current
+                .map_or_else(|| "unlimited".to_owned(), |soft| soft.to_string())
+        );
+    }
+}
+
+/// The descriptor soft and hard limits as the kernel reports them.
+fn open_file_limit() -> String {
+    let limit = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+    let describe =
+        |value: Option<u64>| value.map_or_else(|| "unlimited".to_owned(), |v| v.to_string());
+    format!("{}/{}", describe(limit.current), describe(limit.maximum))
 }
