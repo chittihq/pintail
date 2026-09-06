@@ -38,13 +38,13 @@ per-query ceiling and a 9 GiB shared budget.
   re-run only moves the image tag, so an existing install would never have
   received it. The template now sets the limit and a re-run warns when an
   older file lacks it.
-- [ ] **B2. `PINTAIL_MAX_CONCURRENT_QUERIES` never reached the server.**
+- [x] **B2. `PINTAIL_MAX_CONCURRENT_QUERIES` never reached the server.**
   The compose file passes ten other `PINTAIL_*` keys through and silently
   dropped this one, so a deployment that configured it ran the default
   (`cores * 4`, minimum 16) instead. Every other knob is honoured; this one
   read as configured and was not. Pass it through, and add a compose/env
   consistency check so a dropped knob fails a gate rather than a dashboard.
-- [ ] **B3. Nothing reported the settings actually in force.** A dropped
+- [x] **B3. Nothing reported the settings actually in force.** A dropped
   environment variable is invisible today. Log one line at startup naming
   the effective admission limit, per-query ceiling, shared budget, process
   memory ceiling, descriptor soft and hard limits, and spill directory and
@@ -96,7 +96,7 @@ operators.
   bound, and `SpilledMerge::new` loads every head. Its comment treats input
   bytes over the memory ceiling as a sufficient bound, which is exactly the
   assumption this incident disproved. Same closed-run treatment.
-- [ ] **C1c. Grace join: a separate real bug, fix before bounding it.**
+- [x] **C1c. Grace join: a separate real bug, fix before bounding it.**
   The serve loop calls `reader()` on a build partition, consuming the
   writer; on overflow it drops that reader and `split_grace_partition`
   calls `reader()` on the same run again, which returns
@@ -105,6 +105,10 @@ operators.
   16 build plus 16 probe files are created up front and each split adds 32
   more, with `MAX_GRACE_DEPTH` bounding recursion depth rather than pending
   partitions. Pending sealed partitions should hold paths, not writers.
+  Done: a run seals on first read and reopens from its path on every
+  read, every run seals once probe routing finishes, and the serve-then-
+  split sequence is a unit test. The up-front file count and the growth
+  per split are unchanged and belong to C1.
 - [x] **C1d. `two_pass.rs` does not spill at all.** Its partitions are
   in-memory buckets and maps, with no file creation. My earlier assumption
   that it shared the defect was wrong; nothing to do there.
