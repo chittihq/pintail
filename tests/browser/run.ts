@@ -788,6 +788,22 @@ async function main() {
     await page!.getByRole('link', { name: DATABASE }).first().click()
     await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
 
+    // The snapshot journal is how the copy proves it ran when the page
+    // cannot: the initial snapshot journalled the table's first rows, and a
+    // resync rewrites that figure with the rows it copied.
+    const databaseId = new URL(page!.url()).pathname.split('/').pop() ?? ''
+    const journalledRows = async (): Promise<number> =>
+      page!.evaluate(async ([id, table]) => {
+        const token = window.localStorage.getItem('pintail.token')
+        const response = await fetch(`/api/databases/${id}/snapshot/status`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
+        if (!response.ok) return -1
+        const status = (await response.json()) as { tables: Array<{ name: string; rows: number }> }
+        return status.tables.find((entry) => entry.name === table)?.rows ?? -1
+      }, [databaseId, 'events'] as const)
+    const rowsBefore = await journalledRows()
+
     // One click, no manual retry loop: the busy window is the dashboard's
     // job now. The accept toast is the feedback contract.
     await page!.getByRole('button', { name: 'Resync', exact: true }).first().click()
@@ -796,11 +812,37 @@ async function main() {
       .waitFor({ timeout: 45_000 })
 
     // The progress bar renders while the copy runs, with a live row count.
+    // The bar exists only while the table is snapshotting, and a copy of
+    // two thousand rows takes about ten milliseconds on a fast runner: the
+    // one progress frame lands together with completion, and there is no
+    // moment for a bar to be seen. So the wait accepts either outcome the
+    // user would: a bar with its row count, or a copy the journal shows
+    // finished before a frame could render. A copy that neither renders
+    // nor finishes within the window is the regression this guards.
     const progress = page!.getByTestId('resnapshot-progress').first()
-    await progress.waitFor({ timeout: 30_000 })
-    const label = (await progress.textContent()) ?? ''
-    if (!/rows copied/.test(label)) {
-      throw new Error(`progress rendered without its row count: ${JSON.stringify(label)}`)
+    const barDeadline = Date.now() + 30_000
+    let observed: 'bar' | 'finished' | null = null
+    while (observed === null) {
+      if ((await progress.count()) > 0) {
+        const label = (await progress.textContent()) ?? ''
+        if (!/rows copied/.test(label)) {
+          throw new Error(`progress rendered without its row count: ${JSON.stringify(label)}`)
+        }
+        observed = 'bar'
+        break
+      }
+      const rowsNow = await journalledRows()
+      if (rowsNow > rowsBefore && rowsNow >= 2_048) {
+        observed = 'finished'
+        log(`  resync copied ${rowsNow} rows before a progress frame could render`)
+        break
+      }
+      if (Date.now() > barDeadline) {
+        throw new Error(
+          `the resync neither rendered a progress bar nor finished within 30s (journal rows ${rowsNow}, before ${rowsBefore})`,
+        )
+      }
+      await Bun.sleep(250)
     }
 
     // The bar survives a reload: the server retains the last progress frame
