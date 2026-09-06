@@ -34,6 +34,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- Backups and restores stream their segment transfers, four objects at a
+  time. Segments above 8 MiB upload as multipart with two parts in flight
+  and a whole-object digest computed as the parts are read; restores write
+  each object to disk as it arrives while checking its size and SHA-256.
+  On a 10 GiB synthetic dataset over loopback MinIO a full backup fell from
+  about 48 s to 26 s and a restore from 22 s to 14 s, with peak client
+  memory at 256 MiB segments down from about 265 MiB to under 100 MiB.
 - Initial snapshots run their workers as spawned tasks, each chunk's row
   conversion and segment write on a blocking-permitted thread, instead of
   polling every worker from one future so that only one converted or wrote

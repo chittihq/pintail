@@ -105,7 +105,7 @@ Build the baseline example at `fdd7222`, save its release executable as `EXPERIM
 
 ```sh
 RUSTUP_TOOLCHAIN=1.97.1 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo build --locked --release -p pintail-backup --example s3_transfer_bench
-python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT
+python3 experiments/backup-transfers/harness.py EXPERIMENT_ROOT
 ```
 
 The runner generates fresh credentials, starts its own S3 service, records binary hashes, alternates configurations, verifies results and removes its temporary data. Raw measurements are in [measurements.jsonl](measurements.jsonl); toolchain, binary hashes and scope are in [metadata.json](metadata.json).

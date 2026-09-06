@@ -75,7 +75,7 @@ The incremental case changes one in four payloads under the same logical names. 
 Use the binary setup in the [original report](../README.md), with at least 38 GiB free in the experiment directory before starting.
 
 ```sh
-python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT --dataset 10gib
+python3 experiments/backup-transfers/harness.py EXPERIMENT_ROOT --dataset 10gib
 ```
 
 [Raw measurements](measurements.jsonl) · [Binary hashes and metadata](metadata.json)

@@ -2575,3 +2575,27 @@ conversion and write rather than the branch's thread-per-worker with a
 private runtime, which gave up cancellation; the expanded seek shipped as the
 only predicate form. The range prototype is recorded and not shipped: it needs
 a range planner, one-table segment assembly and a resumable range journal.
+
+## e69 — Backup and restore transfers streamed with bounded concurrency (10 GiB synthetic, loopback MinIO)
+
+From PR #35. Segments above 8 MiB upload as multipart with two parts in
+flight and a whole-object digest computed as the parts are read; restores
+stream each object to disk while its size and SHA-256 are checked; four
+objects transfer at a time. Medians of three fresh-process trials after a
+warm-up, client RSS only. Full report and the smaller earlier datasets in
+[`backup-transfers/`](backup-transfers/README.md).
+
+| Segment layout | Full backup, before → after | Restore, before → after |
+|---|---:|---:|
+| 160 × 64 MiB | 47.74 s → 26.08 s (1.83×) | 22.35 s → 13.60 s (1.64×) |
+| 40 × 256 MiB | 42.91 s → 26.77 s (1.60×) | 20.20 s → 10.79 s (1.87×) |
+
+Peak client RSS at 256 MiB segments fell from 264 to 97 MiB on backup and 267
+to 29 MiB on restore; at 64 MiB segments backup RSS rose from 72 to 107 MiB,
+the cost of four objects in flight. Loopback MinIO on local NVMe with the page
+cache warm: these are transport figures, not cloud S3 figures, and the 1 GiB
+datasets overstated the gain (3.29× against 1.83× here).
+
+**Verdict: keep.** Format, incremental reuse, manifest-last publication and
+staged restore are unchanged; the concurrency is a code default of four with
+no operator knob yet.

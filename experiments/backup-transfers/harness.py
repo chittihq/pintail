@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark two prebuilt backup binaries against an isolated local S3 service.
 
-Usage: python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT [--dataset 10gib]
+Usage: python3 experiments/backup-transfers/harness.py EXPERIMENT_ROOT [--dataset 10gib]
 Requires bin/{minio,baseline,streaming}, curl and GNU time. All service state
 and synthetic data are temporary; only measurements and logs are retained.
 """

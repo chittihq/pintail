@@ -535,7 +535,8 @@ async fn restore_objects(
         validate_component(&table.name, "table name")?;
         validate_component(&table.directory_name, "table directory name")?;
         let table_dir = tables_root.join(&table.directory_name);
-        std::fs::create_dir(&table_dir)?;
+        std::fs::create_dir(&table_dir)
+            .with_context(|| format!("failed to create restored table {}", table.name))?;
         objects.push((&table.manifest, table_dir.join("manifest.ptm")));
         for segment in &table.segments {
             let file_name = segment
