@@ -20,6 +20,7 @@ use super::join::{
     JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, PartitionedBuild, build_hash_join_state,
     normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
+use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
 use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
 };
@@ -1991,15 +1992,17 @@ fn try_sma_fold(
 
 /// Batches gathered before a parallel round runs.
 ///
-/// This is the parallel WIDTH of aggregation: the round is pulled serially,
-/// handed to `par_iter`, and merged serially, so a round of eight can occupy
-/// at most eight threads however many the machine has. Measured 1->16 threads
-/// on sixteen cores, a join-free group-by peaked at 3.12x and went flat after
-/// eight threads, which is the shape of exactly this cap.
-///
-/// Sized from the pool so the round can fill the machine. The per-round memory
-/// ceiling below still bounds it, so a wide machine with a tight budget cuts
-/// the round short rather than overcommitting.
+/// The round is pulled serially, cut into row-range morsels for the pool,
+/// and merged serially. Its width no longer depends on how many batches it
+/// holds - a round of one batch still runs on every thread - so this only
+/// bounds the rows in flight per round. The per-round memory ceiling below
+/// bounds it further, and a round cut short by that ceiling keeps its full
+/// width.
+/// Fewest rows a wave of the general aggregate path is sized for.
+const WAVE_ROWS_FLOOR: usize = 1_024;
+/// Bytes a wave leaves free below the ceiling for the merge that follows it.
+const WAVE_RESERVE_FLOOR: usize = 256 * 1024;
+
 fn aggregate_round_batches() -> usize {
     rayon::current_num_threads().clamp(8, 64)
 }
@@ -2326,6 +2329,7 @@ fn build_buffered_hash_aggregate(
     let mut groups_reserved = 0_usize;
     let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     let mut first_batch = Some(first_batch);
+    let mut waves_debug = (0_usize, 0_usize);
     let per_row_upper = group_by
         .len()
         .saturating_mul(size_of::<Value>())
@@ -2381,102 +2385,154 @@ fn build_buffered_hash_aggregate(
         if batches.is_empty() {
             break;
         }
-        let local_upper = selected_rows.saturating_mul(per_row_upper);
-        reserve_or_spill_groups(
-            local_upper,
-            &mut groups,
-            &mut groups_reserved,
-            &mut spill_runs,
-            memory,
-        )?;
-        let mut used_before_merge = memory.used();
-        // The batch and its upper bound were reserved through the spill-on-
-        // failure path, but building the partial groups reserves again, in
-        // small pieces, and can land on a budget already filled to within a
-        // hundred bytes: a 136-byte key with nothing left fails the query
-        // where it should have spilled. So spill BEFORE the build when the
-        // ceiling is close, and if the build still runs out while the map
-        // holds groups, spill, hand back what the failed build took, and
-        // build once more.
-        if memory.used() > memory.limit().saturating_mul(3) / 4 && !groups.is_empty() {
-            spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
-            memory.release(groups_reserved);
-            groups_reserved = 0;
-            used_before_merge = memory.used();
-        }
-        let build_partials = || {
-            batches
-                .par_iter()
-                .map(|batch| {
-                    direct_columns.map_or_else(
-                        || {
-                            build_local_expression_groups(
-                                batch,
-                                group_by,
-                                aggregates,
-                                memory,
-                                key_collations,
-                            )
-                        },
-                        |columns| {
-                            build_local_direct_groups(
-                                batch,
-                                columns,
-                                aggregates,
-                                memory,
-                                key_collations,
-                            )
-                        },
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()
-        };
-        let partials = match build_partials() {
-            Ok(partials) => partials,
-            Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
-                // The failed build's partial reservations are dropped with it.
-                memory.release(memory.used().saturating_sub(used_before_merge));
+        // The round's rows are cut into morsels, and the morsels run in
+        // WAVES: each wave reserves the pessimistic every-row-is-a-group
+        // bound for its own rows only, sized to the room below the spill
+        // pressure line. A round used to reserve that bound for all of its
+        // rows at once, so a 64 MiB query whose scan already held 21 MB of
+        // ready batches asked 55 MB for one round and failed where it should
+        // have run the round in smaller pieces; and a wave sized to the
+        // whole remainder pushed the tracker over the pressure line every
+        // time, spilling a fifty-group map once per wave. A wave still runs
+        // on the whole pool whenever memory allows it; only the rows in
+        // flight shrink.
+        let morsels = split_into_morsels(&batches);
+        let mut next_morsel = 0;
+        // Physical rows of `morsels[next_morsel]` already run by an earlier
+        // wave, when a morsel had to be cut to fit the budget.
+        let mut morsel_offset = 0;
+        while next_morsel < morsels.len() {
+            // Fill to half the ceiling, not to the spill pressure line: the
+            // partial builds reserve on top of the wave's bound, and a wave
+            // that lands exactly on the line makes the first merge spill.
+            // Never below a thousand rows' worth, so a ceiling the scan has
+            // mostly filled still moves the query forward in real steps;
+            // `reserve_or_spill_groups` spills the map to fit that.
+            let wave_budget = match (memory.limit() / 2).saturating_sub(memory.used()) {
+                0 => memory.remaining() / 4,
+                headroom => headroom,
+            }
+            .max(per_row_upper.saturating_mul(WAVE_ROWS_FLOOR))
+            // ...and never to the brim: the merge that follows reserves its
+            // first entries against what is left, and an empty map has
+            // nothing to spill to make room for them.
+            .min(memory.remaining().saturating_sub(WAVE_RESERVE_FLOOR));
+            let mut wave: Vec<Morsel<'_>> = Vec::new();
+            let mut wave_upper = 0_usize;
+            while next_morsel < morsels.len() {
+                let morsel = &morsels[next_morsel];
+                let rest = Morsel {
+                    batch: morsel.batch,
+                    rows: morsel.rows.start + morsel_offset..morsel.rows.end,
+                };
+                let upper = rest.selected_count().saturating_mul(per_row_upper);
+                if wave_upper.saturating_add(upper) <= wave_budget {
+                    wave_upper = wave_upper.saturating_add(upper);
+                    wave.push(rest);
+                    next_morsel += 1;
+                    morsel_offset = 0;
+                    continue;
+                }
+                if wave.is_empty() {
+                    // Too large for the budget whole: run the prefix that
+                    // fits and leave the remainder for the next wave.
+                    let rows = wave_budget
+                        .checked_div(per_row_upper)
+                        .unwrap_or(rest.rows.len())
+                        .clamp(1, rest.rows.len());
+                    let prefix = Morsel {
+                        batch: rest.batch,
+                        rows: rest.rows.start..rest.rows.start + rows,
+                    };
+                    wave_upper = prefix.selected_count().saturating_mul(per_row_upper);
+                    wave.push(prefix);
+                    morsel_offset += rows;
+                    if morsel_offset >= morsel.rows.len() {
+                        next_morsel += 1;
+                        morsel_offset = 0;
+                    }
+                }
+                break;
+            }
+            waves_debug.0 += 1;
+            waves_debug.1 += wave.len();
+            let wave = wave.as_slice();
+            reserve_or_spill_groups(
+                wave_upper,
+                &mut groups,
+                &mut groups_reserved,
+                &mut spill_runs,
+                memory,
+            )?;
+            let mut used_before_merge = memory.used();
+            // The batch and its upper bound were reserved through the spill-on-
+            // failure path, but building the partial groups reserves again, in
+            // small pieces, and can land on a budget already filled to within a
+            // hundred bytes: a 136-byte key with nothing left fails the query
+            // where it should have spilled. So spill BEFORE the build when the
+            // ceiling is close, and if the build still runs out while the map
+            // holds groups, spill, hand back what the failed build took, and
+            // build once more.
+            if memory.used() > memory.limit().saturating_mul(3) / 4 && !groups.is_empty() {
                 spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                 memory.release(groups_reserved);
                 groups_reserved = 0;
                 used_before_merge = memory.used();
-                build_partials()?
             }
-            Err(error) => return Err(error),
-        };
-        for partial in partials {
-            for entry in partial {
-                let mut pending = Some(entry);
-                while let Some((key, partial_group)) = pending.take() {
-                    // Spill BEFORE merging when the ceiling is close, not after
-                    // a merge has failed. A merge that runs out part-way cannot
-                    // be retried: the group has already been partially updated,
-                    // so the entry cannot be handed back and the error escapes
-                    // instead of spilling. A group's COUNT(DISTINCT) sets grow
-                    // through exactly that path, which is why this query failed
-                    // where it should have spilled once anything else held a
-                    // large share of the budget.
-                    if memory.used() > memory.limit().saturating_mul(3) / 4 && !groups.is_empty() {
-                        groups_reserved = groups_reserved
-                            .saturating_add(memory.used().saturating_sub(used_before_merge));
-                        spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
-                        memory.release(groups_reserved);
-                        groups_reserved = 0;
-                        used_before_merge = memory.used();
-                    }
-                    match merge_partial_group(
-                        &mut groups,
-                        key,
-                        partial_group,
-                        aggregates,
-                        batch_reserved,
-                        memory,
-                    ) {
-                        Ok(()) => {}
-                        // The entry was handed back untouched, so spilling
-                        // the map here and retrying it is safe.
-                        Err((ExecError::MemoryLimitExceeded { .. }, Some(returned)))
-                            if !groups.is_empty() =>
+            let build_partials = || {
+                wave.par_iter()
+                    .map(|morsel| {
+                        direct_columns.map_or_else(
+                            || {
+                                build_local_expression_groups(
+                                    morsel,
+                                    group_by,
+                                    aggregates,
+                                    memory,
+                                    key_collations,
+                                )
+                            },
+                            |columns| {
+                                build_local_direct_groups(
+                                    morsel,
+                                    columns,
+                                    aggregates,
+                                    memory,
+                                    key_collations,
+                                )
+                            },
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let partials = match build_partials() {
+                Ok(partials) => partials,
+                Err(ExecError::MemoryLimitExceeded { .. }) if !groups.is_empty() => {
+                    // The failed build's partial reservations are dropped with it.
+                    memory.release(memory.used().saturating_sub(used_before_merge));
+                    spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                    memory.release(groups_reserved);
+                    groups_reserved = 0;
+                    used_before_merge = memory.used();
+                    build_partials()?
+                }
+                Err(error) => return Err(error),
+            };
+            for partial in partials {
+                for entry in partial {
+                    let mut pending = Some(entry);
+                    while let Some((key, partial_group)) = pending.take() {
+                        // Spill BEFORE merging when the ceiling is close, not
+                        // after a merge has failed. A merge that runs out
+                        // part-way cannot be retried: the group has already
+                        // been partially updated, so the entry cannot be handed
+                        // back and the error escapes instead of spilling. A
+                        // group's COUNT(DISTINCT) sets grow through exactly that
+                        // path, which is why this query failed where it should
+                        // have spilled once anything else held a large share of
+                        // the budget.
+                        if memory.used() > memory.limit().saturating_mul(3) / 4
+                            && !groups.is_empty()
                         {
                             groups_reserved = groups_reserved
                                 .saturating_add(memory.used().saturating_sub(used_before_merge));
@@ -2484,16 +2540,40 @@ fn build_buffered_hash_aggregate(
                             memory.release(groups_reserved);
                             groups_reserved = 0;
                             used_before_merge = memory.used();
-                            pending = Some(returned);
                         }
-                        Err((error, _)) => return Err(error),
+                        match merge_partial_group(
+                            &mut groups,
+                            key,
+                            partial_group,
+                            aggregates,
+                            batch_reserved,
+                            memory,
+                        ) {
+                            Ok(()) => {}
+                            // The entry was handed back untouched, so spilling
+                            // the map here and retrying it is safe.
+                            Err((ExecError::MemoryLimitExceeded { .. }, Some(returned)))
+                                if !groups.is_empty() =>
+                            {
+                                groups_reserved = groups_reserved.saturating_add(
+                                    memory.used().saturating_sub(used_before_merge),
+                                );
+                                spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                                memory.release(groups_reserved);
+                                groups_reserved = 0;
+                                used_before_merge = memory.used();
+                                pending = Some(returned);
+                            }
+                            Err((error, _)) => return Err(error),
+                        }
                     }
                 }
             }
+            groups_reserved =
+                groups_reserved.saturating_add(memory.used().saturating_sub(used_before_merge));
+            memory.release(wave_upper);
         }
-        groups_reserved =
-            groups_reserved.saturating_add(memory.used().saturating_sub(used_before_merge));
-        memory.release(local_upper.saturating_add(batch_reserved));
+        memory.release(batch_reserved);
         // Proactive spill at half the ceiling, mirroring the sort spill:
         // upstream scans size their working sets from the remaining
         // headroom, so a group map that hoards the budget until hard
@@ -2512,6 +2592,15 @@ fn build_buffered_hash_aggregate(
             memory.release(groups_reserved);
             groups_reserved = 0;
         }
+    }
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        eprintln!(
+            "[agg] general path: {} groups, {} waves over {} morsels, {} spill runs",
+            groups.len(),
+            waves_debug.0,
+            waves_debug.1,
+            spill_runs.len()
+        );
     }
     if spill_runs.is_empty() {
         return finish_aggregate_groups(groups.into_values(), memory);
@@ -3205,6 +3294,47 @@ fn build_fused_inner_join_aggregate(
         };
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, group_collation)?;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
+    // What one morsel allocates: the plan's whole group set, cloned up
+    // front, plus a state per aggregate per group. The groups are FIXED by
+    // the build side, so the bound is per morsel and per group, not per
+    // probe row - the old per-row figure charged 776 bytes for every row of
+    // a round and refused a ten-thread round of 64K-row batches under the
+    // shipped ceiling, for a query with eight groups.
+    let per_morsel_upper = plan
+        .values
+        .iter()
+        .map(|values| estimated_row_payload_bytes(values))
+        .sum::<usize>()
+        .saturating_add(
+            plan.values.len().saturating_mul(
+                size_of::<AggregateGroup>()
+                    .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
+                    .saturating_add(HASH_ENTRY_OVERHEAD)
+                    .saturating_add(size_of::<bool>()),
+            ),
+        )
+        .saturating_add(256);
+    // States that grow per row (distinct sets, concatenations) keep a
+    // per-row share on top.
+    let per_row_upper = if aggregates.iter().any(|aggregate| {
+        aggregate.distinct
+            || matches!(
+                aggregate.function,
+                AggregateFunction::GroupConcat
+                    | AggregateFunction::JsonArrayAgg
+                    | AggregateFunction::JsonObjectAgg
+            )
+    }) {
+        size_of::<Value>().saturating_mul(2).saturating_add(64)
+    } else {
+        0
+    };
+    // A plan with many groups makes each morsel expensive to open, so the
+    // morsel count bends to what a quarter of the ceiling can hold.
+    let morsel_limit = (memory.limit() / 4)
+        .checked_div(per_morsel_upper)
+        .unwrap_or(usize::MAX)
+        .clamp(1, default_morsel_limit());
     loop {
         let gather_clock = std::time::Instant::now();
         let round = aggregate_round_batches();
@@ -3227,22 +3357,17 @@ fn build_fused_inner_join_aggregate(
             .iter()
             .map(RecordBatch::visible_row_count)
             .sum::<usize>();
-        let local_upper = selected_rows.saturating_mul(
-            right_group_columns
-                .len()
-                .saturating_mul(size_of::<Value>())
-                .saturating_mul(2)
-                .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
-                .saturating_add(size_of::<AggregateGroup>())
-                .saturating_add(HASH_ENTRY_OVERHEAD)
-                .saturating_add(256),
-        );
+        let morsels = split_into_morsels_bounded(&batches, morsel_limit);
+        let local_upper = morsels
+            .len()
+            .saturating_mul(per_morsel_upper)
+            .saturating_add(selected_rows.saturating_mul(per_row_upper));
         memory.reserve(local_upper)?;
-        let partials = batches
+        let partials = morsels
             .par_iter()
-            .map(|batch| {
+            .map(|morsel| {
                 build_local_fused_join_groups(
-                    batch,
+                    morsel,
                     left_key,
                     *key_mode,
                     group_collation,
@@ -3313,7 +3438,7 @@ fn build_fused_inner_join_aggregate(
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn build_local_fused_join_groups(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     left_key: &CompiledExpr,
     key_mode: JoinKeyMode,
     group_collation: Collation,
@@ -3337,6 +3462,7 @@ fn build_local_fused_join_groups(
         .collect::<Vec<_>>();
     let mut touched = vec![false; groups.len()];
     let memory = parent_memory.unbounded_worker();
+    let batch = morsel.batch;
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
@@ -3352,7 +3478,7 @@ fn build_local_fused_join_groups(
                 )
             })
     });
-    for (offset, row) in batch.selection().selected_rows().enumerate() {
+    for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
@@ -3478,7 +3604,7 @@ fn build_local_fused_join_groups(
 /// back (`None`) whenever the shape doesn't qualify.
 #[allow(clippy::too_many_lines)]
 fn build_local_dictionary_groups(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
@@ -3491,6 +3617,7 @@ fn build_local_dictionary_groups(
     const MAX_CODES: usize = 256;
     const MAX_SLOTS: usize = 4096;
     let memory = parent_memory.unbounded_worker();
+    let batch = morsel.batch;
     if group_columns.is_empty() || group_columns.len() > 2 {
         return Ok(None);
     }
@@ -3549,13 +3676,13 @@ fn build_local_dictionary_groups(
     // of a slot exhibits every key column's original value.
     let mut column_dicts: Vec<Vec<Option<usize>>> =
         key_columns.iter().map(|_| vec![None]).collect();
-    let selected = batch.visible_row_count();
+    let selected = morsel.selected_count();
     let mut rows_buffer = Vec::with_capacity(selected);
     let mut codes_buffer = Vec::with_capacity(selected);
     let composite_capacity = MAX_CODES.pow(u32::try_from(key_columns.len()).expect("<= 2 columns"));
     let mut slot_table = vec![u16::MAX; composite_capacity];
     let mut slot_rows: Vec<usize> = Vec::new();
-    for (offset, row) in batch.selection().selected_rows().enumerate() {
+    for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
@@ -3730,14 +3857,15 @@ fn build_local_dictionary_groups(
 }
 
 fn build_local_direct_groups(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     group_columns: &[usize],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
     key_collations: &[Collation],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    let batch = morsel.batch;
     if let Some(groups) = build_local_dictionary_groups(
-        batch,
+        morsel,
         group_columns,
         aggregates,
         parent_memory,
@@ -3749,7 +3877,7 @@ fn build_local_direct_groups(
     let mut raw_index = HashMap::<u64, usize>::new();
     let memory = parent_memory.unbounded_worker();
     let batch_bytes = batch.estimated_bytes();
-    for (offset, row) in batch.selection().selected_rows().enumerate() {
+    for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
@@ -3825,16 +3953,17 @@ fn build_local_direct_groups(
 }
 
 fn build_local_expression_groups(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     parent_memory: &MemoryTracker,
     key_collations: &[Collation],
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
+    let batch = morsel.batch;
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     let memory = parent_memory.unbounded_worker();
     let batch_bytes = batch.estimated_bytes();
-    for (offset, row) in batch.selection().selected_rows().enumerate() {
+    for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }

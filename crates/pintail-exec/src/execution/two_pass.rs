@@ -12,6 +12,7 @@ use super::aggregate::{
     decimal_units_from_int, merge_spilled_aggregate_groups, write_aggregate_spill_run,
 };
 use super::join::{normalized_collation_text, normalized_hash_key};
+use super::morsel::{Morsel, default_morsel_limit, morsel_plan};
 use super::{
     ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator,
     estimated_row_payload_bytes,
@@ -772,10 +773,22 @@ pub(super) fn build_streaming_two_pass_aggregate(
                 )?;
             }
             (TwoPassKeySource::Int { column, .. }, _) => {
-                two_pass_scatter_batch(&current, column, lanes, partitions, &mut buckets)?;
+                two_pass_scatter_batch(
+                    &Morsel::whole(&current),
+                    column,
+                    lanes,
+                    partitions,
+                    &mut buckets,
+                )?;
             }
             (TwoPassKeySource::DateParts { parts }, _) => {
-                two_pass_scatter_date_parts(&current, parts, lanes, partitions, &mut buckets)?;
+                two_pass_scatter_date_parts(
+                    &Morsel::whole(&current),
+                    parts,
+                    lanes,
+                    partitions,
+                    &mut buckets,
+                )?;
             }
             _ => unreachable!("intern presence follows the key source"),
         }
@@ -957,16 +970,17 @@ pub(super) fn build_streaming_two_pass_aggregate(
 /// Pass 1 for one batch: extract (key bits, lane bits, null mask) per
 /// selected row into the partition buckets. Reservation is the caller\'s.
 fn two_pass_scatter_batch(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     group_column: usize,
     lanes: &[TwoPassLane],
     partitions: usize,
     buckets: &mut [TwoPassBucket],
 ) -> Result<(), ExecError> {
+    let batch = morsel.batch;
     let group_values = batch.column(group_column).ok_or(ExecError::InvalidBatch(
         "grouping column is outside the input batch",
     ))?;
-    for row in batch.selection().selected_rows() {
+    for row in morsel.selected_rows() {
         let value = group_values.value(row).ok_or(ExecError::InvalidBatch(
             "grouping row is outside the input batch",
         ))?;
@@ -1125,13 +1139,14 @@ fn prepare_text_translations(
 /// Scatters string keys from prepared (read-only) translations: no intern
 /// access, so windows of batches scatter in parallel.
 fn two_pass_scatter_text_prepared(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     columns: &[usize],
     translations: &[Vec<u64>],
     lanes: &[TwoPassLane],
     partitions: usize,
     buckets: &mut [TwoPassBucket],
 ) -> Result<(), ExecError> {
+    let batch = morsel.batch;
     let mut readers = Vec::with_capacity(columns.len());
     for (column, translation) in columns.iter().zip(translations) {
         let vector = batch.column(*column).ok_or(ExecError::InvalidBatch(
@@ -1150,7 +1165,7 @@ fn two_pass_scatter_text_prepared(
         readers.push((codes, validity, translation));
     }
     let pair = readers.len() == 2;
-    for row in batch.selection().selected_rows() {
+    for row in morsel.selected_rows() {
         let mut key_bits = 0_u64;
         let mut key_null = false;
         for (codes, validity, translation) in &readers {
@@ -1208,13 +1223,14 @@ fn two_pass_scatter_string_pair(
 /// Up to two bounded date-part expressions as the group key: values come
 /// straight from packed temporal units (no Value cells, no text).
 fn two_pass_scatter_date_parts(
-    batch: &RecordBatch,
+    morsel: &Morsel<'_>,
     parts: [Option<(DatePart, usize)>; 2],
     lanes: &[TwoPassLane],
     partitions: usize,
     buckets: &mut [TwoPassBucket],
 ) -> Result<(), ExecError> {
-    for row in batch.selection().selected_rows() {
+    let batch = morsel.batch;
+    for row in morsel.selected_rows() {
         let mut key_bits = 0_u64;
         for (part, column) in parts.iter().flatten() {
             let id = match crate::expression::evaluate_units_date_part(batch, *column, row, *part) {
@@ -1421,22 +1437,41 @@ fn drain_two_pass_window(
             group_reserved,
         )?;
     }
-    let mut sets = window
+    // Row-range morsels rather than whole batches: the window's width then
+    // comes from the pool, and a window of one or two batches - the tail of
+    // a scan, or a small table - no longer scatters on one or two threads.
+    let morsels: Vec<(Morsel<'_>, &Vec<Vec<u64>>)> = morsel_plan(
+        window.iter().map(|(batch, _)| batch.row_count()),
+        default_morsel_limit(),
+    )
+    .into_iter()
+    .map(|(index, rows)| {
+        let (batch, translations) = &window[index];
+        (Morsel { batch, rows }, translations)
+    })
+    .collect();
+    let mut sets = morsels
         .par_iter()
         .map(
-            |(batch, translations)| -> Result<Vec<TwoPassBucket>, ExecError> {
+            |(morsel, translations)| -> Result<Vec<TwoPassBucket>, ExecError> {
                 let mut buckets: Vec<TwoPassBucket> =
                     (0..partitions).map(|_| TwoPassBucket::default()).collect();
                 match keys {
                     TwoPassKeySource::Int { column, .. } => {
-                        two_pass_scatter_batch(batch, column, lanes, partitions, &mut buckets)?;
+                        two_pass_scatter_batch(morsel, column, lanes, partitions, &mut buckets)?;
                     }
                     TwoPassKeySource::DateParts { parts } => {
-                        two_pass_scatter_date_parts(batch, parts, lanes, partitions, &mut buckets)?;
+                        two_pass_scatter_date_parts(
+                            morsel,
+                            parts,
+                            lanes,
+                            partitions,
+                            &mut buckets,
+                        )?;
                     }
                     TwoPassKeySource::Text { column } => {
                         two_pass_scatter_text_prepared(
-                            batch,
+                            morsel,
                             &[column],
                             translations,
                             lanes,
@@ -1446,7 +1481,7 @@ fn drain_two_pass_window(
                     }
                     TwoPassKeySource::TextPair { first, second } => {
                         two_pass_scatter_text_prepared(
-                            batch,
+                            morsel,
                             &[first, second],
                             translations,
                             lanes,
@@ -1459,6 +1494,7 @@ fn drain_two_pass_window(
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
+    drop(morsels);
     window.clear();
     let outcome = two_pass_flush_sets(&mut sets, maps, lanes, aggregates, memory, group_reserved);
     memory.release(*window_reserved);

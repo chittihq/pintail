@@ -3,6 +3,7 @@ mod budget;
 mod error;
 mod join;
 mod memo;
+mod morsel;
 mod sort;
 mod two_pass;
 mod watchdog;

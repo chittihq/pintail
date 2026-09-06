@@ -905,10 +905,46 @@ impl SelectionMask {
     /// Iterates selected physical row indexes in ascending order.
     #[must_use]
     pub fn selected_rows(&self) -> SelectedRows<'_> {
-        SelectedRows {
+        self.selected_rows_in(0..self.len)
+    }
+
+    /// Iterates the selected physical row indexes inside `rows`, ascending.
+    /// The range is clamped to the mask; a reversed range is empty.
+    #[must_use]
+    pub fn selected_rows_in(&self, rows: std::ops::Range<usize>) -> SelectedRows<'_> {
+        let end = rows.end.min(self.len);
+        let start = rows.start.min(end);
+        let mut iterator = SelectedRows {
             mask: self,
-            next: 0,
+            cursor: start,
+            end,
+            loaded: start / 64,
+            word: 0,
+        };
+        iterator.word = iterator.word_from(start);
+        iterator
+    }
+
+    /// Counts the selected rows inside `rows`.
+    #[must_use]
+    pub fn count_in(&self, rows: std::ops::Range<usize>) -> usize {
+        let end = rows.end.min(self.len);
+        let start = rows.start.min(end);
+        if start == end {
+            return 0;
         }
+        let first_word = start / 64;
+        let last_word = (end - 1) / 64;
+        let head_mask = u64::MAX << (start % 64);
+        let tail_mask = u64::MAX >> (63 - ((end - 1) % 64));
+        if first_word == last_word {
+            return (self.words[first_word] & head_mask & tail_mask).count_ones() as usize;
+        }
+        let mut count = (self.words[first_word] & head_mask).count_ones() as usize;
+        for word in &self.words[first_word + 1..last_word] {
+            count += word.count_ones() as usize;
+        }
+        count + (self.words[last_word] & tail_mask).count_ones() as usize
     }
 
     fn clear_unused_tail_bits(&mut self) {
@@ -922,28 +958,63 @@ impl SelectionMask {
     }
 }
 
-/// Iterator over selected physical row indexes.
+/// Iterator over selected physical row indexes: a word at a time, skipping
+/// clear bits with a count rather than testing rows one by one.
 pub struct SelectedRows<'mask> {
     mask: &'mask SelectionMask,
-    next: usize,
+    /// The row `word`'s lowest bit stands for.
+    cursor: usize,
+    /// Exclusive end of the range.
+    end: usize,
+    /// Index of the mask word `word` was loaded from.
+    loaded: usize,
+    /// Remaining set bits of the loaded word, shifted so bit 0 is `cursor`.
+    word: u64,
+}
+
+impl SelectedRows<'_> {
+    /// The mask word holding `row`, shifted so `row` is its lowest bit and
+    /// bits at or past the range end are clear.
+    fn word_from(&self, row: usize) -> u64 {
+        if row >= self.end {
+            return 0;
+        }
+        let word = self.mask.words[row / 64] >> (row % 64);
+        let span = self.end - row;
+        if span < 64 {
+            word & ((1_u64 << span) - 1)
+        } else {
+            word
+        }
+    }
 }
 
 impl Iterator for SelectedRows<'_> {
     type Item = usize;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.next < self.mask.len {
-            let row = self.next;
-            self.next += 1;
-            if self.mask.is_selected(row) {
-                return Some(row);
+        while self.word == 0 {
+            let index = self.loaded + 1;
+            let start = index * 64;
+            if start >= self.end {
+                self.cursor = self.end;
+                return None;
             }
+            self.loaded = index;
+            self.cursor = start;
+            self.word = self.word_from(start);
         }
-        None
+        let skip = self.word.trailing_zeros() as usize;
+        let row = self.cursor + skip;
+        // Consume through `row`; a shift by 64 is not defined, hence two.
+        self.word >>= skip;
+        self.word >>= 1;
+        self.cursor = row + 1;
+        Some(row)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.mask.len.saturating_sub(self.next);
+        let remaining = self.end.saturating_sub(self.cursor);
         (0, Some(remaining))
     }
 }
@@ -1351,5 +1422,91 @@ mod temporal_tests {
         let text = text.built().expect("value-born text is ready");
         assert_eq!(text.len(), 3);
         assert!(!validity.is_valid(1));
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::SelectionMask;
+
+    fn mask_of(len: usize, selected: &[usize]) -> SelectionMask {
+        let mut mask = SelectionMask::none(len);
+        for row in selected {
+            mask.set(*row, true).expect("in bounds");
+        }
+        mask
+    }
+
+    #[test]
+    fn selected_rows_walk_every_set_bit_across_word_boundaries() {
+        let rows = [0, 1, 63, 64, 65, 127, 128, 200, 201, 299];
+        let mask = mask_of(300, &rows);
+        assert_eq!(mask.selected_rows().collect::<Vec<_>>(), rows.to_vec());
+        assert_eq!(mask.count(), rows.len());
+    }
+
+    #[test]
+    fn a_range_yields_only_its_rows() {
+        let rows = [0, 1, 63, 64, 65, 127, 128, 200, 201, 299];
+        let mask = mask_of(300, &rows);
+        assert_eq!(
+            mask.selected_rows_in(64..201).collect::<Vec<_>>(),
+            vec![64, 65, 127, 128, 200]
+        );
+        assert_eq!(mask.count_in(64..201), 5);
+        assert_eq!(
+            mask.selected_rows_in(1..64).collect::<Vec<_>>(),
+            vec![1, 63]
+        );
+        assert_eq!(mask.count_in(1..64), 2);
+        assert_eq!(mask.selected_rows_in(66..127).count(), 0);
+        assert_eq!(mask.count_in(66..127), 0);
+        assert_eq!(
+            mask.selected_rows_in(299..300).collect::<Vec<_>>(),
+            vec![299]
+        );
+        assert_eq!(mask.count_in(299..300), 1);
+    }
+
+    #[test]
+    fn ranges_clamp_to_the_mask_and_reversed_ranges_are_empty() {
+        let mask = SelectionMask::all(70);
+        assert_eq!(mask.selected_rows_in(60..1_000).count(), 10);
+        assert_eq!(mask.count_in(60..1_000), 10);
+        let reversed = std::ops::Range { start: 50, end: 10 };
+        assert_eq!(mask.selected_rows_in(reversed.clone()).count(), 0);
+        assert_eq!(mask.count_in(reversed), 0);
+        assert_eq!(mask.selected_rows_in(70..70).count(), 0);
+    }
+
+    #[test]
+    fn a_full_mask_counts_and_walks_every_row() {
+        let mask = SelectionMask::all(1_000);
+        assert_eq!(mask.selected_rows().count(), 1_000);
+        for chunk in 0..10 {
+            let range = chunk * 100..(chunk + 1) * 100;
+            assert_eq!(mask.count_in(range.clone()), 100);
+            assert_eq!(
+                mask.selected_rows_in(range.clone()).collect::<Vec<_>>(),
+                range.collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn range_pieces_partition_the_whole_walk() {
+        let selected: Vec<usize> = (0..5_000)
+            .filter(|row| row % 7 == 0 || row % 64 == 63)
+            .collect();
+        let mask = mask_of(5_000, &selected);
+        let mut walked = Vec::new();
+        for piece in 0..13 {
+            walked.extend(mask.selected_rows_in(piece * 400..(piece + 1) * 400));
+        }
+        assert_eq!(walked, selected);
+        let counted: usize = (0..13)
+            .map(|piece| mask.count_in(piece * 400..(piece + 1) * 400))
+            .sum();
+        assert_eq!(counted, selected.len());
     }
 }

@@ -147,23 +147,24 @@ fn spilled_aggregation_matches_the_in_memory_groups_exactly() {
 /// spilled. The gate once caught a 5 MiB ceiling refusing a 136-byte
 /// reservation the partial-group build made on a budget the batch had
 /// already filled; a sweep in unit time is what keeps that class of
-/// knife-edge from reaching the gate again. This corpus's single scan
-/// batch is 13 MiB, so below that the query is right to refuse, and the
-/// sweep starts just above it. The 16 MiB ceiling spills the map hundreds
-/// of times; it used to exhaust macOS's default descriptor limit and was
-/// skipped for that reason, which left the suite encoding the defect as
-/// expected. Now it is the ceiling that proves the bound: one writer
-/// while building, fan-in plus one while a pass merges, nothing once the
-/// last row is out, at run counts that differ by an order of magnitude
-/// across the sweep.
+/// knife-edge from reaching the gate again. Below 12 MiB the query still
+/// refuses (the scan's ready batches fill the ceiling before the first
+/// group lands), so the sweep starts there. The 12 MiB ceiling spills the
+/// map dozens of times - it was hundreds before the aggregate ran its
+/// rounds in budget-sized waves, and it used to exhaust macOS's default
+/// descriptor limit and was skipped for that reason, which left the suite
+/// encoding the defect as expected. Now it is the ceiling that proves the
+/// bound: one writer while building, fan-in plus one while a pass merges,
+/// nothing once the last row is out, at run counts that fall by at least
+/// half across the sweep.
 #[test]
 fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
     let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
     let bound = u64::try_from(MERGE_FAN_IN + 1).expect("small");
     let mut failures = Vec::new();
     let mut run_counts = Vec::new();
-    let mut limit = 16 * 1024 * 1024;
-    while limit <= 32 * 1024 * 1024 {
+    let mut limit = 12 * 1024 * 1024;
+    while limit <= 30 * 1024 * 1024 {
         match run_aggregated_with_metrics(limit) {
             Ok((rows, metrics)) if rows == reference => {
                 if metrics.peak_handles > bound {
@@ -193,18 +194,18 @@ fn every_ceiling_between_spilling_and_fitting_aggregates_exactly() {
     );
     let (first, last) = (run_counts[0], run_counts[run_counts.len() - 1]);
     assert!(
-        first > bound && first > last.saturating_mul(4),
+        first > bound && first >= last.saturating_mul(2),
         "the sweep must span very different run counts, got {run_counts:?}"
     );
 }
 
 /// Set in the child process that runs under a lowered descriptor limit.
 const DESCRIPTOR_PROBE: &str = "PINTAIL_DESCRIPTOR_PROBE";
-const DESCRIPTOR_LIMIT: u64 = 128;
+const DESCRIPTOR_LIMIT: u64 = 48;
 
 /// Handle counters can miss a descriptor something else holds; the kernel
-/// cannot. A fresh child process lowers its own soft `RLIMIT_NOFILE` to 128
-/// and runs the ceiling that spills hundreds of runs. The limit is
+/// cannot. A fresh child process lowers its own soft `RLIMIT_NOFILE` to 48
+/// and runs the ceiling that spills more runs than that. The limit is
 /// process-wide and shared by every thread, so it is never lowered in the
 /// test process itself, where restoring it would not undo interference with
 /// the tests running alongside.
@@ -224,7 +225,7 @@ fn a_spilling_aggregation_completes_under_a_low_descriptor_limit() {
         .expect("lower the soft descriptor limit of this process");
         let reference = run_aggregated(256 * 1024 * 1024).expect("in-memory aggregation");
         let (spilled, metrics) =
-            run_aggregated_with_metrics(16 * 1024 * 1024).expect("spilled aggregation");
+            run_aggregated_with_metrics(12 * 1024 * 1024).expect("spilled aggregation");
         assert_eq!(spilled, reference);
         assert!(
             metrics.files > DESCRIPTOR_LIMIT,
