@@ -18,7 +18,6 @@ use std::{
 };
 
 use chrono::{Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
-use futures_util::future::join_all;
 use mysql_async::{
     IsolationLevel, Params, Pool, Row, Transaction, TxOpts, Value as MysqlValue, prelude::Queryable,
 };
@@ -448,30 +447,26 @@ async fn run_snapshot_inner(
                 Arc::clone(&progress),
             )
         });
-    let worker_results = if std::env::var_os("PINTAIL_SNAPSHOT_THREADS").is_some() {
-        let receivers = futures.map(|future| {
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            std::thread::spawn(move || {
-                let result = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|error| SnapshotError::InvalidConfiguration(error.to_string()))
-                    .and_then(|runtime| runtime.block_on(future));
-                let _ = sender.send(result);
-            });
-            async move {
-                receiver
-                    .await
-                    .map_err(|error| SnapshotError::InvalidConfiguration(error.to_string()))
-            }
-        });
-        join_all(receivers)
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        join_all(futures).await
-    };
+    // Each worker is its own task. Joined inside one future they were polled
+    // by one runtime thread, so a worker's row conversion and segment writes
+    // ran only while every other worker waited: four workers copied four
+    // tables in the time one would have taken. Spawned, they run on as many
+    // runtime threads as the pool has, and the CPU-bound half of each chunk
+    // runs on a blocking-permitted thread (see `run_blocking`). Measured on a
+    // one-million-row synthetic source with four tables: 6.4 s to 2.2 s.
+    //
+    // A `JoinSet` rather than detached tasks: dropping it aborts the workers,
+    // so cancelling the snapshot future still cancels the copy.
+    let mut workers = tokio::task::JoinSet::new();
+    for future in futures {
+        workers.spawn(future);
+    }
+    let mut worker_results = Vec::with_capacity(worker_count);
+    while let Some(joined) = workers.join_next().await {
+        worker_results.push(joined.map_err(|error| {
+            SnapshotError::InvalidConfiguration(format!("snapshot worker stopped: {error}"))
+        })?);
+    }
     let mut populated = Vec::new();
     let mut failed = Vec::new();
     for result in worker_results {
@@ -707,47 +702,32 @@ async fn snapshot_table(
                 columns.join(", ")
             )
         } else if let Some(cursor) = &cursor {
-            if std::env::var_os("PINTAIL_SNAPSHOT_EXPAND_KEYS").is_some() && cursor.len() > 1 {
-                let mut alternatives = Vec::new();
-                for index in 0..cursor.len() {
-                    let mut terms = Vec::new();
-                    for (prefix, value) in cursor.iter().enumerate().take(index + 1) {
-                        let operator = if prefix == index { ">" } else { "=" };
-                        terms.push(format!(
-                            "{} {operator} ?",
-                            quote_identifier(&target.source.key.columns[prefix])
-                        ));
-                        parameters.push(value.clone());
-                    }
-                    alternatives.push(format!("({})", terms.join(" AND ")));
+            // The seek is spelled out as ordered prefixes - `a > ? OR (a = ?
+            // AND b > ?)` - rather than the row comparison `(a, b) > (?, ?)`.
+            // The two are equivalent on key columns, but MySQL's optimizer
+            // does not range-scan the row form on a composite index: a late
+            // page of a one-million-row composite-key table examined
+            // 910,000 rows with the tuple predicate and 10,000 with this one,
+            // and the whole copy took 6.8 s instead of 23.6 s.
+            let mut alternatives = Vec::with_capacity(cursor.len());
+            for index in 0..cursor.len() {
+                let mut terms = Vec::with_capacity(index + 1);
+                for (prefix, value) in cursor.iter().enumerate().take(index + 1) {
+                    let operator = if prefix == index { ">" } else { "=" };
+                    terms.push(format!(
+                        "{} {operator} ?",
+                        quote_identifier(&target.source.key.columns[prefix])
+                    ));
+                    parameters.push(value.clone());
                 }
-                parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
-                format!(
-                    "SELECT {} FROM {qualified_table} WHERE {} ORDER BY {order_by} LIMIT ?",
-                    columns.join(", "),
-                    alternatives.join(" OR ")
-                )
-            } else {
-                parameters.extend(cursor.iter().cloned());
-                parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
-                let key_tuple = target
-                    .source
-                    .key
-                    .columns
-                    .iter()
-                    .map(|column| quote_identifier(column))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let placeholders = std::iter::repeat_n("?", cursor.len())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "SELECT {} FROM {qualified_table} \
-                 WHERE ({key_tuple}) > ({placeholders}) \
-                 ORDER BY {order_by} LIMIT ?",
-                    columns.join(", ")
-                )
+                alternatives.push(format!("({})", terms.join(" AND ")));
             }
+            parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
+            format!(
+                "SELECT {} FROM {qualified_table} WHERE {} ORDER BY {order_by} LIMIT ?",
+                columns.join(", "),
+                alternatives.join(" OR ")
+            )
         } else {
             parameters.push(MysqlValue::UInt(options.chunk_rows as u64));
             format!(
@@ -759,7 +739,7 @@ async fn snapshot_table(
         let rows: Vec<Row> = transaction
             .exec(sql, Params::Positional(parameters))
             .await?;
-        let fetch_seconds = fetch_started.elapsed().as_secs_f64();
+        let fetch_ms = fetch_started.elapsed().as_millis();
         if rows.is_empty() {
             break;
         }
@@ -800,31 +780,31 @@ async fn snapshot_table(
                 hi_json.as_deref(),
             )?;
             let row_offset = page.saturating_mul(options.chunk_rows);
-            let convert_started = Instant::now();
-            let stored_rows = rows
-                .into_iter()
-                .enumerate()
-                .map(|(index, row)| {
-                    convert_row(
-                        &target.source,
-                        row,
-                        u64::try_from(row_offset.saturating_add(index)).unwrap_or(u64::MAX),
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let chunk_bytes = stored_rows
-                .iter()
-                .map(StoredRow::estimated_bytes)
-                .sum::<usize>();
-            let convert_seconds = convert_started.elapsed().as_secs_f64();
+            // Conversion and the segment write are CPU and disk work with
+            // no await in them; on a multi-thread runtime they run with the
+            // worker thread's other tasks handed off, so a chunk being
+            // encoded never stalls the server's requests or another worker.
             let write_started = Instant::now();
-            let outcome = target.store.bulk_ingest_snapshot(stored_rows)?;
-            if std::env::var_os("PINTAIL_SNAPSHOT_PROFILE").is_some() {
-                eprintln!(
-                    "SNAPSHOT-PROFILE fetch={fetch_seconds:.6} convert={convert_seconds:.6} write={:.6}",
-                    write_started.elapsed().as_secs_f64()
-                );
-            }
+            let (outcome, chunk_bytes) = run_blocking(|| {
+                let stored_rows = rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, row)| {
+                        convert_row(
+                            &target.source,
+                            row,
+                            u64::try_from(row_offset.saturating_add(index)).unwrap_or(u64::MAX),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, SnapshotError>>()?;
+                let chunk_bytes = stored_rows
+                    .iter()
+                    .map(StoredRow::estimated_bytes)
+                    .sum::<usize>();
+                let outcome = target.store.bulk_ingest_snapshot(stored_rows)?;
+                Ok::<_, SnapshotError>((outcome, chunk_bytes))
+            })?;
+            let write_ms = write_started.elapsed().as_millis();
             pintail_failpoint::hit("snapshot.chunk.after_ingest").map_err(|source| {
                 StoreError::Io {
                     action: "recovery failpoint".to_owned(),
@@ -855,7 +835,7 @@ async fn snapshot_table(
             // a large table emits thousands of these. The value is watching a
             // specific slow table, not narrating every snapshot.
             pintail_log::log_debug!(
-                "snapshot chunk db={database_id} table={} chunk={chunk_id} rows={run_rows} bytes={run_bytes} eta={}",
+                "snapshot chunk db={database_id} table={} chunk={chunk_id} rows={run_rows} bytes={run_bytes} fetch={fetch_ms}ms convert_write={write_ms}ms eta={}",
                 target.source.name,
                 eta_seconds.map_or_else(|| "unknown".to_owned(), |seconds| format!("{seconds}s"))
             );
@@ -882,6 +862,19 @@ async fn snapshot_table(
         started.elapsed().as_millis()
     );
     Ok(())
+}
+
+/// Runs CPU-bound work from inside an async task without holding up the
+/// runtime: on a multi-thread runtime the thread's other tasks are handed
+/// off first (`block_in_place`); a current-thread runtime has nobody to hand
+/// them to and runs the work inline, as it always did.
+fn run_blocking<T>(work: impl FnOnce() -> T) -> T {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
+    }
 }
 
 /// Where a resumed copy continues after a chunk the journal holds complete.

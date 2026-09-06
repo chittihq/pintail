@@ -45,22 +45,34 @@ latency. For this local workload, eliminating all non-overlapped fetch time woul
 save only about nine percent. The experiment consequently prioritized parallel
 workers and indexed paging over a more invasive fetch/write pipeline.
 
-## What the prototype changes
+## What landed on `dev`
 
-- `PINTAIL_SNAPSHOT_THREADS=1`: execute each existing snapshot worker on a dedicated
-  thread with its own current-thread runtime. Worker transactions still originate
-  under the coordinator's global lock. This allows CPU encoding and durable writes
-  for different workers to run concurrently.
-- `PINTAIL_SNAPSHOT_EXPAND_KEYS=1`: expand composite-key seek predicates into ordered
-  equality prefixes and a greater-than comparison, preserving parameter order and
-  source comparison semantics.
-- `PINTAIL_SNAPSHOT_PROFILE=1`: emit per-chunk fetch-await, conversion and bulk-write
-  durations. Concurrent durations overlap and must not be added as wall time.
+The experiment branch measured both changes behind opt-in switches. On
+merge the switches went away and the measured behaviour became the only
+behaviour:
 
-All candidate behavior is opt-in on this experiment branch. The default algorithm
-is retained as an A/B control. These flags are not deployment recommendations.
-Dedicated-thread shutdown, cancellation, cross-database resource budgeting and
-operational defaults still require production design and review.
+- **Workers are spawned tasks.** The snapshot workers were joined inside one
+  future, so one runtime thread polled all of them and a worker's row
+  conversion and segment writes ran only while every other worker waited.
+  Each worker is now its own task in a `JoinSet` (dropping the snapshot
+  future still cancels the copy), and each chunk's conversion and bulk write
+  run under `block_in_place` on a multi-thread runtime so an encoding chunk
+  never stalls the server's requests. The experiment reached the same
+  parallelism with a dedicated thread and private runtime per worker; the
+  task form gets the same 2.9× without giving up cancellation or crossing
+  runtimes with the source connection.
+- **Composite-key seeks are spelled as ordered prefixes.** `a > ? OR (a = ?
+  AND b > ?)` replaces `(a, b) > (?, ?)` for every keyed page, single-column
+  keys included (the two forms are identical there). MySQL's optimizer does
+  not range-scan the row comparison on a composite index; the expanded form
+  it does. `crates/pintail-snapshot/tests/mysql_snapshot.rs` copies a
+  ten-thousand-row composite-key table in 128-row pages, kills the copy
+  after two pages and resumes it, and requires the store to hold exactly
+  the source's rows in the source's order.
+- **Per-chunk timing is in the debug log.** The chunk line carries the
+  fetch time and the combined convert-and-write time, where the experiment
+  printed them to stderr behind a switch. Concurrent durations overlap and
+  must not be added as wall time.
 
 The range case uses four disjoint MySQL views over one physical table and four
 independent Pintail stores. It proves the benefit of parallel reads/encoding of
@@ -81,7 +93,7 @@ exercised by these experiments.
 The six snapshot unit tests and touched-crate clippy passed. Full development
 validation passed at code commit `a2b28a9`: formatting, workspace clippy, dashboard
 type checking, and workspace unit tests. The full result is banked in
-`benchmark/snapshot-throughput/validation.md`. This is not an rc/stable gate.
+`evidence/validation.md`. This is not an rc/stable gate.
 
 The fresh environment initially lacked Node; adding Node 24 resolved the dashboard
 type-check failure. A storage test assumes its temporary directory shares the root
@@ -89,7 +101,7 @@ filesystem; setting TMPDIR to a directory on that filesystem resolved the other
 environment failure. No application or test changes were made for either issue.
 The complete development profile was then rerun successfully.
 
-Evidence: `benchmark/snapshot-throughput/matrix-results.json`, `matrix-summary.json`,
+Evidence: `evidence/matrix-results.json`, `matrix-summary.json`,
 `composite-explain.log`, and `resume-checks.json`. The `estimated_row_bytes` fields
 include in-memory row accounting: they are NOT source disk size or measured wire
 bytes. Resumed-run rates include already copied rows in their numerator and must
@@ -107,7 +119,7 @@ export SNAPSHOT_BENCH_DSN='mysql://USER:PASSWORD@127.0.0.1:PORT'
 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo build --release -p pintail-snapshot --example throughput
 ./target/release/examples/throughput setup 1000000
 export SNAPSHOT_BENCH_OUTPUT=/path/to/new/experiment-output
-python3 benchmark/snapshot-throughput.py
+python3 experiments/snapshot-throughput/harness.py
 ```
 
 The matrix runs each case three times, validates results, and removes only the
@@ -115,7 +127,6 @@ fresh copy directories it created after successful verification. Preserve its JS
 and log files. Set `SNAPSHOT_BENCH_RESUME=1` for a separate pause/resume run, for example:
 
 ```sh
-PINTAIL_SNAPSHOT_THREADS=1 PINTAIL_SNAPSHOT_EXPAND_KEYS=1 \
 SNAPSHOT_BENCH_RESUME=1 SNAPSHOT_BENCH_CHUNK_ROWS=10000 \
 ./target/release/examples/throughput composite 1 /path/to/new/resume-copy
 ```

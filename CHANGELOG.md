@@ -34,6 +34,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- Initial snapshots run their workers as spawned tasks, each chunk's row
+  conversion and segment write on a blocking-permitted thread, instead of
+  polling every worker from one future so that only one converted or wrote
+  at a time. Composite-key pages seek with ordered prefix predicates
+  (`a > ? OR (a = ? AND b > ?)`) rather than a row comparison MySQL cannot
+  range-scan. On a one-million-row synthetic source: four tables 6.4 s to
+  2.2 s, a composite-key table in 10,000-row pages 23.6 s to 6.8 s.
 - Parallel aggregate rounds run as row-range morsels: the general,
   fused-join and two-pass paths cut a round's batches into bounded row
   ranges the pool takes dynamically, so a round of one or two batches - a

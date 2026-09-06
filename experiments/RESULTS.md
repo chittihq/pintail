@@ -2550,3 +2550,28 @@ sequence converged to MySQL and survived restart. Those checks validate the
 historical experiment only; they are neither a validation of current `dev` nor
 a release gate. No new engine validation or performance remeasurement is
 claimed for this documentation-only entry.
+
+## e68 — Snapshot workers as tasks, composite-key seeks as prefixes (1M synthetic rows, local source)
+
+From the `experiment/snapshot-throughput` branch (PR #32), three-run
+medians, row counts, key sums and payload checksums verified against MySQL
+on every run. Full methodology, limits and evidence in
+[`snapshot-throughput/`](snapshot-throughput/README.md).
+
+| Case | Before | After | Speedup |
+|---|---:|---:|---:|
+| Four tables, four workers | 6.445 s | 2.220 s | 2.90× |
+| One table as four disjoint ranges (prototype, not shipped) | 6.778 s | 2.392 s | 2.83× |
+| Composite key, 10,000-row pages | 23.575 s | 6.766 s | 3.48× |
+
+The gains are independent and must not be multiplied. The composite figure
+is a paging-count demonstration at 10,000-row pages, not a claim about the
+default chunk size; a late page examined 910,000 rows with the row-tuple
+predicate and 10,000 with the expanded one.
+
+**Verdict: keep both, without the switches.** The worker parallelism shipped
+as spawned tasks under a `JoinSet` with `block_in_place` around each chunk's
+conversion and write rather than the branch's thread-per-worker with a
+private runtime, which gave up cancellation; the expanded seek shipped as the
+only predicate form. The range prototype is recorded and not shipped: it needs
+a range planner, one-table segment assembly and a resumable range journal.

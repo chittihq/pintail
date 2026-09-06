@@ -18,7 +18,7 @@ use std::{
 };
 
 #[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let dsn = std::env::var("SNAPSHOT_BENCH_DSN").context("SNAPSHOT_BENCH_DSN is required")?;

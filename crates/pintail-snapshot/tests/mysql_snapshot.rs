@@ -425,6 +425,108 @@ async fn a_resumed_keyless_table_skips_its_completed_pages() {
 /// A run that pauses on its own chunk budget stops as a run: the table it
 /// was copying is not flagged as a failure, because nothing about the table
 /// failed, and the next run continues it from the journal.
+/// The seek predicate for a composite key is spelled as ordered prefixes
+/// rather than a row comparison. Ten thousand rows over seven tenants in
+/// 128-row pages walk about eighty seeks, a copy killed after two pages
+/// resumes through the journal, and the store ends with exactly the
+/// source's rows in exactly the source's order.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_composite_key_table_pages_and_resumes_exactly() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register database");
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "composite_pages")
+        .expect("composite table")
+        .clone();
+
+    let expected: Vec<(i64, u64, String)> = pool
+        .get_conn()
+        .await
+        .expect("source connection")
+        .query("SELECT tenant, id, payload FROM composite_pages ORDER BY tenant, id")
+        .await
+        .expect("source rows");
+    assert_eq!(expected.len(), 10_000);
+
+    let directory = workspace.path().join("composite_pages");
+    kill_snapshot_worker_on(
+        &mysql.dsn(),
+        &metadata_path,
+        &directory,
+        DATABASE_ID,
+        "composite_pages",
+        128,
+    );
+    let completed_before = MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .snapshot_chunks(DATABASE_ID, "composite_pages")
+        .expect("journal")
+        .into_iter()
+        .filter(|chunk| chunk.status == pintail_meta::SnapshotChunkStatus::Completed)
+        .count();
+    assert!(
+        completed_before >= 2,
+        "the killed copy left {completed_before} chunks"
+    );
+
+    let resumed = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![target(&source, &directory)],
+        SnapshotOptions {
+            workers: 1,
+            chunk_rows: 128,
+            ..SnapshotOptions::default()
+        },
+    )
+    .await
+    .expect("resumed composite snapshot");
+    assert!(resumed.failed.is_empty());
+    let outcome = &resumed.tables[0];
+    assert_eq!(outcome.rows, 10_000);
+    assert!(outcome.chunks >= 79, "{} chunks", outcome.chunks);
+
+    let actual: Vec<(i64, u64, String)> = resumed.targets[0]
+        .store()
+        .snapshot()
+        .scan()
+        .expect("scan")
+        .into_iter()
+        .map(|row| {
+            let [
+                Value::Int64(tenant),
+                Value::UInt64(id),
+                Value::Utf8(payload),
+            ] = row.values()
+            else {
+                panic!("unexpected composite row {:?}", row.values());
+            };
+            (*tenant, *id, payload.clone())
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the configured Docker host and mysql:8.4 image"]
 async fn a_paused_run_flags_no_table() {
@@ -819,11 +921,17 @@ async fn snapshot_crash_worker() {
     ));
     let pool = Pool::new(Opts::from_url(&dsn).expect("crash worker DSN"));
     let report = probe(&pool, "app").await.expect("crash worker probe");
+    let source_table =
+        std::env::var("PINTAIL_SNAPSHOT_CRASH_SOURCE").unwrap_or_else(|_| "resume_rows".to_owned());
+    let chunk_rows = std::env::var("PINTAIL_SNAPSHOT_CRASH_CHUNK_ROWS")
+        .ok()
+        .and_then(|rows| rows.parse().ok())
+        .unwrap_or(1_000);
     let source = report
         .tables
         .iter()
-        .find(|table| table.name == "resume_rows")
-        .expect("resume source");
+        .find(|table| table.name == source_table)
+        .expect("crash worker source table");
     let snapshot_target = target(source, Path::new(&table_directory));
     let _result = run_snapshot_with_progress(
         &pool,
@@ -833,7 +941,7 @@ async fn snapshot_crash_worker() {
         vec![snapshot_target],
         SnapshotOptions {
             workers: 1,
-            chunk_rows: 1_000,
+            chunk_rows,
             ..SnapshotOptions::default()
         },
         move |_| {
@@ -854,6 +962,26 @@ fn kill_snapshot_worker(
     table_directory: &Path,
     database_id: &str,
 ) {
+    kill_snapshot_worker_on(
+        dsn,
+        metadata_path,
+        table_directory,
+        database_id,
+        "resume_rows",
+        1_000,
+    );
+}
+
+/// Starts a one-table copy of `source_table` in a child process and kills it
+/// after two durable chunks, leaving a journal for the caller to resume.
+fn kill_snapshot_worker_on(
+    dsn: &str,
+    metadata_path: &Path,
+    table_directory: &Path,
+    database_id: &str,
+    source_table: &str,
+    chunk_rows: usize,
+) {
     let acknowledgement =
         TcpListener::bind(("127.0.0.1", 0)).expect("bind snapshot acknowledgement socket");
     let acknowledgement_address = acknowledgement
@@ -869,6 +997,8 @@ fn kill_snapshot_worker(
         .env("PINTAIL_SNAPSHOT_CRASH_META", metadata_path)
         .env("PINTAIL_SNAPSHOT_CRASH_TABLE", table_directory)
         .env("PINTAIL_SNAPSHOT_CRASH_DATABASE", database_id)
+        .env("PINTAIL_SNAPSHOT_CRASH_SOURCE", source_table)
+        .env("PINTAIL_SNAPSHOT_CRASH_CHUNK_ROWS", chunk_rows.to_string())
         .env(
             "PINTAIL_SNAPSHOT_CRASH_ACK",
             acknowledgement_address.to_string(),
@@ -1137,6 +1267,13 @@ fn source_schema() -> String {
          CREATE TABLE composite_table (tenant INT NOT NULL, id INT NOT NULL, value VARCHAR(32), \
            PRIMARY KEY (tenant,id));\
          INSERT INTO composite_table VALUES (1,1,'a'),(1,2,'b'),(2,1,'c');\
+         CREATE TABLE composite_pages (tenant INT NOT NULL, id BIGINT UNSIGNED NOT NULL, \
+           payload VARCHAR(32) NOT NULL, PRIMARY KEY (tenant,id));\
+         INSERT INTO composite_pages \
+           SELECT n MOD 7, n, CONCAT('page-', n) FROM (\
+             SELECT d0.d + d1.d*10 + d2.d*100 + d3.d*1000 AS n \
+             FROM digits d0 CROSS JOIN digits d1 CROSS JOIN digits d2 CROSS JOIN digits d3\
+           ) numbers;\
          CREATE TABLE unique_table (email VARCHAR(64) NOT NULL UNIQUE, value VARCHAR(32));\
          INSERT INTO unique_table VALUES ('a@example.com','a'),('b@example.com','b');\
          CREATE TABLE append_table (value VARCHAR(32));\
