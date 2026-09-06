@@ -148,9 +148,9 @@ stays readable as a list of things to fix.
   query failed with "Too many open files". The runs are not yet merged in
   passes, so the descriptors a spilling aggregation holds are bounded only
   by how many runs it produces. This is not confined to tight test
-  ceilings: on 2026-09-06 a production dashboard query grouping students
-  across ten joined tables, under a 1.5 GiB per-query ceiling, exhausted a
-  container's default 1024-descriptor soft limit and failed with
+  ceilings: a grouped report joining ten tables, under a 1.5 GiB per-query
+  ceiling, exhausted a container's default 1024-descriptor soft limit and
+  failed with
   `HY000 ... aggregate spill create: Too many open files (os error 24)`.
   Until the runs merge in passes, a deployment must raise its descriptor
   limit; `docker-compose.yml` sets `nofile` to 1048576 for this reason, and

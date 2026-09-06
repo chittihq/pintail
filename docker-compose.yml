@@ -18,8 +18,8 @@ services:
     # A columnar scan opens the segment files it reads, and a grouped
     # aggregation that spills holds one run file open per spill until its
     # final merge. Docker's default soft limit of 1024 is a desktop
-    # default, not a database one: a production dashboard query over ten
-    # joined tables exhausted it and failed with "Too many open files".
+    # default, not a database one: a grouped report joining ten tables
+    # exhausted it and failed with "Too many open files".
     # Every database ships this requirement; 1048576 is the usual value.
     ulimits:
       nofile:
@@ -101,6 +101,12 @@ services:
       # The default suits an analytical join; lower it only to make a single
       # runaway query fail sooner than the total would.
       PINTAIL_QUERY_MEMORY_LIMIT_BYTES: ${PINTAIL_QUERY_MEMORY_LIMIT_BYTES:-536870912}
+      # How many queries execute at once; the rest are refused with 1040 so
+      # a client can retry or shed rather than queue behind a long scan.
+      # Zero is unbounded. Unset uses cores*4 (minimum 16). Note that this
+      # count multiplied by the per-query ceiling above can exceed the
+      # shared total, in which case the total refuses first.
+      PINTAIL_MAX_CONCURRENT_QUERIES: ${PINTAIL_MAX_CONCURRENT_QUERIES:-}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk

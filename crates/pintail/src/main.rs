@@ -71,6 +71,7 @@ async fn main() -> Result<()> {
     // surfaces draws from one bound.
     pintail_wire::init_shared_admission(config.max_concurrent_queries());
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
+    report_effective_limits(&config);
 
     let api_state = ApiState::new(
         config.data_dir(),
@@ -222,4 +223,63 @@ async fn shutdown_signal() {
         () = control_c => {}
         () = terminate => {}
     }
+}
+
+/// Names the resource ceilings actually in force, once, at startup.
+///
+/// A deployment can configure a knob the container never receives - a
+/// compose file that forwards nine environment variables and drops the
+/// tenth reads as configured and is not - and an operator has no way to
+/// tell from the outside. Two production failures on 2026-09-06 were a
+/// dropped `PINTAIL_MAX_CONCURRENT_QUERIES` and a descriptor soft limit
+/// nobody had set, both invisible until a dashboard failed. Print what
+/// the process resolved, including the limits it did not choose.
+fn report_effective_limits(config: &pintail::config::AppConfig) {
+    // Integer arithmetic: a byte ceiling near u64::MAX does not survive an
+    // f64 mantissa, and a limits line that rounds is worse than useless.
+    let describe = |bytes: u64| {
+        if bytes == 0 {
+            return "unbounded".to_owned();
+        }
+        let mib = bytes / (1024 * 1024);
+        format!("{}.{:02}GiB", mib / 1024, (mib % 1024) * 100 / 1024)
+    };
+    let admission = match config.max_concurrent_queries() {
+        0 => "unbounded".to_owned(),
+        limit => limit.to_string(),
+    };
+    pintail_log::log_info!(
+        "pintail limits: concurrent_queries={admission} query_memory={} \
+         shared_memory={} process_memory={} open_files={} spill_dir={} \
+         query_spill={} global_spill={}",
+        describe(config.query_memory_limit_bytes() as u64),
+        describe(config.total_query_memory_limit_bytes() as u64),
+        pintail::config::available_memory_bytes().map_or_else(|| "undetected".to_owned(), describe),
+        open_file_limit(),
+        config.spill_dir().display(),
+        describe(config.query_spill_limit_bytes()),
+        describe(config.global_spill_limit_bytes()),
+    );
+}
+
+/// The descriptor soft and hard limits, when the platform reports them.
+///
+/// Read from `/proc`, so no libc dependency and no unsafe: Linux is where
+/// the container runs and where the limit has bitten. Elsewhere this is
+/// one honest word rather than a number the process did not check.
+fn open_file_limit() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(limits) = std::fs::read_to_string("/proc/self/limits")
+            && let Some(line) = limits
+                .lines()
+                .find(|line| line.starts_with("Max open files"))
+        {
+            let mut fields = line["Max open files".len()..].split_whitespace();
+            if let (Some(soft), Some(hard)) = (fields.next(), fields.next()) {
+                return format!("{soft}/{hard}");
+            }
+        }
+    }
+    "unknown".to_owned()
 }
