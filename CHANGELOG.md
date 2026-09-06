@@ -6,6 +6,37 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- A literal on one side of a join equality now reaches the other side's
+  scan. `WHERE a.k = 5` with `ON b.k = a.k` derives `b.k = 5` onto the
+  scan of `b`, so both sides prune segments and blocks instead of one.
+  Inner joins carry constants both ways, a left join only into its
+  null-supplying side; semi, anti and scalar-subquery joins, mismatched
+  types or collations, ENUM keys, self-joins and anything beneath a
+  LIMIT, window, aggregate, DISTINCT, derived table or set operation are
+  left alone. On an eleven-table grouped report over 850K rows the
+  derived predicates took 35 % off the run time. Forty-five oracle cases
+  pin the pass and its boundaries byte-exact against MySQL.
+
+### Fixed
+
+- A derived table whose `ORDER BY` names a column outside its select
+  list, such as `(SELECT a FROM t ORDER BY b LIMIT 3)`, failed to plan
+  with an internal layout error. The hidden sort key is no longer exposed
+  as a column of the derived table.
+- A grace hash join that overflowed while a partition was being served
+  could not split that partition again and failed with
+  `grace run read twice`. Spill runs now reopen from disk on every read,
+  and every run closes its writer once probe routing finishes, so the
+  join holds far fewer open descriptors while it serves.
+- The server logs its effective limits at startup: admission slots,
+  per-query and shared memory, process memory, descriptor soft and hard
+  limits, and the spill directory and its ceilings.
+- The compose file passes `PINTAIL_MAX_CONCURRENT_QUERIES` through and
+  raises the container's descriptor limit; the installer's generated
+  compose file does the same and warns when an existing one lacks it.
+
 ## [0.1.2-rc4] - 2026-09-06
 
 ### Performance
