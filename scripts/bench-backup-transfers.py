@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """Benchmark two prebuilt backup binaries against an isolated local S3 service.
 
-Usage: python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT
+Usage: python3 scripts/bench-backup-transfers.py EXPERIMENT_ROOT [--dataset 10gib]
 Requires bin/{minio,baseline,streaming}, curl and GNU time. All service state
 and synthetic data are temporary; only measurements and logs are retained.
 """
 
+import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import platform
 import secrets
+import shutil
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.request
@@ -25,7 +26,22 @@ def digest(path):
 
 
 def main():
-    root = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("experiment_root", type=Path)
+    parser.add_argument("--dataset", choices=["original", "10gib"], default="original")
+    options = parser.parse_args()
+    root = options.experiment_root.resolve()
+    shapes = (
+        [("medium-10gib", 160, 64), ("large-10gib", 40, 256)]
+        if options.dataset == "10gib"
+        else [("small", 64, 1), ("medium", 16, 64), ("large", 4, 256)]
+    )
+    # Source plus changed files, full plus incremental S3 objects, and one
+    # restored copy coexist. Leave room for metadata and multipart staging.
+    required = max((3 * count + 2 * ((count + 3) // 4)) * mib * 1024**2
+                   for _, count, mib in shapes) + 3 * 1024**3
+    if shutil.disk_usage(root).free < required:
+        raise RuntimeError(f"benchmark needs at least {required / 1024**3:.1f} GiB free")
     run = root / "results" / time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     run.mkdir(parents=True)
     binaries = {name: root / "bin" / name for name in ["baseline", "streaming"]}
@@ -34,7 +50,11 @@ def main():
         "logical_cpus": os.cpu_count(),
         "binary_sha256": {name: digest(path) for name, path in binaries.items()},
         "s3_service": subprocess.check_output([root / "bin/minio", "--version"], text=True),
-        "transport": "loopback HTTP; local NVMe; warm filesystem cache; no injected latency",
+        "transport": "loopback HTTP; local NVMe; no injected latency",
+        "cache_policy": "no cache flushes; large working sets can exceed available page cache",
+        "dataset": options.dataset,
+        "shapes": [{"name": name, "segments": count, "segment_mib": mib}
+                   for name, count, mib in shapes],
         "memory": "GNU time maximum client RSS; service memory excluded",
         "repetitions": 3,
         "warmups": 1,
@@ -72,7 +92,7 @@ def main():
             ], check=True, capture_output=True)
             variants = [("baseline", 1), ("streaming", 1), ("streaming", 4), ("streaming", 8)]
             with open(run / "measurements.jsonl", "w") as measurements:
-                for shape, count, mib in [("small", 64, 1), ("medium", 16, 64), ("large", 4, 256)]:
+                for shape, count, mib in shapes:
                     source = temporary / shape
                     subprocess.run([binaries["baseline"], "prepare", source, str(count), str(mib), "prepare"], check=True)
                     expected = {
@@ -107,6 +127,7 @@ def main():
                                     raise RuntimeError("independent restored-file checksum mismatch")
                             subprocess.run([binaries[variant], "cleanup", *args], env=trial_env,
                                            stdout=subprocess.DEVNULL, check=True)
+                    shutil.rmtree(source)
             # Exercise both directions with changed multipart objects and
             # references inherited from the other implementation's manifest.
             source = temporary / "interop"
