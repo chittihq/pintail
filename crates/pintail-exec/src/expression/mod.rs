@@ -96,10 +96,40 @@ fn typed_comparison_mask(
             _ => return None,
         })
     }
+    /// Every valid value stands in `relation` to the literal, so the answer
+    /// is the same for all of them: keep every valid row or none.
+    fn constant<T: Copy + Sync>(
+        values: &[T],
+        validity: &ValidityMask,
+        op: BinaryOp,
+        relation: Ordering,
+    ) -> Option<SelectionMask> {
+        let keep = match op {
+            BinaryOp::Equal => false,
+            BinaryOp::NotEqual => true,
+            BinaryOp::Less | BinaryOp::LessOrEqual => relation == Ordering::Less,
+            BinaryOp::Greater | BinaryOp::GreaterOrEqual => relation == Ordering::Greater,
+            _ => return None,
+        };
+        Some(fill(values, validity, |_| keep))
+    }
     use pintail_types::Value;
     match (typed, literal) {
         (TypedValues::Int64(values), Value::Int64(lit)) => ordered(values, validity, op, *lit),
         (TypedValues::UInt64(values), Value::UInt64(lit)) => ordered(values, validity, op, *lit),
+        // A signed literal against an unsigned column, and the reverse. The
+        // binder types a small integer literal as signed, so `id >= 1` on an
+        // unsigned key left the packed path for the row path over every row
+        // of a predicate that excluded nothing. A literal outside the
+        // column's range compares the same way with every value.
+        (TypedValues::UInt64(values), Value::Int64(lit)) => match u64::try_from(*lit) {
+            Ok(lit) => ordered(values, validity, op, lit),
+            Err(_) => constant(values, validity, op, Ordering::Greater),
+        },
+        (TypedValues::Int64(values), Value::UInt64(lit)) => match i64::try_from(*lit) {
+            Ok(lit) => ordered(values, validity, op, lit),
+            Err(_) => constant(values, validity, op, Ordering::Less),
+        },
         (TypedValues::Float64(values), Value::Float64(lit)) => {
             ordered(values, validity, op, lit.get())
         }
@@ -5737,6 +5767,149 @@ fn parse_mysql_number(value: &str) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn packed_comparisons_cross_the_sign_boundary_without_leaving_the_kernel() {
+        use crate::array::ValidityMask;
+        use crate::batch::TypedValues;
+        use pintail_sql::BinaryOp;
+        use pintail_types::{DataType, Value};
+        let selected = |mask: Option<crate::batch::SelectionMask>| -> Vec<usize> {
+            mask.expect("the packed kernel must answer")
+                .selected_rows()
+                .collect()
+        };
+        let unsigned = TypedValues::UInt64(vec![0, 1, 5, u64::MAX]);
+        let validity = ValidityMask::all_valid(4);
+        let kernel = |typed: &TypedValues, op, literal: &Value, logical| {
+            super::typed_comparison_mask(
+                typed,
+                &validity,
+                logical,
+                op,
+                literal,
+                Collation::default(),
+            )
+        };
+        // A signed literal in range compares as the column's own type.
+        assert_eq!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::GreaterOrEqual,
+                &Value::Int64(1),
+                DataType::UInt64
+            )),
+            [1, 2, 3]
+        );
+        assert_eq!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::Equal,
+                &Value::Int64(5),
+                DataType::UInt64
+            )),
+            [2]
+        );
+        // A negative literal is below every unsigned value.
+        assert_eq!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::Greater,
+                &Value::Int64(-1),
+                DataType::UInt64
+            )),
+            [0, 1, 2, 3]
+        );
+        assert!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::LessOrEqual,
+                &Value::Int64(-1),
+                DataType::UInt64
+            ))
+            .is_empty()
+        );
+        assert!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::Equal,
+                &Value::Int64(-1),
+                DataType::UInt64
+            ))
+            .is_empty()
+        );
+        assert_eq!(
+            selected(kernel(
+                &unsigned,
+                BinaryOp::NotEqual,
+                &Value::Int64(-1),
+                DataType::UInt64
+            )),
+            [0, 1, 2, 3]
+        );
+        // The reverse: a literal past i64::MAX is above every signed value.
+        let signed = TypedValues::Int64(vec![-3, 0, 7]);
+        let validity = ValidityMask::all_valid(3);
+        let kernel = |typed: &TypedValues, op, literal: &Value, logical| {
+            super::typed_comparison_mask(
+                typed,
+                &validity,
+                logical,
+                op,
+                literal,
+                Collation::default(),
+            )
+        };
+        assert_eq!(
+            selected(kernel(
+                &signed,
+                BinaryOp::Less,
+                &Value::UInt64(u64::MAX),
+                DataType::Int64
+            )),
+            [0, 1, 2]
+        );
+        assert!(
+            selected(kernel(
+                &signed,
+                BinaryOp::Greater,
+                &Value::UInt64(u64::MAX),
+                DataType::Int64
+            ))
+            .is_empty()
+        );
+        assert_eq!(
+            selected(kernel(
+                &signed,
+                BinaryOp::GreaterOrEqual,
+                &Value::UInt64(0),
+                DataType::Int64
+            )),
+            [1, 2]
+        );
+        // NULLs stay unselected either way.
+        let validity = ValidityMask::from_bools(&[true, false, true]);
+        let kernel = |typed: &TypedValues, op, literal: &Value, logical| {
+            super::typed_comparison_mask(
+                typed,
+                &validity,
+                logical,
+                op,
+                literal,
+                Collation::default(),
+            )
+        };
+        assert_eq!(
+            selected(kernel(
+                &signed,
+                BinaryOp::NotEqual,
+                &Value::UInt64(u64::MAX),
+                DataType::Int64
+            )),
+            [0, 2]
+        );
+    }
+
     use crate::collation::Collation;
     // Expression behavior is exercised through physical operator tests. Keep
     // the MySQL numeric-prefix parser covered directly because its edge cases
