@@ -3061,6 +3061,10 @@ enum PullOperator {
         key: CompiledExpr,
         key_mode: JoinKeyMode,
         keys: std::sync::Arc<std::collections::HashSet<JoinHashKey>>,
+        /// The same keys as a packed integer membership test, when every
+        /// key is an integer; a typed integer key column is filtered
+        /// through this without a `Value` per row.
+        integers: Option<join::IntegerKeySet>,
     },
     HashAggregate {
         input: Box<Self>,
@@ -3164,12 +3168,14 @@ impl PullOperator {
         {
             self.restrict_probe_range(position, &minimum, &maximum);
         }
+        let integers = join::IntegerKeySet::from_keys(&keys);
         let input = std::mem::replace(self, Self::Empty);
         *self = Self::KeyFilter {
             input: Box::new(input),
             key,
             key_mode,
             keys,
+            integers,
         };
     }
 
@@ -3334,22 +3340,58 @@ impl PullOperator {
                 key,
                 key_mode,
                 keys,
+                integers,
             } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
                 let batch_bytes = batch.estimated_bytes();
-                for row in 0..batch.row_count() {
-                    if !batch.selection().is_selected(row) {
-                        continue;
+                // A typed integer key column against integer probe keys is
+                // one bit test per row. Rows to drop are collected first,
+                // since the selection cannot change while it is being read.
+                let dropped = integers.as_ref().and_then(|set| {
+                    let column = batch.column(key.column_index()?)?;
+                    let (typed, validity) = column.typed()?;
+                    let mut dropped = Vec::new();
+                    match typed {
+                        crate::batch::TypedValues::Int64(values) => {
+                            for row in batch.selection().selected_rows() {
+                                if !validity.is_valid(row) || !set.contains(i128::from(values[row]))
+                                {
+                                    dropped.push(row);
+                                }
+                            }
+                        }
+                        crate::batch::TypedValues::UInt64(values) => {
+                            for row in batch.selection().selected_rows() {
+                                if !validity.is_valid(row) || !set.contains(i128::from(values[row]))
+                                {
+                                    dropped.push(row);
+                                }
+                            }
+                        }
+                        _ => return None,
                     }
-                    memory.ensure_transient(
-                        batch_bytes.saturating_add(key.allocation_upper_bound(&batch, row)),
-                    )?;
-                    let keep = normalized_join_key(key.evaluate(&batch, row)?, *key_mode)?
-                        .is_some_and(|candidate| keys.contains(&candidate));
-                    if !keep {
+                    Some(dropped)
+                });
+                if let Some(dropped) = dropped {
+                    memory.ensure_transient(batch_bytes)?;
+                    for row in dropped {
                         batch.selection_mut().set(row, false)?;
+                    }
+                } else {
+                    for row in 0..batch.row_count() {
+                        if !batch.selection().is_selected(row) {
+                            continue;
+                        }
+                        memory.ensure_transient(
+                            batch_bytes.saturating_add(key.allocation_upper_bound(&batch, row)),
+                        )?;
+                        let keep = normalized_join_key(key.evaluate(&batch, row)?, *key_mode)?
+                            .is_some_and(|candidate| keys.contains(&candidate));
+                        if !keep {
+                            batch.selection_mut().set(row, false)?;
+                        }
                     }
                 }
                 if batch.visible_row_count() > 0 {

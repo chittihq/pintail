@@ -754,6 +754,70 @@ pub(super) fn prefetch_probe(
     Ok(prefetch)
 }
 
+/// The probe side's integer keys as a membership structure the build-side
+/// filter tests straight from a packed column, without building a `Value`
+/// and a hash key per build row. That per-row path cost about 1,800
+/// instructions a row on the instruction gate's 4,096-row join - a fifth of
+/// the whole query - for a test that is one bit lookup.
+#[derive(Debug)]
+pub(super) enum IntegerKeySet {
+    /// One bit per value from `low` upward, when the keys span a narrow range.
+    Bitmap { low: i128, words: Vec<u64> },
+    /// The keys themselves when the span is too wide for a bitmap.
+    Sparse(HashSet<i128>),
+}
+
+impl IntegerKeySet {
+    /// Widest key span the bitmap form covers: sixteen million values, two
+    /// mebibytes of bits.
+    const BITMAP_SPAN: i128 = 1 << 24;
+
+    /// Builds the set from the probe's keys; `None` when any key is not an
+    /// integer, since the packed test has nothing to compare then.
+    pub(super) fn from_keys(keys: &HashSet<JoinHashKey>) -> Option<Self> {
+        let mut values = Vec::with_capacity(keys.len());
+        for key in keys {
+            match key {
+                JoinHashKey::NegativeInteger(value) => values.push(i128::from(*value)),
+                JoinHashKey::NonNegativeInteger(value) => values.push(i128::from(*value)),
+                _ => return None,
+            }
+        }
+        let (Some(low), Some(high)) = (values.iter().min().copied(), values.iter().max().copied())
+        else {
+            return Some(Self::Sparse(HashSet::new()));
+        };
+        if high - low < Self::BITMAP_SPAN {
+            let span = usize::try_from(high - low + 1).ok()?;
+            let mut words = vec![0_u64; span.div_ceil(64)];
+            for value in values {
+                let offset = usize::try_from(value - low).ok()?;
+                words[offset / 64] |= 1 << (offset % 64);
+            }
+            Some(Self::Bitmap { low, words })
+        } else {
+            Some(Self::Sparse(values.into_iter().collect()))
+        }
+    }
+
+    pub(super) fn contains(&self, value: i128) -> bool {
+        match self {
+            Self::Bitmap { low, words } => {
+                let Some(offset) = value
+                    .checked_sub(*low)
+                    .and_then(|delta| usize::try_from(delta).ok())
+                else {
+                    return false;
+                };
+                words
+                    .get(offset / 64)
+                    .is_some_and(|word| word & (1 << (offset % 64)) != 0)
+            }
+            Self::Sparse(values) => values.contains(&value),
+        }
+    }
+}
+
 /// The smallest and largest integer key in the set, as values a scan can
 /// restrict on; `None` when any key is not an integer.
 pub(super) fn integer_key_span(keys: &HashSet<JoinHashKey>) -> Option<(Value, Value)> {
@@ -2107,5 +2171,65 @@ mod tests {
             super::normalized_collation_text("a", Collation::Utf8mb40900AiCi),
             super::normalized_collation_text("a ", Collation::Utf8mb40900AiCi)
         );
+    }
+}
+
+#[cfg(test)]
+mod integer_key_set_tests {
+    use super::{IntegerKeySet, JoinHashKey};
+    use std::collections::HashSet;
+
+    fn keys(values: &[i64]) -> HashSet<JoinHashKey> {
+        values
+            .iter()
+            .map(|value| {
+                if *value < 0 {
+                    JoinHashKey::NegativeInteger(*value)
+                } else {
+                    JoinHashKey::NonNegativeInteger(u64::try_from(*value).expect("non-negative"))
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_narrow_span_is_a_bitmap_that_answers_both_signs() {
+        let set = IntegerKeySet::from_keys(&keys(&[-3, 0, 5, 127])).expect("integers");
+        assert!(matches!(set, IntegerKeySet::Bitmap { low: -3, .. }));
+        for value in [-3, 0, 5, 127] {
+            assert!(set.contains(value), "{value}");
+        }
+        for value in [
+            -4,
+            -1,
+            1,
+            6,
+            126,
+            128,
+            i128::from(i64::MAX),
+            i128::from(i64::MIN),
+        ] {
+            assert!(!set.contains(value), "{value}");
+        }
+    }
+
+    #[test]
+    fn a_wide_span_falls_back_to_the_sparse_set() {
+        let set = IntegerKeySet::from_keys(&keys(&[0, i64::MAX])).expect("integers");
+        assert!(matches!(set, IntegerKeySet::Sparse(_)));
+        assert!(set.contains(0));
+        assert!(set.contains(i128::from(i64::MAX)));
+        assert!(!set.contains(1));
+    }
+
+    #[test]
+    fn non_integer_keys_and_empty_sets_are_handled() {
+        let mut mixed = keys(&[1]);
+        mixed.insert(JoinHashKey::Scalar(pintail_types::Value::Utf8(
+            "x".to_owned(),
+        )));
+        assert!(IntegerKeySet::from_keys(&mixed).is_none());
+        let empty = IntegerKeySet::from_keys(&HashSet::new()).expect("empty is a set");
+        assert!(!empty.contains(0));
     }
 }
