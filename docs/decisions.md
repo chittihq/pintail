@@ -1339,12 +1339,14 @@ walk still checks row counts against the key column's and stays aligned.
 The consequence accepted is that a skipped payload is not checksummed on
 that read; block checksums guard what a scan decodes, and a later scan that
 decodes the block verifies it. The footer verification at open is
-unchanged. Two follow-ups stay open from the same audit: the row-header
-pass still reads and checksums every block of the key column to find the
-ones a range touches although the footer's sparse index could seek to
-them, and the merge path streams a segment's key, version and tombstone
-columns from the first row whatever the merged range is. Both are bounded
-by the key column's size, not the table's width.
+unchanged. The same audit closed two more readers of more than they
+needed: the row-header pass now seeks by the footer's column directory and
+sparse key index to the run of key, version and tombstone blocks a range
+touches (strictly bounded when the segment holds one row per key,
+inclusively when it retains versions) and reserves memory for that run,
+not the segment; and merge-on-read seeks each overlapping segment's header
+stream to the range's lower bound and stops the merge at the upper bound
+rather than draining every segment to its end.
 
 ### A table mid-copy is not ready, not empty
 

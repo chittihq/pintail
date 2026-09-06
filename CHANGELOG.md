@@ -38,6 +38,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   database, and metadata queries, keep answering. A table flagged for a
   resync it has not started, a table under replication and a local table
   hold complete stores and serve as before.
+- A key lookup reads the key blocks its range touches, not the whole key
+  column. The row-header pass walked every block of the primary-key column
+  (loading and checksumming each) to find the ones a range fell in, then
+  every block of the version and tombstone columns, and reserved header
+  memory for every row of the segment; on a compaction-sized segment that
+  was tens of megabytes read and reserved per lookup. It now seeks by the
+  footer's column directory and sparse key index straight to the touched
+  run of blocks in each of the three system columns, passes over the blocks
+  before it, stops after it, and reserves for the run. Merge-on-read over
+  overlapping segments seeks each segment to the range's lower bound the
+  same way and stops at its upper bound instead of draining every segment
+  to its end.
 - A segment reader skips the blocks it will not decode. The readers behind
   key lookups, ranged projections and late materialization walked every
   column of a segment through the file and loaded and checksummed each

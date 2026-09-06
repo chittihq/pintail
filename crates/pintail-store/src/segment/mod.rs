@@ -1281,6 +1281,74 @@ impl SegmentRowStream {
         }
     }
 
+    /// Positions a freshly opened stream at the first block whose keys can
+    /// reach `lo`, passing over the blocks before it without reading them.
+    /// The rows skipped keep their physical indices, so late materialization
+    /// still addresses them. Must be called before the first row is read.
+    pub(crate) fn skip_to_key(
+        &mut self,
+        meta: &SegmentMeta,
+        lo: &PrimaryKey,
+    ) -> Result<(), StoreError> {
+        if self.next_physical_index != 0 || self.buffered_rows.len() != 0 {
+            return Err(StoreError::FormatLimit(
+                "a segment stream can only seek before its first row".into(),
+            ));
+        }
+        let layout = read_footer_layout(&self.path, meta)?;
+        let first = match blocks_touching_key_range(
+            &layout.sparse,
+            &meta.max_key,
+            meta.unique_keys,
+            lo,
+            &meta.max_key,
+        ) {
+            Some(blocks) => *blocks.start(),
+            // Nothing at or after `lo`: skip everything.
+            None => layout.sparse.len(),
+        };
+        if first == 0 {
+            return Ok(());
+        }
+        let mut skipped_rows = None;
+        for column in &mut self.columns {
+            if column.remaining_blocks < first {
+                return Err(corrupt(
+                    &self.path,
+                    column.decoder.decode_position(),
+                    "column has fewer blocks than the sparse index",
+                ));
+            }
+            let mut rows = 0_usize;
+            for _ in 0..first {
+                rows = rows
+                    .saturating_add(skip_file_block(&self.path, &mut column.decoder)?.row_count);
+            }
+            column.remaining_blocks -= first;
+            if skipped_rows
+                .replace(rows)
+                .is_some_and(|previous| previous != rows)
+            {
+                return Err(corrupt(
+                    &self.path,
+                    column.decoder.decode_position(),
+                    "column block row count mismatch",
+                ));
+            }
+        }
+        let skipped = skipped_rows.unwrap_or(0);
+        if skipped > self.remaining_rows {
+            return Err(corrupt(
+                &self.path,
+                0,
+                "skipped blocks hold more rows than the segment",
+            ));
+        }
+        self.remaining_rows -= skipped;
+        self.next_physical_index = skipped;
+        Ok(())
+    }
+
     pub(crate) fn next_header(&mut self) -> Result<Option<SegmentRowHeader>, StoreError> {
         let Some(row) = self.next_row()? else {
             return Ok(None);
@@ -1598,8 +1666,84 @@ pub(crate) fn read_sparse_index(
     meta: &SegmentMeta,
 ) -> Result<Vec<(u64, PrimaryKey)>, StoreError> {
     let path = directory.join(&meta.file_name);
-    let (footer, footer_offset, _) = read_verified_footer(&path)?;
-    parse_footer_body(&path, &footer, footer_offset, meta)
+    Ok(read_footer_layout(&path, meta)?.sparse)
+}
+
+/// Reads and verifies the footer, returning the column directory offsets
+/// and the sparse primary-key index.
+pub(crate) fn read_footer_layout(
+    path: &Path,
+    meta: &SegmentMeta,
+) -> Result<FooterLayout, StoreError> {
+    let (footer, footer_offset, _) = read_verified_footer(path)?;
+    parse_footer_body(path, &footer, footer_offset, meta)
+}
+
+/// The contiguous run of blocks whose keys can fall in `start..=end`, from
+/// the sparse index: block `b` begins at the index's key and ends before
+/// the next block's first key (the last block ends at the segment's
+/// maximum). When the segment holds one row per key that bound is strict;
+/// a segment retaining several versions of a key may carry one across a
+/// block boundary, so its blocks are bounded inclusively and the per-row
+/// key filter resolves the edge. Returns `None` when no block can match.
+fn blocks_touching_key_range(
+    sparse: &[(u64, PrimaryKey)],
+    max_key: &PrimaryKey,
+    unique_keys: bool,
+    start: &PrimaryKey,
+    end: &PrimaryKey,
+) -> Option<std::ops::RangeInclusive<usize>> {
+    if sparse.is_empty() || start > end {
+        return None;
+    }
+    // First block whose last key can reach `start`: its successor's first
+    // key (or the segment maximum) is at least `start`.
+    let mut first = 0;
+    while first < sparse.len() {
+        let (upper, inclusive) = sparse
+            .get(first + 1)
+            .map_or((max_key, true), |(_, key)| (key, !unique_keys));
+        if upper > start || (inclusive && upper == start) {
+            break;
+        }
+        first += 1;
+    }
+    if first == sparse.len() {
+        return None;
+    }
+    // Last block whose first key is at most `end`.
+    let last = sparse.partition_point(|(_, key)| key <= end);
+    if last == 0 || last - 1 < first {
+        return None;
+    }
+    Some(first..=last - 1)
+}
+
+/// Seeks to one column directory entry and reads its id, logical type and
+/// block count, leaving the decoder at the column's first block.
+fn read_column_directory_entry(
+    path: &Path,
+    decoder: &mut FileDecoder,
+    offset: u64,
+) -> Result<(u32, LogicalType, usize), StoreError> {
+    let offset = usize::try_from(offset)
+        .map_err(|_| corrupt(path, 0, "column offset does not fit usize"))?;
+    decoder
+        .seek_to(offset)
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    let id = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    let logical_type = LogicalType::decode(
+        decoder
+            .u8()
+            .map_err(|reason| corrupt_here(path, decoder, reason))?,
+    )
+    .map_err(|reason| corrupt_here(path, decoder, reason))?;
+    let block_count = decoder
+        .u32()
+        .map_err(|reason| corrupt_here(path, decoder, reason))? as usize;
+    Ok((id, logical_type, block_count))
 }
 
 /// Identity of one successful footer verification: the file as it existed
@@ -1743,6 +1887,7 @@ pub(crate) fn read_row_headers_range(
 ) -> Result<ProjectedSegmentScan, StoreError> {
     let path = directory.join(&meta.file_name);
     verify(directory, meta, schema)?;
+    let layout = read_footer_layout(&path, meta)?;
     let mut decoder = FileDecoder::open(&path)?;
     let magic = decoder
         .raw(MAGIC.len())
@@ -1777,7 +1922,7 @@ pub(crate) fn read_row_headers_range(
     .map_err(|_| corrupt_here(&path, &decoder, "segment row count exceeds usize"))?;
     let column_count = decoder
         .u32()
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
     let block_rows = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
@@ -1788,168 +1933,165 @@ pub(crate) fn read_row_headers_range(
             "segment block row target is zero",
         ));
     }
-    let block_count_upper = row_count.div_ceil(block_rows);
-    let header_reserved = row_count
-        .saturating_mul(
-            std::mem::size_of::<usize>().saturating_add(std::mem::size_of::<ProjectedSegmentRow>()),
-        )
-        .saturating_add(
-            row_count
-                .saturating_mul(3)
-                .saturating_mul(std::mem::size_of::<Cell>())
-                .saturating_mul(2),
-        )
-        .saturating_add(block_count_upper.saturating_mul(
-            std::mem::size_of::<bool>().saturating_add(std::mem::size_of::<usize>()),
+    if layout.column_offsets.len() != column_count {
+        return Err(corrupt_here(
+            &path,
+            &decoder,
+            "footer column count differs from the header",
         ));
-    memory.reserve(header_reserved)?;
-    let mut reserved_bytes = header_reserved;
+    }
+    let block_count = row_count.div_ceil(block_rows);
+    if layout.sparse.len() != block_count {
+        return Err(corrupt_here(
+            &path,
+            &decoder,
+            "sparse index entry count differs from the block count",
+        ));
+    }
 
-    let mut selected_blocks = Vec::with_capacity(block_count_upper);
-    let mut block_row_counts = Vec::with_capacity(block_count_upper);
-    let mut selected_row_indices = Vec::with_capacity(row_count);
-    let mut next_row_index = 0;
-    let mut keys = None;
-    let mut versions = None;
-    let mut tombstones = None;
-    let mut stats = SegmentReadStats::default();
-    for _ in 0..column_count {
-        let id = decoder
-            .u32()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-        let logical_type = LogicalType::decode(
-            decoder
-                .u8()
-                .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
-        )
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-        let block_count = decoder
-            .u32()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?
-            as usize;
-
-        if id == KEY_COLUMN_ID {
-            if logical_type != LogicalType::PrimaryKey || !selected_blocks.is_empty() {
-                return Err(corrupt_here(
-                    &path,
-                    &decoder,
-                    "invalid or duplicate primary-key column",
-                ));
-            }
-            let mut column_cells = Vec::new();
-            for _ in 0..block_count {
-                let block = read_file_block_if_bounded(
-                    &path,
-                    &mut decoder,
-                    logical_type,
-                    memory,
-                    |minimum, maximum| {
-                        let minimum = decode_stat_key(&path, minimum).map_err(|reason| {
-                            StoreError::CorruptSegment {
-                                path: path.clone(),
-                                offset: 0,
-                                reason,
-                            }
-                        })?;
-                        let maximum = decode_stat_key(&path, maximum).map_err(|reason| {
-                            StoreError::CorruptSegment {
-                                path: path.clone(),
-                                offset: 0,
-                                reason,
-                            }
-                        })?;
-                        Ok(minimum <= *end && maximum >= *start)
-                    },
-                )?;
-                let selected = block.cells.is_some();
-                reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
-                stats.read += usize::from(selected);
-                stats.decoded += usize::from(selected);
-                stats.pruned += usize::from(!selected);
-                selected_blocks.push(selected);
-                block_row_counts.push(block.row_count);
-                if let Some(cells) = block.cells {
-                    selected_row_indices.extend(next_row_index..next_row_index + block.row_count);
-                    column_cells.extend(cells);
-                }
-                next_row_index += block.row_count;
-            }
-            keys = Some(column_cells);
-            continue;
-        }
-        if selected_blocks.len() != block_count {
+    // The column directory, by footer offset: the three system columns are
+    // what this pass decodes; user columns are only checked for type
+    // compatibility, never read.
+    let mut key_column = None;
+    let mut version_column = None;
+    let mut tombstone_column = None;
+    for offset in &layout.column_offsets {
+        let (id, logical_type, blocks) = read_column_directory_entry(&path, &mut decoder, *offset)?;
+        if blocks != block_count {
             return Err(corrupt_here(
                 &path,
                 &decoder,
-                "column block count differs from primary-key column",
+                "column block count differs from the segment row count",
             ));
         }
-
-        let system_column = match id {
-            VERSION_COLUMN_ID if logical_type == LogicalType::UInt64 => 1,
-            TOMBSTONE_COLUMN_ID if logical_type == LogicalType::Boolean => 2,
-            VERSION_COLUMN_ID | TOMBSTONE_COLUMN_ID => {
+        let slot = match id {
+            KEY_COLUMN_ID if logical_type == LogicalType::PrimaryKey => &mut key_column,
+            VERSION_COLUMN_ID if logical_type == LogicalType::UInt64 => &mut version_column,
+            TOMBSTONE_COLUMN_ID if logical_type == LogicalType::Boolean => &mut tombstone_column,
+            KEY_COLUMN_ID | VERSION_COLUMN_ID | TOMBSTONE_COLUMN_ID => {
                 return Err(corrupt_here(
                     &path,
                     &decoder,
                     "system column has the wrong logical type",
                 ));
             }
-            _ => 0,
+            _ => {
+                if let Some(column) = schema.columns().iter().find(|column| column.id() == id)
+                    && !wire_type_compatible(column.data_type(), logical_type)
+                {
+                    return Err(StoreError::IncompatibleSchema(format!(
+                        "column {} ({id}) changed physical type",
+                        column.name()
+                    )));
+                }
+                continue;
+            }
         };
-        let schema_index = schema.columns().iter().position(|column| column.id() == id);
-        if let Some(schema_index) = schema_index
-            && !wire_type_compatible(schema.columns()[schema_index].data_type(), logical_type)
+        if slot
+            .replace((decoder.decode_position(), logical_type))
+            .is_some()
         {
-            return Err(StoreError::IncompatibleSchema(format!(
-                "column {} ({id}) changed physical type",
-                schema.columns()[schema_index].name()
-            )));
+            return Err(corrupt_here(&path, &decoder, "duplicate system column"));
         }
-        let decode_column = system_column != 0;
-        let mut column_cells = Vec::new();
-        for (block_index, selected) in selected_blocks.iter().copied().enumerate() {
-            let block = if selected && decode_column {
+    }
+    let (key_offset, key_type) =
+        key_column.ok_or_else(|| corrupt_here(&path, &decoder, "missing primary-key column"))?;
+    let (version_offset, version_type) =
+        version_column.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
+    let (tombstone_offset, tombstone_type) = tombstone_column
+        .ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
+
+    let mut stats = SegmentReadStats::default();
+    let Some(selected) =
+        blocks_touching_key_range(&layout.sparse, &meta.max_key, meta.unique_keys, start, end)
+    else {
+        stats.pruned = block_count;
+        return Ok(ProjectedSegmentScan {
+            rows: Vec::new(),
+            stats,
+            reserved_bytes: 0,
+        });
+    };
+    let selected_blocks = selected.end() - selected.start() + 1;
+    stats.read = selected_blocks;
+    stats.pruned = block_count - selected_blocks;
+    // The rows this pass can hold: those of the selected blocks, not the
+    // segment's. The last block may be shorter than the target; the bound
+    // is an upper one.
+    let selected_rows_upper = selected_blocks.saturating_mul(block_rows).min(row_count);
+    let header_reserved = selected_rows_upper
+        .saturating_mul(
+            std::mem::size_of::<usize>().saturating_add(std::mem::size_of::<ProjectedSegmentRow>()),
+        )
+        .saturating_add(
+            selected_rows_upper
+                .saturating_mul(3)
+                .saturating_mul(std::mem::size_of::<Cell>())
+                .saturating_mul(2),
+        );
+    memory.reserve(header_reserved)?;
+    let mut reserved_bytes = header_reserved;
+
+    // Walks one system column: passes over the blocks before the selected
+    // run, decodes the run, and stops; the blocks after it are never
+    // touched. Returns the decoded cells and the run's block row counts.
+    let mut read_system_column = |offset: usize,
+                                  logical_type: LogicalType,
+                                  expected_rows: Option<&[usize]>|
+     -> Result<(Vec<Cell>, Vec<usize>, usize, usize), StoreError> {
+        decoder
+            .seek_to(offset)
+            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
+        let mut first_row = 0_usize;
+        for _ in 0..*selected.start() {
+            first_row = first_row.saturating_add(skip_file_block(&path, &mut decoder)?.row_count);
+        }
+        let mut cells = Vec::new();
+        let mut row_counts = Vec::with_capacity(selected_blocks);
+        let mut reserved = 0_usize;
+        for (index, _) in selected.clone().enumerate() {
+            let block =
                 read_file_block_if_bounded(&path, &mut decoder, logical_type, memory, |_, _| {
                     Ok(true)
-                })?
-            } else {
-                skip_file_block(&path, &mut decoder)?
-            };
-            if block.row_count != block_row_counts[block_index] {
+                })?;
+            if let Some(expected) = expected_rows
+                && expected.get(index) != Some(&block.row_count)
+            {
                 return Err(corrupt_here(
                     &path,
                     &decoder,
                     "column block row count mismatch",
                 ));
             }
-            reserved_bytes = reserved_bytes.saturating_add(block.reserved_bytes);
-            stats.decoded += usize::from(block.cells.is_some());
-            if let Some(cells) = block.cells {
-                column_cells.extend(cells);
+            reserved = reserved.saturating_add(block.reserved_bytes);
+            row_counts.push(block.row_count);
+            if let Some(block_cells) = block.cells {
+                cells.extend(block_cells);
             }
         }
-        let duplicate = match system_column {
-            1 => versions
-                .replace(column_cells)
-                .is_some()
-                .then_some("duplicate version column"),
-            2 => tombstones
-                .replace(column_cells)
-                .is_some()
-                .then_some("duplicate tombstone column"),
-            _ => None,
-        };
-        if let Some(message) = duplicate {
-            return Err(corrupt_here(&path, &decoder, message));
-        }
+        Ok((cells, row_counts, first_row, reserved))
+    };
+    let (keys, key_row_counts, first_row, key_reserved) =
+        read_system_column(key_offset, key_type, None)?;
+    reserved_bytes = reserved_bytes.saturating_add(key_reserved);
+    let sparse_first_row = usize::try_from(layout.sparse[*selected.start()].0)
+        .map_err(|_| corrupt(&path, 0, "sparse index ordinal exceeds usize"))?;
+    if first_row != sparse_first_row {
+        return Err(corrupt(
+            &path,
+            0,
+            "sparse index ordinal differs from the block row counts",
+        ));
     }
+    let (versions, _, _, version_reserved) =
+        read_system_column(version_offset, version_type, Some(&key_row_counts))?;
+    let (tombstones, _, _, tombstone_reserved) =
+        read_system_column(tombstone_offset, tombstone_type, Some(&key_row_counts))?;
+    reserved_bytes = reserved_bytes
+        .saturating_add(version_reserved)
+        .saturating_add(tombstone_reserved);
+    stats.decoded = selected_blocks * 3;
 
-    let keys = keys.ok_or_else(|| corrupt_here(&path, &decoder, "missing primary-key column"))?;
-    let versions =
-        versions.ok_or_else(|| corrupt_here(&path, &decoder, "missing version column"))?;
-    let tombstones =
-        tombstones.ok_or_else(|| corrupt_here(&path, &decoder, "missing tombstone column"))?;
     let cloned_key_bytes = keys
         .iter()
         .filter_map(|cell| match cell {
@@ -1964,25 +2106,25 @@ pub(crate) fn read_row_headers_range(
         .fold(0_usize, usize::saturating_add);
     memory.reserve(cloned_key_bytes)?;
     reserved_bytes = reserved_bytes.saturating_add(cloned_key_bytes);
-    let mut rows = Vec::with_capacity(row_count);
-    for row_index in 0..keys.len() {
-        let Cell::Key(key) = &keys[row_index] else {
-            return Err(corrupt_here(&path, &decoder, "invalid primary-key cell"));
+    let mut rows = Vec::with_capacity(keys.len());
+    for (row_index, key) in keys.iter().enumerate() {
+        let Cell::Key(key) = key else {
+            return Err(corrupt(&path, 0, "invalid primary-key cell"));
         };
         if key < start || key > end {
             continue;
         }
         let Cell::UInt64(version) = versions[row_index] else {
-            return Err(corrupt_here(&path, &decoder, "invalid version cell"));
+            return Err(corrupt(&path, 0, "invalid version cell"));
         };
         let Cell::Boolean(deleted) = tombstones[row_index] else {
-            return Err(corrupt_here(&path, &decoder, "invalid tombstone cell"));
+            return Err(corrupt(&path, 0, "invalid tombstone cell"));
         };
         rows.push(ProjectedSegmentRow {
             key: key.clone(),
             version,
             deleted,
-            physical_index: selected_row_indices[row_index],
+            physical_index: first_row + row_index,
         });
     }
     Ok(ProjectedSegmentScan {
@@ -3066,14 +3208,6 @@ pub(crate) fn read_projected_column_ranges(
     })
 }
 
-fn decode_stat_key(path: &Path, bytes: &[u8]) -> Result<PrimaryKey, String> {
-    let mut decoder = Decoder::new(bytes);
-    let key = decode_key(&mut decoder)
-        .map_err(|reason| format!("invalid key statistic in {}: {reason}", path.display()))?;
-    decoder.finish()?;
-    Ok(key)
-}
-
 fn column_specs(schema: &TableSchema) -> Vec<ColumnSpec> {
     let mut specs = vec![
         ColumnSpec {
@@ -4122,12 +4256,20 @@ fn decode_cell(decoder: &mut Decoder<'_>, logical_type: LogicalType) -> Result<C
     }
 }
 
+/// What the footer says about where things are: the file offset of each
+/// column's directory entry, in file order, and the sparse primary-key
+/// index (one `(first row ordinal, first key)` entry per block).
+pub(crate) struct FooterLayout {
+    pub(crate) column_offsets: Vec<u64>,
+    pub(crate) sparse: Vec<(u64, PrimaryKey)>,
+}
+
 fn parse_footer_body(
     path: &Path,
     bytes: &[u8],
     footer_offset: usize,
     meta: &SegmentMeta,
-) -> Result<Vec<(u64, PrimaryKey)>, StoreError> {
+) -> Result<FooterLayout, StoreError> {
     let mut decoder = Decoder::new(bytes);
     expect_raw(&mut decoder, FOOTER_MAGIC)
         .map_err(|reason| corrupt(path, footer_offset, reason))?;
@@ -4168,10 +4310,13 @@ fn parse_footer_body(
     let column_count = decoder
         .u32()
         .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+    let mut column_offsets = Vec::with_capacity(column_count as usize);
     for _ in 0..column_count {
-        decoder
-            .u64()
-            .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?;
+        column_offsets.push(
+            decoder
+                .u64()
+                .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?,
+        );
     }
     let sparse_count = decoder
         .u32()
@@ -4205,7 +4350,10 @@ fn parse_footer_body(
     decoder
         .finish()
         .map_err(|reason| corrupt(path, footer_offset, reason))?;
-    Ok(sparse)
+    Ok(FooterLayout {
+        column_offsets,
+        sparse,
+    })
 }
 
 fn build_bloom(rows: &[StoredRow]) -> Result<Vec<u8>, StoreError> {
@@ -4742,6 +4890,140 @@ mod range_read_tests {
         assert!(
             error.to_string().contains("block checksum mismatch"),
             "{error}"
+        );
+    }
+
+    /// A key range touches a run of blocks; the row-header pass reads that
+    /// run and nothing else. The budget it needs is sized by the run, not by
+    /// the segment, so a lookup on a large segment fits a small budget.
+    #[test]
+    fn a_key_lookup_reads_and_reserves_for_the_blocks_it_touches() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "amount", DataType::Int64, true),
+            ],
+        )
+        .expect("schema");
+        let rows = (0..200_000_u64)
+            .map(|id| {
+                StoredRow::new(
+                    PrimaryKey::new(vec![KeyPart::UInt64(id * 2)]).expect("key"),
+                    vec![
+                        Value::UInt64(id * 2),
+                        Value::Int64(i64::try_from(id % 7).expect("small")),
+                    ],
+                    1,
+                    false,
+                )
+            })
+            .collect::<Vec<_>>();
+        let meta = write(
+            directory.path(),
+            1,
+            &schema,
+            &rows,
+            4096,
+            Compression::Lz4,
+            true,
+        )
+        .expect("write segment");
+        let blocks = 200_000_usize.div_ceil(4096);
+        let key = |value: u64| PrimaryKey::new(vec![KeyPart::UInt64(value)]).expect("key");
+        // Reserving headers for the whole segment would need tens of
+        // megabytes; two blocks fit in a few.
+        let limit = 4 * 1024 * 1024;
+        let lookup = |start: u64, end: u64| {
+            let cell = std::sync::atomic::AtomicUsize::new(0);
+            let budget = ScanMemoryBudget::new(&cell, limit);
+            super::read_row_headers_range(
+                directory.path(),
+                &meta,
+                &schema,
+                &key(start),
+                &key(end),
+                &budget,
+            )
+        };
+
+        // Inside one block, in the middle of the segment.
+        let middle = lookup(100_000, 100_020).expect("middle lookup");
+        assert_eq!(middle.rows.len(), 11);
+        assert_eq!(middle.rows[0].physical_index, 50_000);
+        assert_eq!(middle.stats.read, 1);
+        assert_eq!(middle.stats.pruned, blocks - 1);
+        assert!(middle.reserved_bytes < limit);
+
+        // Straddling a block boundary: rows 4095 and 4096 are keys 8190, 8192.
+        let straddle = lookup(8_190, 8_192).expect("straddling lookup");
+        assert_eq!(straddle.rows.len(), 2);
+        assert_eq!(straddle.stats.read, 2);
+
+        // The last, short block, and a key past the end of it.
+        let tail = lookup(399_990, 500_000).expect("tail lookup");
+        assert_eq!(tail.rows.len(), 5);
+        assert_eq!(tail.rows[4].physical_index, 199_999);
+        assert_eq!(tail.stats.read, 1);
+
+        // Odd keys are absent: the block is read, nothing qualifies.
+        assert!(lookup(101, 101).expect("absent key").rows.is_empty());
+
+        // Beyond either end nothing is read at all.
+        let beyond = lookup(400_001, 400_002).expect("beyond the end");
+        assert!(beyond.rows.is_empty());
+        assert_eq!(beyond.stats.read, 0);
+        assert_eq!(beyond.stats.pruned, blocks);
+        assert_eq!(beyond.reserved_bytes, 0);
+    }
+
+    /// A header stream seeks to the block a lower bound falls in; the rows
+    /// before it are never read yet keep their physical indices.
+    #[test]
+    fn a_header_stream_seeks_to_its_lower_bound() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let (schema, meta) = write_wide_segment(directory.path(), 64);
+        let key = |value: u64| PrimaryKey::new(vec![KeyPart::UInt64(value)]).expect("key");
+
+        let mut stream =
+            super::SegmentRowStream::open_headers(directory.path(), &meta, &schema).expect("open");
+        stream.skip_to_key(&meta, &key(100)).expect("seek");
+        let head = stream.next_header().expect("read").expect("a row");
+        assert_eq!(head.key, key(96), "the block holding 100 starts at 96");
+        assert_eq!(head.physical_index, 96);
+        let mut count = 1;
+        while stream.next_header().expect("read").is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 256 - 96, "the rest of the segment follows");
+
+        let mut past =
+            super::SegmentRowStream::open_headers(directory.path(), &meta, &schema).expect("open");
+        past.skip_to_key(&meta, &key(1_000))
+            .expect("seek past the end");
+        assert!(past.next_header().expect("read").is_none());
+
+        let mut before =
+            super::SegmentRowStream::open_headers(directory.path(), &meta, &schema).expect("open");
+        before
+            .skip_to_key(&meta, &key(0))
+            .expect("seek to the start");
+        assert_eq!(
+            before
+                .next_header()
+                .expect("read")
+                .expect("a row")
+                .physical_index,
+            0
+        );
+
+        let mut late =
+            super::SegmentRowStream::open_headers(directory.path(), &meta, &schema).expect("open");
+        late.next_header().expect("read");
+        assert!(
+            late.skip_to_key(&meta, &key(100)).is_err(),
+            "seeking after reading is refused"
         );
     }
 

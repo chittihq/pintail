@@ -281,15 +281,16 @@ prints.
   half a second on a deployment host). Closed 2026-09-07: blocks a reader
   has ruled out are skipped with a seek; see "A segment reader skips the
   blocks it will not decode" in `docs/decisions.md`.
-- [ ] **G5. The row-header pass reads the whole key column.** A range
-  lookup still loads and checksums every block of the key column to find
-  the blocks the range touches, and reserves header memory for every row
-  of the segment, although the footer's sparse index names each block's
-  first key. Bounded by the key column's size, not the table's width; on a
-  compaction-sized segment that is tens of megabytes per lookup.
-- [ ] **G6. The merge path streams from the first row.** `ScanPart::Merge`
-  opens each overlapping segment's key, version and tombstone columns from
-  row zero and walks them to the merged range rather than seeking to it.
+- [x] **G5. The row-header pass read the whole key column.** A range
+  lookup loaded and checksummed every block of the key, version and
+  tombstone columns to find the ones the range touched, and reserved
+  header memory for every row of the segment. Closed 2026-09-07: the pass
+  seeks by the footer's column directory and sparse key index to the
+  touched run in each system column and reserves for that run.
+- [x] **G6. The merge path streamed from the first row.** `ScanPart::Merge`
+  walked each overlapping segment from row zero to the merged range and on
+  to the segment's end. Closed 2026-09-07: each stream seeks to the range's
+  lower bound and the merge stops at the upper bound.
 
 ## F. Still open from earlier reviews
 

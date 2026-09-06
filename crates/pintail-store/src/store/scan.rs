@@ -184,6 +184,16 @@ pub(super) enum ScanPart {
 }
 
 /// Whether `key` lies within the inclusive/exclusive bound pair.
+/// Whether `key` lies beyond the upper bound `hi`.
+fn bound_below(hi: &std::ops::Bound<PrimaryKey>, key: &PrimaryKey) -> bool {
+    use std::ops::Bound::{Excluded, Included, Unbounded};
+    match hi {
+        Included(bound) => key > bound,
+        Excluded(bound) => key >= bound,
+        Unbounded => false,
+    }
+}
+
 fn bounds_contain(
     lo: &std::ops::Bound<PrimaryKey>,
     hi: &std::ops::Bound<PrimaryKey>,
@@ -1016,13 +1026,20 @@ impl ProjectedScanStream {
                 let mut streams = segments
                     .iter()
                     .map(|meta| {
-                        segment::SegmentRowStream::open_headers(
+                        let mut stream = segment::SegmentRowStream::open_headers(
                             &self.snapshot.directory,
                             meta,
                             &self.snapshot.schema,
-                        )
+                        )?;
+                        // The merge starts at the part's lower bound; the
+                        // blocks before it are passed over, not walked.
+                        if let std::ops::Bound::Included(key) | std::ops::Bound::Excluded(key) = &lo
+                        {
+                            stream.skip_to_key(meta, key)?;
+                        }
+                        Ok(stream)
                     })
-                    .collect::<Result<Vec<_>, _>>()?;
+                    .collect::<Result<Vec<_>, StoreError>>()?;
                 let heads = streams
                     .iter_mut()
                     .map(segment::SegmentRowStream::next_header)
@@ -1562,6 +1579,12 @@ impl ProjectedScanStream {
             let Some(minimum) = minimum else {
                 break;
             };
+            // Every remaining head is at or past the smallest one, so once
+            // that is beyond the part's upper bound nothing else qualifies:
+            // the streams are left where they are rather than drained.
+            if bound_below(&part_hi, &minimum) {
+                break;
+            }
             let mut winner = None::<(u64, bool, MergedWinnerSource)>;
             for (segment_index, (stream, head)) in
                 merge.streams.iter_mut().zip(&mut merge.heads).enumerate()
