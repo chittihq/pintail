@@ -367,11 +367,20 @@ G2 and G3 above are their own brief; this section is everything else the
   range became apparent one value at a time); growing the bitmap with
   doubling headroom instead fixed it, banking a real ~25% win (e77,
   `docs/decisions.md`).
-- [ ] **H4. High-cardinality `GROUP BY` into a top-K.** Q6 groups by
-  ~200K users, sorts, and takes ten. Radix-partition the group keys by
-  worker so each worker folds a disjoint range with no cross-worker merge,
-  and stream finished groups into the top-K heap instead of materialising
-  every group first.
+- [ ] **H4. High-cardinality `GROUP BY` into a top-K.** Not attempted;
+  investigated and re-scoped. Q6's actual shape (a bare int column,
+  `COUNT`/`SUM`) already routes to the streaming two-pass aggregate
+  (e13), not the general full-materialization path this item assumed -
+  measured 223 ms at 10M rows against the general path's 4.2 s for an
+  unrelated (expression-keyed) shape (e78). Radix-partitioning the build
+  key so each worker's groups are disjoint and can stream into a top-K
+  heap is a new execution-model capability (a key-based shuffle, not a
+  row-range split), not a local change; `build_buffered_hash_aggregate`
+  already documents that naively parallelizing this exact shape
+  regressed Q6 from seconds to minutes and "needs a partitioned design
+  and its own experiment first" - unchanged by this brief. Next attempt
+  should start from the 223 ms baseline in e78, not the 4.2 s figure this
+  item was written against.
 - [ ] **H5. Scan follow-ups already measured.** e65 measured sixteen scan
   threads beating eight on an 8-CPU host; default the scan pool (not the
   execution pool) to twice the CPU count. e70 noted the sliced scan idles

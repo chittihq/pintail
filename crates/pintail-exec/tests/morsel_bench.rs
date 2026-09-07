@@ -232,6 +232,19 @@ const WIDE_JOIN_CASE: Case = Case {
     limit: 512 << 20,
 };
 
+/// Q6's own shape (benchmark/queries.ts): `GROUP BY` a bare high-cardinality
+/// int COLUMN (not an expression - `grp` is stored, not computed here) with
+/// `COUNT(*)`/`SUM`, `ORDER BY` the sum, `LIMIT 10`. The "general high
+/// cardinality" case above groups by an EXPRESSION (`id % 200000`), which
+/// `column_index()` cannot resolve to a plain column and so never reaches
+/// the direct/two-pass paths at all - it is not what Q6 runs.
+const TOP_K_CASE: Case = Case {
+    label: "top 10 by sum, 200K-value column",
+    sql: "SELECT grp, COUNT(*) AS order_count, SUM(amount) AS total_spent FROM facts \
+          GROUP BY grp ORDER BY total_spent DESC, grp LIMIT 10",
+    limit: 512 << 20,
+};
+
 fn measure(fixture: &Fixture, case: &Case, runs: usize) -> String {
     let mut times = Vec::with_capacity(runs);
     let mut rows = 0;
@@ -298,5 +311,9 @@ fn aggregate_paths_over_a_large_table() {
     if wanted(&&WIDE_JOIN_CASE) {
         let wide = Fixture::with_dims(rows, 100_000);
         eprintln!("{}", measure(&wide, &WIDE_JOIN_CASE, runs));
+    }
+    if wanted(&&TOP_K_CASE) {
+        let wide = Fixture::with_dims(rows, 200_000);
+        eprintln!("{}", measure(&wide, &TOP_K_CASE, runs));
     }
 }

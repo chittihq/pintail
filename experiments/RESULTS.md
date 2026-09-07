@@ -2864,3 +2864,63 @@ minimum on the 10M-row case, consistent across three separate runs. Not
 banked here: `docs/decisions.md` records the alternative (demote vs.
 grow vs. grow-with-headroom) for section H item 3 in
 `docs/design/production-hardening-todo.md`.
+
+## e78 — Q6's real shape is already on the two-pass streaming path; the naive-materialization premise was stale (10M rows, 32 threads, memo off)
+
+The brief for section H item 4 described Q6 as "the general partitioned
+aggregate, a full materialization, then sort.rs `materialize_top_k`" and
+asked for radix-partitioned parallel aggregation feeding a streaming
+top-K heap. Measured instead of assumed:
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "top 10 by sum,
+200K-value column" - `GROUP BY grp` on a bare, stored integer column with
+200,000 distinct values (Q6's own cardinality), `COUNT(*)` and `SUM`,
+`ORDER BY total_spent DESC, grp LIMIT 10` - Q6's exact shape
+(`benchmark/queries.ts`), unlike the existing "general high cardinality"
+case, which groups by the EXPRESSION `id % 200000`: `column_index()`
+cannot resolve an expression to a plain column, so that case never
+reaches `build_direct_column_aggregate`'s direct/two-pass routing at all
+and measures a different, slower path (4.0-6.1 s in e76's matrix) that
+Q6 does not run.
+
+| case | shape | min |
+|---|---|---:|
+| "general high cardinality" (pre-existing) | `GROUP BY id % 200000` (expression) | 4,205 ms |
+| "top 10 by sum, 200K-value column" (this entry) | `GROUP BY grp` (bare column, Q6's shape) | 223.0 ms |
+
+`build_buffered_hash_aggregate`/`build_direct_column_aggregate` already
+route a single bare int-typed group column with `COUNT`/`SUM`-shaped
+aggregates to `build_streaming_two_pass_aggregate` (e13: banked
+4.2-8.9x), not the general `HashMap<Vec<Value>, AggregateGroup>` path.
+223 ms for 10M rows scales close to linearly to the 20M-row benchmark's
+banked 420 ms for real Q6 - the existing optimization already accounts
+for most of the gap the brief attributed to "full materialization."
+
+A comment already in `build_buffered_hash_aggregate` (above
+`build_direct_column_aggregate`'s call site) records that this exact
+question was tried before: routing the single-int-column case through
+the parallel morsel/merge path "regressed Q6 (2M groups over 20M rows)
+from seconds to minutes," because the dense-array parallel win that
+helps LOW-cardinality keys does not transfer to sparse high-cardinality
+ones, and closes with "Parallel high-cardinality aggregation needs a
+partitioned design and its own experiment first." Radix-partitioning the
+build key so each worker owns a disjoint range and can safely call its
+own groups finished - the precondition for streaming them into a top-K
+heap without a cross-worker merge - is a new execution-model capability
+(a hash-based shuffle/exchange stage), not a local change to
+`sort.rs::materialize_top_k` or to the two-pass aggregate: no query in
+the current planner or executor partitions its parallel work by key
+rather than by row range. Attempting it inside this brief's remaining
+scope, on top of the correctness surface a change like that touches
+(admission, memory tracking across N partition buffers, interaction with
+existing spill/two-pass paths) risked exactly the kind of regression the
+comment already describes, without the dedicated measurement budget the
+comment says it needs.
+
+**Verdict: not attempted.** The measured baseline for Q6's actual shape
+(223 ms at 10M rows, this entry) is the number future work on this item
+should compare against - not the 4,205 ms "general high cardinality"
+case, which is a different, already-slow path Q6 does not take.
+`docs/design/production-hardening-todo.md` section H keeps item 4 open
+with this finding attached, so it is not re-discovered from a stale
+premise.
