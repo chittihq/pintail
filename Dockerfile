@@ -41,9 +41,16 @@ ENV PINTAIL_DASHBOARD_PREBUILT=1
 # crates recompiled from scratch on every source change. A BuildKit cache
 # mount keeps the incremental state between builds; the binary is copied out
 # inside the same RUN because cache mounts do not persist into the layer.
+# The cache mount outlives the tree it was built from, and a COPY layer
+# carries the source files' own timestamps. When a tree older by mtime is
+# built after a newer one, cargo reads the newer artifacts as fresh and
+# links a stale workspace crate. Stamping the sources at build time makes
+# every workspace crate newer than whatever the mount holds; the 472
+# dependencies keep their cache.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
-    if [ "$PINTAIL_PGO" = 1 ]; then \
+    find crates tests/sqllogic -name '*.rs' -exec touch {} + \
+    && if [ "$PINTAIL_PGO" = 1 ]; then \
       rustup component add llvm-tools-preview \
       && bash scripts/pgo-build.sh server \
       && cp /source/target/pgo/pintail /usr/local/bin/pintail-built; \
