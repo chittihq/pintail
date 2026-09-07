@@ -1,0 +1,109 @@
+{
+  "correct": true,
+  "factorized_join": true,
+  "filtered_join": false,
+  "phases": [
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 15.232093,
+          "rows": 22,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 0
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 78.007989,
+          "rows": 22,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 1
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 79.685671,
+          "rows": 22,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 2
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 79.188329,
+          "rows": 21,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 3
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 80.972451,
+          "rows": 21,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 4
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 83.191811,
+          "rows": 21,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 5
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 83.428451,
+          "rows": 21,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 6
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 11.1188,
+          "rows": 21,
+          "sql": "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 7
+    }
+  ],
+  "query_memory_limit_bytes": 268435456,
+  "record_resource_errors": true,
+  "rows": 100000,
+  "scenario": 1,
+  "seed": 9901,
+  "settled_memo_disabled": true
+}

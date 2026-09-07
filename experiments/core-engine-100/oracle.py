@@ -23,14 +23,18 @@ name='pintail-core100-oracle-'+uuid.uuid4().hex[:10]
 owned=False
 results=[]
 def docker(args,**kw):
-    return subprocess.run(['docker',*args],check=True,text=True,capture_output=True,**kw)
+    result=subprocess.run(['docker',*args],text=True,capture_output=True,**kw)
+    if result.returncode:
+        (out/'docker-error.json').write_text(json.dumps({'command':args,'exit':result.returncode,'stderr':result.stderr,'stdout':result.stdout},indent=2)+'\n')
+        raise RuntimeError(f'docker command failed: {result.stderr.strip()}')
+    return result
 try:
     docker(['run','-d','--name',name,'--label','pintail.harness=core100','-e','MYSQL_ALLOW_EMPTY_PASSWORD=yes','mysql:8.4','--binlog-format=ROW','--binlog-row-image=FULL','--server-id=812'])
     owned=True
     deadline=time.monotonic()+120
     while True:
-        r=subprocess.run(['docker','exec',name,'mysqladmin','ping','-uroot'],capture_output=True)
-        if r.returncode==0:break
+        r=subprocess.run(['docker','exec',name,'mysql','-h127.0.0.1','-N','-uroot','-e','SELECT 1'],capture_output=True)
+        if r.returncode==0 and r.stdout.strip()==b'1':break
         if time.monotonic()>deadline:raise RuntimeError('MySQL readiness timeout')
         time.sleep(1)
     version=docker(['exec',name,'mysql','-N','-uroot','-e','SELECT VERSION()']).stdout.strip()
