@@ -108,6 +108,18 @@ when judging diversity. Optional production BI capture and dual-engine
 replay is documented under `tests/corpus/bi-captured/README.md` (not a
 release requirement).
 
+Queries under live replication have a generated layer in the unit stage:
+`crates/pintail-exec/tests/live_replication_queries.rs` runs a seeded
+sequence of change batches (inserts past the end and into gaps, updates,
+deletes), stale replays of older versions, flushes and compactions over a
+fact and a dimension table, and after every step checks nine query shapes
+(whole-table and grouped aggregates, key lookups mixing live, deleted and
+absent keys, a key range, a two-column filter-first predicate, a nullable
+column under an ordered limit, extremes, a small-probe join grouped by the
+dimension, and the scan's own key order) against an in-memory model, on a
+table below the streaming threshold and on two above it. The settled memo
+stays on, as in production.
+
 The store's recovery has two generated layers of its own, both in the unit
 gate. The crash fuzz (`crates/pintail-store/tests/crash_fuzz.rs`) kills a
 fixed write loop at a random moment and checks the reopened tables against
