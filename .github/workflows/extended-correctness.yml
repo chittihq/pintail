@@ -62,9 +62,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: extended-core
-          workspaces: |
-            . -> target
-            experiments/query-reuse -> target
       - name: SQL, spill, storage fault and reuse prototype checks
         run: python3 tests/extended/run.py --layer core
       - name: Summary
@@ -91,6 +88,14 @@ jobs:
         mysql: ['8.0', '8.4']
     steps:
       - uses: actions/checkout@v4
+      - name: Remove checked-in evidence from the fresh runner
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          for pattern in ('results*.json', 'results*.md'):
+              for path in Path('tests/e2e').glob(pattern):
+                  path.unlink()
+          PYCODE
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
