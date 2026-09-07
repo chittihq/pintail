@@ -348,12 +348,17 @@ G2 and G3 above are their own brief; this section is everything else the
   in `experiments/RESULTS.md`. The wire-vs-HTTP timing this item asked
   for is now in `benchmark/run.ts`, reported alongside HTTP rather than
   replacing it — banking a number needs the containerized benchmark.
-- [ ] **H2. Dense join build for a contiguous build key.** Q8's fused
-  join-aggregate probes a general hash table at about 20 ns a probe,
-  scaling with the execution pool (e65). Extend `DenseJoinTable` to a
-  direct-index table when the build key's span fits a budget, and resolve
-  the group slot once per build row when the group key comes from the
-  build side.
+- [x] **H2. Dense join build for a contiguous build key.** Q8's fused
+  join-aggregate probed a general hash table at about 20 ns a probe (e65).
+  Closed in part: `PartitionedBuild` now finalizes itself into a
+  hash-free direct-index table in place when eligible, so every reader
+  of `get` benefits, not only the fused aggregate, and the fused path
+  resolves each distinct key's output group once instead of once per
+  probe row; measured a 5-9% minimum-time improvement at Q8's real key
+  cardinality (e76). Batching the probe into two passes, also asked for
+  here, measured slower and was dropped (e76, `docs/decisions.md`). Q8's
+  gap to ClickHouse is not closed by this alone - the two scans plus this
+  probe still trail the target of 1.5x the scan cost.
 - [ ] **H3. Bitset `COUNT(DISTINCT)`.** A hash set per group for an
   integer column with a known range should be a bitmap per group instead,
   charged to the tracker; the hash-set form stays as the fallback for a

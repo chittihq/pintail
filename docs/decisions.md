@@ -1426,3 +1426,40 @@ no row names. Snapshots opened before the rename keep the old path and
 fail their next read; the replica reloads on the directory change. A
 rename into another schema leaves the mirror and is treated as a drop; a
 rename onto a name already tracked quarantines the table as before.
+
+### The dense join table lives inside `PartitionedBuild`, not beside it
+
+The fused join-aggregate already built a throwaway direct-address table
+for an integer build key in a narrow span: a local `(minimum, Vec<Option<&
+bucket>>)` borrowing from the hash-partitioned build side, read for one
+query and dropped. Extending that to the general hash-join probe
+(`next_hash_join_batch`) meant holding the same kind of borrow alongside
+the `PartitionedBuild` it borrows from, across calls - a self-referential
+struct. The workspace forbids `unsafe_code` outright, and pulling in a
+crate for self-referential types is not the one dependency exception this
+repo carries, so neither of the usual ways to express that shape was
+available.
+
+The alternative taken: `PartitionedBuild` finalizes itself into the dense
+form in place. Once every row is inserted and the build did not spill,
+`finalize_dense` drains its hashed partitions into one flat
+`Vec<Vec<Vec<Value>>>` plus a per-offset index into it, when the keys are
+a plain integer set under `MAX_DENSE_SPAN` (4M slots - wide enough for
+real key ranges, capped so a sparse int column with two far-apart values
+never allocates a table sized to their gap); `get` checks that index
+first. Every reader of `get` - the general hash-join probe included -
+gets the dense path for free, with no change to its own code, and no
+reference crosses a struct boundary: the flat array is owned data, not a
+borrow.
+
+The fused join-aggregate keeps one thing of its own: which output group
+each bucket's rows fold into, resolved once per distinct key right after
+the dense table exists (not stored in `PartitionedBuild`, since only this
+one caller needs it) so a probe row that hits the dense table needs no
+further lookup. A further idea - splitting the probe into a pass that
+resolves every row's dense offset before any of them fold into a group,
+so the fold reads a stream of already-known offsets instead of resolving
+one write at a time - measured slower on a 10M-row, 100K-key fixture
+(`experiments/RESULTS.md` e76): the second pass's own allocation and
+extra traversal cost more than the resolved offsets saved. Kept as a
+single pass.

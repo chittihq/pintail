@@ -2772,3 +2772,43 @@ next full run to bank.
 unit tests for the new serialization shape and the cache's TTL/invalidation;
 the crate's existing HTTP integration suite (which exercises the full
 request path) passes unchanged.
+
+## e76 — Dense join table extended to every reader; batching the probe measured negative (10M rows, 100K-key build, 32 threads, memo off)
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "fused join + group,
+100K-key dim": a 100,000-row dimension table (8 distinct region names, like
+`benchmark/queries.ts`'s Q8) joined to the 10M-row fact table and grouped
+by region - the shape the fused join-aggregate's dense probe already had
+in reach, at Q8's real cardinality rather than the existing 50-row-dim
+case's. Minimum of 7-9 runs each; the host's spread across runs was real
+(medians moved more than the effect being measured), so the minimum is
+the number read, matching this file's convention elsewhere.
+
+| build | min | median |
+|---|---:|---:|
+| before (fused-only dense table, per-row `plan.buckets` address lookup) | 156.5 ms | 162.6 ms |
+| after (`PartitionedBuild` finalizes dense in place; group indexes resolved once per key) | 143.2-151.1 ms (three runs) | 148.6-170.1 ms |
+| after, plus batching the probe into two passes | 143.6-180.9 ms | 148.6-184.5 ms |
+
+The single-pass version is a real, modest win (~5-9% at the minimum,
+consistent across three separate runs never exceeding the before
+figure). The two-pass version - precompute every row's dense offset in
+one pass, fold in a second - was tried because the brief called for it
+directly; measured, it made the same case slower on one run (180.9 ms)
+and no better than the single-pass version on the others. At this
+build size (100K distinct keys, comfortably inside cache) the dense
+table gather was not the bottleneck the two-pass split was written to
+fix, and the extra `Vec` allocation plus a second full traversal per
+morsel cost more than it saved. Reverted; see "The dense join table
+lives inside `PartitionedBuild`, not beside it" in `docs/decisions.md`
+for what was kept.
+
+Full crate suite (350 existing + 3 new `dense_join_table_tests`) passes
+unchanged, including the fused-join-and-spill, mixed-collation-join, and
+join-accounting tests that already exercised this path.
+
+**Verdict: keep the single-pass dense extension; drop the two-pass
+batching.** `PartitionedBuild::get` is now dense-aware for every caller,
+not only the fused aggregate, closing that part of item 2 in
+`docs/design/production-hardening-todo.md` section H; the probe-batching
+half of that item did not survive measurement.

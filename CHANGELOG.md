@@ -23,6 +23,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of through an intermediate JSON tree first. The benchmark can now time
   Pintail over its MySQL wire protocol beside the HTTP call, so the engine
   is measured the way a BI tool actually reaches it.
+- A join's build side now finalizes itself into a hash-free, direct-index
+  table in place when its keys are a plain integer set in a narrow range,
+  instead of that table existing only inside the fused join-aggregate:
+  every reader of the build side benefits, and the fused join-aggregate
+  additionally resolves which output group each build row folds into once
+  per distinct key rather than once per probe row.
 
 ### Added
 

@@ -17,7 +17,7 @@ use crate::collation::Collation;
 use rayon::prelude::*;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, PartitionedBuild, build_hash_join_state,
+    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
     normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
@@ -25,10 +25,10 @@ use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
 };
 use super::{
-    DenseJoinTable, ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker,
-    OneShotStream, PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS,
-    compare_sort_values, estimated_row_payload_bytes, reserve_hash_map_entries,
-    reserve_hash_set_entries, reserve_vec_elements, scalar_string_memory_upper_bound,
+    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker, OneShotStream,
+    PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS, compare_sort_values,
+    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_hash_set_entries,
+    reserve_vec_elements, scalar_string_memory_upper_bound,
 };
 use crate::{
     ColumnVector, RecordBatch,
@@ -3342,50 +3342,29 @@ fn build_fused_inner_join_aggregate(
         *state = Some(Box::new(join));
         return Ok(None);
     }
-    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
-    // Integer-mode build keys occupying a small dense range trade the
-    // per-probe evaluate+hash for one bounds-checked index lookup. MySQL
-    // auto-increment keys make this the common case, not the exception.
-    let dense: Option<DenseJoinTable<'_>> =
-        if matches!(key_mode, JoinKeyMode::Integer) && !join.build.is_empty() {
-            let mut min = i128::MAX;
-            let mut max = i128::MIN;
-            let mut integers = true;
-            for key in join.build.keys() {
-                match key {
-                    JoinHashKey::NegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    JoinHashKey::NonNegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    _ => {
-                        integers = false;
-                        break;
-                    }
-                }
-            }
-            if integers && max - min < MAX_DENSE_SPAN {
-                let span = usize::try_from(max - min).expect("bounded span") + 1;
-                let mut table: Vec<Option<&Vec<Vec<Value>>>> = vec![None; span];
-                for (key, bucket) in join.build.iter() {
-                    let value = match key {
-                        JoinHashKey::NegativeInteger(value) => i128::from(*value),
-                        JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
-                        _ => unreachable!("verified integer keys"),
-                    };
-                    table[usize::try_from(value - min).expect("within span")] = Some(bucket);
-                }
-                Some((min, table))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, group_collation)?;
+    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x; e76):
+    // `build_hash_join_state` already finalized `join.build` to a dense,
+    // hash-free table when its keys are a plain integer set in a small
+    // range - MySQL auto-increment keys make this the common case, not the
+    // exception. What is fused-aggregate-specific is resolved here, once
+    // per distinct key: which group each bucket's rows fold into, so a
+    // probe row that hit the dense table needs no further lookup (the
+    // `plan.buckets` address map below stays for the non-dense fallback,
+    // and for grace-spilled builds, where nothing is finalized to dense).
+    let dense_group_indexes: Vec<Option<&[usize]>> = if join.build.is_dense() {
+        join.build
+            .dense_buckets()
+            .iter()
+            .map(|bucket| {
+                plan.buckets
+                    .get(&(std::ptr::from_ref(bucket) as usize))
+                    .map(Vec::as_slice)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     // What one morsel allocates: the plan's whole group set, cloned up
     // front, plus a state per aggregate per group. The groups are FIXED by
@@ -3471,7 +3450,7 @@ fn build_fused_inner_join_aggregate(
                     left_width,
                     aggregates,
                     &join.build,
-                    dense.as_ref(),
+                    &dense_group_indexes,
                     &plan,
                     memory,
                 )
@@ -3527,7 +3506,6 @@ fn build_fused_inner_join_aggregate(
             pull_us
         );
     }
-    drop(dense);
     drop(join);
     memory.release(build_reserved);
     Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
@@ -3542,7 +3520,7 @@ fn build_local_fused_join_groups(
     left_width: usize,
     aggregates: &[CompiledAggregate],
     build: &PartitionedBuild,
-    dense: Option<&DenseJoinTable<'_>>,
+    dense_group_indexes: &[Option<&[usize]>],
     plan: &JoinGroupPlan,
     parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
@@ -3563,41 +3541,49 @@ fn build_local_fused_join_groups(
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
-    let left_typed = dense.and_then(|_| {
-        left_key
-            .column_index()
-            .and_then(|column| batch.column(column))
-            .and_then(ColumnVector::typed)
-            .filter(|(typed, _)| {
-                matches!(
-                    typed,
-                    crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
-                )
-            })
-    });
+    let left_typed = build
+        .is_dense()
+        .then(|| left_key.column_index())
+        .flatten()
+        .and_then(|column| batch.column(column))
+        .and_then(ColumnVector::typed)
+        .filter(|(typed, _)| {
+            matches!(
+                typed,
+                crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
+            )
+        });
     for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
-        let matches = if let (Some((min, table)), Some((typed, validity))) = (dense, left_typed) {
+        let (matches, indexes) = if let Some((typed, validity)) = left_typed {
             if !validity.is_valid(row) {
                 continue;
             }
-            let candidate = match typed {
-                crate::batch::TypedValues::Int64(values) => i128::from(values[row]),
-                crate::batch::TypedValues::UInt64(values) => i128::from(values[row]),
+            let key = match typed {
+                crate::batch::TypedValues::Int64(values) => {
+                    let candidate = values[row];
+                    if candidate < 0 {
+                        JoinHashKey::NegativeInteger(candidate)
+                    } else {
+                        JoinHashKey::NonNegativeInteger(
+                            u64::try_from(candidate).expect("non-negative i64 fits u64"),
+                        )
+                    }
+                }
+                crate::batch::TypedValues::UInt64(values) => {
+                    JoinHashKey::NonNegativeInteger(values[row])
+                }
                 _ => unreachable!("filtered to integer projections"),
             };
-            let Some(offset) = candidate
-                .checked_sub(*min)
-                .and_then(|delta| usize::try_from(delta).ok())
-            else {
+            let Some((flat_index, matches)) = build.dense_get(&key) else {
                 continue;
             };
-            match table.get(offset) {
-                Some(Some(bucket)) => *bucket,
-                _ => continue,
-            }
+            let Some(indexes) = dense_group_indexes[flat_index] else {
+                continue;
+            };
+            (matches, indexes)
         } else {
             let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
                 continue;
@@ -3605,14 +3591,14 @@ fn build_local_fused_join_groups(
             let Some(matches) = build.get(&key) else {
                 continue;
             };
-            matches
+            let indexes = plan
+                .buckets
+                .get(&(std::ptr::from_ref(matches) as usize))
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                    "probe matched a bucket outside the resolved group plan",
+                ))?;
+            (matches, indexes.as_slice())
         };
-        let indexes = plan
-            .buckets
-            .get(&(std::ptr::from_ref(matches) as usize))
-            .ok_or(ExecError::InvalidPhysicalPlan(
-                "probe matched a bucket outside the resolved group plan",
-            ))?;
         for (right_values, group_index) in matches.iter().zip(indexes) {
             let group_index = *group_index;
             touched[group_index] = true;

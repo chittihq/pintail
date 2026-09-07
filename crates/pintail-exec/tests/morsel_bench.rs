@@ -49,12 +49,12 @@ fn dim_schema() -> TableSchema {
     .expect("schema")
 }
 
-fn fact_row(id: u64) -> StoredRow {
+fn fact_row(id: u64, dim_rows: u64) -> StoredRow {
     StoredRow::new(
         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
         vec![
             Value::UInt64(id),
-            Value::Int64(i64::try_from(id % 50).expect("small")),
+            Value::Int64(i64::try_from(id % dim_rows).expect("small")),
             Value::Utf8(STATUSES[usize::try_from(id % 5).expect("small")].to_owned()),
             Value::Int64(i64::try_from(id % 1000).expect("small")),
         ],
@@ -65,6 +65,15 @@ fn fact_row(id: u64) -> StoredRow {
 
 impl Fixture {
     fn new(rows: u64) -> Self {
+        Self::with_dims(rows, 50)
+    }
+
+    /// `dim_rows` is both the dimension table's row count and the fact
+    /// table's join-key cardinality: the fused join-aggregate's dense
+    /// build-side table and its pre-resolved group index are sized to it,
+    /// so a case that wants to measure that path at Q8's scale (~100K
+    /// distinct users, not 50) needs this rather than `new`.
+    fn with_dims(rows: u64, dim_rows: u64) -> Self {
         let directory = tempfile::tempdir().expect("directory");
         let mut facts = TableStore::open(
             directory.path().join("facts"),
@@ -76,7 +85,7 @@ impl Fixture {
         while next <= rows {
             let end = (next + CHUNK - 1).min(rows);
             facts
-                .bulk_ingest_snapshot((next..=end).map(fact_row).collect())
+                .bulk_ingest_snapshot((next..=end).map(|id| fact_row(id, dim_rows)).collect())
                 .expect("ingest");
             next = end + 1;
         }
@@ -87,7 +96,7 @@ impl Fixture {
         )
         .expect("dims");
         dims.bulk_ingest_snapshot(
-            (0..50)
+            (0..i64::try_from(dim_rows).expect("dim_rows fits i64"))
                 .map(|id| {
                     StoredRow::new(
                         PrimaryKey::new(vec![KeyPart::Int64(id)]).expect("key"),
@@ -112,7 +121,7 @@ impl Fixture {
             TableId::new(2),
             "dims",
             dim_schema(),
-            TableStatistics::with_row_count(50),
+            TableStatistics::with_row_count(dim_rows),
         )
         .expect("entry")
         .with_key_columns([1])
@@ -203,6 +212,18 @@ const CASES: &[Case] = &[
     },
 ];
 
+/// Q8's own shape: a dense integer build key with real-world cardinality
+/// (100K users, like `benchmark/queries.ts`), grouped by a build-side
+/// column that folds to a handful of groups (8 regions). The 50-row `dims`
+/// case above shares the query text but not the scale that makes the
+/// per-probe-row bucket-address lookup worth precomputing once per key.
+const WIDE_JOIN_CASE: Case = Case {
+    label: "fused join + group, 100K-key dim",
+    sql: "SELECT d.name, COUNT(*), SUM(f.amount) FROM facts f JOIN dims d ON f.grp = d.id \
+          GROUP BY d.name",
+    limit: 512 << 20,
+};
+
 fn measure(fixture: &Fixture, case: &Case, runs: usize) -> String {
     let mut times = Vec::with_capacity(runs);
     let mut rows = 0;
@@ -265,5 +286,9 @@ fn aggregate_paths_over_a_large_table() {
         .filter(|case| case.limit == 512 << 20)
     {
         eprintln!("[150K rows] {}", measure(&small, case, runs));
+    }
+    if wanted(&&WIDE_JOIN_CASE) {
+        let wide = Fixture::with_dims(rows, 100_000);
+        eprintln!("{}", measure(&wide, &WIDE_JOIN_CASE, runs));
     }
 }
