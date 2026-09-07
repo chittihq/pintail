@@ -469,6 +469,12 @@ stays readable as a list of things to fix.
   not meaningful on a read-only replica and pretending otherwise would leave
   clients believing a connection died that did not.
 - DBeaver and Metabase application-level smokes are not automated in CI.
+- A request waiting on another request's identical execution keeps the
+  admission permit it took, so sharing removes executions rather than
+  freeing concurrency slots: sixteen simultaneous copies of one statement
+  still occupy sixteen slots while one of them runs. It is bounded at
+  sixty-four concurrent shared executions and sixty-four waiters each,
+  past which a request executes on its own.
 ## Operations and backup
 
 - Memory cancellation is cooperative, and allocator RSS may stay high after

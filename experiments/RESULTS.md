@@ -3108,3 +3108,42 @@ update-heavy table that has flushed once sits on a base and an overlapping
 tail and merges on every scan until two more flushes arrive; at these
 figures that is not a tidiness problem, it is a hundredfold slowdown
 persisting until compaction happens to run.
+
+## e82 — One execution answering a burst of identical reads
+
+`crates/pintail-wire/tests/shared_query_burst.rs`, ignored. A local
+database of 200,000 rows, sixteen threads released together on one
+grouped aggregate, five bursts, the best reported.
+`PINTAIL_DISABLE_SHARED_QUERIES=1` runs the arm where each request
+executes for itself; `PINTAIL_DISABLE_SETTLED_MEMO=1` crosses it with the
+settled aggregate memo, to show the two are independent.
+
+| host shape | each request executes | one execution answers all | ratio |
+|---|---:|---:|---:|
+| 32 cores | 71.4 ms | 42.7 ms | 1.67× |
+| 32 cores, settled memo off | 72.5 ms | 45.2 ms | 1.60× |
+| 4 cores (`taskset -c 0-3`) | 288.4 ms | 80.9 ms | 3.57× |
+
+Executions, in every shared run: sixteen requests, one execution. Across
+five bursts the counters read five led and seventy-five answered by
+another, with nothing falling back or refused.
+
+Two readings matter more than the ratio.
+
+The first is that the ratio is a function of how much spare CPU the host
+has. On 32 idle cores the sixteen executions mostly run at once, so
+deleting fifteen of them saves less than a third of the wall clock. On
+four cores they queue, and the same deletion is worth 3.6×. A server
+doing nothing else gains little; a server under load - the case a refresh
+storm creates, and the case that produced the 503s - gains most. Quoting
+a single speedup for this would be quoting the idle host.
+
+The second is that it composes with the settled aggregate memo rather
+than duplicating it. The memo answers a repeat of a settled query; this
+answers a *simultaneous* copy, settled or not, and the memo-off row shows
+the gain is the same size without it.
+
+What is not measured here: the admission permit. A waiting request keeps
+the permit it took, so this removes executions rather than freeing slots,
+and the throughput it buys is the queue draining faster rather than more
+queries being admitted at once.

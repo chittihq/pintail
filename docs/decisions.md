@@ -1558,3 +1558,50 @@ with a conservative common partition closes the memory failure without
 introducing a second equality definition. It can still perform quadratic
 comparison work for skew or mixed types. Correlated sets use the same
 storage switch for the current outer tuple; large disk sets are not memoized.
+
+## Concurrent identical reads share one execution (2026-09-07)
+
+Several requests for the same statement at the same moment used to mean
+several executions producing identical rows. The first now executes and
+the rest wait on it.
+
+The design turns on refusing to be a cache. An entry lives only for the
+duration of its execution and is removed when it settles, so no answer
+outlives the moment it was produced and there is never stored data to
+disagree with the store. What that buys is that correctness stops being a
+question about schedules - when is an answer stale, what invalidates it,
+what happens if an update lands between the read and the write - and
+becomes a question about one struct: does the key name every input an
+execution has?
+
+The key names the loaded replica by a number taken fresh on each load,
+the statement text, the row ceiling, and the four session settings an
+execution reads. The alternative considered was finer invalidation:
+tracking which columns a result depends on so an update to an unrelated
+column does not disqualify a kept answer. That would keep answers across
+changes rather than only across simultaneity, and it was measured to be
+worth a great deal when nothing relevant changes. It was refused for two
+reasons. It needs full before-images to decide relevance, and a source
+running minimal row metadata does not supply them, so the tracking would
+fall back to invalidating on every change - which is what keying on the
+whole load already does, at none of the cost. And under continuous
+ingest, membership changes disqualify even a `COUNT(*)`, so the case it
+optimizes is a table nobody is writing to.
+
+Failures are not shared. An execution that errors, is cancelled by its
+own client, or panics wakes its waiters to execute independently, which
+is exactly what they would have done without this mechanism. Sharing
+errors would have saved repeated failing work and required deciding
+whether a follower deserved a leader's interruption; the answer is that
+it does not, and refusing to share failure removes the question.
+
+A waiter never sleeps past its own deadline, so a client with a tight
+`max_execution_time` is not held to a looser one. It keeps its admission
+permit while waiting: releasing it would free a slot, but a request that
+then had to execute for itself could be refused after already waiting,
+which trades a latency win for a new way to fail.
+
+Eligibility is a syntax gate over the parsed statement rather than the
+bound plan, and it matches names rather than reasoning about position: a
+column called `version` is refused sharing. Over-refusal costs an
+opportunity; under-refusal would cost an answer.

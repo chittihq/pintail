@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Several clients asking the same question at the same time now cost one
+  execution instead of one each. The first request executes and the rest
+  wait on it, then every one of them receives those rows; nothing is
+  retained afterwards, so the next request executes again. Only a `SELECT`
+  whose answer cannot move between two runs is offered, and it is offered
+  only to requests that match on the loaded replica, the statement text,
+  the row ceiling and every session setting an execution reads - so a
+  commit, a local write or a schema change puts the same text on a
+  different key rather than answering it from before the change. A failure
+  is never shared: an error, a cancellation or a panic sends everyone
+  waiting to execute for themselves. Measured on sixteen simultaneous
+  copies of one grouped aggregate: 1.7x faster on an idle host and 3.6x
+  on a host with four cores to share, sixteen executions becoming one in
+  both. `PINTAIL_DISABLE_SHARED_QUERIES` turns it off.
+
 ### Fixed
 
 - Resuming a paused table could leave it silently stale. A replication

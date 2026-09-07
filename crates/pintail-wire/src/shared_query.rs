@@ -38,7 +38,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        Arc, Condvar, Mutex, OnceLock,
+        Arc, Condvar, LazyLock, Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
@@ -59,6 +59,13 @@ const MAX_FOLLOWERS: usize = 64;
 
 /// How long a waiter sleeps before rechecking its own deadline.
 const WAIT_SLICE: Duration = Duration::from_millis(25);
+
+/// `PINTAIL_DISABLE_SHARED_QUERIES` puts every request back on its own
+/// execution. It is how the measurement runs both arms, and it is the
+/// switch to reach for if a deployment ever needs one request to mean one
+/// execution.
+static DISABLED: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("PINTAIL_DISABLE_SHARED_QUERIES").is_some());
 
 /// Everything that must match before one execution can answer another
 /// request. See the module documentation for why each field is here;
@@ -170,6 +177,9 @@ impl SharedQueries {
     /// stops waiting and executes independently, so a client with a tight
     /// `max_execution_time` is not held to a leader's looser one.
     pub(crate) fn join(self: &Arc<Self>, key: &SharedQueryKey, deadline: Option<Instant>) -> Join {
+        if *DISABLED {
+            return Join::Alone;
+        }
         let flight = {
             let mut flights = self
                 .flights
