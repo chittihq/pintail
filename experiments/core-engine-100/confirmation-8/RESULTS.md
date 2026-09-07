@@ -13,9 +13,9 @@ creation and independent correctness checks are excluded.
 |---|---|---:|---:|---:|---:|
 | 8 | 7: parallel-halo-windows | 1.11× | 1.05× | 1.87× | 1.07× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
-Selection is exploratory; these same samples selected the winners. Confirm on
-new seeds, larger tables and the real SQL path before adopting anything.
+These arms were selected from the independent screen before these measurements.
+Small confirmation samples do not certify an installed engine optimization.
 
 - Case 8: parallel-halo-windows, 1.11× query, 1.05× cycle.

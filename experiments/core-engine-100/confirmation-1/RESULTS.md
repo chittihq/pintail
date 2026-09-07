@@ -13,9 +13,9 @@ creation and independent correctness checks are excluded.
 |---|---|---:|---:|---:|---:|
 | 1 | 1: selective-predicate-first | 1.00× | 1.01× | 1.21× | 0.98× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
-Selection is exploratory; these same samples selected the winners. Confirm on
-new seeds, larger tables and the real SQL path before adopting anything.
+These arms were selected from the independent screen before these measurements.
+Small confirmation samples do not certify an installed engine optimization.
 
 - Case 1: selective-predicate-first, 1.00× query, 1.01× cycle.

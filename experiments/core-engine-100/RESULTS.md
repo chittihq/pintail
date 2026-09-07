@@ -58,6 +58,7 @@ These add 18 processes and 144 checked snapshots. Selection is recorded in [regi
   tails, overlapping flushed segments and compaction.
 - [All 100 outcomes](evidence/RESULTS.md), [raw screen records](evidence/raw.jsonl),
   [source and binary provenance](evidence/provenance.json), [selection rule](confirmation-selection.json).
+- [Descriptive latency and process RSS](evidence/LATENCY.md) retains all controls and alternatives.
 
 ## Cost of changing storage
 
@@ -107,7 +108,7 @@ At 100,000 invented rows and a fixed 256 MiB query cap, 200 of 240 SQL answers w
 | Nullable IN/NOT IN | 0 | 24 | — |
 | Correlated aggregates | 24 | 0 | 232.48 |
 
-An additional native SQL experiment filters the dimension in a derived table before
+An additional native SQL experiment filters and projects the dimension in a derived table before
 the equality join, preserving duplicates, grouping, NULL handling and the expected
 answer. It uses the same memory cap and changing fixtures; it does not change the
 production optimizer or install the factorized prototype.
@@ -127,6 +128,8 @@ in the actual engine, not an installed optimizer rule.
 | hot-key skew | 144.22 | 80.33 | 2.43× |
 | key-clustered | 72.88 | 77.82 | 0.93× |
 
+The ratio divides the sums of the six dirty-state query times; it is not the ratio
+of the medians displayed beside it.
 These are single-seed, sequential SQL anchor timings between mutation batches. The
 concurrent writer/cycle evidence belongs to the independently confirmed external
 prototype above. The uniform and clustered regressions rule out blanket adoption.

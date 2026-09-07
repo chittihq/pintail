@@ -13,9 +13,9 @@ creation and independent correctness checks are excluded.
 |---|---|---:|---:|---:|---:|
 | 9 | 3: dense-membership-bitmap | 1.00× | 0.95× | 3.09× | 0.99× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
-Selection is exploratory; these same samples selected the winners. Confirm on
-new seeds, larger tables and the real SQL path before adopting anything.
+These arms were selected from the independent screen before these measurements.
+Small confirmation samples do not certify an installed engine optimization.
 
 - Case 9: dense-membership-bitmap, 1.00× query, 0.95× cycle.

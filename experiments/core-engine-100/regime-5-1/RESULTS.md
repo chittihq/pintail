@@ -13,9 +13,9 @@ creation and independent correctness checks are excluded.
 |---|---|---:|---:|---:|---:|
 | 5 | 10: factorized-fact-aggregate | 2.06× | 1.44× | 47.21× | 2.06× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
-Selection is exploratory; these same samples selected the winners. Confirm on
-new seeds, larger tables and the real SQL path before adopting anything.
+These arms were selected from the independent screen before these measurements.
+Small confirmation samples do not certify an installed engine optimization.
 
 - Case 5: factorized-fact-aggregate, 2.06× query, 1.44× cycle.

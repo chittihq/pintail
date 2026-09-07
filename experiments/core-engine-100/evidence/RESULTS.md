@@ -112,7 +112,7 @@ creation and independent correctness checks are excluded.
 | 10 | 9: sorted-prefix-sums | 1.13× | 1.07× | 2.36× | 1.08× |
 | 10 | 10: demand-bitmap-dense-fold | 1.19× | 1.09× | 62.10× | 1.16× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
 Selection is exploratory; these same samples selected the winners. Confirm on
 new seeds, larger tables and the real SQL path before adopting anything.

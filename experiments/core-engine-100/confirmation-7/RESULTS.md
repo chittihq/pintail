@@ -13,9 +13,9 @@ creation and independent correctness checks are excluded.
 |---|---|---:|---:|---:|---:|
 | 7 | 2: quickselect-prefix | 1.03× | 1.01× | 7.34× | 1.03× |
 
-## Strongest observed alternative per workload
+## Observed alternatives per workload
 
-Selection is exploratory; these same samples selected the winners. Confirm on
-new seeds, larger tables and the real SQL path before adopting anything.
+These arms were selected from the independent screen before these measurements.
+Small confirmation samples do not certify an installed engine optimization.
 
 - Case 7: quickselect-prefix, 1.03× query, 1.01× cycle.

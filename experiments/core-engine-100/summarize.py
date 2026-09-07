@@ -35,7 +35,9 @@ summary={'processes':len(records),'validated_snapshots':sum(len(r['phases']) for
 lines=['# Changing-data experiment results','','Ratios compare each algorithm with its explicit reference over the same changing','fixture. They are **not speedups over the current Pintail SQL executor**. The','query figure includes a real storage scan and materialization followed by the','experimental operator. Cycle time also waits for concurrent mutation/maintenance.','Setup for candidate indexes and intermediate state is included; initial fixture','creation and independent correctness checks are excluded.','',f"{len(records)} processes; {summary['validated_snapshots']} checked snapshots; {len(results)} alternatives.",'','| Case | Approach | Query ratio | Cycle ratio | Operator ratio | Worst scenario median |','|---|---|---:|---:|---:|---:|']
 for r in results:
     lines.append(f"| {r['case']} | {r['variant']}: {r['name']} | {r['changing_query_speedup']:.2f}× | {r['changing_cycle_speedup']:.2f}× | {r['operator_only_speedup']:.2f}× | {min(r['scenario_medians'].values()):.2f}× |")
-lines+=['','## Strongest observed alternative per workload','','Selection is exploratory; these same samples selected the winners. Confirm on','new seeds, larger tables and the real SQL path before adopting anything.','']
+confirmation=a.directory.startswith(('confirmation-','regime-'))
+selection_note=(['These arms were selected from the independent screen before these measurements.','Small confirmation samples do not certify an installed engine optimization.'] if confirmation else ['Selection is exploratory; these same samples selected the winners. Confirm on','new seeds, larger tables and the real SQL path before adopting anything.'])
+lines+=['','## Observed alternatives per workload','',*selection_note,'']
 for case in sorted({r['case'] for r in results}):
     best=max((r for r in results if r['case']==case),key=lambda r:r['changing_query_speedup'])
     lines.append(f"- Case {case}: {best['name']}, {best['changing_query_speedup']:.2f}× query, {best['changing_cycle_speedup']:.2f}× cycle.")
