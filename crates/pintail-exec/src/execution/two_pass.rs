@@ -1999,7 +1999,14 @@ fn dense_text_window(
         TwoPassKeySource::DateParts { .. } => unreachable!("dense slots are text or integer keyed"),
     };
     let slot_count = slots.len();
-    let chunk_size = window.len().div_ceil(rayon::current_num_threads()).max(1);
+    // Several chunks per thread, not one: a slab per chunk bounds the
+    // partials, but one chunk per thread leaves the pool with nothing to
+    // steal, so the window ends when its slowest chunk does. Measured on
+    // the benchmark replica, where a batch's cost varies with its groups.
+    let chunk_size = window
+        .len()
+        .div_ceil(rayon::current_num_threads().saturating_mul(4))
+        .max(1);
     let workers = window.len().div_ceil(chunk_size);
     let partial_bytes = workers.saturating_mul(slot_count).saturating_mul(
         size_of::<Option<Vec<AggregateState>>>() + aggregates.len() * size_of::<AggregateState>(),
