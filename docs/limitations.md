@@ -201,21 +201,18 @@ stays readable as a list of things to fix.
   morsels to parallelize.
 - Views below 65,536 candidate rows use the simpler materialized merge path,
   which remains covered by the query memory ceiling.
-- `GROUP_CONCAT`/`JSON_ARRAYAGG` aggregation, the single-column direct-path
-  aggregation, and materialized query outputs do not spill and still fail at
-  the memory ceiling. A grace-partitioned join errors when one join key's own
-  rows exceed the ceiling. Spill is isolated per query and bounded by
-  `query.spill_limit_bytes` plus the process-wide `global_spill_limit_bytes`;
-  exhausting either limit fails the query before the write crosses the
-  ceiling.
-- Uncorrelated scalar and `EXISTS` subqueries stop after two and one rows,
-  respectively. Large `IN (subquery)` membership still materializes in memory
-  under the query ceiling rather than using an external membership index.
+- Five execution shapes still fail at the per-query memory ceiling instead
+  of spilling: window-function output; group maps containing `GROUP_CONCAT`
+  or `JSON_ARRAYAGG`; large `IN (subquery)` membership sets; the materialized
+  nested-loop fallback for a correlated subquery in a join `ON` predicate;
+  and a grace join whose single build key's rows exceed the ceiling.
+- Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
+  `global_spill_limit_bytes`; exhausting either limit fails the query before
+  the write crosses the ceiling.
 - Dependent correlated execution reruns its bounded inner plan for each outer
-  row and does not cache repeated parameter tuples. A correlated subquery in a
-  join `ON` predicate uses a materialized nested loop under the query ceiling;
-  that fallback does not spill. Nullable correlated `NOT IN` shapes that cannot
-  be proven safe still reject rather than risk a different answer.
+  row and does not cache repeated parameter tuples. Nullable correlated
+  `NOT IN` shapes that cannot be proven safe still reject rather than risk a
+  different answer.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
 - Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
