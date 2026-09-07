@@ -21,6 +21,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -41,6 +46,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -57,6 +67,51 @@
   {
     "phase": "snapshot",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -1037,6 +1092,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -1057,6 +1117,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -1073,6 +1138,51 @@
   {
     "phase": "orm-compat",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -1933,6 +2043,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -1953,6 +2068,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -1969,6 +2089,51 @@
   {
     "phase": "crud",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -2808,6 +2973,957 @@
     "status": "PASS"
   },
   {
+    "phase": "composite-keys",
+    "check": "converge:Dim",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:Event",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:Fact",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:audit_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:badges",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:counters",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:customers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:order_items",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:composite: join on two columns across both composite tables",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: triple-alias person join with a dangling FK",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: mixed-collation double grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: enum ordinal ordering disagrees with labels",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: trailing-space grouping under PAD semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: case-variant code grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: anti-join finds the event-less dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: nullable join key NULL-extends",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: timestamp ties page deterministically with a tiebreaker",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: date bucketing over the fact table",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conformance: decimal aggregate spanning negatives and zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:point lookup by key",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:range scan with compound predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:inner join with aggregation",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:join with a residual comparison between both inputs",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:left join keeps rows whose only matches fail the residual",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:residual comparison through coalesce on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:created-by and updated-by resolve through separate aliases",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:alias pair with the join order reversed",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:four aliases of one table joined in a chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:self-join with a single-side predicate in the ON clause",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:self-join manager chain preserves the roots",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:a table joined twice under two aliases keeps them distinct",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:aliases stay distinct when the empty side joins first",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:left join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:right join preserves unmatched rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:three-way join through items",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:union all across sources",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:intersect customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:except customer identifiers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:order by an expression over an aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:order by a tree over several aggregates",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:order by an aggregate absent from the select list",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:group by with having",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:conditional decimal sum keeps the fraction",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:distinct count and min max",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:uncorrelated in-subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:correlated exists with inner predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:correlated scalar aggregate",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:correlated scalar unique lookup",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:scalar subquery threshold",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:non-recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bounded recursive cte",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:date bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:string functions and like",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:looker symmetric key helpers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json constructor preserves json versus text",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json aggregate embeds documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:regular expression read transforms",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:case expression buckets",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:null handling",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:coalesce and ifnull",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum and set filters",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unsigned boundary readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:group_concat single expression",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:window ranking per group",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:window share of total over grouped output",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:window running total",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:decimal column average beyond simple sum",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:computed decimal rounds negative digits half away from zero",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json extract filter on customer meta",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:fan-out join group concat line products",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:outer join customers without recent orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set op union distinct tiers and statuses",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal convert and date_format grain",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:correlated not exists open orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:window lag payment-shaped totals",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:multi-key join items to orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:between and null-safe coalesce on balance",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:intersect all-style customer buyers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:derived table status revenue share",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: every supplementary character compares equal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: representative spelling of a collated group",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:general_ci: mixing collations across separate comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: order by ascends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: order by descends by declared ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: min and max compare as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: a greater-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: a less-than range compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: between compares as strings",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: distinct orders by ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: a limited sort keeps the lowest ordinals",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: a window order walks the ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:collation: mixed grouping answers with per-key folds",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:collation: distinct counts fold per column collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:collation: regrouping a mixed grouping stays exact",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: order by walks the member bitmask",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: grouping orders groups by bitmask",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: the empty member groups by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: the empty member sorts by its ordinal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:enum: the empty member is selectable by text",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:geometry: hex round-trips the internal format",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:geometry: byte length includes the srid prefix",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:geometry: null routes filter and count",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:geometry: spatial functions are a documented gap",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: find_in_set filters by membership",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: equality is literal, not member-normalized",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: distinct values walk the bitmask including empty",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: grouped counts order by bitmask not text",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:set: a range predicate compares the bitmask",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: fact with dimension and two audit persons",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: five-alias chain fans out through events",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: grouped rollup counts facts and events per dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: five tables bridge the shop and the star",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: null join keys stay unmatched through a four-table chain",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:star: date-windowed join keeps only overlapping activity",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: length and keys survive null documents",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: contains_path filters the documented rows",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: json_value reads a scalar with sql semantics",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: object construction embeds an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: search locates a literal value",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: grouping by an extracted scalar",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: merge_patch overlays and reads back",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: quarter, weekday and name grains agree",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: month-end bucketing via last_day",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: timestampdiff spans date and datetime operands",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: datetime range keeps the year window",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: date_sub bound in the predicate",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: year-month split grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:temporal: sub-day grains on a microsecond timestamp",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:regex: substr extracts the mail domain",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:regex: the REGEXP operator anchors a class",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:regex: replace folds suffix classes before grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi metabase: month grain through convert_tz",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi metabase: iso week bucketing",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi metabase: display formats for weekday, pretty date and clock",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi metabase: previous-period revenue window",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: week-start grain with a rolling average",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: running total over grouped revenue",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: lag and lead against a named window",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: quartile counts from ntile",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: first and last value over an unbounded frame",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi superset: compound interval grains",
+    "status": "WARN",
+    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi looker: symmetric aggregate across a fanned-out join",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi looker: any_value reads a functionally dependent column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi looker: a grouped foreign key reads the joined dimension",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi looker: the grouped primary key determines the row",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi looker: a grouped self-join key reads the managers row",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi tableau: explicit cast ladder",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi tableau: the stddev and variance family",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi tableau: bit aggregates over an unsigned flag column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: substring_index dimension cleanup",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: json validity and typed path filter",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: contains_path over several paths at once",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: maketime from extracted parts",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: extract year_month grouping",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:bi shared: keyset-free pagination with limit offset",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:staff: three-level management chain with an inactive tail",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:staff: active split with id extremes",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:counters: full unsigned ladder readback",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:counters: greatest and least across widths",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:dim: enum status split",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:dim: pattern filter across collated columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:person: anti-join finds owners without facts",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:person: created-fact counts through a scalar subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:event: lag over per-dimension timelines",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:event: daily grain per dimension code",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:order_items: product rollup without the orders table",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:shipments: carrier value through the items bridge",
+    "status": "SKIP"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
     "phase": "type-edges",
     "check": "converge:Dim",
     "status": "PASS"
@@ -2825,6 +3941,11 @@
   {
     "phase": "type-edges",
     "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:attendance",
     "status": "PASS"
   },
   {
@@ -2849,6 +3970,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -2865,6 +3991,51 @@
   {
     "phase": "type-edges",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -3710,6 +4881,16 @@
   },
   {
     "phase": "ddl",
+    "check": "a table created mid-stream is streaming before its rename",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "a renamed table follows its new name under CDC",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:Dim",
     "status": "PASS"
   },
@@ -3726,6 +4907,11 @@
   {
     "phase": "ddl",
     "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:attendance",
     "status": "PASS"
   },
   {
@@ -3750,12 +4936,22 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "ddl",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -3771,6 +4967,51 @@
   {
     "phase": "ddl",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -4632,6 +5873,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -4652,12 +5898,22 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "schema-drift-minimal",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -4673,6 +5929,51 @@
   {
     "phase": "schema-drift-minimal",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -5534,6 +6835,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -5554,12 +6860,22 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "schema-drift-unseen",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -5575,6 +6891,51 @@
   {
     "phase": "schema-drift-unseen",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -6416,32 +7777,32 @@
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: triple-alias person join with a dangling FK",
+    "check": "live:composite: one first part, ordered by the second",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: mixed-collation double grouping",
+    "check": "live:composite: grouped by the first part",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: enum ordinal ordering disagrees with labels",
+    "check": "live:composite: exact key pairs, deleted and reinserted among them",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: trailing-space grouping under PAD semantics",
+    "check": "live:composite: a range on the first part with a filter on the second",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: case-variant code grouping",
+    "check": "live:composite: descending key order with a limit",
     "status": "PASS"
   },
   {
     "phase": "churn-live",
-    "check": "live:conformance: anti-join finds the event-less dimension",
+    "check": "live:composite: nulls in a non-key column under the key order",
     "status": "PASS"
   },
   {
@@ -6466,6 +7827,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -6486,12 +7852,22 @@
   },
   {
     "phase": "churn",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "churn",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -6507,6 +7883,51 @@
   {
     "phase": "churn",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -7368,6 +8789,11 @@
   },
   {
     "phase": "contention",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -7388,12 +8814,22 @@
   },
   {
     "phase": "contention",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "contention",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -7409,6 +8845,51 @@
   {
     "phase": "contention",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -8295,6 +9776,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -8315,12 +9801,22 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "execution-budget",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -8336,6 +9832,51 @@
   {
     "phase": "execution-budget",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -9217,6 +10758,11 @@
   },
   {
     "phase": "spill",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -9237,12 +10783,22 @@
   },
   {
     "phase": "spill",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "spill",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -9258,6 +10814,51 @@
   {
     "phase": "spill",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -10134,6 +11735,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -10154,12 +11760,22 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "pooling",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -10175,6 +11791,51 @@
   {
     "phase": "pooling",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -11131,6 +12792,11 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -11151,12 +12817,22 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "local-database",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -11172,6 +12848,51 @@
   {
     "phase": "local-database",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -12038,6 +13759,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -12058,12 +13784,22 @@
   },
   {
     "phase": "restart",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "restart",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -12079,6 +13815,51 @@
   {
     "phase": "restart",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -12922,7 +14703,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150037 sync_runs rows for db_b53f1ff4ae19de7a2eea2ccc210942e9"
+    "detail": "150028 sync_runs rows for db_3d19bed9cbffca779452ba19a40af25c"
   },
   {
     "phase": "activity-history",
@@ -12934,25 +14715,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 9ms over 150000 rows"
+    "detail": "p50 1ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 2ms p95 2ms"
+    "detail": "p50 1ms p95 2ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 29ms p99 50ms"
+    "detail": "p50 27ms p99 38ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 32ms"
+    "detail": "health p95 2ms"
   },
   {
     "phase": "activity-history",
@@ -12972,6 +14753,11 @@
   {
     "phase": "activity-history",
     "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:attendance",
     "status": "PASS"
   },
   {
@@ -12996,12 +14782,22 @@
   },
   {
     "phase": "activity-history",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "activity-history",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -13017,6 +14813,51 @@
   {
     "phase": "activity-history",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -13860,25 +15701,25 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4790"
+    "detail": "0 failed of 4925"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4790 requests: p50 2ms p99 34ms"
+    "detail": "4925 requests: p50 1ms p99 8ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 32ms"
+    "detail": "health p99 1ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 825 vs source 825"
+    "detail": "orders replica 7440 vs source 7440"
   },
   {
     "phase": "poll-storm",
@@ -13898,6 +15739,11 @@
   {
     "phase": "poll-storm",
     "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:attendance",
     "status": "PASS"
   },
   {
@@ -13922,12 +15768,22 @@
   },
   {
     "phase": "poll-storm",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
     "check": "converge:order_items",
     "status": "PASS"
   },
   {
     "phase": "poll-storm",
     "check": "converge:orders",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:renamed_target",
     "status": "PASS"
   },
   {
@@ -13943,6 +15799,51 @@
   {
     "phase": "poll-storm",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -14904,6 +16805,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -14924,6 +16830,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -14939,6 +16850,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -14950,6 +16866,51 @@
   {
     "phase": "control-plane",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -15816,6 +17777,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -15836,6 +17802,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -15851,6 +17822,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -15862,6 +17838,51 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -16749,6 +18770,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -16769,6 +18795,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -16784,6 +18815,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -16795,6 +18831,51 @@
   {
     "phase": "drop-table-cdc",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -17672,6 +19753,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -17692,6 +19778,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -17707,6 +19798,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -17718,6 +19814,51 @@
   {
     "phase": "drop-table-recreate",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -18576,7 +20717,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_b53f1ff4ae19de7a2eea2ccc210942e9\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-07T05:57:00.085761+00:00\",\"updated_at\":\"2026-09-07T06:05:10.702723+00:00\"},\"tables\":18,\"rows\":1333}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_3d19bed9cbffca779452ba19a40af25c\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-07T09:07:59.774947123+00:00\",\"updated_at\":\"2026-09-07T09:13:48.832987343+00:00\"},\"tables\":21,\"rows\":10164}"
   },
   {
     "phase": "drop-table-polling",
@@ -18605,6 +20746,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -18625,6 +20771,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -18640,6 +20791,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -18651,6 +20807,51 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -19533,6 +21734,11 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -19553,6 +21759,11 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -19568,6 +21779,11 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -19579,6 +21795,51 @@
   {
     "phase": "restart-during-snapshot",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -20472,6 +22733,11 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -20492,6 +22758,11 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -20507,6 +22778,11 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -20518,6 +22794,51 @@
   {
     "phase": "restart-during-resync",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -21367,7 +23688,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 239 ok, http 77 ok, dashboards 181 ok; admission-refused×1"
+    "detail": "wire 240 ok, http 86 ok, dashboards 151 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -21379,31 +23700,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 239 of 240, http 77"
+    "detail": "wire 240 of 240, http 86"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 423ms p99 1325ms over 239 queries"
+    "detail": "wire p50 243ms p99 1386ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 8ms over 13 samples"
+    "detail": "health p99 16ms over 11 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 264MB with a 256MB budget"
+    "detail": "peak RSS 289MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201000 vs source 201000"
+    "detail": "big 201100 vs source 201100"
   },
   {
     "phase": "memory-pressure",
@@ -21433,6 +23754,11 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -21453,6 +23779,11 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -21468,6 +23799,11 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -21479,6 +23815,51 @@
   {
     "phase": "memory-pressure",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -22340,13 +24721,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 19.4s"
+    "detail": "child 1800000 vs source 1800000 after 4.4s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 24MB before, peak 191MB during (margin 768MB)"
+    "detail": "RSS 54MB before, peak 214MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -22366,6 +24747,11 @@
   {
     "phase": "reconcile-memory",
     "check": "converge:Person",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:attendance",
     "status": "PASS"
   },
   {
@@ -22390,6 +24776,11 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -22405,6 +24796,11 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -22416,6 +24812,51 @@
   {
     "phase": "reconcile-memory",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -23318,6 +25759,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:audit_log",
     "status": "PASS"
   },
@@ -23338,6 +25784,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -23353,6 +25804,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -23364,6 +25820,51 @@
   {
     "phase": "drop-database",
     "check": "converge:information_schema.columns",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:composite: join on two columns across both composite tables",
     "status": "PASS"
   },
   {
@@ -24225,6 +26726,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:attendance",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:audit_history",
     "status": "WARN",
     "detail": "pintail query failed: Error: unknown table e2e_db.audit_history"
@@ -24246,6 +26752,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:enrollments",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:keyless_log",
     "status": "PASS"
   },
@@ -24262,6 +26773,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:shipments",
     "status": "PASS"
   },
@@ -24274,7 +26790,52 @@
     "phase": "ddl-documented-gaps",
     "check": "converge:information_schema.columns",
     "status": "WARN",
-    "detail": "row 20:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
+    "detail": "row 24:\n  mysql   audit_history | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | \n  pintail audit_log | note | 1.0000 | varchar | varchar(128) | NO | 128.0000 | 512.0000 | NULL | NULL | NULL | NULL |  | "
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: one first part, ordered by the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: grouped by the first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: exact key pairs, deleted and reinserted among them",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: a range on the first part with a filter on the second",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: descending key order with a limit",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: nulls in a non-key column under the key order",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: text-led key, one tenant and a user range",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: text-led key grouped by its first part",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:composite: join on two columns across both composite tables",
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",

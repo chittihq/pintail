@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-07T06:19:47.017Z.
+Measured 2026-09-07T09:21:48.170Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**4912 passed, 0 failed, 57 documented-gap warnings, 37 skipped.**
+**5416 passed, 0 failed, 58 documented-gap warnings, 44 skipped.**
 
-167 unique corpus queries produced 4509 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+176 unique corpus queries produced 4928 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -14,14 +14,25 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | converge:Event | PASS |  |
 | snapshot | converge:Fact | PASS |  |
 | snapshot | converge:Person | PASS |  |
+| snapshot | converge:attendance | PASS |  |
 | snapshot | converge:audit_log | PASS |  |
 | snapshot | converge:badges | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
+| snapshot | converge:enrollments | PASS |  |
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
 | snapshot | converge:staff | PASS |  |
 | snapshot | converge:information_schema.columns | PASS |  |
+| snapshot | query:composite: one first part, ordered by the second | PASS |  |
+| snapshot | query:composite: grouped by the first part | PASS |  |
+| snapshot | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| snapshot | query:composite: a range on the first part with a filter on the second | PASS |  |
+| snapshot | query:composite: descending key order with a limit | PASS |  |
+| snapshot | query:composite: nulls in a non-key column under the key order | PASS |  |
+| snapshot | query:composite: text-led key, one tenant and a user range | PASS |  |
+| snapshot | query:composite: text-led key grouped by its first part | PASS |  |
+| snapshot | query:composite: join on two columns across both composite tables | PASS |  |
 | snapshot | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | snapshot | query:conformance: mixed-collation double grouping | PASS |  |
 | snapshot | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -217,14 +228,25 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | converge:Event | PASS |  |
 | orm-compat | converge:Fact | PASS |  |
 | orm-compat | converge:Person | PASS |  |
+| orm-compat | converge:attendance | PASS |  |
 | orm-compat | converge:audit_log | PASS |  |
 | orm-compat | converge:badges | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
+| orm-compat | converge:enrollments | PASS |  |
 | orm-compat | converge:order_items | PASS |  |
 | orm-compat | converge:orders | PASS |  |
 | orm-compat | converge:staff | PASS |  |
 | orm-compat | converge:information_schema.columns | PASS |  |
+| orm-compat | query:composite: one first part, ordered by the second | PASS |  |
+| orm-compat | query:composite: grouped by the first part | PASS |  |
+| orm-compat | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| orm-compat | query:composite: a range on the first part with a filter on the second | PASS |  |
+| orm-compat | query:composite: descending key order with a limit | PASS |  |
+| orm-compat | query:composite: nulls in a non-key column under the key order | PASS |  |
+| orm-compat | query:composite: text-led key, one tenant and a user range | PASS |  |
+| orm-compat | query:composite: text-led key grouped by its first part | PASS |  |
+| orm-compat | query:composite: join on two columns across both composite tables | PASS |  |
 | orm-compat | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | orm-compat | query:conformance: mixed-collation double grouping | PASS |  |
 | orm-compat | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -396,14 +418,25 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
 | crud | converge:Person | PASS |  |
+| crud | converge:attendance | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:badges | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
+| crud | converge:enrollments | PASS |  |
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
 | crud | converge:staff | PASS |  |
 | crud | converge:information_schema.columns | PASS |  |
+| crud | query:composite: one first part, ordered by the second | PASS |  |
+| crud | query:composite: grouped by the first part | PASS |  |
+| crud | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| crud | query:composite: a range on the first part with a filter on the second | PASS |  |
+| crud | query:composite: descending key order with a limit | PASS |  |
+| crud | query:composite: nulls in a non-key column under the key order | PASS |  |
+| crud | query:composite: text-led key, one tenant and a user range | PASS |  |
+| crud | query:composite: text-led key grouped by its first part | PASS |  |
+| crud | query:composite: join on two columns across both composite tables | PASS |  |
 | crud | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | crud | query:conformance: mixed-collation double grouping | PASS |  |
 | crud | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -571,18 +604,219 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:order_items: product rollup without the orders table | PASS |  |
 | crud | query:shipments: carrier value through the items bridge | SKIP |  |
 | crud | query:json: distinct case variants survive a derived table | PASS |  |
+| composite-keys | converge:Dim | PASS |  |
+| composite-keys | converge:Event | PASS |  |
+| composite-keys | converge:Fact | PASS |  |
+| composite-keys | converge:Person | PASS |  |
+| composite-keys | converge:attendance | PASS |  |
+| composite-keys | converge:audit_log | PASS |  |
+| composite-keys | converge:badges | PASS |  |
+| composite-keys | converge:counters | PASS |  |
+| composite-keys | converge:customers | PASS |  |
+| composite-keys | converge:enrollments | PASS |  |
+| composite-keys | converge:order_items | PASS |  |
+| composite-keys | converge:orders | PASS |  |
+| composite-keys | converge:staff | PASS |  |
+| composite-keys | converge:information_schema.columns | PASS |  |
+| composite-keys | query:composite: one first part, ordered by the second | PASS |  |
+| composite-keys | query:composite: grouped by the first part | PASS |  |
+| composite-keys | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| composite-keys | query:composite: a range on the first part with a filter on the second | PASS |  |
+| composite-keys | query:composite: descending key order with a limit | PASS |  |
+| composite-keys | query:composite: nulls in a non-key column under the key order | PASS |  |
+| composite-keys | query:composite: text-led key, one tenant and a user range | PASS |  |
+| composite-keys | query:composite: text-led key grouped by its first part | PASS |  |
+| composite-keys | query:composite: join on two columns across both composite tables | PASS |  |
+| composite-keys | query:conformance: triple-alias person join with a dangling FK | PASS |  |
+| composite-keys | query:conformance: mixed-collation double grouping | PASS |  |
+| composite-keys | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
+| composite-keys | query:conformance: trailing-space grouping under PAD semantics | PASS |  |
+| composite-keys | query:conformance: case-variant code grouping | PASS |  |
+| composite-keys | query:conformance: anti-join finds the event-less dimension | PASS |  |
+| composite-keys | query:conformance: nullable join key NULL-extends | PASS |  |
+| composite-keys | query:conformance: timestamp ties page deterministically with a tiebreaker | PASS |  |
+| composite-keys | query:conformance: date bucketing over the fact table | PASS |  |
+| composite-keys | query:conformance: decimal aggregate spanning negatives and zero | PASS |  |
+| composite-keys | query:point lookup by key | PASS |  |
+| composite-keys | query:range scan with compound predicate | PASS |  |
+| composite-keys | query:inner join with aggregation | PASS |  |
+| composite-keys | query:join with a residual comparison between both inputs | PASS |  |
+| composite-keys | query:left join keeps rows whose only matches fail the residual | PASS |  |
+| composite-keys | query:residual comparison through coalesce on a nullable column | PASS |  |
+| composite-keys | query:created-by and updated-by resolve through separate aliases | PASS |  |
+| composite-keys | query:alias pair with the join order reversed | PASS |  |
+| composite-keys | query:four aliases of one table joined in a chain | PASS |  |
+| composite-keys | query:self-join with a single-side predicate in the ON clause | PASS |  |
+| composite-keys | query:self-join manager chain preserves the roots | PASS |  |
+| composite-keys | query:a table joined twice under two aliases keeps them distinct | PASS |  |
+| composite-keys | query:aliases stay distinct when the empty side joins first | PASS |  |
+| composite-keys | query:left join preserves unmatched rows | PASS |  |
+| composite-keys | query:right join preserves unmatched rows | PASS |  |
+| composite-keys | query:three-way join through items | PASS |  |
+| composite-keys | query:union all across sources | PASS |  |
+| composite-keys | query:intersect customer identifiers | PASS |  |
+| composite-keys | query:except customer identifiers | PASS |  |
+| composite-keys | query:order by an expression over an aggregate | PASS |  |
+| composite-keys | query:order by a tree over several aggregates | PASS |  |
+| composite-keys | query:order by an aggregate absent from the select list | PASS |  |
+| composite-keys | query:group by with having | PASS |  |
+| composite-keys | query:conditional decimal sum keeps the fraction | PASS |  |
+| composite-keys | query:distinct count and min max | PASS |  |
+| composite-keys | query:uncorrelated in-subquery | PASS |  |
+| composite-keys | query:correlated exists with inner predicate | PASS |  |
+| composite-keys | query:correlated scalar aggregate | PASS |  |
+| composite-keys | query:correlated scalar unique lookup | PASS |  |
+| composite-keys | query:scalar subquery threshold | PASS |  |
+| composite-keys | query:non-recursive cte | PASS |  |
+| composite-keys | query:bounded recursive cte | PASS |  |
+| composite-keys | query:date bucketing | PASS |  |
+| composite-keys | query:string functions and like | PASS |  |
+| composite-keys | query:looker symmetric key helpers | PASS |  |
+| composite-keys | query:json constructor preserves json versus text | PASS |  |
+| composite-keys | query:json aggregate embeds documents | PASS |  |
+| composite-keys | query:regular expression read transforms | PASS |  |
+| composite-keys | query:case expression buckets | PASS |  |
+| composite-keys | query:null handling | PASS |  |
+| composite-keys | query:coalesce and ifnull | PASS |  |
+| composite-keys | query:enum and set filters | PASS |  |
+| composite-keys | query:unsigned boundary readback | PASS |  |
+| composite-keys | query:derived table | PASS |  |
+| composite-keys | query:group_concat single expression | PASS |  |
+| composite-keys | query:window ranking per group | PASS |  |
+| composite-keys | query:window share of total over grouped output | PASS |  |
+| composite-keys | query:window running total | PASS |  |
+| composite-keys | query:decimal column average beyond simple sum | PASS |  |
+| composite-keys | query:computed decimal rounds negative digits half away from zero | PASS |  |
+| composite-keys | query:json extract filter on customer meta | PASS |  |
+| composite-keys | query:fan-out join group concat line products | PASS |  |
+| composite-keys | query:outer join customers without recent orders | PASS |  |
+| composite-keys | query:set op union distinct tiers and statuses | PASS |  |
+| composite-keys | query:temporal convert and date_format grain | PASS |  |
+| composite-keys | query:correlated not exists open orders | PASS |  |
+| composite-keys | query:window lag payment-shaped totals | PASS |  |
+| composite-keys | query:multi-key join items to orders | PASS |  |
+| composite-keys | query:between and null-safe coalesce on balance | PASS |  |
+| composite-keys | query:intersect all-style customer buyers | PASS |  |
+| composite-keys | query:derived table status revenue share | PASS |  |
+| composite-keys | query:general_ci: equality folds ASCII case | PASS |  |
+| composite-keys | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
+| composite-keys | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| composite-keys | query:general_ci: every supplementary character compares equal | PASS |  |
+| composite-keys | query:general_ci: grouping partitions by collated equality | PASS |  |
+| composite-keys | query:general_ci: ordering follows the collation, not code points | PASS |  |
+| composite-keys | query:general_ci: DISTINCT collapses collation-equal values | PASS |  |
+| composite-keys | query:general_ci: joining on a collated column | PASS |  |
+| composite-keys | query:general_ci: representative spelling of a collated group | PASS |  |
+| composite-keys | query:general_ci: mixing collations across separate comparisons | PASS |  |
+| composite-keys | query:enum: order by ascends by declared ordinal | PASS |  |
+| composite-keys | query:enum: order by descends by declared ordinal | PASS |  |
+| composite-keys | query:enum: min and max compare as strings | PASS |  |
+| composite-keys | query:enum: a greater-than range compares as strings | PASS |  |
+| composite-keys | query:enum: a less-than range compares as strings | PASS |  |
+| composite-keys | query:enum: between compares as strings | PASS |  |
+| composite-keys | query:enum: distinct orders by ordinal | PASS |  |
+| composite-keys | query:enum: a limited sort keeps the lowest ordinals | PASS |  |
+| composite-keys | query:enum: a window order walks the ordinal | PASS |  |
+| composite-keys | query:collation: mixed grouping answers with per-key folds | PASS |  |
+| composite-keys | query:collation: distinct counts fold per column collation | PASS |  |
+| composite-keys | query:collation: regrouping a mixed grouping stays exact | PASS |  |
+| composite-keys | query:set: order by walks the member bitmask | SKIP |  |
+| composite-keys | query:set: grouping orders groups by bitmask | SKIP |  |
+| composite-keys | query:enum: the empty member groups by its ordinal | PASS |  |
+| composite-keys | query:enum: the empty member sorts by its ordinal | PASS |  |
+| composite-keys | query:enum: the empty member is selectable by text | PASS |  |
+| composite-keys | query:geometry: hex round-trips the internal format | SKIP |  |
+| composite-keys | query:geometry: byte length includes the srid prefix | SKIP |  |
+| composite-keys | query:geometry: null routes filter and count | SKIP |  |
+| composite-keys | query:geometry: spatial functions are a documented gap | SKIP |  |
+| composite-keys | query:set: find_in_set filters by membership | PASS |  |
+| composite-keys | query:set: equality is literal, not member-normalized | PASS |  |
+| composite-keys | query:set: distinct values walk the bitmask including empty | PASS |  |
+| composite-keys | query:set: grouped counts order by bitmask not text | PASS |  |
+| composite-keys | query:set: a range predicate compares the bitmask | PASS |  |
+| composite-keys | query:star: fact with dimension and two audit persons | PASS |  |
+| composite-keys | query:star: five-alias chain fans out through events | PASS |  |
+| composite-keys | query:star: grouped rollup counts facts and events per dimension | PASS |  |
+| composite-keys | query:star: five tables bridge the shop and the star | PASS |  |
+| composite-keys | query:star: null join keys stay unmatched through a four-table chain | PASS |  |
+| composite-keys | query:star: date-windowed join keeps only overlapping activity | PASS |  |
+| composite-keys | query:json: length and keys survive null documents | PASS |  |
+| composite-keys | query:json: contains_path filters the documented rows | PASS |  |
+| composite-keys | query:json: json_value reads a scalar with sql semantics | PASS |  |
+| composite-keys | query:json: object construction embeds an extracted scalar | PASS |  |
+| composite-keys | query:json: search locates a literal value | PASS |  |
+| composite-keys | query:json: grouping by an extracted scalar | PASS |  |
+| composite-keys | query:json: merge_patch overlays and reads back | PASS |  |
+| composite-keys | query:temporal: quarter, weekday and name grains agree | PASS |  |
+| composite-keys | query:temporal: month-end bucketing via last_day | PASS |  |
+| composite-keys | query:temporal: timestampdiff spans date and datetime operands | PASS |  |
+| composite-keys | query:temporal: datetime range keeps the year window | PASS |  |
+| composite-keys | query:temporal: date_sub bound in the predicate | PASS |  |
+| composite-keys | query:temporal: year-month split grouping | PASS |  |
+| composite-keys | query:temporal: sub-day grains on a microsecond timestamp | PASS |  |
+| composite-keys | query:regex: substr extracts the mail domain | PASS |  |
+| composite-keys | query:regex: the REGEXP operator anchors a class | PASS |  |
+| composite-keys | query:regex: replace folds suffix classes before grouping | PASS |  |
+| composite-keys | query:bi metabase: month grain through convert_tz | PASS |  |
+| composite-keys | query:bi metabase: iso week bucketing | PASS |  |
+| composite-keys | query:bi metabase: display formats for weekday, pretty date and clock | PASS |  |
+| composite-keys | query:bi metabase: previous-period revenue window | PASS |  |
+| composite-keys | query:bi superset: week-start grain with a rolling average | PASS |  |
+| composite-keys | query:bi superset: running total over grouped revenue | PASS |  |
+| composite-keys | query:bi superset: lag and lead against a named window | PASS |  |
+| composite-keys | query:bi superset: quartile counts from ntile | PASS |  |
+| composite-keys | query:bi superset: first and last value over an unbounded frame | PASS |  |
+| composite-keys | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| composite-keys | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
+| composite-keys | query:bi looker: any_value reads a functionally dependent column | PASS |  |
+| composite-keys | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
+| composite-keys | query:bi looker: the grouped primary key determines the row | PASS |  |
+| composite-keys | query:bi looker: a grouped self-join key reads the managers row | PASS |  |
+| composite-keys | query:bi tableau: explicit cast ladder | PASS |  |
+| composite-keys | query:bi tableau: the stddev and variance family | PASS |  |
+| composite-keys | query:bi tableau: bit aggregates over an unsigned flag column | PASS |  |
+| composite-keys | query:bi shared: substring_index dimension cleanup | PASS |  |
+| composite-keys | query:bi shared: json validity and typed path filter | PASS |  |
+| composite-keys | query:bi shared: contains_path over several paths at once | PASS |  |
+| composite-keys | query:bi shared: maketime from extracted parts | PASS |  |
+| composite-keys | query:bi shared: extract year_month grouping | PASS |  |
+| composite-keys | query:bi shared: keyset-free pagination with limit offset | PASS |  |
+| composite-keys | query:staff: three-level management chain with an inactive tail | PASS |  |
+| composite-keys | query:staff: active split with id extremes | PASS |  |
+| composite-keys | query:counters: full unsigned ladder readback | PASS |  |
+| composite-keys | query:counters: greatest and least across widths | PASS |  |
+| composite-keys | query:dim: enum status split | PASS |  |
+| composite-keys | query:dim: pattern filter across collated columns | PASS |  |
+| composite-keys | query:person: anti-join finds owners without facts | PASS |  |
+| composite-keys | query:person: created-fact counts through a scalar subquery | PASS |  |
+| composite-keys | query:event: lag over per-dimension timelines | PASS |  |
+| composite-keys | query:event: daily grain per dimension code | PASS |  |
+| composite-keys | query:order_items: product rollup without the orders table | PASS |  |
+| composite-keys | query:shipments: carrier value through the items bridge | SKIP |  |
+| composite-keys | query:json: distinct case variants survive a derived table | PASS |  |
 | type-edges | converge:Dim | PASS |  |
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
 | type-edges | converge:Person | PASS |  |
+| type-edges | converge:attendance | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:badges | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
+| type-edges | converge:enrollments | PASS |  |
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
 | type-edges | converge:staff | PASS |  |
 | type-edges | converge:information_schema.columns | PASS |  |
+| type-edges | query:composite: one first part, ordered by the second | PASS |  |
+| type-edges | query:composite: grouped by the first part | PASS |  |
+| type-edges | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| type-edges | query:composite: a range on the first part with a filter on the second | PASS |  |
+| type-edges | query:composite: descending key order with a limit | PASS |  |
+| type-edges | query:composite: nulls in a non-key column under the key order | PASS |  |
+| type-edges | query:composite: text-led key, one tenant and a user range | PASS |  |
+| type-edges | query:composite: text-led key grouped by its first part | PASS |  |
+| type-edges | query:composite: join on two columns across both composite tables | PASS |  |
 | type-edges | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | type-edges | query:conformance: mixed-collation double grouping | PASS |  |
 | type-edges | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -751,19 +985,33 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:shipments: carrier value through the items bridge | SKIP |  |
 | type-edges | query:json: distinct case variants survive a derived table | PASS |  |
 | ddl | a virtual column added mid-stream is recopied with its values | PASS |  |
+| ddl | a table created mid-stream is streaming before its rename | PASS |  |
+| ddl | a renamed table follows its new name under CDC | PASS |  |
 | ddl | converge:Dim | PASS |  |
 | ddl | converge:Event | PASS |  |
 | ddl | converge:Fact | PASS |  |
 | ddl | converge:Person | PASS |  |
+| ddl | converge:attendance | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:badges | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
+| ddl | converge:enrollments | PASS |  |
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
+| ddl | converge:renamed_target | PASS |  |
 | ddl | converge:shipments | PASS |  |
 | ddl | converge:staff | PASS |  |
 | ddl | converge:information_schema.columns | PASS |  |
+| ddl | query:composite: one first part, ordered by the second | PASS |  |
+| ddl | query:composite: grouped by the first part | PASS |  |
+| ddl | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| ddl | query:composite: a range on the first part with a filter on the second | PASS |  |
+| ddl | query:composite: descending key order with a limit | PASS |  |
+| ddl | query:composite: nulls in a non-key column under the key order | PASS |  |
+| ddl | query:composite: text-led key, one tenant and a user range | PASS |  |
+| ddl | query:composite: text-led key grouped by its first part | PASS |  |
+| ddl | query:composite: join on two columns across both composite tables | PASS |  |
 | ddl | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | ddl | query:conformance: mixed-collation double grouping | PASS |  |
 | ddl | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -935,15 +1183,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
 | schema-drift-minimal | converge:Person | PASS |  |
+| schema-drift-minimal | converge:attendance | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:badges | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
+| schema-drift-minimal | converge:enrollments | PASS |  |
 | schema-drift-minimal | converge:order_items | PASS |  |
 | schema-drift-minimal | converge:orders | PASS |  |
+| schema-drift-minimal | converge:renamed_target | PASS |  |
 | schema-drift-minimal | converge:shipments | PASS |  |
 | schema-drift-minimal | converge:staff | PASS |  |
 | schema-drift-minimal | converge:information_schema.columns | PASS |  |
+| schema-drift-minimal | query:composite: one first part, ordered by the second | PASS |  |
+| schema-drift-minimal | query:composite: grouped by the first part | PASS |  |
+| schema-drift-minimal | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| schema-drift-minimal | query:composite: a range on the first part with a filter on the second | PASS |  |
+| schema-drift-minimal | query:composite: descending key order with a limit | PASS |  |
+| schema-drift-minimal | query:composite: nulls in a non-key column under the key order | PASS |  |
+| schema-drift-minimal | query:composite: text-led key, one tenant and a user range | PASS |  |
+| schema-drift-minimal | query:composite: text-led key grouped by its first part | PASS |  |
+| schema-drift-minimal | query:composite: join on two columns across both composite tables | PASS |  |
 | schema-drift-minimal | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | schema-drift-minimal | query:conformance: mixed-collation double grouping | PASS |  |
 | schema-drift-minimal | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1115,15 +1375,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
 | schema-drift-unseen | converge:Person | PASS |  |
+| schema-drift-unseen | converge:attendance | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:badges | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
+| schema-drift-unseen | converge:enrollments | PASS |  |
 | schema-drift-unseen | converge:order_items | PASS |  |
 | schema-drift-unseen | converge:orders | PASS |  |
+| schema-drift-unseen | converge:renamed_target | PASS |  |
 | schema-drift-unseen | converge:shipments | PASS |  |
 | schema-drift-unseen | converge:staff | PASS |  |
 | schema-drift-unseen | converge:information_schema.columns | PASS |  |
+| schema-drift-unseen | query:composite: one first part, ordered by the second | PASS |  |
+| schema-drift-unseen | query:composite: grouped by the first part | PASS |  |
+| schema-drift-unseen | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| schema-drift-unseen | query:composite: a range on the first part with a filter on the second | PASS |  |
+| schema-drift-unseen | query:composite: descending key order with a limit | PASS |  |
+| schema-drift-unseen | query:composite: nulls in a non-key column under the key order | PASS |  |
+| schema-drift-unseen | query:composite: text-led key, one tenant and a user range | PASS |  |
+| schema-drift-unseen | query:composite: text-led key grouped by its first part | PASS |  |
+| schema-drift-unseen | query:composite: join on two columns across both composite tables | PASS |  |
 | schema-drift-unseen | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | schema-drift-unseen | query:conformance: mixed-collation double grouping | PASS |  |
 | schema-drift-unseen | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1291,25 +1563,37 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:order_items: product rollup without the orders table | PASS |  |
 | schema-drift-unseen | query:shipments: carrier value through the items bridge | PASS |  |
 | schema-drift-unseen | query:json: distinct case variants survive a derived table | PASS |  |
-| churn-live | live:conformance: triple-alias person join with a dangling FK | PASS |  |
-| churn-live | live:conformance: mixed-collation double grouping | PASS |  |
-| churn-live | live:conformance: enum ordinal ordering disagrees with labels | PASS |  |
-| churn-live | live:conformance: trailing-space grouping under PAD semantics | PASS |  |
-| churn-live | live:conformance: case-variant code grouping | PASS |  |
-| churn-live | live:conformance: anti-join finds the event-less dimension | PASS |  |
+| churn-live | live:composite: one first part, ordered by the second | PASS |  |
+| churn-live | live:composite: grouped by the first part | PASS |  |
+| churn-live | live:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| churn-live | live:composite: a range on the first part with a filter on the second | PASS |  |
+| churn-live | live:composite: descending key order with a limit | PASS |  |
+| churn-live | live:composite: nulls in a non-key column under the key order | PASS |  |
 | churn | converge:Dim | PASS |  |
 | churn | converge:Event | PASS |  |
 | churn | converge:Fact | PASS |  |
 | churn | converge:Person | PASS |  |
+| churn | converge:attendance | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:badges | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
+| churn | converge:enrollments | PASS |  |
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
+| churn | converge:renamed_target | PASS |  |
 | churn | converge:shipments | PASS |  |
 | churn | converge:staff | PASS |  |
 | churn | converge:information_schema.columns | PASS |  |
+| churn | query:composite: one first part, ordered by the second | PASS |  |
+| churn | query:composite: grouped by the first part | PASS |  |
+| churn | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| churn | query:composite: a range on the first part with a filter on the second | PASS |  |
+| churn | query:composite: descending key order with a limit | PASS |  |
+| churn | query:composite: nulls in a non-key column under the key order | PASS |  |
+| churn | query:composite: text-led key, one tenant and a user range | PASS |  |
+| churn | query:composite: text-led key grouped by its first part | PASS |  |
+| churn | query:composite: join on two columns across both composite tables | PASS |  |
 | churn | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | churn | query:conformance: mixed-collation double grouping | PASS |  |
 | churn | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1481,15 +1765,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | converge:Event | PASS |  |
 | contention | converge:Fact | PASS |  |
 | contention | converge:Person | PASS |  |
+| contention | converge:attendance | PASS |  |
 | contention | converge:audit_log | PASS |  |
 | contention | converge:badges | PASS |  |
 | contention | converge:counters | PASS |  |
 | contention | converge:customers | PASS |  |
+| contention | converge:enrollments | PASS |  |
 | contention | converge:order_items | PASS |  |
 | contention | converge:orders | PASS |  |
+| contention | converge:renamed_target | PASS |  |
 | contention | converge:shipments | PASS |  |
 | contention | converge:staff | PASS |  |
 | contention | converge:information_schema.columns | PASS |  |
+| contention | query:composite: one first part, ordered by the second | PASS |  |
+| contention | query:composite: grouped by the first part | PASS |  |
+| contention | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| contention | query:composite: a range on the first part with a filter on the second | PASS |  |
+| contention | query:composite: descending key order with a limit | PASS |  |
+| contention | query:composite: nulls in a non-key column under the key order | PASS |  |
+| contention | query:composite: text-led key, one tenant and a user range | PASS |  |
+| contention | query:composite: text-led key grouped by its first part | PASS |  |
+| contention | query:composite: join on two columns across both composite tables | PASS |  |
 | contention | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | contention | query:conformance: mixed-collation double grouping | PASS |  |
 | contention | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1666,15 +1962,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | converge:Event | PASS |  |
 | execution-budget | converge:Fact | PASS |  |
 | execution-budget | converge:Person | PASS |  |
+| execution-budget | converge:attendance | PASS |  |
 | execution-budget | converge:audit_log | PASS |  |
 | execution-budget | converge:badges | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
+| execution-budget | converge:enrollments | PASS |  |
 | execution-budget | converge:order_items | PASS |  |
 | execution-budget | converge:orders | PASS |  |
+| execution-budget | converge:renamed_target | PASS |  |
 | execution-budget | converge:shipments | PASS |  |
 | execution-budget | converge:staff | PASS |  |
 | execution-budget | converge:information_schema.columns | PASS |  |
+| execution-budget | query:composite: one first part, ordered by the second | PASS |  |
+| execution-budget | query:composite: grouped by the first part | PASS |  |
+| execution-budget | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| execution-budget | query:composite: a range on the first part with a filter on the second | PASS |  |
+| execution-budget | query:composite: descending key order with a limit | PASS |  |
+| execution-budget | query:composite: nulls in a non-key column under the key order | PASS |  |
+| execution-budget | query:composite: text-led key, one tenant and a user range | PASS |  |
+| execution-budget | query:composite: text-led key grouped by its first part | PASS |  |
+| execution-budget | query:composite: join on two columns across both composite tables | PASS |  |
 | execution-budget | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | execution-budget | query:conformance: mixed-collation double grouping | PASS |  |
 | execution-budget | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -1850,15 +2158,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | converge:Event | PASS |  |
 | spill | converge:Fact | PASS |  |
 | spill | converge:Person | PASS |  |
+| spill | converge:attendance | PASS |  |
 | spill | converge:audit_log | PASS |  |
 | spill | converge:badges | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
+| spill | converge:enrollments | PASS |  |
 | spill | converge:order_items | PASS |  |
 | spill | converge:orders | PASS |  |
+| spill | converge:renamed_target | PASS |  |
 | spill | converge:shipments | PASS |  |
 | spill | converge:staff | PASS |  |
 | spill | converge:information_schema.columns | PASS |  |
+| spill | query:composite: one first part, ordered by the second | PASS |  |
+| spill | query:composite: grouped by the first part | PASS |  |
+| spill | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| spill | query:composite: a range on the first part with a filter on the second | PASS |  |
+| spill | query:composite: descending key order with a limit | PASS |  |
+| spill | query:composite: nulls in a non-key column under the key order | PASS |  |
+| spill | query:composite: text-led key, one tenant and a user range | PASS |  |
+| spill | query:composite: text-led key grouped by its first part | PASS |  |
+| spill | query:composite: join on two columns across both composite tables | PASS |  |
 | spill | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | spill | query:conformance: mixed-collation double grouping | PASS |  |
 | spill | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2033,15 +2353,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | converge:Event | PASS |  |
 | pooling | converge:Fact | PASS |  |
 | pooling | converge:Person | PASS |  |
+| pooling | converge:attendance | PASS |  |
 | pooling | converge:audit_log | PASS |  |
 | pooling | converge:badges | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
+| pooling | converge:enrollments | PASS |  |
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
+| pooling | converge:renamed_target | PASS |  |
 | pooling | converge:shipments | PASS |  |
 | pooling | converge:staff | PASS |  |
 | pooling | converge:information_schema.columns | PASS |  |
+| pooling | query:composite: one first part, ordered by the second | PASS |  |
+| pooling | query:composite: grouped by the first part | PASS |  |
+| pooling | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| pooling | query:composite: a range on the first part with a filter on the second | PASS |  |
+| pooling | query:composite: descending key order with a limit | PASS |  |
+| pooling | query:composite: nulls in a non-key column under the key order | PASS |  |
+| pooling | query:composite: text-led key, one tenant and a user range | PASS |  |
+| pooling | query:composite: text-led key grouped by its first part | PASS |  |
+| pooling | query:composite: join on two columns across both composite tables | PASS |  |
 | pooling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | pooling | query:conformance: mixed-collation double grouping | PASS |  |
 | pooling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2232,15 +2564,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | converge:Event | PASS |  |
 | local-database | converge:Fact | PASS |  |
 | local-database | converge:Person | PASS |  |
+| local-database | converge:attendance | PASS |  |
 | local-database | converge:audit_log | PASS |  |
 | local-database | converge:badges | PASS |  |
 | local-database | converge:counters | PASS |  |
 | local-database | converge:customers | PASS |  |
+| local-database | converge:enrollments | PASS |  |
 | local-database | converge:order_items | PASS |  |
 | local-database | converge:orders | PASS |  |
+| local-database | converge:renamed_target | PASS |  |
 | local-database | converge:shipments | PASS |  |
 | local-database | converge:staff | PASS |  |
 | local-database | converge:information_schema.columns | PASS |  |
+| local-database | query:composite: one first part, ordered by the second | PASS |  |
+| local-database | query:composite: grouped by the first part | PASS |  |
+| local-database | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| local-database | query:composite: a range on the first part with a filter on the second | PASS |  |
+| local-database | query:composite: descending key order with a limit | PASS |  |
+| local-database | query:composite: nulls in a non-key column under the key order | PASS |  |
+| local-database | query:composite: text-led key, one tenant and a user range | PASS |  |
+| local-database | query:composite: text-led key grouped by its first part | PASS |  |
+| local-database | query:composite: join on two columns across both composite tables | PASS |  |
 | local-database | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | local-database | query:conformance: mixed-collation double grouping | PASS |  |
 | local-database | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2413,15 +2757,27 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | converge:Event | PASS |  |
 | restart | converge:Fact | PASS |  |
 | restart | converge:Person | PASS |  |
+| restart | converge:attendance | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:badges | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
+| restart | converge:enrollments | PASS |  |
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
+| restart | converge:renamed_target | PASS |  |
 | restart | converge:shipments | PASS |  |
 | restart | converge:staff | PASS |  |
 | restart | converge:information_schema.columns | PASS |  |
+| restart | query:composite: one first part, ordered by the second | PASS |  |
+| restart | query:composite: grouped by the first part | PASS |  |
+| restart | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| restart | query:composite: a range on the first part with a filter on the second | PASS |  |
+| restart | query:composite: descending key order with a limit | PASS |  |
+| restart | query:composite: nulls in a non-key column under the key order | PASS |  |
+| restart | query:composite: text-led key, one tenant and a user range | PASS |  |
+| restart | query:composite: text-led key grouped by its first part | PASS |  |
+| restart | query:composite: join on two columns across both composite tables | PASS |  |
 | restart | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | restart | query:conformance: mixed-collation double grouping | PASS |  |
 | restart | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2589,25 +2945,37 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150036 sync_runs rows for db_36d951cc31576cab262f5932e6c8504c |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_155b73d250634e9d0ea711af74a141ce |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 3ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 32ms p99 47ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 22ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 1ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 26ms p99 49ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 2ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
 | activity-history | converge:Person | PASS |  |
+| activity-history | converge:attendance | PASS |  |
 | activity-history | converge:audit_log | PASS |  |
 | activity-history | converge:badges | PASS |  |
 | activity-history | converge:counters | PASS |  |
 | activity-history | converge:customers | PASS |  |
+| activity-history | converge:enrollments | PASS |  |
 | activity-history | converge:order_items | PASS |  |
 | activity-history | converge:orders | PASS |  |
+| activity-history | converge:renamed_target | PASS |  |
 | activity-history | converge:shipments | PASS |  |
 | activity-history | converge:staff | PASS |  |
 | activity-history | converge:information_schema.columns | PASS |  |
+| activity-history | query:composite: one first part, ordered by the second | PASS |  |
+| activity-history | query:composite: grouped by the first part | PASS |  |
+| activity-history | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| activity-history | query:composite: a range on the first part with a filter on the second | PASS |  |
+| activity-history | query:composite: descending key order with a limit | PASS |  |
+| activity-history | query:composite: nulls in a non-key column under the key order | PASS |  |
+| activity-history | query:composite: text-led key, one tenant and a user range | PASS |  |
+| activity-history | query:composite: text-led key grouped by its first part | PASS |  |
+| activity-history | query:composite: join on two columns across both composite tables | PASS |  |
 | activity-history | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | activity-history | query:conformance: mixed-collation double grouping | PASS |  |
 | activity-history | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2775,23 +3143,35 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4784 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4784 requests: p50 2ms p99 32ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 8ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 815 vs source 815 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4925 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4925 requests: p50 1ms p99 8ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6891 vs source 6891 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
 | poll-storm | converge:Person | PASS |  |
+| poll-storm | converge:attendance | PASS |  |
 | poll-storm | converge:audit_log | PASS |  |
 | poll-storm | converge:badges | PASS |  |
 | poll-storm | converge:counters | PASS |  |
 | poll-storm | converge:customers | PASS |  |
+| poll-storm | converge:enrollments | PASS |  |
 | poll-storm | converge:order_items | PASS |  |
 | poll-storm | converge:orders | PASS |  |
+| poll-storm | converge:renamed_target | PASS |  |
 | poll-storm | converge:shipments | PASS |  |
 | poll-storm | converge:staff | PASS |  |
 | poll-storm | converge:information_schema.columns | PASS |  |
+| poll-storm | query:composite: one first part, ordered by the second | PASS |  |
+| poll-storm | query:composite: grouped by the first part | PASS |  |
+| poll-storm | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| poll-storm | query:composite: a range on the first part with a filter on the second | PASS |  |
+| poll-storm | query:composite: descending key order with a limit | PASS |  |
+| poll-storm | query:composite: nulls in a non-key column under the key order | PASS |  |
+| poll-storm | query:composite: text-led key, one tenant and a user range | PASS |  |
+| poll-storm | query:composite: text-led key grouped by its first part | PASS |  |
+| poll-storm | query:composite: join on two columns across both composite tables | PASS |  |
 | poll-storm | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | poll-storm | query:conformance: mixed-collation double grouping | PASS |  |
 | poll-storm | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -2983,16 +3363,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | converge:Event | PASS |  |
 | control-plane | converge:Fact | PASS |  |
 | control-plane | converge:Person | PASS |  |
+| control-plane | converge:attendance | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:badges | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
+| control-plane | converge:enrollments | PASS |  |
 | control-plane | converge:keyless_log | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
+| control-plane | converge:renamed_target | PASS |  |
 | control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
 | control-plane | converge:information_schema.columns | PASS |  |
+| control-plane | query:composite: one first part, ordered by the second | PASS |  |
+| control-plane | query:composite: grouped by the first part | PASS |  |
+| control-plane | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| control-plane | query:composite: a range on the first part with a filter on the second | PASS |  |
+| control-plane | query:composite: descending key order with a limit | PASS |  |
+| control-plane | query:composite: nulls in a non-key column under the key order | PASS |  |
+| control-plane | query:composite: text-led key, one tenant and a user range | PASS |  |
+| control-plane | query:composite: text-led key grouped by its first part | PASS |  |
+| control-plane | query:composite: join on two columns across both composite tables | PASS |  |
 | control-plane | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | control-plane | query:conformance: mixed-collation double grouping | PASS |  |
 | control-plane | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -3165,16 +3557,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | converge:Event | PASS |  |
 | snapshot-ddl-window | converge:Fact | PASS |  |
 | snapshot-ddl-window | converge:Person | PASS |  |
+| snapshot-ddl-window | converge:attendance | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:badges | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
+| snapshot-ddl-window | converge:enrollments | PASS |  |
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
 | snapshot-ddl-window | converge:order_items | PASS |  |
 | snapshot-ddl-window | converge:orders | PASS |  |
+| snapshot-ddl-window | converge:renamed_target | PASS |  |
 | snapshot-ddl-window | converge:shipments | PASS |  |
 | snapshot-ddl-window | converge:staff | PASS |  |
 | snapshot-ddl-window | converge:information_schema.columns | PASS |  |
+| snapshot-ddl-window | query:composite: one first part, ordered by the second | PASS |  |
+| snapshot-ddl-window | query:composite: grouped by the first part | PASS |  |
+| snapshot-ddl-window | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| snapshot-ddl-window | query:composite: a range on the first part with a filter on the second | PASS |  |
+| snapshot-ddl-window | query:composite: descending key order with a limit | PASS |  |
+| snapshot-ddl-window | query:composite: nulls in a non-key column under the key order | PASS |  |
+| snapshot-ddl-window | query:composite: text-led key, one tenant and a user range | PASS |  |
+| snapshot-ddl-window | query:composite: text-led key grouped by its first part | PASS |  |
+| snapshot-ddl-window | query:composite: join on two columns across both composite tables | PASS |  |
 | snapshot-ddl-window | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | snapshot-ddl-window | query:conformance: mixed-collation double grouping | PASS |  |
 | snapshot-ddl-window | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -3351,16 +3755,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | converge:Event | PASS |  |
 | drop-table-cdc | converge:Fact | PASS |  |
 | drop-table-cdc | converge:Person | PASS |  |
+| drop-table-cdc | converge:attendance | PASS |  |
 | drop-table-cdc | converge:audit_log | PASS |  |
 | drop-table-cdc | converge:badges | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
+| drop-table-cdc | converge:enrollments | PASS |  |
 | drop-table-cdc | converge:keyless_log | PASS |  |
 | drop-table-cdc | converge:order_items | PASS |  |
 | drop-table-cdc | converge:orders | PASS |  |
+| drop-table-cdc | converge:renamed_target | PASS |  |
 | drop-table-cdc | converge:shipments | PASS |  |
 | drop-table-cdc | converge:staff | PASS |  |
 | drop-table-cdc | converge:information_schema.columns | PASS |  |
+| drop-table-cdc | query:composite: one first part, ordered by the second | PASS |  |
+| drop-table-cdc | query:composite: grouped by the first part | PASS |  |
+| drop-table-cdc | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| drop-table-cdc | query:composite: a range on the first part with a filter on the second | PASS |  |
+| drop-table-cdc | query:composite: descending key order with a limit | PASS |  |
+| drop-table-cdc | query:composite: nulls in a non-key column under the key order | PASS |  |
+| drop-table-cdc | query:composite: text-led key, one tenant and a user range | PASS |  |
+| drop-table-cdc | query:composite: text-led key grouped by its first part | PASS |  |
+| drop-table-cdc | query:composite: join on two columns across both composite tables | PASS |  |
 | drop-table-cdc | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-cdc | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-cdc | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -3535,16 +3951,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | converge:Event | PASS |  |
 | drop-table-recreate | converge:Fact | PASS |  |
 | drop-table-recreate | converge:Person | PASS |  |
+| drop-table-recreate | converge:attendance | PASS |  |
 | drop-table-recreate | converge:audit_log | PASS |  |
 | drop-table-recreate | converge:badges | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
+| drop-table-recreate | converge:enrollments | PASS |  |
 | drop-table-recreate | converge:keyless_log | PASS |  |
 | drop-table-recreate | converge:order_items | PASS |  |
 | drop-table-recreate | converge:orders | PASS |  |
+| drop-table-recreate | converge:renamed_target | PASS |  |
 | drop-table-recreate | converge:shipments | PASS |  |
 | drop-table-recreate | converge:staff | PASS |  |
 | drop-table-recreate | converge:information_schema.columns | PASS |  |
+| drop-table-recreate | query:composite: one first part, ordered by the second | PASS |  |
+| drop-table-recreate | query:composite: grouped by the first part | PASS |  |
+| drop-table-recreate | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| drop-table-recreate | query:composite: a range on the first part with a filter on the second | PASS |  |
+| drop-table-recreate | query:composite: descending key order with a limit | PASS |  |
+| drop-table-recreate | query:composite: nulls in a non-key column under the key order | PASS |  |
+| drop-table-recreate | query:composite: text-led key, one tenant and a user range | PASS |  |
+| drop-table-recreate | query:composite: text-led key grouped by its first part | PASS |  |
+| drop-table-recreate | query:composite: join on two columns across both composite tables | PASS |  |
 | drop-table-recreate | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-recreate | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-recreate | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -3715,22 +4143,34 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_36d951cc31576cab262f5932e6c8504c","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-07T06:08:59.010407+00:00","updated_at":"2026-09-07T06:17:04.154708+00:00"},"tables":18,"rows":1322} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_155b73d250634e9d0ea711af74a141ce","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-07T09:14:51.673578262+00:00","updated_at":"2026-09-07T09:20:39.124736742+00:00"},"tables":21,"rows":9615} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
 | drop-table-polling | converge:Fact | PASS |  |
 | drop-table-polling | converge:Person | PASS |  |
+| drop-table-polling | converge:attendance | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:badges | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
+| drop-table-polling | converge:enrollments | PASS |  |
 | drop-table-polling | converge:keyless_log | PASS |  |
 | drop-table-polling | converge:order_items | PASS |  |
 | drop-table-polling | converge:orders | PASS |  |
+| drop-table-polling | converge:renamed_target | PASS |  |
 | drop-table-polling | converge:shipments | PASS |  |
 | drop-table-polling | converge:staff | PASS |  |
 | drop-table-polling | converge:information_schema.columns | PASS |  |
+| drop-table-polling | query:composite: one first part, ordered by the second | PASS |  |
+| drop-table-polling | query:composite: grouped by the first part | PASS |  |
+| drop-table-polling | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| drop-table-polling | query:composite: a range on the first part with a filter on the second | PASS |  |
+| drop-table-polling | query:composite: descending key order with a limit | PASS |  |
+| drop-table-polling | query:composite: nulls in a non-key column under the key order | PASS |  |
+| drop-table-polling | query:composite: text-led key, one tenant and a user range | PASS |  |
+| drop-table-polling | query:composite: text-led key grouped by its first part | PASS |  |
+| drop-table-polling | query:composite: join on two columns across both composite tables | PASS |  |
 | drop-table-polling | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-table-polling | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-table-polling | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -3906,16 +4346,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | converge:Event | PASS |  |
 | restart-during-snapshot | converge:Fact | PASS |  |
 | restart-during-snapshot | converge:Person | PASS |  |
+| restart-during-snapshot | converge:attendance | PASS |  |
 | restart-during-snapshot | converge:audit_log | PASS |  |
 | restart-during-snapshot | converge:badges | PASS |  |
 | restart-during-snapshot | converge:counters | PASS |  |
 | restart-during-snapshot | converge:customers | PASS |  |
+| restart-during-snapshot | converge:enrollments | PASS |  |
 | restart-during-snapshot | converge:keyless_log | PASS |  |
 | restart-during-snapshot | converge:order_items | PASS |  |
 | restart-during-snapshot | converge:orders | PASS |  |
+| restart-during-snapshot | converge:renamed_target | PASS |  |
 | restart-during-snapshot | converge:shipments | PASS |  |
 | restart-during-snapshot | converge:staff | PASS |  |
 | restart-during-snapshot | converge:information_schema.columns | PASS |  |
+| restart-during-snapshot | query:composite: one first part, ordered by the second | PASS |  |
+| restart-during-snapshot | query:composite: grouped by the first part | PASS |  |
+| restart-during-snapshot | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| restart-during-snapshot | query:composite: a range on the first part with a filter on the second | PASS |  |
+| restart-during-snapshot | query:composite: descending key order with a limit | PASS |  |
+| restart-during-snapshot | query:composite: nulls in a non-key column under the key order | PASS |  |
+| restart-during-snapshot | query:composite: text-led key, one tenant and a user range | PASS |  |
+| restart-during-snapshot | query:composite: text-led key grouped by its first part | PASS |  |
+| restart-during-snapshot | query:composite: join on two columns across both composite tables | PASS |  |
 | restart-during-snapshot | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | restart-during-snapshot | query:conformance: mixed-collation double grouping | PASS |  |
 | restart-during-snapshot | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -4093,16 +4545,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | converge:Event | PASS |  |
 | restart-during-resync | converge:Fact | PASS |  |
 | restart-during-resync | converge:Person | PASS |  |
+| restart-during-resync | converge:attendance | PASS |  |
 | restart-during-resync | converge:audit_log | PASS |  |
 | restart-during-resync | converge:badges | PASS |  |
 | restart-during-resync | converge:counters | PASS |  |
 | restart-during-resync | converge:customers | PASS |  |
+| restart-during-resync | converge:enrollments | PASS |  |
 | restart-during-resync | converge:keyless_log | PASS |  |
 | restart-during-resync | converge:order_items | PASS |  |
 | restart-during-resync | converge:orders | PASS |  |
+| restart-during-resync | converge:renamed_target | PASS |  |
 | restart-during-resync | converge:shipments | PASS |  |
 | restart-during-resync | converge:staff | PASS |  |
 | restart-during-resync | converge:information_schema.columns | PASS |  |
+| restart-during-resync | query:composite: one first part, ordered by the second | PASS |  |
+| restart-during-resync | query:composite: grouped by the first part | PASS |  |
+| restart-during-resync | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| restart-during-resync | query:composite: a range on the first part with a filter on the second | PASS |  |
+| restart-during-resync | query:composite: descending key order with a limit | PASS |  |
+| restart-during-resync | query:composite: nulls in a non-key column under the key order | PASS |  |
+| restart-during-resync | query:composite: text-led key, one tenant and a user range | PASS |  |
+| restart-during-resync | query:composite: text-led key grouped by its first part | PASS |  |
+| restart-during-resync | query:composite: join on two columns across both composite tables | PASS |  |
 | restart-during-resync | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | restart-during-resync | query:conformance: mixed-collation double grouping | PASS |  |
 | restart-during-resync | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -4271,28 +4735,40 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-resync | query:json: distinct case variants survive a derived table | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 238 ok, http 71 ok, dashboards 190 ok; admission-refused×2 |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 93 ok, dashboards 156 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 238 of 240, http 71 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 445ms p99 1410ms over 238 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 6ms over 14 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 264MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201000 vs source 201000 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 93 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 280ms p99 1686ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 16ms over 11 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 307MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 201100 vs source 201100 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
 | memory-pressure | converge:Fact | PASS |  |
 | memory-pressure | converge:Person | PASS |  |
+| memory-pressure | converge:attendance | PASS |  |
 | memory-pressure | converge:audit_log | PASS |  |
 | memory-pressure | converge:badges | PASS |  |
 | memory-pressure | converge:counters | PASS |  |
 | memory-pressure | converge:customers | PASS |  |
+| memory-pressure | converge:enrollments | PASS |  |
 | memory-pressure | converge:keyless_log | PASS |  |
 | memory-pressure | converge:order_items | PASS |  |
 | memory-pressure | converge:orders | PASS |  |
+| memory-pressure | converge:renamed_target | PASS |  |
 | memory-pressure | converge:shipments | PASS |  |
 | memory-pressure | converge:staff | PASS |  |
 | memory-pressure | converge:information_schema.columns | PASS |  |
+| memory-pressure | query:composite: one first part, ordered by the second | PASS |  |
+| memory-pressure | query:composite: grouped by the first part | PASS |  |
+| memory-pressure | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| memory-pressure | query:composite: a range on the first part with a filter on the second | PASS |  |
+| memory-pressure | query:composite: descending key order with a limit | PASS |  |
+| memory-pressure | query:composite: nulls in a non-key column under the key order | PASS |  |
+| memory-pressure | query:composite: text-led key, one tenant and a user range | PASS |  |
+| memory-pressure | query:composite: text-led key grouped by its first part | PASS |  |
+| memory-pressure | query:composite: join on two columns across both composite tables | PASS |  |
 | memory-pressure | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | memory-pressure | query:conformance: mixed-collation double grouping | PASS |  |
 | memory-pressure | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -4463,22 +4939,34 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
-| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 22.6s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 24MB before, peak 165MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 56MB before, peak 207MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
 | reconcile-memory | converge:Person | PASS |  |
+| reconcile-memory | converge:attendance | PASS |  |
 | reconcile-memory | converge:audit_log | PASS |  |
 | reconcile-memory | converge:badges | PASS |  |
 | reconcile-memory | converge:counters | PASS |  |
 | reconcile-memory | converge:customers | PASS |  |
+| reconcile-memory | converge:enrollments | PASS |  |
 | reconcile-memory | converge:keyless_log | PASS |  |
 | reconcile-memory | converge:order_items | PASS |  |
 | reconcile-memory | converge:orders | PASS |  |
+| reconcile-memory | converge:renamed_target | PASS |  |
 | reconcile-memory | converge:shipments | PASS |  |
 | reconcile-memory | converge:staff | PASS |  |
 | reconcile-memory | converge:information_schema.columns | PASS |  |
+| reconcile-memory | query:composite: one first part, ordered by the second | PASS |  |
+| reconcile-memory | query:composite: grouped by the first part | PASS |  |
+| reconcile-memory | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| reconcile-memory | query:composite: a range on the first part with a filter on the second | PASS |  |
+| reconcile-memory | query:composite: descending key order with a limit | PASS |  |
+| reconcile-memory | query:composite: nulls in a non-key column under the key order | PASS |  |
+| reconcile-memory | query:composite: text-led key, one tenant and a user range | PASS |  |
+| reconcile-memory | query:composite: text-led key grouped by its first part | PASS |  |
+| reconcile-memory | query:composite: join on two columns across both composite tables | PASS |  |
 | reconcile-memory | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | reconcile-memory | query:conformance: mixed-collation double grouping | PASS |  |
 | reconcile-memory | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -4658,16 +5146,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | converge:Event | PASS |  |
 | drop-database | converge:Fact | PASS |  |
 | drop-database | converge:Person | PASS |  |
+| drop-database | converge:attendance | PASS |  |
 | drop-database | converge:audit_log | PASS |  |
 | drop-database | converge:badges | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
+| drop-database | converge:enrollments | PASS |  |
 | drop-database | converge:keyless_log | PASS |  |
 | drop-database | converge:order_items | PASS |  |
 | drop-database | converge:orders | PASS |  |
+| drop-database | converge:renamed_target | PASS |  |
 | drop-database | converge:shipments | PASS |  |
 | drop-database | converge:staff | PASS |  |
 | drop-database | converge:information_schema.columns | PASS |  |
+| drop-database | query:composite: one first part, ordered by the second | PASS |  |
+| drop-database | query:composite: grouped by the first part | PASS |  |
+| drop-database | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| drop-database | query:composite: a range on the first part with a filter on the second | PASS |  |
+| drop-database | query:composite: descending key order with a limit | PASS |  |
+| drop-database | query:composite: nulls in a non-key column under the key order | PASS |  |
+| drop-database | query:composite: text-led key, one tenant and a user range | PASS |  |
+| drop-database | query:composite: text-led key grouped by its first part | PASS |  |
+| drop-database | query:composite: join on two columns across both composite tables | PASS |  |
 | drop-database | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | drop-database | query:conformance: mixed-collation double grouping | PASS |  |
 | drop-database | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -4839,16 +5339,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
 | ddl-documented-gaps | converge:Person | PASS |  |
+| ddl-documented-gaps | converge:attendance | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:badges | PASS |  |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
+| ddl-documented-gaps | converge:enrollments | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
 | ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
+| ddl-documented-gaps | converge:renamed_target | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
-| ddl-documented-gaps | converge:information_schema.columns | WARN | row 20: |
+| ddl-documented-gaps | converge:information_schema.columns | WARN | row 24: |
+| ddl-documented-gaps | query:composite: one first part, ordered by the second | PASS |  |
+| ddl-documented-gaps | query:composite: grouped by the first part | PASS |  |
+| ddl-documented-gaps | query:composite: exact key pairs, deleted and reinserted among them | PASS |  |
+| ddl-documented-gaps | query:composite: a range on the first part with a filter on the second | PASS |  |
+| ddl-documented-gaps | query:composite: descending key order with a limit | PASS |  |
+| ddl-documented-gaps | query:composite: nulls in a non-key column under the key order | PASS |  |
+| ddl-documented-gaps | query:composite: text-led key, one tenant and a user range | PASS |  |
+| ddl-documented-gaps | query:composite: text-led key grouped by its first part | PASS |  |
+| ddl-documented-gaps | query:composite: join on two columns across both composite tables | PASS |  |
 | ddl-documented-gaps | query:conformance: triple-alias person join with a dangling FK | PASS |  |
 | ddl-documented-gaps | query:conformance: mixed-collation double grouping | PASS |  |
 | ddl-documented-gaps | query:conformance: enum ordinal ordering disagrees with labels | PASS |  |
@@ -5021,31 +5533,32 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.8 | 1.7 |
-| orm-compat | 9.8 | 0.3 | 0.9 |
-| crud | 0.3 | 2.0 | 0.9 |
-| type-edges | 0.0 | 1.1 | 0.6 |
-| ddl | 10.4 | 14.8 | 0.8 |
-| schema-drift-minimal | 0.2 | 2.7 | 0.6 |
-| schema-drift-unseen | 1.1 | 6.6 | 0.8 |
-| churn | 12.5 | 1.7 | 0.7 |
-| contention | 13.9 | 0.3 | 0.7 |
-| execution-budget | 0.0 | 0.5 | 0.9 |
-| spill | 3.0 | 0.6 | 0.7 |
-| pooling | 0.1 | 1.1 | 0.8 |
-| local-database | 0.1 | 0.3 | 0.9 |
-| restart | 0.7 | 2.3 | 0.8 |
-| activity-history | 1.8 | 0.3 | 0.9 |
-| poll-storm | 31.5 | 0.5 | 0.6 |
-| control-plane | 63.9 | 0.9 | 0.8 |
-| snapshot-ddl-window | 5.0 | 3.2 | 0.7 |
-| drop-table-cdc | 20.4 | 1.6 | 0.8 |
-| drop-table-recreate | 133.4 | 1.9 | 0.6 |
-| drop-table-polling | 128.6 | 1.5 | 0.8 |
-| restart-during-snapshot | 8.2 | 1.3 | 0.9 |
-| restart-during-resync | 15.5 | 1.2 | 1.3 |
-| memory-pressure | 18.3 | 1.1 | 1.2 |
-| reconcile-memory | 68.5 | 1.1 | 0.8 |
-| drop-database | 19.3 | 1.2 | 1.1 |
-| ddl-documented-gaps | 0.2 | 1.1 | 0.8 |
-| total | 566.6 | 51.7 | 23.0 |
+| snapshot | 0.0 | 0.1 | 0.1 |
+| orm-compat | 1.9 | 0.0 | 0.1 |
+| crud | 0.0 | 1.1 | 0.1 |
+| composite-keys | 0.0 | 2.4 | 0.1 |
+| type-edges | 0.0 | 2.6 | 0.1 |
+| ddl | 7.4 | 2.6 | 0.1 |
+| schema-drift-minimal | 0.0 | 2.1 | 0.1 |
+| schema-drift-unseen | 0.0 | 2.6 | 0.1 |
+| churn | 0.2 | 2.1 | 0.1 |
+| contention | 13.5 | 0.1 | 0.6 |
+| execution-budget | 0.0 | 0.1 | 0.6 |
+| spill | 5.1 | 0.4 | 0.6 |
+| pooling | 0.1 | 1.3 | 0.6 |
+| local-database | 0.0 | 0.1 | 0.6 |
+| restart | 0.5 | 2.6 | 0.6 |
+| activity-history | 1.0 | 0.4 | 0.6 |
+| poll-storm | 21.7 | 0.1 | 0.6 |
+| control-plane | 24.4 | 0.1 | 0.4 |
+| snapshot-ddl-window | 5.1 | 0.1 | 0.4 |
+| drop-table-cdc | 8.4 | 0.1 | 0.7 |
+| drop-table-recreate | 129.2 | 0.1 | 0.7 |
+| drop-table-polling | 104.2 | 0.1 | 0.4 |
+| restart-during-snapshot | 2.3 | 0.1 | 0.4 |
+| restart-during-resync | 3.9 | 0.1 | 0.4 |
+| memory-pressure | 10.9 | 0.1 | 0.4 |
+| reconcile-memory | 31.6 | 0.1 | 0.4 |
+| drop-database | 12.0 | 0.1 | 0.4 |
+| ddl-documented-gaps | 0.0 | 0.1 | 0.3 |
+| total | 383.4 | 21.4 | 10.7 |
