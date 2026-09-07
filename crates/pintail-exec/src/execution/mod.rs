@@ -3460,11 +3460,20 @@ impl PullOperator {
                         key_collations,
                     )?);
                 }
-                next_materialized_batch(
-                    state.as_mut().expect("initialized above"),
-                    column_types,
-                    memory,
-                )
+                let state = state.as_mut().expect("initialized above");
+                if state.position >= state.rows.len()
+                    && let Some(spilled) = state.spilled.as_mut()
+                {
+                    let rows = spilled.next_chunk(aggregates, memory)?;
+                    if rows.is_empty() {
+                        spilled.finish(memory);
+                        state.spilled = None;
+                        return Ok(None);
+                    }
+                    state.rows = rows;
+                    state.position = 0;
+                }
+                next_materialized_batch(state, column_types, memory)
             }
             Self::Project { input, expressions } => {
                 let Some(batch) = input.next_batch(memory)? else {
@@ -4415,6 +4424,9 @@ fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
 struct MaterializedRows {
     rows: Vec<Vec<Value>>,
     position: usize,
+    /// An aggregate whose group map spilled serves its merged result from
+    /// here, a chunk at a time into `rows`, instead of holding it whole.
+    spilled: Option<aggregate::SpilledGroupMerge>,
 }
 
 fn next_materialized_batch(
@@ -6047,6 +6059,74 @@ mod tests {
         assert_eq!(memory_spill.files, 0);
         assert!(spill.files > 0, "the tight execution must use spill files");
         assert!(spill.written_bytes > 0);
+    }
+
+    #[test]
+    fn a_spilled_aggregate_serves_a_result_larger_than_its_ceiling() {
+        // 20,000 groups whose finished rows come to several times the tight
+        // ceiling: the map spills while grouping, and the merged result must
+        // then be served in chunks rather than held whole, or the query
+        // fails on its own output after spilling correctly. The expression
+        // key keeps this on the general path; the streaming two-pass path
+        // over an input that reports no transient floor is a separate case.
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..512)
+                    .map(|row| {
+                        let key = (batch * 512 + row) % 20_000;
+                        Value::Utf8(format!(
+                            "name-{key:05}-with-a-payload-that-outgrows-the-ceiling"
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |memory_limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT name, LENGTH(name) AS n, COUNT(*) FROM events GROUP BY name, n"),
+                &provider,
+                memory_limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            let mut peak = 0;
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                peak = peak.max(execution.memory().used());
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            rows.sort_by(|left, right| match (&left[0], &right[0]) {
+                (Value::Utf8(left), Value::Utf8(right)) => left.cmp(right),
+                _ => unreachable!("group keys are text"),
+            });
+            (rows, execution.spill_metrics(), peak, memory_limit)
+        };
+        let (memory, memory_spill, _, _) = execute(64 * 1024 * 1024);
+        let (spilled, spill, peak, limit) = execute(1024 * 1024);
+        assert_eq!(spilled.len(), 20_000);
+        assert_eq!(spilled, memory);
+        assert_eq!(memory_spill.files, 0);
+        assert!(spill.files > 0, "the tight execution must use spill files");
+        assert!(
+            peak <= limit,
+            "served under the ceiling: peak {peak} of {limit}"
+        );
     }
 
     #[test]

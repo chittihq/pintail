@@ -927,7 +927,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
             collation,
         );
         memory.release(group_reserved);
-        return merge_spilled_aggregate_groups(spill_runs, resident, aggregates, memory);
+        return merge_spilled_aggregate_groups(spill_runs, resident, memory);
     }
 
     // Finalize each partition in parallel; ORDER BY above owns ordering.
@@ -964,7 +964,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
     for (partition_rows, _) in finalized {
         rows.extend(partition_rows);
     }
-    Ok(MaterializedRows { rows, position: 0 })
+    Ok(MaterializedRows {
+        rows,
+        position: 0,
+        spilled: None,
+    })
 }
 
 /// Pass 1 for one batch: extract (key bits, lane bits, null mask) per

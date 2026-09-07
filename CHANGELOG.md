@@ -18,6 +18,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   as a drop. Before, a rename quarantined the table for a resync and the
   new name was copied afresh on the next probe.
 
+### Fixed
+
+- A grouped aggregate whose group map spilled held its merged result
+  whole, so a result larger than the query's memory ceiling failed on its
+  own output after spilling correctly. The merged groups are now served a
+  chunk at a time, each chunk sized to a quarter of what remains, and a
+  spilled result is never memoized.
+
 ## [0.1.2-rc8] - 2026-09-07
 
 ### Fixed

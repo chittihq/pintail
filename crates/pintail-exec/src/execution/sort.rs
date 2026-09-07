@@ -341,7 +341,11 @@ pub(super) fn build_sort(
                 row.truncate(width);
             }
         }
-        return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
+        return Ok(SortedRows::Memory(MaterializedRows {
+            rows,
+            position: 0,
+            spilled: None,
+        }));
     }
     let SpillMaterialization {
         mut rows,
@@ -355,7 +359,11 @@ pub(super) fn build_sort(
                 row.truncate(width);
             }
         }
-        return Ok(SortedRows::Memory(MaterializedRows { rows, position: 0 }));
+        return Ok(SortedRows::Memory(MaterializedRows {
+            rows,
+            position: 0,
+            spilled: None,
+        }));
     }
     let merge = SpilledMerge::new(runs, &rows, keys.to_vec(), trim_to, collation, memory)?;
     drop(rows);

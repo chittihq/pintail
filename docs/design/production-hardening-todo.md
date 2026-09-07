@@ -317,6 +317,14 @@ prints.
   flagged table resets every table's store; with the not-ready guard the
   whole database answers not ready for the copy. The per-table resync is
   the scoped path.
+- [ ] **G12. The streaming two-pass aggregate fails instead of spilling
+  over an input with no transient floor.** Its proactive relief keys off
+  the scan's reported floor; an input that reports none (a join, a
+  subquery, the static test provider) can fill the ceiling with buffered
+  windows until the next input batch's own reservation fails. Reproduced
+  in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
+  ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
+  general path over the same input spills and completes.
 
 ## F. Still open from earlier reviews
 

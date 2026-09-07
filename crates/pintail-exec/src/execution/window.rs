@@ -186,7 +186,11 @@ pub(super) fn build_window(
             row.push(value.clone());
         }
     }
-    Ok(MaterializedRows { rows, position: 0 })
+    Ok(MaterializedRows {
+        rows,
+        position: 0,
+        spilled: None,
+    })
 }
 
 enum NumericRangeTarget {
