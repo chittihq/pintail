@@ -3064,3 +3064,47 @@ path can absorb. The scan then reads a bitmap. The open question is the
 lifetime: a bitmap belongs to a (segment, memtable generation) pair, so a
 flush retires it, and the cost of rebuilding one after a flush is the
 0.797 ms measured above, paid once.
+
+
+## e81 — What a merging scan costs against a direct one, on the same rows
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows of
+four columns, twenty thousand of them changed and flushed so the scan
+meets two overlapping segments. The comparison is the same rows and the
+same columns with nothing to merge.
+
+| scan | ms |
+|---|---:|
+| direct, one segment, packed columns | 14.4 |
+| merging, 1% of rows changed | 1546.7 |
+| the merge costs | 107x |
+
+One row in a hundred changing makes the scan a hundred times slower. Two
+things account for it and neither is the winner-selection logic, which is
+a cheap walk of already-sorted heads.
+
+The first is the gather. A merging chunk asks its segment for scattered
+row indices, so it decodes per row rather than per block, and gives up
+every advantage the block layout has. The direct path reads ranges.
+
+The second is the representation. The direct path hands back packed typed
+columns; the merging path hands back `Value` per cell, which e77 measured
+at 32 bytes to carry 8, with an allocation for every string.
+
+Removing the two transposes the merging path used to do between those
+steps, turning its fetch into rows and back into columns, was measured at
+1546.7 against 1433.7 ms: about 6%. Worth keeping, since the work was
+pure waste, but it is not the cliff and this records that plainly.
+
+**The fix is to make a merging scan look like a direct one.** At one
+percent churn the winning rows form long contiguous runs, so the winner
+indices can be expressed as ranges and read with the same ranged, packed
+reader the direct path uses, with the few memtable winners placed into the
+resulting typed columns. That is a contained change with a clear target:
+this scan should cost nearer 14 ms than 1547.
+
+The number also reframes the compaction gap recorded as G10. An
+update-heavy table that has flushed once sits on a base and an overlapping
+tail and merges on every scan until two more flushes arrive; at these
+figures that is not a tidiness problem, it is a hundredfold slowdown
+persisting until compaction happens to run.

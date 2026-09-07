@@ -2421,13 +2421,20 @@ impl ProjectedScanStream {
         }
         let first_chunk = !std::mem::replace(&mut merge.reported_segments, true);
         let report_pruned = first_chunk && !std::mem::replace(&mut self.reported_pruned, true);
-        let mut winner_values = vec![None; row_count];
+        // The winners are placed straight into the output columns. The
+        // fetch below is already column-major and so is the chunk, so
+        // turning it into rows and back cost two transposes and one vector
+        // allocation per row, for a representation nothing downstream
+        // wanted.
+        let mut columns = projection
+            .iter()
+            .map(|_| vec![pintail_types::Value::Null; row_count])
+            .collect::<Vec<_>>();
+        let mut placed = 0_usize;
         let mut segment_rows = BTreeMap::<usize, Vec<(usize, usize)>>::new();
         for (winner_index, source) in winner_sources.into_iter().enumerate() {
             match source {
-                MergedWinnerSource::Segment { .. } if projection.is_empty() => {
-                    winner_values[winner_index] = Some(Vec::new());
-                }
+                MergedWinnerSource::Segment { .. } if projection.is_empty() => placed += 1,
                 MergedWinnerSource::Segment {
                     segment_index,
                     row_index,
@@ -2436,7 +2443,16 @@ impl ProjectedScanStream {
                     .or_default()
                     .push((row_index, winner_index)),
                 MergedWinnerSource::Memtable(values) => {
-                    winner_values[winner_index] = Some(values);
+                    if values.len() != columns.len() {
+                        return Err(StoreError::FormatLimit(
+                            "a merged memtable winner has a different width from the projection"
+                                .into(),
+                        ));
+                    }
+                    for (column, value) in columns.iter_mut().zip(values) {
+                        column[winner_index] = value;
+                    }
+                    placed += 1;
                 }
             }
         }
@@ -2457,23 +2473,28 @@ impl ProjectedScanStream {
                 &scan_budget,
             )?;
             blocks_decoded += fetch.blocks_decoded;
-            let values = columns_to_rows(fetch.columns, selected.len())?;
+            if fetch.columns.len() != columns.len() {
+                return Err(StoreError::FormatLimit(
+                    "a merged segment fetch has a different width from the projection".into(),
+                ));
+            }
+            for (column, fetched) in columns.iter_mut().zip(fetch.columns) {
+                if fetched.len() != selected.len() {
+                    return Err(StoreError::FormatLimit(
+                        "projected column length differs from its selected row count".into(),
+                    ));
+                }
+                for ((_, winner_index), value) in selected.iter().zip(fetched) {
+                    column[*winner_index] = value;
+                }
+            }
             scan_budget.release(fetch.reserved_bytes);
-            for ((_, winner_index), values) in selected.into_iter().zip(values) {
-                winner_values[winner_index] = Some(values);
-            }
+            placed += selected.len();
         }
-        let mut columns = projection
-            .iter()
-            .map(|_| Vec::with_capacity(row_count))
-            .collect::<Vec<_>>();
-        for values in winner_values {
-            let values = values.ok_or_else(|| {
-                StoreError::FormatLimit("merged winner was not late-materialized".into())
-            })?;
-            for (column, value) in columns.iter_mut().zip(values) {
-                column.push(value);
-            }
+        if placed != row_count {
+            return Err(StoreError::FormatLimit(
+                "a merged winner was not materialized".into(),
+            ));
         }
         let retained_bytes = size_of::<ProjectedColumnChunk>()
             .saturating_add(
