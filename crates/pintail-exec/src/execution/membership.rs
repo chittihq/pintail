@@ -25,13 +25,29 @@ enum BucketMode {
     Common,
 }
 
+/// One partition, either still on disk or already decoded into memory.
+/// A partition is a 64th of a set that spilled at a quarter of the query
+/// ceiling, so the resident form is bounded by construction; the file scan
+/// stays for the partition that still refuses to fit.
+enum Partition {
+    Absent,
+    Resident(Vec<Value>),
+    OnDisk(spill::ClosedRun),
+}
+
 struct ExternalMembership {
-    runs: Vec<Option<spill::ClosedRun>>,
+    /// Each partition behind its own lock: probes on different partitions
+    /// never wait for each other, and the first probe on one loads it while
+    /// later probes on it read the decoded values.
+    runs: Vec<std::sync::RwLock<Partition>>,
     mode: BucketMode,
     collation: Collation,
     exact_decimal: bool,
     saw_null: bool,
-    lookup_lock: std::sync::Mutex<()>,
+    /// Bytes the resident partitions hold, against the budget reserved for
+    /// this set at construction.
+    resident_bytes: std::sync::atomic::AtomicUsize,
+    resident_budget: usize,
     interruption: MemoryTracker,
 }
 
@@ -57,46 +73,133 @@ fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
     usize::try_from(hash.finish() % PARTITIONS as u64).expect("partition fits usize")
 }
 
+impl ExternalMembership {
+    /// Compares the needle against one already-decoded value.
+    fn matches(&self, needle: &Value, value: Value) -> Result<bool, MembershipError> {
+        crate::expression::evaluate_in_list(
+            &[needle.clone(), value],
+            false,
+            self.exact_decimal,
+            self.collation,
+        )
+        .map_err(lookup_error)
+        .map(|outcome| outcome == Value::Boolean(true))
+    }
+
+    /// Reads one partition's file, comparing as it goes. Used while the
+    /// partition is being promoted, and for good on a partition too large
+    /// to hold: correctness never depends on the promotion succeeding.
+    fn scan_file(
+        &self,
+        run: &spill::ClosedRun,
+        needle: &Value,
+        mut collect: Option<&mut Vec<Value>>,
+    ) -> Result<bool, MembershipError> {
+        let mut reader = run
+            .open()
+            .map_err(|error| MembershipError::Failed(error.to_string()))?;
+        let mut found = false;
+        while let Some(payload) = reader
+            .next()
+            .map_err(|error| MembershipError::Failed(error.to_string()))?
+        {
+            self.interruption
+                .check_interruption()
+                .map_err(lookup_error)?;
+            let value = spill::Decoder::new(payload)
+                .value()
+                .map_err(MembershipError::Failed)?;
+            if !found && self.matches(needle, value.clone())? {
+                found = true;
+                // Keep reading only while a promotion still wants the rest.
+                if collect.is_none() {
+                    return Ok(true);
+                }
+            }
+            if let Some(values) = collect.as_mut() {
+                values.push(value);
+            }
+        }
+        Ok(found)
+    }
+
+    /// Whether this partition's values fit the budget left for resident
+    /// partitions. Charged once, when the partition is promoted.
+    fn claim_resident(&self, values: &[Value]) -> bool {
+        let bytes = values
+            .iter()
+            .map(|value| size_of::<Value>().saturating_add(value.heap_bytes()))
+            .fold(0_usize, usize::saturating_add);
+        self.resident_bytes
+            .fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |used| {
+                    let wanted = used.saturating_add(bytes);
+                    (wanted <= self.resident_budget).then_some(wanted)
+                },
+            )
+            .is_ok()
+    }
+}
+
 impl MembershipLookup for ExternalMembership {
     fn lookup(&self, needle: &Value) -> Result<Value, MembershipError> {
         self.interruption
             .check_interruption()
             .map_err(lookup_error)?;
-        let _guard = self
-            .lookup_lock
-            .lock()
-            .map_err(|_| MembershipError::Failed("membership lock poisoned".to_owned()))?;
         if matches!(needle, Value::Null) {
             return Ok(Value::Null);
         }
-        if let Some(run) = &self.runs[bucket(needle, self.mode, self.collation)] {
-            let mut reader = run
-                .open()
-                .map_err(|error| MembershipError::Failed(error.to_string()))?;
-            while let Some(payload) = reader
-                .next()
-                .map_err(|error| MembershipError::Failed(error.to_string()))?
-            {
-                self.interruption
-                    .check_interruption()
-                    .map_err(lookup_error)?;
-                let value = spill::Decoder::new(payload)
-                    .value()
-                    .map_err(MembershipError::Failed)?;
-                if crate::expression::evaluate_in_list(
-                    &[needle.clone(), value],
-                    false,
-                    self.exact_decimal,
-                    self.collation,
-                )
-                .map_err(lookup_error)?
-                    == Value::Boolean(true)
-                {
-                    return Ok(Value::Boolean(true));
+        let slot = &self.runs[bucket(needle, self.mode, self.collation)];
+        let found = {
+            let partition = slot
+                .read()
+                .map_err(|_| MembershipError::Failed("membership lock poisoned".to_owned()))?;
+            match &*partition {
+                Partition::Absent => false,
+                // The common case after the first probe on this partition:
+                // a memory scan of a 64th of the set, with no lock held by
+                // any other partition's probes.
+                Partition::Resident(values) => {
+                    let mut found = false;
+                    for value in values {
+                        self.interruption
+                            .check_interruption()
+                            .map_err(lookup_error)?;
+                        if self.matches(needle, value.clone())? {
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
+                }
+                // First probe on this partition: answer from the file, and
+                // decode the rest of it for the probes that follow. The
+                // whole set was written under a quarter of the ceiling, so
+                // one partition of it is small; a partition that still does
+                // not fit keeps answering from disk.
+                Partition::OnDisk(run) => {
+                    let mut values = Vec::new();
+                    let found = self.scan_file(run, needle, Some(&mut values))?;
+                    if self.claim_resident(&values) {
+                        drop(partition);
+                        let mut partition = slot.write().map_err(|_| {
+                            MembershipError::Failed("membership lock poisoned".to_owned())
+                        })?;
+                        // Another probe may have promoted it first; its
+                        // values are the same, so either copy will do.
+                        if matches!(&*partition, Partition::OnDisk(_)) {
+                            *partition = Partition::Resident(values);
+                        }
+                    }
+                    found
                 }
             }
-        }
-        Ok(if self.saw_null {
+        };
+        Ok(if found {
+            Value::Boolean(true)
+        } else if self.saw_null {
             Value::Null
         } else {
             Value::Boolean(false)
@@ -250,21 +353,31 @@ pub(super) fn materialize_membership(
     }
     // Reserve the largest decoded candidate and comparison scratch for the
     // index's lifetime; lookups retain only one candidate at a time.
+    // The set spilled at a quarter of the limit, so holding its decoded
+    // partitions costs about that again; probes read a resident partition
+    // instead of reopening its file per row.
+    let resident_budget = limit / 4;
     let retained = PARTITIONS
-        .saturating_mul(size_of::<Option<spill::ClosedRun>>().saturating_add(256))
-        .saturating_add(largest.saturating_mul(16));
+        .saturating_mul(size_of::<spill::ClosedRun>().saturating_add(256))
+        .saturating_add(largest.saturating_mul(16))
+        .saturating_add(resident_budget);
     memory.ensure_transient(retained)?;
     Ok(MaterializedMembership::External(
         PreparedMembership(Arc::new(ExternalMembership {
             runs: runs
                 .into_iter()
-                .map(|run| run.map(spill::AppendRun::seal))
+                .map(|run| {
+                    std::sync::RwLock::new(
+                        run.map_or(Partition::Absent, |run| Partition::OnDisk(run.seal())),
+                    )
+                })
                 .collect(),
             mode,
             collation,
             exact_decimal,
             saw_null,
-            lookup_lock: std::sync::Mutex::new(()),
+            resident_bytes: std::sync::atomic::AtomicUsize::new(0),
+            resident_budget,
             interruption: memory.unbounded_worker(),
         })),
         retained,
@@ -296,15 +409,128 @@ mod tests {
     }
 
     #[test]
+    fn a_probed_partition_is_read_from_disk_once() {
+        // The file scan is the fallback, not the probe path: a set that
+        // spilled must not reopen a file per probe row.
+        let spill = spill::QuerySpill::new();
+        let memory = MemoryTracker::new(64 * 1024);
+        let collation = Collation::default();
+        let mut runs = (0..PARTITIONS).map(|_| None).collect::<Vec<_>>();
+        for id in 0..256_i64 {
+            append_value(
+                &mut runs,
+                &Value::Int64(id),
+                BucketMode::Integer,
+                collation,
+                &spill,
+            )
+            .expect("append");
+        }
+        let set = ExternalMembership {
+            runs: runs
+                .into_iter()
+                .map(|run| {
+                    std::sync::RwLock::new(
+                        run.map_or(Partition::Absent, |run| Partition::OnDisk(run.seal())),
+                    )
+                })
+                .collect(),
+            mode: BucketMode::Integer,
+            collation,
+            exact_decimal: false,
+            saw_null: false,
+            resident_bytes: std::sync::atomic::AtomicUsize::new(0),
+            resident_budget: 64 * 1024,
+            interruption: memory.unbounded_worker(),
+        };
+        for id in 0..256_i64 {
+            assert_eq!(
+                set.lookup(&Value::Int64(id)).expect("probe"),
+                Value::Boolean(true)
+            );
+        }
+        assert_eq!(
+            set.lookup(&Value::Int64(-1)).expect("probe"),
+            Value::Boolean(false)
+        );
+        // Every partition that held a value answered from memory after its
+        // first probe, so 257 probes touched at most one file each.
+        let on_disk = set
+            .runs
+            .iter()
+            .filter(|slot| matches!(&*slot.read().expect("lock"), Partition::OnDisk(_)))
+            .count();
+        assert_eq!(on_disk, 0, "a probed partition stayed on disk");
+        let resident = set
+            .runs
+            .iter()
+            .filter(|slot| matches!(&*slot.read().expect("lock"), Partition::Resident(_)))
+            .count();
+        assert!(resident > 0);
+    }
+
+    #[test]
+    fn a_partition_too_large_for_the_budget_keeps_answering_from_disk() {
+        let spill = spill::QuerySpill::new();
+        let memory = MemoryTracker::new(64 * 1024);
+        let collation = Collation::default();
+        let mut runs = (0..PARTITIONS).map(|_| None).collect::<Vec<_>>();
+        for id in 0..256_i64 {
+            append_value(
+                &mut runs,
+                &Value::Int64(id),
+                BucketMode::Integer,
+                collation,
+                &spill,
+            )
+            .expect("append");
+        }
+        let set = ExternalMembership {
+            runs: runs
+                .into_iter()
+                .map(|run| {
+                    std::sync::RwLock::new(
+                        run.map_or(Partition::Absent, |run| Partition::OnDisk(run.seal())),
+                    )
+                })
+                .collect(),
+            mode: BucketMode::Integer,
+            collation,
+            exact_decimal: false,
+            saw_null: true,
+            resident_bytes: std::sync::atomic::AtomicUsize::new(0),
+            resident_budget: 0,
+            interruption: memory.unbounded_worker(),
+        };
+        for id in 0..256_i64 {
+            assert_eq!(
+                set.lookup(&Value::Int64(id)).expect("probe"),
+                Value::Boolean(true)
+            );
+        }
+        // A NULL in the set turns a miss into NULL, from disk as in memory.
+        assert_eq!(set.lookup(&Value::Int64(-1)).expect("probe"), Value::Null);
+        assert!(
+            set.runs
+                .iter()
+                .any(|slot| matches!(&*slot.read().expect("lock"), Partition::OnDisk(_))),
+            "no partition may be promoted past the budget"
+        );
+    }
+
+    #[test]
     fn external_lookup_observes_cancellation_and_deadlines() {
         let memory = MemoryTracker::new(64 * 1024);
         let mut set = ExternalMembership {
-            runs: (0..PARTITIONS).map(|_| None).collect(),
+            runs: (0..PARTITIONS)
+                .map(|_| std::sync::RwLock::new(Partition::Absent))
+                .collect(),
             mode: BucketMode::Common,
             collation: Collation::default(),
             exact_decimal: false,
             saw_null: false,
-            lookup_lock: std::sync::Mutex::new(()),
+            resident_bytes: std::sync::atomic::AtomicUsize::new(0),
+            resident_budget: 0,
             interruption: memory.unbounded_worker(),
         };
         memory.cancellation.as_ref().expect("token").cancel();
