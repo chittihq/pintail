@@ -206,15 +206,19 @@ stays readable as a list of things to fix.
 - A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
   value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
   state encoding.
-- External `IN` membership probes scan their hash partition. Highly skewed
-  sets can require quadratic comparisons across many probes; mixed-type and
+- External `IN` membership probes scan one hash partition, held in memory
+  after its first probe while a budget allows; a partition too large for
+  that budget is re-read from its file for every probe. Highly skewed sets
+  can require quadratic comparisons across many probes; mixed-type and
   exact-decimal comparisons use a common partition to preserve coercion
   semantics. A correlated external set is rebuilt for each uncached outer
   tuple. One value and its comparison scratch must fit in the query budget.
-- A grace join partition that cannot be reduced by hashing replays the
-  build file for each probe row. This can require quadratic comparisons
-  when many distinct keys collide through every hash pass. One candidate
-  pair, its normalized keys, and its residual predicate must still fit.
+- A grace join partition that cannot be reduced by hashing replays its
+  build rows for each probe row: what a quarter of the ceiling holds is
+  read from the file once, and the rest is re-read per probe. This can
+  require quadratic comparisons when many distinct keys collide through
+  every hash pass. One candidate pair, its normalized keys, and its
+  residual predicate must still fit.
 - The correlated join `ON` fallback replays the right side once per left
   row; it has no cardinality-based side selection. Each candidate pair and
   its dependent inner execution must fit within the remaining query budget.

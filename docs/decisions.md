@@ -1508,6 +1508,32 @@ probe files. For a single equal key its comparisons correspond to candidate
 output pairs; a partition containing many colliding distinct keys can incur
 quadratic comparison work. Each candidate pair and predicate must fit.
 
+Reading the whole file once per probe made that comparison work an equal
+amount of I/O, so the replay first reads the partition once and keeps what
+a quarter of the ceiling affords, writing the rest to its own run. Each
+probe then walks the resident rows in memory and continues into the tail
+file where they stop, which preserves the file order every join kind's
+match accounting depends on. A partition that fits entirely is never read
+from disk again; one far larger than the ceiling still re-reads its tail.
+
+### A spilled IN set holds the partitions it probes
+
+The external membership index answered each probe by reopening its
+partition file and streaming every value in it, under one process-wide
+lock, so a scan probing a spilled set did one file read per row with no
+parallelism. A partition is a 64th of a set that spilled at a quarter of
+the ceiling, so its decoded form is bounded by construction: the first
+probe on a partition keeps the values it read, and later probes on it
+scan memory. Each partition has its own lock, so probes on different
+partitions proceed together.
+
+A resident budget of a quarter of the ceiling bounds the promotions, and
+a partition that does not fit keeps answering from its file, so no answer
+depends on a promotion having happened. Reading each partition into a
+sorted vector and binary-searching it would cut the memory scan further,
+but the ordering would have to agree with every mixed-type equality
+coercion, which is the reason the file scan compares rather than seeks.
+
 ### Prepared membership owns external IN storage
 
 Subquery resolution previously replaced every IN result with a literal

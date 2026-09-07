@@ -1133,13 +1133,104 @@ struct SkewReplay {
     matches: usize,
     reserved: usize,
     scalar: Option<Vec<Value>>,
+    /// The build rows a budget lets this replay keep, in file order. Every
+    /// probe walks these from memory before the file continues where they
+    /// stop, so the rows that fit are read from disk once rather than once
+    /// per probe.
+    resident: Vec<(JoinHashKey, Vec<Value>)>,
+    resident_bytes: usize,
+    /// Build rows past the resident prefix, in file order.
+    tail: Option<GraceRun>,
+    prepared: bool,
+    /// Position of the current probe within the resident prefix.
+    cursor: usize,
 }
 
 impl SkewReplay {
+    fn new(build: GraceRun, probes: GraceRunReader) -> Self {
+        Self {
+            build,
+            probes,
+            current: None,
+            entries: None,
+            matches: 0,
+            reserved: 0,
+            scalar: None,
+            resident: Vec::new(),
+            resident_bytes: 0,
+            tail: None,
+            prepared: false,
+            cursor: 0,
+        }
+    }
+
+    /// Reads the partition once, keeping what a quarter of the ceiling
+    /// affords and writing the rest to its own run. A partition that fits
+    /// entirely leaves no tail and is never read from disk again.
+    fn prepare(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        if self.prepared {
+            return Ok(());
+        }
+        self.prepared = true;
+        let budget = (memory.limit() / 4).min(memory.remaining() / 2);
+        let mut source = self.build.reader(memory)?;
+        let mut tail = GraceRun::create();
+        let mut spilling = false;
+        while let Some((key, row)) = source.next_entry()? {
+            if !spilling {
+                let bytes = estimated_row_payload_bytes(&row)
+                    .saturating_add(key.heap_bytes())
+                    .saturating_add(size_of::<(JoinHashKey, Vec<Value>)>());
+                if self.resident_bytes.saturating_add(bytes) <= budget
+                    && memory.reserve(bytes).is_ok()
+                {
+                    self.resident_bytes = self.resident_bytes.saturating_add(bytes);
+                    self.resident.push((key, row));
+                    continue;
+                }
+                spilling = true;
+            }
+            tail.append(&key, &row, memory)?;
+        }
+        if tail.entries > 0 {
+            self.tail = Some(tail);
+        }
+        Ok(())
+    }
+
+    /// The next build row for the current probe: the resident prefix first,
+    /// then the tail file from where the prefix stops.
+    fn next_build(
+        &mut self,
+        memory: &MemoryTracker,
+    ) -> Result<Option<(JoinHashKey, Vec<Value>)>, ExecError> {
+        if self.cursor < self.resident.len() {
+            let entry = self.resident[self.cursor].clone();
+            self.cursor += 1;
+            return Ok(Some(entry));
+        }
+        if self.entries.is_none() {
+            let Some(tail) = self.tail.as_mut() else {
+                return Ok(None);
+            };
+            self.entries = Some(tail.reader(memory)?);
+        }
+        self.entries.as_mut().expect("tail opened").next_entry()
+    }
+
+    /// Hands back the resident prefix once the partition is served.
+    fn release(&mut self, memory: &MemoryTracker) {
+        self.clear_probe(memory);
+        memory.release(self.resident_bytes);
+        self.resident = Vec::new();
+        self.resident_bytes = 0;
+    }
+
     fn clear_probe(&mut self, memory: &MemoryTracker) {
         self.current = None;
         self.scalar = None;
         self.entries = None;
+        self.cursor = 0;
         memory.release(self.reserved);
         self.reserved = 0;
         self.matches = 0;
@@ -1153,6 +1244,7 @@ impl SkewReplay {
         columns: &[BoundColumn],
         memory: &MemoryTracker,
     ) -> Result<Option<Vec<Value>>, ExecError> {
+        self.prepare(memory)?;
         loop {
             memory.check_interruption()?;
             if self.current.is_none() {
@@ -1162,10 +1254,12 @@ impl SkewReplay {
                 self.reserved = estimated_row_payload_bytes(&row).saturating_add(key.heap_bytes());
                 memory.reserve(self.reserved)?;
                 self.current = Some((key, row));
-                self.entries = Some(self.build.reader(memory)?);
+                self.cursor = 0;
+                self.entries = None;
             }
+            let next = self.next_build(memory)?;
             let (probe_key, left) = self.current.as_ref().expect("probe loaded");
-            if let Some((key, right)) = self.entries.as_mut().expect("build opened").next_entry()? {
+            if let Some((key, right)) = next {
                 memory.ensure_transient(
                     estimated_row_payload_bytes(&right).saturating_add(key.heap_bytes()),
                 )?;
@@ -1618,6 +1712,7 @@ pub(super) fn next_grace_join_batch(
                 push(&mut rows, &mut buffered_bytes, output)?;
                 continue;
             }
+            skew.release(memory);
             grace.skew = None;
         }
         if grace.replay.is_none() {
@@ -1682,15 +1777,7 @@ pub(super) fn next_grace_join_batch(
                     let build =
                         std::mem::replace(&mut grace.build_files[index], GraceRun::create());
                     let probes = grace.probe_files[index].reader(memory)?;
-                    grace.skew = Some(SkewReplay {
-                        build,
-                        probes,
-                        current: None,
-                        entries: None,
-                        matches: 0,
-                        reserved: 0,
-                        scalar: None,
-                    });
+                    grace.skew = Some(SkewReplay::new(build, probes));
                     continue;
                 }
                 split_grace_partition(grace, index, memory)?;
@@ -2244,15 +2331,7 @@ mod tests {
         probes
             .append(&key, &[Value::UInt64(1)], &memory)
             .expect("probe");
-        let mut replay = SkewReplay {
-            build,
-            probes: probes.reader(&memory).expect("reader"),
-            current: None,
-            entries: None,
-            matches: 0,
-            reserved: 0,
-            scalar: None,
-        };
+        let mut replay = SkewReplay::new(build, probes.reader(&memory).expect("reader"));
         assert!(matches!(
             replay.next_row(BoundJoinKind::Scalar, 1, None, &[], &memory),
             Err(ExecError::ScalarSubqueryRows { rows: 2 })
