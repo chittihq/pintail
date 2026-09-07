@@ -955,7 +955,11 @@ async fn query_and_table_routes_read_the_same_mirrored_snapshot() {
 
 #[tokio::test]
 async fn storage_reports_both_volumes_and_refuses_an_anonymous_caller() {
-    let data = tempfile::tempdir().expect("API data directory");
+    // Under the crate, not the system temporary directory: the check below
+    // expects the data directory on the system volume, and a host whose
+    // /tmp is its own filesystem (tmpfs on a server) would otherwise read
+    // as a second disk.
+    let data = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).expect("API data directory");
     let app = pintail_api::router_with_state(configured_state(data.path()));
     let authorization = format!("Bearer {}", setup_admin(&app).await);
 
