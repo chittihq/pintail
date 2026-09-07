@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc10] - 2026-09-07
+
 ### Added
 
 - One table can be paused while the rest of its database keeps
@@ -55,6 +57,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   evaluated one partition at a time, then served in chunks. Independent
   window expressions retain their input row identity through each sort; a
   single partition still has to fit within the ceiling.
+
+### Fixed
+
+- The container image could link a stale workspace crate. Its build keeps
+  incremental state in a cache that outlives the tree it was built from,
+  and a source file older than that cache's artifacts read as unchanged,
+  so a build of one tree after a newer one compiled against the previous
+  crate. Workspace sources are stamped at build time; the dependency
+  cache is unaffected.
 
 ## [0.1.2-rc9] - 2026-09-07
 
