@@ -941,6 +941,59 @@ impl AggregateState {
         Ok(())
     }
 
+    /// The dense count lane already resolved its aggregate once per batch.
+    pub(super) fn add_dense_count(&mut self, amount: u64) -> Result<(), ExecError> {
+        let AggregateValue::Count(count) = &mut self.value else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "dense count requires a count state",
+            ));
+        };
+        *count = count
+            .checked_add(amount)
+            .ok_or(ExecError::NumericOverflow)?;
+        Ok(())
+    }
+
+    /// Packed signed SUM keeps the same checked arithmetic and NULL state.
+    pub(super) fn add_dense_signed(&mut self, amount: i64) -> Result<(), ExecError> {
+        match &mut self.value {
+            AggregateValue::Sum(Some(Value::Int64(total))) => {
+                *total = total
+                    .checked_add(amount)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            value @ AggregateValue::Sum(None) => {
+                *value = AggregateValue::Sum(Some(Value::Int64(amount)));
+            }
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "dense sum requires a matching integer state",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Packed unsigned SUM keeps the same checked arithmetic and NULL state.
+    pub(super) fn add_dense_unsigned(&mut self, amount: u64) -> Result<(), ExecError> {
+        match &mut self.value {
+            AggregateValue::Sum(Some(Value::UInt64(total))) => {
+                *total = total
+                    .checked_add(amount)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            value @ AggregateValue::Sum(None) => {
+                *value = AggregateValue::Sum(Some(Value::UInt64(amount)));
+            }
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "dense sum requires a matching integer state",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Exact decimal SUM on scaled integer units: no text parse, no text
     /// format until `finish`. The state lazily morphs from `Sum(None)` on
     /// the first unit-borne update.

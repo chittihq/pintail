@@ -2685,3 +2685,48 @@ merge; after = the overlay masks the superseded rows from a direct decode.
 speed plus one packed key column; the merge remains for the shapes the
 overlay declines (stale versions, composite keys, partial segments,
 version-retaining segments, key-ordered consumers).
+
+
+## e74 — Dense packed aggregate lanes (synthetic table, in-process, memo off)
+
+Ten million generated rows in 1M-row segments, 32 execution threads,
+release build, five runs per case on the build host. Milliseconds below
+are minimum / median, with operator profiling enabled through
+`PINTAIL_BENCH_PROFILE=1` in `morsel_bench`. The settled memo is disabled.
+Before is the development baseline; after includes bounded integer slots,
+packed count/SUM lanes, and explicit persistent and worker slab bounds.
+
+| case | before min / median | after min / median |
+|---|---:|---:|
+| two-pass text key, five groups | 86.8 / 90.7 | 22.3 / 25.4 |
+| two-pass int key, fifty groups | 105.3 / 131.2 | 32.6 / 39.0 |
+| general int+text keys | 505.5 / 508.5 | 519.2 / 543.0 |
+| general int+text keys, 64 MiB | 784.5 / 801.7 | 764.9 / 927.9 |
+
+The text path already had a dense table. Its remaining cost was repeated
+column access and generic lane/state dispatch per row. Packed count and
+integer SUM kernels resolve those choices once per batch; the integer
+key path also avoids scattering and hashing for a bounded domain. The
+mixed-key control keeps the general path and does not establish a speedup.
+Its median varies more than its minimum on the shared machine.
+
+For the five text-key profiles, aggregate self time changed from
+78.2/83.0 ms minimum/median to 15.2/18.1 ms; scan self time from 7.7/7.8
+to 7.1/7.3 ms. Scan peak reservation changed from 133.0 to 133.4 MiB,
+including the newly reserved dense state bound. The aggregate still costs
+more than the scan in this profile; the total-time target is met, rather
+than a claim that their self times are equal.
+
+The generated NULL/duplicate/domain-overflow comparisons pass for text,
+signed and unsigned keys. One concurrent test run exposed a split group
+in the general CONCAT-keyed reference (two rows with the same key whose
+counts sum to the dense result); twenty isolated repeats and the subsequent
+complete crate run passed. This intermittent reference-path observation
+is not claimed fixed by the dense kernels. The final slice checks passed:
+workspace clippy with warnings denied, formatting, and 464 executor/store
+tests (three ignored measurements). No spill implementation was added.
+
+**Verdict: keep.** Both single-key minima and medians improve materially;
+the text aggregate's total is below the original 120 ms target. The fused
+profile attributes later direct input pulls to the aggregate, so its self
+time is not an isolated CPU-kernel measurement.

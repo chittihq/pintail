@@ -267,12 +267,18 @@ prints.
   extra predicate excludes nothing and now stays on the packed kernel.
   Establish which of the two-predicate paths (no prewhere, since every
   projected column is a predicate column) pays the difference.
-- [ ] **G3. Five-group aggregation spends 18 ns per row in the
+- [x] **G3. Five-group aggregation spends 18 ns per row in the
   aggregate.** `GROUP BY status` over ten million rows: 114 ms in the
   scan, 179 ms of aggregate self time for five groups. That is the
   direct-column path's per-row hash and index work on a key with five
   values; a dictionary or dense-array fold would make it a memory
   pass.
+  Closed 2026-09-07: the existing dense slots now fold packed integer SUM
+  and COUNT lanes with dispatch outside the row loop, and bounded integer
+  keys use the same table with whole-window fallback. The synthetic
+  text-key minimum/median fell from 86.8/90.7 to 22.3/25.4 ms; integer keys
+  from 105.3/131.2 to 32.6/39.0 ms. Reservations bound persistent and worker
+  arrays. See e74 and the dense group slots decision.
 
 - [x] **G4. A narrow read paid for the whole segment.** The block readers
   loaded and checksummed every block of every column before deciding

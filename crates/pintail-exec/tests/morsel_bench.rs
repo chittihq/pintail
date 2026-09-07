@@ -144,8 +144,12 @@ impl Fixture {
         )
         .expect("plan");
         let clock = Instant::now();
-        let mut execution = Execution::start(physical, &provider, limit, Collation::default())
-            .map_err(|error| error.to_string())?;
+        let mut execution = if std::env::var_os("PINTAIL_BENCH_PROFILE").is_some() {
+            Execution::start_profiled(physical, &provider, limit, None, Collation::default())
+        } else {
+            Execution::start(physical, &provider, limit, Collation::default())
+        }
+        .map_err(|error| error.to_string())?;
         let mut rows = 0;
         loop {
             match execution.next_batch() {
@@ -154,7 +158,11 @@ impl Fixture {
                 Err(error) => return Err(error.to_string()),
             }
         }
-        Ok((rows, clock.elapsed()))
+        let elapsed = clock.elapsed();
+        if let Some(profile) = execution.profile() {
+            eprintln!("{}", profile.render());
+        }
+        Ok((rows, elapsed))
     }
 }
 
@@ -165,6 +173,26 @@ struct Case {
 }
 
 const CASES: &[Case] = &[
+    Case {
+        label: "predicate count single",
+        sql: "SELECT COUNT(*) FROM facts WHERE grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate count conjunction",
+        sql: "SELECT COUNT(*) FROM facts WHERE id >= 1 AND grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate single",
+        sql: "SELECT id, grp FROM facts WHERE grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate conjunction",
+        sql: "SELECT id, grp FROM facts WHERE id >= 1 AND grp = 2",
+        limit: 512 << 20,
+    },
     Case {
         label: "two-pass int key",
         sql: "SELECT grp, COUNT(*), SUM(amount) FROM facts GROUP BY grp",

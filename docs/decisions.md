@@ -1426,3 +1426,26 @@ no row names. Snapshots opened before the rename keep the old path and
 fail their next read; the replica reloads on the directory change. A
 rename into another schema leaves the mirror and is treated as a drop; a
 rename onto a name already tracked quarantines the table as before.
+
+
+### Dense group slots fold packed integer lanes directly
+
+A single dictionary text key uses its collation-normalized intern ID as a
+slot. Signed and unsigned integer keys also qualify when every selected,
+non-NULL value in the window is in 0..1024; slot zero represents NULL.
+Negative integers, larger integers, floats and booleans keep the existing
+scatter path. A window is checked before any integer partial is updated.
+Text keeps the existing 1024-distinct budget and dictionary translation.
+When either domain exceeds its budget, the accumulated slots merge into
+the partition maps and the complete pending window goes through scatter.
+
+COUNT(*) and SUM over a packed integer column with a matching integer
+result type resolve their column and lane once per batch. Workers update
+the existing dense aggregate states with checked arithmetic; an all-NULL
+SUM stays NULL. Other lanes use the existing state updates. Worker chunks
+bound the number of partial slabs by the pool width. The persistent slab
+reserves its slot and state bound, and temporary worker slabs reserve and
+release their own bound. A worker reservation refusal returns to scatter;
+map conversion releases the dense slab's reservation. The existing spill
+writer and merge remain the only spill machinery. The separate no-transient-
+floor streaming spill limitation (hardening G12) is not addressed here.
