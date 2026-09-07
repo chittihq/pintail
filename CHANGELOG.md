@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- The overlay picks its superseded-row mask by a threshold that now comes
+  from the algorithm the engine runs. The threshold had been read off a
+  measurement of a different mask - one built block by block rather than
+  by looking each changed key up against the whole key column - which put
+  the crossover four times further out than it is. Every table between one
+  and five percent changed was taking the slower of the two paths.
 - Several clients asking the same question at the same time now cost one
   execution instead of one each. The first request executes and the rest
   wait on it, then every one of them receives those rows; nothing is
