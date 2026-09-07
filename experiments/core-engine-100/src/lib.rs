@@ -1,13 +1,16 @@
 //! Isolated algorithm experiments. None changes the production executor.
 use std::collections::BTreeMap;
 
+pub mod correlated;
 pub mod distinct;
 pub mod high;
 pub mod join;
 pub mod low;
+pub mod membership;
 pub mod merge;
 pub mod scan;
 pub mod topk;
+pub mod window;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Row {
@@ -108,6 +111,9 @@ pub fn names(case: usize) -> &'static [&'static str] {
         5 => join::NAMES,
         6 => distinct::NAMES,
         7 => topk::NAMES,
+        8 => window::NAMES,
+        9 => membership::NAMES,
+        10 => correlated::NAMES,
         _ => panic!("unknown case"),
     }
 }
@@ -120,6 +126,9 @@ pub fn run(case: usize, variant: usize, data: &Data) -> Vec<i128> {
         5 => join::run(variant, data),
         6 => distinct::run(variant, data),
         7 => topk::run(variant, data),
+        8 => window::run(variant, data),
+        9 => membership::run(variant, data),
+        10 => correlated::run(variant, data),
         _ => panic!("unknown case"),
     }
 }
@@ -128,7 +137,7 @@ mod tests {
     use super::*;
     #[test]
     fn every_approach_matches_complete_reference() {
-        for case in 1..=7 {
+        for case in 1..=10 {
             for scenario in 0..3 {
                 for seed in [1, 7, 991] {
                     for n in [0, 1, 63, 257, 4097] {
