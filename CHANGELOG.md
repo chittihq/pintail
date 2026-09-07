@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Two overlapping segments are now enough to plan a compaction. The
+  planner returned before overlap was ever considered unless the table
+  held at least the fan-in's worth of segments, four by default, so a
+  table that had flushed once - one base and one small tail covering the
+  rows that changed - stayed on the merging scan path until two more
+  flushes arrived, however often it was read. Measured on two million rows
+  with one percent changed: the scan went from 1430 ms to 19 ms, and the
+  rewrite that bought that repays after 1.1 scans. The size tier still
+  refuses to rewrite a base for a tail a hundredth its size when the only
+  prize is fewer files; overlap is admitted because the prize is the scan.
+
 ### Fixed
 
 - An `AVG` the planner typed as an exact decimal could accumulate through
