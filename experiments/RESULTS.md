@@ -2792,3 +2792,46 @@ tests (28 ignored tests, including measurements and external harnesses).
 
 **Verdict: keep.** The large-table conjunction costs less than 1.5 times
 the single predicate at both minimum and median, and peak reservation falls.
+
+
+## e76 — G2 and G3 on the benchmark replica (20M rows, 8 CPUs, memo off)
+
+The synthetic morsel table established both closures; this is the same
+pair of changes measured on the benchmark replica through
+`benchmark/profile.ts`, scan and execution pools at 8x8, five runs, the
+settled memo off. Milliseconds are the wall time of `EXPLAIN ANALYZE`
+through the HTTP API, minimum of five, with the profile's own operator
+self times beside them. Before is the rc9 tree; after is that tree plus
+the two kernels.
+
+| query | before min | after min | before aggregate self | after aggregate self |
+|---|---:|---:|---:|---:|
+| one predicate, filtered count | 48 | 46 | — | — |
+| two predicates, filtered count | 155 | 74 | — | — |
+| five-group aggregate | 131 | 118 | 86.9 | 73.7 |
+
+The two-predicate count is the shape G2 was opened on. Its replica gain
+matches the synthetic one in direction and lands inside the 1.5x target
+against the single-predicate control, which did not move.
+
+The five-group aggregate did not behave as the synthetic case predicted,
+and the reason is that the synthetic case was the wrong shape. It groups
+with COUNT and an integer SUM, which is exactly the packed fold; the
+replica's query averages a decimal, whose lane the fold declines. So the
+replica query never reached the new kernel, and it still got slower: 131
+ms before, 156 ms after, with aggregate self time rising from 86.9 to
+120.4 ms.
+
+The cause was the fold's window chunking, not the fold. It cut a window
+into exactly one chunk per pool thread, which bounds the partial slabs
+but leaves rayon nothing to steal, so a window ends when its slowest
+chunk does; batch cost varies with the groups a batch touches. Four
+chunks per thread restores the balance, keeps the slab bound (computed
+from the chunk count, and still declining the fold when it does not
+fit), and the query runs 118 ms with 73.7 ms of aggregate self time,
+ahead of the 131 ms and 86.9 ms it started at.
+
+**Verdict: keep, and measure closures on the replica.** A synthetic case
+that takes a different code path from the query it stands for can report
+a fourfold gain while the real query regresses by a fifth. Both figures
+above are now in the hardening todo's closure notes.

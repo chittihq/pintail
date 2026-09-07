@@ -273,6 +273,9 @@ prints.
   The synthetic count conjunction fell from 37.5/38.4 to 9.7/10.5 ms
   minimum/median, versus 7.9/9.4 ms for the single predicate; peak
   reservation fell from 74.9 to 3.1 MiB. See e75. Scan sizing is unchanged.
+  Confirmed on the benchmark replica 2026-09-07: the two-predicate count
+  over twenty million rows fell from 155 ms to 74 ms against 46 ms for the
+  single predicate, inside the 1.5x target. See e76.
 - [x] **G3. Five-group aggregation spends 18 ns per row in the
   aggregate.** `GROUP BY status` over ten million rows: 114 ms in the
   scan, 179 ms of aggregate self time for five groups. That is the
@@ -285,6 +288,13 @@ prints.
   text-key minimum/median fell from 86.8/90.7 to 22.3/25.4 ms; integer keys
   from 105.3/131.2 to 32.6/39.0 ms. Reservations bound persistent and worker
   arrays. See e74 and the dense group slots decision.
+  Confirmed on the benchmark replica 2026-09-07, after a correction: the
+  synthetic case measured the packed fold, while the replica's five-group
+  query averages a decimal and takes a lane the fold declines. That query
+  first went from 131 ms to 156 ms, because the fold cut its window into
+  one chunk per thread and left the pool nothing to steal. With four
+  chunks per thread it runs 118 ms with 74 ms of aggregate self time,
+  against 131 ms and 87 ms before the fold. See e76.
 
 - [x] **G4. A narrow read paid for the whole segment.** The block readers
   loaded and checksummed every block of every column before deciding
@@ -329,6 +339,16 @@ prints.
   flagged table resets every table's store; with the not-ready guard the
   whole database answers not ready for the copy. The per-table resync is
   the scoped path.
+- [ ] **G13. A grouped aggregate over an expression key split one group
+  across two output rows, once.** Observed during the dense-fold work
+  while several test binaries ran concurrently: the general
+  expression-keyed reference produced two rows for one key whose counts
+  summed to the correct total, on a 720,000-row two-segment table with a
+  text expression key. Sixty repeats at twelve concurrent binaries on a
+  32-core host did not reproduce it, nor did the crate suite. Unresolved
+  and unattributed: it was seen on the reference path, not on the dense
+  fold under test. If it returns, the partition merge in the general
+  aggregate is where two partials for one key could fail to combine.
 - [ ] **G12. The streaming two-pass aggregate fails instead of spilling
   over an input with no transient floor.** Its proactive relief keys off
   the scan's reported floor; an input that reports none (a join, a
