@@ -171,6 +171,19 @@ enum DistinctSeen {
     Values(HashSet<Value>),
 }
 
+/// The boxing above is a memory decision, and it is invisible: adding an
+/// `i128` field to a variant costs nothing at the call sites, compiles
+/// clean, and silently pads this enum - and with it every group's state -
+/// for a query holding hundreds of thousands of groups. It regressed a
+/// two-pass aggregate past a spill ceiling once already. A `HashSet` is
+/// the widest variant, so that is the bound; a change that pushes past it
+/// fails here rather than in whichever memory-ceiling test happens to sit
+/// closest to the edge.
+const _: () = assert!(
+    size_of::<DistinctSeen>() <= size_of::<HashSet<Value>>() + size_of::<usize>(),
+    "DistinctSeen grew past its widest variant: box the field that widened it"
+);
+
 /// splitmix-style hasher for raw integer distinct keys: `SipHash` cost is
 /// pure overhead here — the keys are column data in a per-query set, not
 /// a persistent attacker-fed table.
