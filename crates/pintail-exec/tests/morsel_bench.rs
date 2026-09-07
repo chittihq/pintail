@@ -210,6 +210,14 @@ const CASES: &[Case] = &[
               GROUP BY d.name",
         limit: 512 << 20,
     },
+    Case {
+        label: "count distinct, 100K-value column",
+        // Q7's shape (benchmark/queries.ts): a handful of groups, each
+        // counting distinct values of a column whose real cardinality
+        // (100K) is far higher than the group count.
+        sql: "SELECT status, COUNT(*), COUNT(DISTINCT id % 100000) FROM facts GROUP BY status",
+        limit: 512 << 20,
+    },
 ];
 
 /// Q8's own shape: a dense integer build key with real-world cardinality

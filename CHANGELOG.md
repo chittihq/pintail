@@ -29,6 +29,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   every reader of the build side benefits, and the fused join-aggregate
   additionally resolves which output group each build row folds into once
   per distinct key rather than once per probe row.
+- `COUNT(DISTINCT)` over an integer column now dedups through a bitmap
+  once a group's distinct values pass a count threshold and fit a span
+  cap, instead of always hashing into a set; the bitmap grows with
+  headroom as the column's real range becomes apparent, the same way a
+  growing `Vec` or `HashSet` amortizes its own resizing.
 
 ### Added
 

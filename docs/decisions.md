@@ -1463,3 +1463,32 @@ one write at a time - measured slower on a 10M-row, 100K-key fixture
 (`experiments/RESULTS.md` e76): the second pass's own allocation and
 extra traversal cost more than the resolved offsets saved. Kept as a
 single pass.
+
+### A distinct bitmap grows with headroom rather than tracking its exact bound
+
+`COUNT(DISTINCT)`'s bitset (`DistinctSeen::Bitmap`) is sized once a
+group's integer keys pass a count threshold and their span fits a cap,
+the same shape as the join's dense table. Unlike a join's build side,
+though, this bitmap keeps receiving new keys after it exists - the
+column's real range is rarely known up front, and a value can arrive at
+any time that falls outside the window the bitmap was built with.
+
+The first two shapes tried both tracked that window exactly and paid for
+it on every out-of-window insert: demoting the bitmap back to a hash set
+and immediately re-promoting it at the barely-wider span the very next
+call, and (once that was replaced) reallocating the array to the exact
+new bound each time. Both are the same failure in different clothes -
+`experiments/RESULTS.md` e77 measured the first at 1.5-30x slower than
+never bitmapping at all, on a column whose values arrive in roughly
+ascending order and so keep exceeding the window by a small amount for a
+long stretch. `Vec` and `HashSet` solved exactly this problem for their
+own resizing decades ago: grow by more than what is needed right now, so
+the added capacity absorbs many future insertions before another
+reallocation is due. The bitmap now doubles the needed span (capped at
+the same limit that gates promotion) and biases the extra room toward
+whichever side just grew, turning a reallocation-per-insert into a
+handful of reallocations for the whole column. A span that still would
+not fit even at the minimum needed width demotes to the hash set for
+good, matching the join table's own "correctness never depends on the
+range guess" rule - the guess only ever costs performance, never an
+exact answer.

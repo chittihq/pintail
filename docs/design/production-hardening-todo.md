@@ -359,10 +359,14 @@ G2 and G3 above are their own brief; this section is everything else the
   here, measured slower and was dropped (e76, `docs/decisions.md`). Q8's
   gap to ClickHouse is not closed by this alone - the two scans plus this
   probe still trail the target of 1.5x the scan cost.
-- [ ] **H3. Bitset `COUNT(DISTINCT)`.** A hash set per group for an
-  integer column with a known range should be a bitmap per group instead,
-  charged to the tracker; the hash-set form stays as the fallback for a
-  wide or unknown range.
+- [x] **H3. Bitset `COUNT(DISTINCT)`.** A hash set per group for an
+  integer column now promotes to a bitmap once past a count threshold and
+  a span cap, charged to the tracker; the hash-set form stays as the
+  fallback for a wide or unknown range. First shape shipped and measured
+  1.5-30x SLOWER (thrashed between representations as a column's real
+  range became apparent one value at a time); growing the bitmap with
+  doubling headroom instead fixed it, banking a real ~25% win (e77,
+  `docs/decisions.md`).
 - [ ] **H4. High-cardinality `GROUP BY` into a top-K.** Q6 groups by
   ~200K users, sorts, and takes ten. Radix-partition the group keys by
   worker so each worker folds a disjoint range with no cross-worker merge,

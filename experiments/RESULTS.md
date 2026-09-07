@@ -2812,3 +2812,55 @@ batching.** `PartitionedBuild::get` is now dense-aware for every caller,
 not only the fused aggregate, closing that part of item 2 in
 `docs/design/production-hardening-todo.md` section H; the probe-batching
 half of that item did not survive measurement.
+
+## e77 — Bitset `COUNT(DISTINCT)`: a real 25% win, after a thrashing bug measured 1.5-30x slower
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "count distinct,
+100K-value column": Q7's shape (`benchmark/queries.ts`) - a handful of
+groups, each counting `COUNT(DISTINCT id % 100000)` over its share of
+10M rows, so the column's real cardinality (100,000) is far above the
+group count and comfortably inside the new bitmap's span cap. Minimum of
+7-9 runs.
+
+`DistinctSeen`'s existing `Ints` variant (a `HashSet<i128>`, already
+faster than the general `Value`-keyed path per e16) now promotes to a
+bitmap once a group's distinct integers pass 64 in count and span fewer
+than `DISTINCT_BITMAP_MAX_SPAN` (2^20) values - trading the hash-and-probe
+per key for one bit test/set.
+
+First attempt, measured: **slower**, not faster.
+
+| build | 10M rows, min | 150K rows, min |
+|---|---:|---:|
+| before (HashSet only) | 710.1 ms | 14.2 ms |
+| bitmap, demote-and-immediately-retry past the window | 1,102.6-1,262.2 ms | 440.8-458.8 ms |
+| bitmap, grow the window to the exact new bound | (not separately measured - same failure mode) | |
+| bitmap, grow with doubling headroom | **523.5-533.0 ms** | **11.8-12.7 ms** |
+
+Cause: `id % 100_000` seen in roughly ascending order widens a group's
+observed span by a handful of values at a time for a long stretch before
+it has covered the column's real range. The first design demoted a
+bitmap back to `Ints` the moment a new key fell outside the window it was
+built with, then immediately re-promoted at the (slightly) wider span on
+the very next `insert_int` call inside the same retry - converting the
+member set to a `HashSet` and back to a fresh array on nearly every new
+distinct value, for as long as the range kept widening. Growing the
+window in place to the exact new bound instead of demoting has the same
+failure shape one level down: reallocating and copying the whole bitmap
+on every insert that pushes the bound out by one. Growing with doubling
+headroom (in the direction that just grew, capped at the span limit) is
+what fixed it - the same amortized-growth trick `Vec` itself uses - and
+is what is banked here: a handful of reallocations total instead of one
+per insert. The 150K-row case is the sharper signal: fewer real rows
+means the per-insert reallocation overhead so dominated the first two
+attempts that they were 30-70x slower than doing nothing at all.
+
+Full crate suite (357 tests, four of them
+`distinct_bitmap_tests` new for this) passes, including the existing
+distinct-under-spill test.
+
+**Verdict: keep the doubling-headroom version.** ~25% faster at the
+minimum on the 10M-row case, consistent across three separate runs. Not
+banked here: `docs/decisions.md` records the alternative (demote vs.
+grow vs. grow-with-headroom) for section H item 3 in
+`docs/design/production-hardening-todo.md`.
