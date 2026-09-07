@@ -1121,6 +1121,120 @@ fn grace_partition(key: &JoinHashKey, seed: u64) -> usize {
     }
 }
 
+/// A partition that hashing cannot shrink is replayed one build row at a
+/// time for each probe. Keeping the probe's match count across the replay
+/// preserves outer, scalar, semi, and anti semantics without duplicating
+/// unmatched output across sub-partitions.
+struct SkewReplay {
+    build: GraceRun,
+    probes: GraceRunReader,
+    current: Option<(JoinHashKey, Vec<Value>)>,
+    entries: Option<GraceRunReader>,
+    matches: usize,
+    reserved: usize,
+    scalar: Option<Vec<Value>>,
+}
+
+impl SkewReplay {
+    fn clear_probe(&mut self, memory: &MemoryTracker) {
+        self.current = None;
+        self.scalar = None;
+        self.entries = None;
+        memory.release(self.reserved);
+        self.reserved = 0;
+        self.matches = 0;
+    }
+
+    fn next_row(
+        &mut self,
+        kind: BoundJoinKind,
+        right_width: usize,
+        residual: Option<&CompiledExpr>,
+        columns: &[BoundColumn],
+        memory: &MemoryTracker,
+    ) -> Result<Option<Vec<Value>>, ExecError> {
+        loop {
+            memory.check_interruption()?;
+            if self.current.is_none() {
+                let Some((key, row)) = self.probes.next_entry()? else {
+                    return Ok(None);
+                };
+                self.reserved = estimated_row_payload_bytes(&row).saturating_add(key.heap_bytes());
+                memory.reserve(self.reserved)?;
+                self.current = Some((key, row));
+                self.entries = Some(self.build.reader(memory)?);
+            }
+            let (probe_key, left) = self.current.as_ref().expect("probe loaded");
+            if let Some((key, right)) = self.entries.as_mut().expect("build opened").next_entry()? {
+                memory.ensure_transient(
+                    estimated_row_payload_bytes(&right).saturating_add(key.heap_bytes()),
+                )?;
+                if &key != probe_key {
+                    continue;
+                }
+                if residual.is_some() {
+                    let candidates = vec![right.clone()];
+                    if apply_join_residual(residual, columns, left, Some(&candidates))?
+                        .is_none_or(|rows| rows.is_empty())
+                    {
+                        continue;
+                    }
+                }
+                self.matches = self.matches.saturating_add(1);
+                match kind {
+                    BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar => {
+                        if kind == BoundJoinKind::Scalar && self.matches > 1 {
+                            return Err(ExecError::ScalarSubqueryRows { rows: self.matches });
+                        }
+                        let mut output = left.clone();
+                        output.extend(right);
+                        let bytes = estimated_row_payload_bytes(&output);
+                        memory.ensure_transient(bytes)?;
+                        if kind == BoundJoinKind::Scalar {
+                            memory.reserve(bytes)?;
+                            self.reserved += bytes;
+                            self.scalar = Some(output);
+                            continue;
+                        }
+                        return Ok(Some(output));
+                    }
+                    BoundJoinKind::Semi => {
+                        let output = left.clone();
+                        self.clear_probe(memory);
+                        return Ok(Some(output));
+                    }
+                    BoundJoinKind::Anti => {
+                        self.clear_probe(memory);
+                    }
+                    BoundJoinKind::Cross => {
+                        return Err(ExecError::InvalidPhysicalPlan(
+                            "cross join reached skew replay",
+                        ));
+                    }
+                }
+            } else {
+                let output = if self.matches == 0 {
+                    match kind {
+                        BoundJoinKind::Left | BoundJoinKind::Scalar => {
+                            let mut row = left.clone();
+                            row.extend(std::iter::repeat_n(Value::Null, right_width));
+                            Some(row)
+                        }
+                        BoundJoinKind::Anti => Some(left.clone()),
+                        _ => None,
+                    }
+                } else {
+                    self.scalar.take()
+                };
+                self.clear_probe(memory);
+                if output.is_some() {
+                    return Ok(output);
+                }
+            }
+        }
+    }
+}
+
 /// Partitioned join state once the build side overflowed the ceiling.
 pub(super) struct GraceJoin {
     build_files: Vec<GraceRun>,
@@ -1136,6 +1250,7 @@ pub(super) struct GraceJoin {
     replay: Option<GraceRunReader>,
     /// Bytes reserved for the loaded partition's build map.
     partition_reserved: usize,
+    skew: Option<SkewReplay>,
 }
 
 impl GraceJoin {
@@ -1154,6 +1269,7 @@ impl GraceJoin {
             current: 0,
             replay: None,
             partition_reserved: 0,
+            skew: None,
         }
     }
 }
@@ -1488,12 +1604,21 @@ pub(super) fn next_grace_join_batch(
         // Turning the buffered rows into a batch needs about as much again
         // for the columns, so under a tight ceiling the batch is cut where
         // that copy still fits rather than refused once it is buffered.
-        if !rows.is_empty() && buffered_bytes.saturating_mul(2) > memory.remaining() {
+        if !rows.is_empty() && buffered_bytes.saturating_mul(4) > memory.remaining() {
             break;
         }
         let grace = state.grace.as_mut().expect("grace state engaged");
         if !grace.probing_done {
             break;
+        }
+        if let Some(skew) = &mut grace.skew {
+            if let Some(output) =
+                skew.next_row(kind, right_width, residual, residual_columns, memory)?
+            {
+                push(&mut rows, &mut buffered_bytes, output)?;
+                continue;
+            }
+            grace.skew = None;
         }
         if grace.replay.is_none() {
             if grace.current >= grace.build_files.len() {
@@ -1553,6 +1678,21 @@ pub(super) fn next_grace_join_batch(
                 drop(entries);
                 state.build.clear();
                 memory.release(memory.used().saturating_sub(used_before));
+                if grace.depths[index] >= MAX_GRACE_DEPTH {
+                    let build =
+                        std::mem::replace(&mut grace.build_files[index], GraceRun::create());
+                    let probes = grace.probe_files[index].reader(memory)?;
+                    grace.skew = Some(SkewReplay {
+                        build,
+                        probes,
+                        current: None,
+                        entries: None,
+                        matches: 0,
+                        reserved: 0,
+                        scalar: None,
+                    });
+                    continue;
+                }
                 split_grace_partition(grace, index, memory)?;
                 continue;
             }
@@ -2084,6 +2224,41 @@ pub(super) fn execute_nested_loop_join(
 mod tests {
     use crate::collation::Collation;
 
+    #[test]
+    fn skew_scalar_checks_every_match_before_returning_a_row() {
+        use super::{GraceRun, JoinHashKey, SkewReplay};
+        use crate::execution::{ExecError, MemoryTracker};
+        use pintail_sql::BoundJoinKind;
+        use pintail_types::Value;
+        let memory = MemoryTracker::new(2 * 1024 * 1024);
+        let key = JoinHashKey::NonNegativeInteger(1);
+        let mut build = GraceRun::create();
+        build
+            .append(&key, &[Value::UInt64(10)], &memory)
+            .expect("build");
+        build
+            .append(&key, &[Value::UInt64(20)], &memory)
+            .expect("build");
+        build.seal(&memory).expect("seal");
+        let mut probes = GraceRun::create();
+        probes
+            .append(&key, &[Value::UInt64(1)], &memory)
+            .expect("probe");
+        let mut replay = SkewReplay {
+            build,
+            probes: probes.reader(&memory).expect("reader"),
+            current: None,
+            entries: None,
+            matches: 0,
+            reserved: 0,
+            scalar: None,
+        };
+        assert!(matches!(
+            replay.next_row(BoundJoinKind::Scalar, 1, None, &[], &memory),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
+    }
+
     fn drain_partitions(runs: &mut [super::GraceRun], memory: &super::MemoryTracker) -> Vec<u64> {
         let mut ids = Vec::new();
         for run in runs {
@@ -2341,7 +2516,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_key_that_never_fits_reports_skew_at_the_depth_bound() {
+    fn hash_repartitioning_stops_at_its_depth_bound() {
         use super::{ExecError, MemoryTracker};
         use super::{GraceJoin, MAX_GRACE_DEPTH, split_grace_partition};
         let memory = MemoryTracker::new(usize::MAX);

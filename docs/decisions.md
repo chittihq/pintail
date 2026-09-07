@@ -1492,3 +1492,18 @@ Choosing a side by cardinality could reduce rereads for inner joins. Keeping
 the left side as the probe instead preserves the existing encounter order
 and the left, semi, anti, and scalar matching rules with one evaluation
 loop. Side selection and multi-row probe tiles remain future optimizations.
+
+## Oversized grace keys use a row-bounded replay
+
+Hash repartitioning remains the first response when a grace partition does
+not fit. At its depth bound, the join replays one build row at a time for
+each probe, carrying the probe's match count through the complete file.
+Output returns in chunks instead of accumulating a whole key's matches.
+
+Splitting build rows by row-index hash and copying probes to every piece
+would shrink each build map, but outer and anti joins would also need a
+shared matched-probe ledger and scalar joins a shared cardinality check.
+A row-bounded replay keeps these decisions in one place and avoids copying
+probe files. For a single equal key its comparisons correspond to candidate
+output pairs; a partition containing many colliding distinct keys can incur
+quadratic comparison work. Each candidate pair and predicate must fit.

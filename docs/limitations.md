@@ -206,8 +206,12 @@ stays readable as a list of things to fix.
 - A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
   value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
   state encoding.
-- Large `IN (subquery)` membership sets and a grace join whose single build
-  key's rows exceed the ceiling still fail instead of spilling.
+- Large `IN (subquery)` membership sets still materialize and fail at the
+  query ceiling instead of using an external membership index.
+- A grace join partition that cannot be reduced by hashing replays the
+  build file for each probe row. This can require quadratic comparisons
+  when many distinct keys collide through every hash pass. One candidate
+  pair, its normalized keys, and its residual predicate must still fit.
 - The correlated join `ON` fallback replays the right side once per left
   row; it has no cardinality-based side selection. Each candidate pair and
   its dependent inner execution must fit within the remaining query budget.

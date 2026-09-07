@@ -6018,6 +6018,64 @@ mod tests {
     }
 
     #[test]
+    fn oversized_grace_key_streams_every_match() {
+        let batches = (0..64)
+            .map(|batch| {
+                let ids = (0..8)
+                    .map(|row| Value::UInt64(batch * 8 + row))
+                    .collect::<Vec<_>>();
+                let names = vec![Value::Utf8("x".repeat(1024)); 8];
+                RecordBatch::new(
+                    8,
+                    vec![
+                        ColumnVector::new(DataType::UInt64, ids).expect("ids"),
+                        ColumnVector::new(DataType::Utf8, names).expect("names"),
+                    ],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical(
+                    "SELECT r.id FROM events l JOIN events r ON l.name = r.name WHERE l.id = 0",
+                ),
+                &provider,
+                limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .expect("column")
+                            .value(row)
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            rows.sort_by(|left, right| match (left, right) {
+                (Value::UInt64(left), Value::UInt64(right)) => left.cmp(right),
+                _ => unreachable!(),
+            });
+            (rows, execution.spill_metrics())
+        };
+        let (wide, _) = execute(64 * 1024 * 1024);
+        let (tight, spill) = execute(512 * 1024);
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 512);
+        assert!(spill.files > 0);
+    }
+
+    #[test]
     fn correlated_join_on_spills_its_replayed_side_and_output() {
         let batches = (0..64)
             .map(|batch| {

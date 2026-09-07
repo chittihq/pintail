@@ -31,6 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lookup and lane dispatch move out of the row loop; larger key domains
   return to the existing partitioned aggregate without changing results.
 
+- A grace join no longer rejects a key whose build rows exceed the memory
+  ceiling after repeated partitioning. It replays the build rows from disk
+  for each probe and serves matches in bounded chunks, keeping unmatched
+  and scalar-row decisions across the complete replay.
+
 - A correlated subquery in a join `ON` predicate no longer requires both
   inputs and the complete output to fit in memory. The replayed side and
   accumulated output spill independently, while the left input is read in
