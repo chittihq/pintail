@@ -78,6 +78,9 @@ def main():
               'layer': args.layer, 'shard': args.shard, 'mysql': args.mysql,
               'seeds': seeds, 'cases_per_seed': args.cases, 'meta_cases_per_seed': args.meta_cases,
               'dirty': bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)),
+              'status': 'RUNNING',
+              'toolchain': (ROOT / 'rust-toolchain.toml').read_text(),
+              'lock_sha256': hashlib.sha256((ROOT / 'Cargo.lock').read_bytes()).hexdigest(),
               'results': []}
     env = dict(os.environ, CARGO_TARGET_DIR='target', PINTAIL_ORACLE_MYSQL_IMAGE=f'mysql:{args.mysql}')
     # Do not inherit a developer's evidence/corpus paths or seed overrides.
@@ -104,7 +107,9 @@ def main():
         ok = code == 0 and count > 0
         result = {'stage': name, 'status': 'PASS' if ok else 'FAIL', 'exit_code': code,
                   'passed_tests': count, 'seconds': round(time.monotonic() - started, 3),
-                  'command': command, 'environment': overrides}
+                  'command': command, 'environment': overrides,
+                  'query_metrics': [line for line in content.splitlines()
+                                    if line.startswith(('fuzz:', 'metamorphic:'))]}
         report['results'].append(result)
         report['status'] = 'RUNNING'
         (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')

@@ -31,6 +31,9 @@ across versions. Generated SQL may repeat: the harness reports unique SQL and
 family counts; these are not 40,000 distinct hand-written cases. Metamorphic
 runs have 8,000 base queries per version leg and a variable number of equivalent
 variants; this layer does not use MySQL and intentionally repeats on both legs.
+The existing metamorphic harness may skip erroring base queries, with a hard
+20% ceiling; logs and reports expose those counts. A generated differential
+query error fails its stage.
 Each shard combines a stable seed with a commit-derived seed. Odd seeds remain
 distinct after the existing generator's seed normalization. Release reruns are
 reproducible; new commits explore another generated sequence.
