@@ -1,6 +1,8 @@
 //! Isolated algorithm experiments. None changes the production executor.
 use std::collections::BTreeMap;
 
+pub mod low;
+pub mod merge;
 pub mod scan;
 
 #[derive(Clone, Copy, Debug)]
@@ -96,12 +98,16 @@ pub fn reference_group(rows: &[Row], low: bool) -> Groups {
 pub fn names(case: usize) -> &'static [&'static str] {
     match case {
         1 => scan::NAMES,
+        2 => merge::NAMES,
+        3 => low::NAMES,
         _ => panic!("unknown case"),
     }
 }
 pub fn run(case: usize, variant: usize, data: &Data) -> Vec<i128> {
     match case {
         1 => scan::run(variant, data),
+        2 => merge::run(variant, data),
+        3 => low::run(variant, data),
         _ => panic!("unknown case"),
     }
 }
@@ -110,7 +116,7 @@ mod tests {
     use super::*;
     #[test]
     fn every_approach_matches_complete_reference() {
-        for case in 1..=1 {
+        for case in 1..=3 {
             for scenario in 0..3 {
                 for seed in [1, 7, 991] {
                     for n in [0, 1, 63, 257, 4097] {
