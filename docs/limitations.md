@@ -380,6 +380,9 @@ stays readable as a list of things to fix.
 - Readers that opened a table's snapshot before a `RENAME TABLE` keep the
   old directory and fail their next read; a client retries and the new
   name answers. The window is the moment the rename applies.
+- In polling mode a `RENAME TABLE` is not observed (there is no binlog to
+  carry it): the next probe adopts the new name as a table the source
+  added and copies it afresh, and the old name is retired then.
 - Adding or removing a stable key is therefore a safe resnapshot boundary, not
   an in-place identity change. After the replacement generation is published,
   the refreshed probe promotes the table to row-level primary/unique-key CDC or

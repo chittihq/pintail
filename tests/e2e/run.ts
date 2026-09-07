@@ -789,6 +789,41 @@ async function phaseDdl() {
     recopied ? 'PASS' : 'FAIL',
     recopied ? undefined : `customers: ${JSON.stringify(await tableSummary('customers'))}`,
   )
+  // RENAME TABLE while streaming: the store and its metadata follow the
+  // new name at the binlog position, rows written under the new name land
+  // in the same store, and the old name is gone. The table is created,
+  // adopted and streamed first so the rename meets a live store.
+  await sql(`CREATE TABLE renamed_source (id BIGINT UNSIGNED NOT NULL PRIMARY KEY, note VARCHAR(32) NOT NULL) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`INSERT INTO renamed_source VALUES (1, 'before'), (2, 'before too')`)
+  const adopted = await waitUntil(async () => {
+    const summary = await tableSummary('renamed_source')
+    return summary?.state === 'streaming' && (await replicaCount('renamed_source')) === 2
+  }, 180_000)
+  record('ddl', 'a table created mid-stream is streaming before its rename', adopted ? 'PASS' : 'FAIL')
+  await sql(`RENAME TABLE renamed_source TO renamed_target`)
+  await sql(`INSERT INTO renamed_target VALUES (3, 'after')`)
+  await sql(`UPDATE renamed_target SET note = 'changed' WHERE id = 1`)
+  let renameDetail = 'never compared'
+  const followed = await waitUntil(async () => {
+    try {
+      const expected = await mysqlRows('SELECT id, note FROM renamed_target ORDER BY id')
+      const actual = await pintailQuery('SELECT id, note FROM renamed_target ORDER BY id')
+      const diff = diffRows(expected, actual, {})
+      renameDetail = diff ?? 'rows agree'
+      if (diff !== undefined) return false
+    } catch (error) {
+      renameDetail = String(error)
+      return false
+    }
+    try {
+      await pintailQuery('SELECT COUNT(*) FROM renamed_source')
+      renameDetail = 'the old name still answers'
+      return false
+    } catch (error) {
+      return /unknown table|doesn't exist/i.test(String(error))
+    }
+  }, 120_000)
+  record('ddl', 'a renamed table follows its new name under CDC', followed ? 'PASS' : 'FAIL', followed ? undefined : renameDetail)
   // CREATE TABLE mid-stream: the replica must pick it up automatically.
   // route (GEOMETRY) and services (SET) exist because real data found
   // both types broken while the gate stayed green: sakila's address lost
@@ -926,48 +961,20 @@ async function phaseSchemaDriftUnseen() {
 }
 
 async function phaseDdlDocumentedGaps() {
-  const phase = 'ddl-documented-gaps'
-  const check = async (name: string, run: () => Promise<void>) => {
-    try {
-      await run()
-      results.push({ phase, check: name, status: 'PASS' })
-    } catch (error) {
-      results.push({ phase, check: name, status: 'FAIL', detail: String(error) })
-      log(`FAIL ${name} — ${error}`)
-    }
-  }
   // Type changes are not part of the DDL gate; exercised so regressions in
   // the documented behavior surface as WARN diffs, and improvements flip
-  // them to PASS. A table rename is followed: the store and its metadata
-  // take the new name at the binlog position, rows written under the new
-  // name land in the same store, and the old name is gone on both sides,
-  // so the convergence loop below holds the renamed table to PASS.
+  // them to PASS. The database is in polling mode by now (the drop-table
+  // phases switched it), and polling has no binlog to observe a rename
+  // through: the new name is adopted as a fresh table by a later probe and
+  // the old name lingers until then. The streaming case is covered by the
+  // ddl phase, where the rename is followed in place.
+  documentedGapTables.set('audit_log', /unknown table/)
+  documentedGapTables.set('audit_history', /unknown table/)
+  documentedMetadataGaps.push(
+    /^row \d+:\n  mysql   audit_history( \|.*)\n  pintail audit_log\1$/,
+  )
   await sql(`RENAME TABLE audit_log TO audit_history`)
   await sql(`INSERT INTO audit_history VALUES ('post rename')`)
-  await check('a renamed table follows its new name in the replica', async () => {
-    const deadline = Date.now() + 120_000
-    let last = 'never compared'
-    for (;;) {
-      const expected = await mysqlRows('SELECT note FROM audit_history ORDER BY note')
-      try {
-        const actual = await pintailQuery('SELECT note FROM audit_history ORDER BY note')
-        const diff = diffRows(expected, actual, {})
-        if (diff === undefined) break
-        last = diff
-      } catch (error) {
-        last = String(error)
-      }
-      if (Date.now() > deadline) throw new Error(`renamed table never converged: ${last}`)
-      await Bun.sleep(POLL_MS)
-    }
-    let oldGone = false
-    try {
-      await pintailQuery('SELECT COUNT(*) FROM audit_log')
-    } catch (error) {
-      oldGone = /unknown table|doesn't exist/i.test(String(error))
-    }
-    if (!oldGone) throw new Error('the old name still answers after the rename')
-  })
   // In-place type change: replication stops applying to the table, so the
   // divergence is a row-content diff (never a missing table or an error).
   documentedGapTables.set('order_items', /^row \d+:/)
@@ -2653,13 +2660,12 @@ async function phaseSpill() {
       'SELECT o.id, c.id, COUNT(*) FROM orders o CROSS JOIN customers c ' +
         'GROUP BY o.id, c.id',
       // MySQL 8.0's preceding mutation phases leave one input batch 136
-      // bytes above 4 MiB, and the fixed footprint held beside it (the join
-      // build and the scan's chunk, before the first group lands) moves
-      // between hosts: a Mac measured 5,242,758 bytes of a 5 MiB ceiling; a
-      // 32-core Linux server 5,308,390, and 5,308,310 pinned to ten
-      // threads, so it is the platform, not the lane count. 384 KiB of
-      // headroom covers both while keeping the limit far below the grouped
-      // state (about six megabytes), which still must spill.
+      // bytes above 4 MiB, so the ceiling admits that batch with headroom
+      // for the join build and the scan's chunk beside it, while staying
+      // far below the grouped state (about six megabytes), which still
+      // must spill. The merged result is larger than the ceiling too and
+      // is served in chunks; a ceiling of this size once failed here
+      // because that result was held whole.
       5 * 1024 * 1024 + 384 * 1024,
     ],
     [
