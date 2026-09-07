@@ -3133,7 +3133,7 @@ enum PullOperator {
         /// The plan's collation: window ORDER BY and PARTITION BY use it.
         collation: Collation,
         column_types: Vec<DataType>,
-        state: Option<MaterializedRows>,
+        state: Option<SortedRows>,
     },
     Limit {
         input: Box<Self>,
@@ -3607,13 +3607,18 @@ impl PullOperator {
                 collation,
             } => {
                 if state.is_none() {
-                    *state = Some(build_window(input, windows, memory, *collation)?);
+                    *state = Some(build_window(
+                        input,
+                        windows,
+                        column_types,
+                        memory,
+                        *collation,
+                    )?);
                 }
-                next_materialized_batch(
-                    state.as_mut().expect("initialized above"),
-                    column_types,
-                    memory,
-                )
+                state
+                    .as_mut()
+                    .expect("initialized above")
+                    .next_batch(column_types, memory)
             }
             Self::Sort {
                 input,
@@ -6008,6 +6013,93 @@ mod tests {
         );
         assert!(execution.next_batch().expect("end").is_none());
         assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn partitioned_window_output_spills_under_the_ceiling() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..128)
+                    .map(|row| Value::Utf8(format!("key-{:04}", (batch * 128 + row) % 512)))
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT name, ROW_NUMBER() OVER (PARTITION BY name ORDER BY name), COUNT(*) OVER (PARTITION BY name) FROM events"),
+                &provider, limit, Collation::default(),
+            ).expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let (wide, _) = execute(64 * 1024 * 1024);
+        let (tight, spill) = execute(512 * 1024);
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 8192);
+        assert!(spill.files > 0);
+    }
+
+    #[test]
+    fn expanded_window_values_spill_from_a_small_input() {
+        let names = (0..512)
+            .map(|row| Value::Utf8(format!("key-{:04}", row % 2)))
+            .collect::<Vec<_>>();
+        let batch = RecordBatch::new(
+            names.len(),
+            vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+        )
+        .expect("batch");
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(vec![batch.clone()]),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT GROUP_CONCAT(name) OVER (PARTITION BY name) FROM events"),
+                &provider,
+                limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .and_then(|column| column.value(row))
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let (wide, _) = execute(64 * 1024 * 1024);
+        let (tight, spill) = execute(512 * 1024);
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 512);
+        assert!(spill.files > 0);
     }
 
     #[test]

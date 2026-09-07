@@ -31,6 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lookup and lane dispatch move out of the row loop; larger key domains
   return to the existing partitioned aggregate without changing results.
 
+- Window output larger than the query memory ceiling is sorted on disk and
+  evaluated one partition at a time, then served in chunks. Independent
+  window expressions retain their input row identity through each sort; a
+  single partition still has to fit within the ceiling.
+
 ## [0.1.2-rc9] - 2026-09-07
 
 ### Added

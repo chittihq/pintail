@@ -119,9 +119,343 @@ impl CompiledWindow {
     }
 }
 
+/// Keeps small inputs on the memory path and stages larger inputs for one
+/// partition at a time. An ordinal survives every sort so independent windows
+/// append their values to the same input row and preserve encounter-order ties.
+pub(super) fn build_window(
+    input: &mut PullOperator,
+    windows: &[CompiledWindow],
+    column_types: &[DataType],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<super::SortedRows, ExecError> {
+    let input_types = &column_types[..column_types.len() - windows.len()];
+    let mut rows: Vec<Vec<Value>> = Vec::new();
+    let mut reserved = 0;
+    let mut writer = None;
+    let mut ordinal = 0_u64;
+    while let Some(batch) = input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            let values = super::batch_row(&batch, row)?;
+            let bytes = estimated_row_payload_bytes(&values);
+            if writer.is_none() && reserved + bytes > memory.limit() / 8 {
+                let mut run = window_writer(memory)?;
+                for (index, mut buffered) in rows.drain(..).enumerate() {
+                    buffered.push(Value::UInt64(index as u64));
+                    write_window_row(&mut run, &buffered)?;
+                }
+                rows = Vec::new();
+                memory.release(reserved);
+                reserved = 0;
+                writer = Some(run);
+            }
+            if let Some(run) = &mut writer {
+                let mut values = values;
+                values.push(Value::UInt64(ordinal));
+                memory.ensure_transient(
+                    batch.estimated_bytes() + estimated_row_payload_bytes(&values),
+                )?;
+                write_window_row(run, &values)?;
+            } else {
+                reserved += super::reserve_vec_elements(&mut rows, 1, 0, memory)?;
+                memory.reserve(bytes)?;
+                reserved += bytes;
+                rows.push(values);
+            }
+            ordinal += 1;
+        }
+    }
+    let writer = if let Some(writer) = writer {
+        writer
+    } else {
+        let mut source = PullOperator::Rows {
+            rows,
+            cursor: 0,
+            column_types: input_types.to_vec(),
+        };
+        let before = memory.used();
+        match build_memory_window(&mut source, windows, memory, collation) {
+            Ok(output) => {
+                drop(source);
+                memory.release(reserved);
+                return Ok(super::SortedRows::Memory(output));
+            }
+            Err(ExecError::MemoryLimitExceeded { .. }) => {
+                // Frame values can grow far beyond their input. The raw
+                // rows remain replayable if the memory attempt fails.
+                memory.release(memory.used().saturating_sub(before));
+                let PullOperator::Rows { rows, .. } = source else {
+                    unreachable!()
+                };
+                let mut writer = window_writer(memory)?;
+                for (index, mut row) in rows.into_iter().enumerate() {
+                    row.push(Value::UInt64(index as u64));
+                    write_window_row(&mut writer, &row)?;
+                }
+                memory.release(reserved);
+                writer
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    let mut run = writer.finish().map_err(window_io)?;
+    for (index, window) in windows.iter().enumerate() {
+        run = evaluate_spilled_window(
+            run,
+            window,
+            input_types,
+            input_types.len() + index,
+            memory,
+            collation,
+        )?;
+    }
+    let width = column_types.len();
+    let keys = vec![window_order_key(width, true, true, false)];
+    let mut sorter = WindowSorter::new(keys, collation);
+    let mut reader = run.open().map_err(window_io)?;
+    while let Some(payload) = reader.next().map_err(window_io)? {
+        sorter.push(
+            crate::spill::Decoder::new(payload)
+                .values()
+                .map_err(ExecError::Source)?,
+            memory,
+        )?;
+    }
+    sorter
+        .finish(Some(width), memory)
+        .map(super::SortedRows::Spilled)
+}
+
+// Result::map_err passes ownership of its error to this adapter.
+#[allow(clippy::needless_pass_by_value)]
+fn window_io(error: std::io::Error) -> ExecError {
+    ExecError::Source(format!("window spill: {error}"))
+}
+
+fn window_writer(memory: &MemoryTracker) -> Result<crate::spill::RunWriter, ExecError> {
+    crate::spill::RunWriter::create("pintail-window-", memory.spill()).map_err(window_io)
+}
+
+fn write_window_row(writer: &mut crate::spill::RunWriter, row: &[Value]) -> Result<(), ExecError> {
+    let mut encoder = crate::spill::Encoder::new();
+    encoder.values(row);
+    writer.write(&encoder.finish()).map_err(window_io)
+}
+
+fn window_order_key(
+    index: usize,
+    ascending: bool,
+    nulls_first: bool,
+    decimal: bool,
+) -> BoundOrderKey {
+    BoundOrderKey {
+        index,
+        ascending,
+        nulls_first,
+        decimal,
+        collation: None,
+    }
+}
+
+struct WindowSorter {
+    rows: Vec<Vec<Value>>,
+    runs: Vec<crate::spill::ClosedRun>,
+    reserved: usize,
+    keys: Vec<BoundOrderKey>,
+    collation: Collation,
+}
+
+impl WindowSorter {
+    fn new(keys: Vec<BoundOrderKey>, collation: Collation) -> Self {
+        Self {
+            rows: Vec::new(),
+            runs: Vec::new(),
+            reserved: 0,
+            keys,
+            collation,
+        }
+    }
+
+    fn flush(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        if self.rows.is_empty() {
+            return Ok(());
+        }
+        self.rows.sort_by(|left, right| {
+            super::sort::compare_sort_rows(left, right, &self.keys, self.collation)
+        });
+        self.runs
+            .push(super::sort::write_sorted_run(&self.rows, memory)?);
+        self.rows = Vec::new();
+        memory.release(self.reserved);
+        self.reserved = 0;
+        Ok(())
+    }
+
+    fn push(&mut self, row: Vec<Value>, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let bytes = estimated_row_payload_bytes(&row);
+        if self.reserved + bytes > memory.limit() / 8 {
+            self.flush(memory)?;
+        }
+        self.reserved += super::reserve_vec_elements(&mut self.rows, 1, 0, memory)?;
+        memory.reserve(bytes)?;
+        self.reserved += bytes;
+        self.rows.push(row);
+        Ok(())
+    }
+
+    fn finish(
+        mut self,
+        trim: Option<usize>,
+        memory: &MemoryTracker,
+    ) -> Result<super::sort::SpilledMerge, ExecError> {
+        self.flush(memory)?;
+        super::sort::SpilledMerge::new(self.runs, &[], self.keys, trim, self.collation, memory)
+    }
+}
+
+fn evaluate_spilled_window(
+    run: crate::spill::ClosedRun,
+    window: &CompiledWindow,
+    input_types: &[DataType],
+    width: usize,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<crate::spill::ClosedRun, ExecError> {
+    let key_start = width + 1;
+    let mut order = (0..window.partition.len())
+        .map(|index| window_order_key(key_start + index, true, true, false))
+        .collect::<Vec<_>>();
+    order.extend(window.order.iter().enumerate().map(|(index, key)| {
+        window_order_key(
+            key_start + window.partition.len() + index,
+            key.1,
+            key.2,
+            key.3,
+        )
+    }));
+    order.push(window_order_key(width, true, true, false));
+    let mut sorter = WindowSorter::new(order, collation);
+    let mut reader = run.open().map_err(window_io)?;
+    while let Some(payload) = reader.next().map_err(window_io)? {
+        memory.check_interruption()?;
+        let mut row = crate::spill::Decoder::new(payload)
+            .values()
+            .map_err(ExecError::Source)?;
+        let batch = crate::RecordBatch::new(
+            1,
+            super::rows_to_columns(&[row[..input_types.len()].to_vec()], input_types)?,
+        )?;
+        for expr in &window.partition {
+            row.push(expr.evaluate(&batch, 0)?);
+        }
+        for (expr, _, _, _) in &window.order {
+            row.push(expr.evaluate(&batch, 0)?);
+        }
+        match &window.function {
+            CompiledWindowFunction::Aggregate(_, argument)
+            | CompiledWindowFunction::Extreme { argument, .. } => {
+                row.push(argument.evaluate(&batch, 0)?);
+            }
+            CompiledWindowFunction::Offset {
+                argument, default, ..
+            } => {
+                row.push(argument.evaluate(&batch, 0)?);
+                if let Some(default) = default {
+                    row.push(default.evaluate(&batch, 0)?);
+                }
+            }
+            _ => {}
+        }
+        memory.ensure_transient(batch.estimated_bytes() + estimated_row_payload_bytes(&row))?;
+        sorter.push(row, memory)?;
+    }
+    drop(reader);
+    drop(run);
+    let mut merged = sorter.finish(None, memory)?;
+    let mut writer = window_writer(memory)?;
+    let mut partition: Vec<Vec<Value>> = Vec::new();
+    let mut reserved = 0;
+    while let Some(row) = merged.next_row()? {
+        let same = partition.first().is_none_or(|first| {
+            (0..window.partition.len()).all(|index| {
+                compare_sort_values(
+                    &first[key_start + index],
+                    &row[key_start + index],
+                    window_order_key(0, true, true, false),
+                    collation,
+                )
+                .is_eq()
+            })
+        });
+        if !same {
+            finish_window_partition(
+                &mut partition,
+                window,
+                key_start,
+                &mut writer,
+                memory,
+                collation,
+            )?;
+            partition = Vec::new();
+            memory.release(reserved);
+            reserved = 0;
+        }
+        let bytes = estimated_row_payload_bytes(&row);
+        reserved += super::reserve_vec_elements(&mut partition, 1, 0, memory)?;
+        memory.reserve(bytes)?;
+        reserved += bytes;
+        partition.push(row);
+    }
+    finish_window_partition(
+        &mut partition,
+        window,
+        key_start,
+        &mut writer,
+        memory,
+        collation,
+    )?;
+    memory.release(reserved);
+    writer.finish().map_err(window_io)
+}
+
+fn finish_window_partition(
+    rows: &mut Vec<Vec<Value>>,
+    window: &CompiledWindow,
+    key_start: usize,
+    writer: &mut crate::spill::RunWriter,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<(), ExecError> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let before = memory.used();
+    let key_bytes = rows
+        .iter()
+        .map(|row| estimated_row_payload_bytes(&row[key_start..]))
+        .sum::<usize>();
+    memory.reserve(key_bytes.saturating_add(rows.len().saturating_mul(size_of::<Vec<Value>>())))?;
+    let keys = rows
+        .iter()
+        .map(|row| row[key_start..].to_vec())
+        .collect::<Vec<_>>();
+    memory.reserve(rows.len() * size_of::<Value>())?;
+    let results = compute_window_column(window, &keys, rows.len(), memory, collation)?;
+    for (mut row, value) in rows.drain(..).zip(results) {
+        row.truncate(key_start);
+        let ordinal = row.pop().expect("window ordinal");
+        row.push(value);
+        row.push(ordinal);
+        memory.ensure_transient(estimated_row_payload_bytes(&row))?;
+        write_window_row(writer, &row)?;
+    }
+    memory.release(memory.used().saturating_sub(before));
+    Ok(())
+}
+
 /// Materializes the input, computes every window over its partitions, and
 /// returns rows with the window results appended as trailing columns.
-pub(super) fn build_window(
+fn build_memory_window(
     input: &mut PullOperator,
     windows: &[CompiledWindow],
     memory: &MemoryTracker,

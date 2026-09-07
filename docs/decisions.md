@@ -1449,3 +1449,18 @@ release their own bound. A worker reservation refusal returns to scatter;
 map conversion releases the dense slab's reservation. The existing spill
 writer and merge remain the only spill machinery. The separate no-transient-
 floor streaming spill limitation (hardening G12) is not addressed here.
+
+### Window spill retains one partition and restores row identity
+
+Large window inputs use external sorts for each window's partition and order
+keys. An input ordinal breaks equal-key ties and follows the row through each
+window, then restores encounter order for the output. Small inputs keep the
+in-memory evaluator. The spill path reuses that evaluator on one partition
+at a time so RANGE peer groups, offsets, and whole-partition frames share the
+same semantics. Output is served from an external sort in bounded batches.
+
+A sliding-frame deque could retain less than a partition for bounded ROWS
+frames, but would require separate evaluation logic for offsets and peer
+groups. This implementation instead bounds the retained partition with the
+query tracker and refuses a partition whose keys, state, and computed values
+do not fit. It does not promise spilling within a single window partition.

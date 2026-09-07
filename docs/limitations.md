@@ -201,8 +201,10 @@ stays readable as a list of things to fix.
   morsels to parallelize.
 - Views below 65,536 candidate rows use the simpler materialized merge path,
   which remains covered by the query memory ceiling.
-- Five execution shapes still fail at the per-query memory ceiling instead
-  of spilling: window-function output; group maps containing `GROUP_CONCAT`
+- A window partition, including its frame state and computed values, must fit
+  within the per-query memory ceiling. A larger partition is refused.
+- Four execution shapes still fail at the per-query memory ceiling instead
+  of spilling: group maps containing `GROUP_CONCAT`
   or `JSON_ARRAYAGG`; large `IN (subquery)` membership sets; the materialized
   nested-loop fallback for a correlated subquery in a join `ON` predicate;
   and a grace join whose single build key's rows exceed the ceiling.
