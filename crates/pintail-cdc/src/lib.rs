@@ -7,6 +7,7 @@
 
 mod ddl;
 mod decoder;
+mod event;
 mod gtid;
 
 use std::{
@@ -479,10 +480,7 @@ async fn run_cdc_inner(
             };
             let event_position = u64::from(event.header().log_pos());
             let event_type = event.header().event_type_raw();
-            let Some(data) = event
-                .read_data()
-                .map_err(|error| CdcError::Decode(error.to_string()))?
-            else {
+            let Some(data) = self::event::decode_event(&event)? else {
                 continue;
             };
             match data {

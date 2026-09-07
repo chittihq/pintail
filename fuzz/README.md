@@ -35,21 +35,18 @@ minimized regressions in the corpus; transient libFuzzer artifacts and newly
 expanded corpus entries stay ignored. A smoke run is bounded evidence, not a
 claim of exhaustive parser safety. No target catches panics.
 
-## Known dependency finding
+## Transaction-payload regression
 
-The binlog target exposes a panic in mysql_common 0.37.3: a transaction-payload
-header field ID above 255 reaches a narrowing conversion with `unwrap()`.
-The same conversion was still present in upstream master when inspected on
-2026-09-05. This is a source/binlog decoder finding, not the pre-login wire
-parser. Dependency vendoring is outside this slice.
-
-The deterministic regression is explicitly ignored in ordinary smoke checks
-because it currently **fails**. Reproduce it without fuzz tooling:
+The decoder is pinned through a local patch shared by the workspace and this
+harness. Transaction-payload header field IDs above 255 are rejected before
+the narrowing conversion, including when the stream decodes a payload before
+returning its event to CDC. The minimized artifact is checked in under
+`corpus/binlog/transaction_payload_field`; its deterministic regression runs
+in ordinary smoke checks and asserts an invalid-data error:
 
 ```sh
-CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload_field -- --ignored
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload_field
 ```
 
-The unrestricted binlog fuzz target remains enabled and reports crashes; it
-is not claimed green. Remove the ignore only after updating or fixing the
-production dependency and proving the reproducer no longer panics.
+The unrestricted binlog fuzz target is unchanged. Fixing this reproducer is
+not a claim that all malformed inputs are safe.

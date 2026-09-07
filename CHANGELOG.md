@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A malformed transaction-payload header could panic while replication read
+  its next event. Oversized header field IDs return a decoding error with
+  the event position, without advancing the checkpoint.
+
 - The MySQL client dependency is updated to fix a race in its statement
   cache. The workspace and fuzz harness use the same client version.
 

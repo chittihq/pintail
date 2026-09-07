@@ -44,3 +44,6 @@ test = false
 doc = false
 bench = false
 required-features = ["libfuzzer"]
+
+[patch.crates-io]
+mysql_common = { path = "../vendor/mysql_common" }

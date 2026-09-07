@@ -49,12 +49,19 @@ mod tests {
     use super::{binlog, storage, wire};
 
     #[test]
-    #[ignore = "known mysql_common 0.37.3 panic; see fuzz/README.md"]
     fn transaction_payload_field_above_u8_is_rejected_without_panicking() {
-        let mut event = vec![0_u8; 19];
-        event[4] = 40;
-        event.extend_from_slice(&[0xfc, 0, 1]); // length-encoded field ID 256
-        binlog(&event);
+        use mysql_async::binlog::{
+            BinlogChecksumAlg, BinlogVersion,
+            events::{BinlogEventFooter, Event, FormatDescriptionEvent},
+        };
+        let input = include_bytes!("../corpus/binlog/transaction_payload_field");
+        binlog(input);
+        let format = FormatDescriptionEvent::new(BinlogVersion::Version4).with_footer(
+            BinlogEventFooter::new(BinlogChecksumAlg::BINLOG_CHECKSUM_ALG_OFF),
+        );
+        let event = Event::read(&format, input.as_slice()).expect("framed event");
+        let error = event.read_data().expect_err("invalid field must be rejected");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
