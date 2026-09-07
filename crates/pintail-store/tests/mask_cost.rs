@@ -59,7 +59,9 @@ fn searched_mask(keys: &[i64], changed: &[i64]) -> Vec<usize> {
 #[test]
 #[ignore = "a measurement over a large key column, not a gate"]
 fn the_masks_agree_and_one_of_them_follows_the_changes() {
-    let keys: Vec<i64> = (0..SEGMENT_ROWS as i64).collect();
+    let keys: Vec<i64> = (0..SEGMENT_ROWS)
+        .map(|n| i64::try_from(n).expect("small"))
+        .collect();
     println!("{SEGMENT_ROWS} segment rows, {BLOCK_ROWS}-row blocks, minimum of 5 runs");
     println!(
         "{:>12}  {:>12}  {:>12}  {:>8}",

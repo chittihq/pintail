@@ -19,7 +19,6 @@ use std::{
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
-static DECODED: AtomicUsize = AtomicUsize::new(0);
 const IDS: [u32; 4] = [1, 2, 3, 4];
 const SQL: &str = "SELECT bucket, SUM(metric), COUNT(*) FROM samples WHERE metric >= 0 AND id % 7 <> 0 GROUP BY bucket ORDER BY bucket";
 fn schema() -> TableSchema {
@@ -138,9 +137,6 @@ fn query(catalog: &CatalogSnapshot, snapshot: &TableSnapshot, sql: &str) -> Answ
             }
         }
     }
-    if let Some(stats) = provider.scan_stats(DatabaseId::new(1), TableId::new(1)) {
-        DECODED.fetch_add(stats.blocks_decoded, Ordering::Relaxed);
-    }
     Ok(Arc::new(rows))
 }
 fn encoded(rows: &Rows) -> Vec<u8> {
@@ -163,8 +159,6 @@ fn peak_rss() -> u64 {
         .unwrap_or(0)
 }
 struct Finished<'a> {
-    started: &'a Instant,
-    elapsed: &'a std::sync::atomic::AtomicU64,
     count: &'a AtomicUsize,
     stop: &'a AtomicBool,
     clients: usize,
@@ -172,18 +166,12 @@ struct Finished<'a> {
 impl Drop for Finished<'_> {
     fn drop(&mut self) {
         if self.count.fetch_add(1, Ordering::Relaxed) + 1 == self.clients {
-            self.elapsed
-                .store(self.started.elapsed().as_nanos() as u64, Ordering::Relaxed);
             self.stop.store(true, Ordering::Relaxed);
         }
     }
 }
 fn flights(n: usize, clients: usize, duplicates: usize, shared: bool) {
-    let mut fixture = Fixture::new(n);
-    fixture
-        .table
-        .ingest_cdc(vec![make_row(13, n as u64 + 1, 13, "overlap", false)])
-        .unwrap();
+    let fixture = Fixture::new(n);
     let snapshot = fixture.table.snapshot();
     let coordinator = Flights::default();
     let count = AtomicUsize::new(0);
@@ -197,8 +185,6 @@ fn flights(n: usize, clients: usize, duplicates: usize, shared: bool) {
     let stop = AtomicBool::new(false);
     let peak = AtomicUsize::new(0);
     let finished = AtomicUsize::new(0);
-    DECODED.store(0, Ordering::Relaxed);
-    let measured = std::sync::atomic::AtomicU64::new(0);
     let cpu_before = cpu_ticks();
     let start = Instant::now();
     std::thread::scope(|scope| {
@@ -214,8 +200,6 @@ fn flights(n: usize, clients: usize, duplicates: usize, shared: bool) {
             }
         });
         let finished = &finished;
-        let started = &start;
-        let measured = &measured;
         for (sql, expected) in queries.iter().zip(&expected) {
             let snapshot = &snapshot;
             let catalog = &fixture.catalog;
@@ -225,8 +209,6 @@ fn flights(n: usize, clients: usize, duplicates: usize, shared: bool) {
             let latencies = &latencies;
             scope.spawn(move || {
                 let _finished = Finished {
-                    started,
-                    elapsed: measured,
                     count: finished,
                     stop: stop_ref,
                     clients,
@@ -262,11 +244,11 @@ fn flights(n: usize, clients: usize, duplicates: usize, shared: bool) {
             });
         }
     });
-    let elapsed = measured.load(Ordering::Relaxed);
+    let elapsed = start.elapsed().as_nanos() as u64;
     assert_eq!(coordinator.active(), 0);
     println!(
         "{}",
-        serde_json::json!({"experiment":"flights","overlapping_memtable":true,"blocks_decoded":DECODED.load(Ordering::Relaxed),"shared":shared,"rows":n,"clients":clients,"duplicates":duplicates,"executions":count.load(Ordering::Relaxed),"followers":coordinator.followers.load(Ordering::Relaxed),"elapsed_ns":elapsed,"cpu_ticks":cpu_ticks()-cpu_before,"sampled_query_bytes":peak.load(Ordering::Relaxed),"latency_ns":latencies.into_inner().unwrap(),"process_peak_rss_kib":peak_rss()})
+        serde_json::json!({"experiment":"flights","shared":shared,"rows":n,"clients":clients,"duplicates":duplicates,"executions":count.load(Ordering::Relaxed),"followers":coordinator.followers.load(Ordering::Relaxed),"elapsed_ns":elapsed,"cpu_ticks":cpu_ticks()-cpu_before,"sampled_query_bytes":peak.load(Ordering::Relaxed),"latency_ns":latencies.into_inner().unwrap(),"process_peak_rss_kib":peak_rss()})
     );
 }
 fn epochs(n: usize, ratio: usize, cached: bool) {

@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import random
 import statistics
-import sys
 import subprocess
 
 root = Path(__file__).resolve().parent
@@ -20,7 +19,7 @@ for repeat in range(5):
         for duplicate in sorted(set([0, clients // 4, clients])):
             for mode in ["independent", "shared"]:
                 jobs.append((repeat, ["flights", "50000", str(clients), str(duplicate), mode]))
-    for relevant in ([] if "--flights-only" in sys.argv else [0, 25, 100]):
+    for relevant in [0, 25, 100]:
         for mode in ["uncached", "cached"]:
             jobs.append((repeat, ["epochs", "10000", str(relevant), mode]))
 random.Random(9217).shuffle(jobs)
@@ -29,7 +28,7 @@ metadata = dict(base_commit=(root / "BASE_COMMIT").read_text().strip(),
                 allocator="tikv-jemallocator 0.6", logical_cpus=os.cpu_count(), affinity_cpus=len(cpus),
                 rayon_threads=2, independent_repetitions=5, seed=9217,
                 cpu_ticks_per_second=os.sysconf("SC_CLK_TCK"),
-                overlapping_memtable=True, run_arguments=sys.argv[1:], source_sha256={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
+                source_sha256={str(p.relative_to(root)):hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in [root/"src/main.rs", root/"src/lib.rs", root/"Cargo.lock",root/"run.py"]})
 (out/"environment.json").write_text(json.dumps(metadata, indent=2)+"\n")
 readings=[]

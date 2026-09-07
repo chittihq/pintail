@@ -1,0 +1,1330 @@
+[
+  {
+    "experiment": "flights",
+    "clients": 1,
+    "duplicates": 0,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 23267822,
+      "min": 23018290,
+      "max": 23663987,
+      "samples": [
+        23018290,
+        23663987,
+        23086059,
+        23557072,
+        23267822
+      ]
+    },
+    "cpu_ticks": {
+      "median": 2,
+      "min": 2,
+      "max": 3,
+      "samples": [
+        2,
+        3,
+        2,
+        2,
+        2
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 53032,
+      "min": 52696,
+      "max": 53112,
+      "samples": [
+        53080,
+        53112,
+        52800,
+        53032,
+        52696
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 23211390,
+      "p95": 23466650,
+      "p99": 23466650
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 1,
+    "duplicates": 0,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 22583554,
+      "min": 22566395,
+      "max": 22693278,
+      "samples": [
+        22583554,
+        22693278,
+        22566395,
+        22569364,
+        22661657
+      ]
+    },
+    "cpu_ticks": {
+      "median": 3,
+      "min": 1,
+      "max": 3,
+      "samples": [
+        3,
+        3,
+        3,
+        1,
+        3
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 53236,
+      "min": 52812,
+      "max": 53832,
+      "samples": [
+        53724,
+        53160,
+        53236,
+        52812,
+        53832
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 22512797,
+      "p95": 22589377,
+      "p99": 22589377
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 1,
+    "duplicates": 1,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 23156306,
+      "min": 23039712,
+      "max": 23285348,
+      "samples": [
+        23285348,
+        23094975,
+        23156306,
+        23039712,
+        23277425
+      ]
+    },
+    "cpu_ticks": {
+      "median": 3,
+      "min": 2,
+      "max": 3,
+      "samples": [
+        2,
+        2,
+        3,
+        3,
+        3
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 53472,
+      "min": 53200,
+      "max": 53552,
+      "samples": [
+        53528,
+        53472,
+        53552,
+        53424,
+        53200
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 23075621,
+      "p95": 23213715,
+      "p99": 23213715
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 1,
+    "duplicates": 1,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 22779031,
+      "min": 22624890,
+      "max": 23023033,
+      "samples": [
+        22779031,
+        22624890,
+        23023033,
+        22944644,
+        22655547
+      ]
+    },
+    "cpu_ticks": {
+      "median": 3,
+      "min": 2,
+      "max": 3,
+      "samples": [
+        3,
+        2,
+        2,
+        3,
+        3
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 53144,
+      "min": 52832,
+      "max": 53380,
+      "samples": [
+        53380,
+        53288,
+        52976,
+        52832,
+        53144
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 22715905,
+      "p95": 22870478,
+      "p99": 22870478
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 0,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 32351057,
+      "min": 31744118,
+      "max": 34474055,
+      "samples": [
+        34474055,
+        32351057,
+        31744118,
+        32704196,
+        32225174
+      ]
+    },
+    "cpu_ticks": {
+      "median": 13,
+      "min": 12,
+      "max": 13,
+      "samples": [
+        13,
+        13,
+        12,
+        13,
+        13
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 83092,
+      "min": 82888,
+      "max": 83224,
+      "samples": [
+        82888,
+        83092,
+        83224,
+        82956,
+        83184
+      ]
+    },
+    "executions": {
+      "median": 4,
+      "min": 4,
+      "max": 4,
+      "samples": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 32055427.5,
+      "p95": 33272884,
+      "p99": 33272884
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 0,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 31919094,
+      "min": 31472016,
+      "max": 32177192,
+      "samples": [
+        32177192,
+        31472016,
+        31624351,
+        31919094,
+        31936896
+      ]
+    },
+    "cpu_ticks": {
+      "median": 13,
+      "min": 11,
+      "max": 13,
+      "samples": [
+        12,
+        13,
+        13,
+        11,
+        13
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 82952,
+      "min": 81860,
+      "max": 83208,
+      "samples": [
+        83072,
+        82064,
+        82952,
+        81860,
+        83208
+      ]
+    },
+    "executions": {
+      "median": 4,
+      "min": 4,
+      "max": 4,
+      "samples": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 31474939.0,
+      "p95": 32061295,
+      "p99": 32061295
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 1,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 32640975,
+      "min": 32431347,
+      "max": 33278083,
+      "samples": [
+        32640975,
+        32465031,
+        32874532,
+        32431347,
+        33278083
+      ]
+    },
+    "cpu_ticks": {
+      "median": 13,
+      "min": 12,
+      "max": 13,
+      "samples": [
+        13,
+        13,
+        13,
+        12,
+        12
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 83480,
+      "min": 82928,
+      "max": 83604,
+      "samples": [
+        83480,
+        83604,
+        83556,
+        82928,
+        83196
+      ]
+    },
+    "executions": {
+      "median": 4,
+      "min": 4,
+      "max": 4,
+      "samples": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 32203666.5,
+      "p95": 32765509,
+      "p99": 32765509
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 1,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 32338745,
+      "min": 31173889,
+      "max": 32760540,
+      "samples": [
+        31448298,
+        32338745,
+        31173889,
+        32642681,
+        32760540
+      ]
+    },
+    "cpu_ticks": {
+      "median": 13,
+      "min": 12,
+      "max": 13,
+      "samples": [
+        13,
+        13,
+        12,
+        13,
+        12
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 82900,
+      "min": 81652,
+      "max": 83072,
+      "samples": [
+        83008,
+        82708,
+        81652,
+        83072,
+        82900
+      ]
+    },
+    "executions": {
+      "median": 4,
+      "min": 4,
+      "max": 4,
+      "samples": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 31632416.5,
+      "p95": 32519541,
+      "p99": 32519541
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 4,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 32769008,
+      "min": 32112877,
+      "max": 33125651,
+      "samples": [
+        32790395,
+        32424535,
+        32112877,
+        32769008,
+        33125651
+      ]
+    },
+    "cpu_ticks": {
+      "median": 13,
+      "min": 12,
+      "max": 13,
+      "samples": [
+        13,
+        13,
+        13,
+        12,
+        13
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 83356,
+      "min": 82828,
+      "max": 83968,
+      "samples": [
+        83192,
+        83968,
+        83408,
+        83356,
+        82828
+      ]
+    },
+    "executions": {
+      "median": 4,
+      "min": 4,
+      "max": 4,
+      "samples": [
+        4,
+        4,
+        4,
+        4,
+        4
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 32208893.5,
+      "p95": 32677117,
+      "p99": 32677117
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 4,
+    "duplicates": 4,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 22994938,
+      "min": 22792171,
+      "max": 23175463,
+      "samples": [
+        23119197,
+        23175463,
+        22792171,
+        22994938,
+        22826180
+      ]
+    },
+    "cpu_ticks": {
+      "median": 3,
+      "min": 3,
+      "max": 3,
+      "samples": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 54524,
+      "min": 54176,
+      "max": 54852,
+      "samples": [
+        54772,
+        54176,
+        54524,
+        54852,
+        54292
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 3,
+      "min": 3,
+      "max": 3,
+      "samples": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 22859049.0,
+      "p95": 23038609,
+      "p99": 23038609
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 0,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 132423064,
+      "min": 129585858,
+      "max": 146074017,
+      "samples": [
+        132423064,
+        129585858,
+        146074017,
+        132934365,
+        130205618
+      ]
+    },
+    "cpu_ticks": {
+      "median": 50,
+      "min": 49,
+      "max": 51,
+      "samples": [
+        49,
+        50,
+        51,
+        49,
+        50
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 164108,
+      "min": 155688,
+      "max": 180060,
+      "samples": [
+        163288,
+        180060,
+        165640,
+        164108,
+        155688
+      ]
+    },
+    "executions": {
+      "median": 16,
+      "min": 16,
+      "max": 16,
+      "samples": [
+        16,
+        16,
+        16,
+        16,
+        16
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 112764410.5,
+      "p95": 134274198,
+      "p99": 145315527
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 0,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 131178728,
+      "min": 127245091,
+      "max": 148666605,
+      "samples": [
+        131178728,
+        131523849,
+        128291887,
+        148666605,
+        127245091
+      ]
+    },
+    "cpu_ticks": {
+      "median": 49,
+      "min": 49,
+      "max": 51,
+      "samples": [
+        49,
+        49,
+        49,
+        51,
+        50
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 164260,
+      "min": 150196,
+      "max": 181668,
+      "samples": [
+        162972,
+        181668,
+        164260,
+        168508,
+        150196
+      ]
+    },
+    "executions": {
+      "median": 16,
+      "min": 16,
+      "max": 16,
+      "samples": [
+        16,
+        16,
+        16,
+        16,
+        16
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 117288077.0,
+      "p95": 138171465,
+      "p99": 144282998
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 4,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 129065753,
+      "min": 128023814,
+      "max": 130754662,
+      "samples": [
+        128023814,
+        129065753,
+        130754662,
+        130411911,
+        128515938
+      ]
+    },
+    "cpu_ticks": {
+      "median": 50,
+      "min": 49,
+      "max": 51,
+      "samples": [
+        49,
+        49,
+        50,
+        51,
+        50
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 161344,
+      "min": 146948,
+      "max": 166012,
+      "samples": [
+        146948,
+        157036,
+        166012,
+        164308,
+        161344
+      ]
+    },
+    "executions": {
+      "median": 16,
+      "min": 16,
+      "max": 16,
+      "samples": [
+        16,
+        16,
+        16,
+        16,
+        16
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 112922249.5,
+      "p95": 127912898,
+      "p99": 129734321
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 4,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 105802602,
+      "min": 104955939,
+      "max": 109040747,
+      "samples": [
+        105802602,
+        105204918,
+        109040747,
+        104955939,
+        106592118
+      ]
+    },
+    "cpu_ticks": {
+      "median": 40,
+      "min": 39,
+      "max": 40,
+      "samples": [
+        39,
+        39,
+        40,
+        40,
+        40
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 140612,
+      "min": 129064,
+      "max": 147224,
+      "samples": [
+        142760,
+        147224,
+        140612,
+        130348,
+        129064
+      ]
+    },
+    "executions": {
+      "median": 13,
+      "min": 13,
+      "max": 13,
+      "samples": [
+        13,
+        13,
+        13,
+        13,
+        13
+      ]
+    },
+    "followers": {
+      "median": 3,
+      "min": 3,
+      "max": 3,
+      "samples": [
+        3,
+        3,
+        3,
+        3,
+        3
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 91071891.0,
+      "p95": 104521681,
+      "p99": 106141623
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 16,
+    "shared": false,
+    "elapsed_ns": {
+      "median": 129597178,
+      "min": 126579727,
+      "max": 133532480,
+      "samples": [
+        129580970,
+        126579727,
+        133532480,
+        129597178,
+        132482302
+      ]
+    },
+    "cpu_ticks": {
+      "median": 50,
+      "min": 49,
+      "max": 51,
+      "samples": [
+        49,
+        50,
+        51,
+        50,
+        50
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 158916,
+      "min": 138316,
+      "max": 184132,
+      "samples": [
+        184132,
+        160576,
+        158916,
+        138316,
+        150160
+      ]
+    },
+    "executions": {
+      "median": 16,
+      "min": 16,
+      "max": 16,
+      "samples": [
+        16,
+        16,
+        16,
+        16,
+        16
+      ]
+    },
+    "followers": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 120020771.5,
+      "p95": 128790262,
+      "p99": 133006706
+    }
+  },
+  {
+    "experiment": "flights",
+    "clients": 16,
+    "duplicates": 16,
+    "shared": true,
+    "elapsed_ns": {
+      "median": 23714892,
+      "min": 23410361,
+      "max": 24401441,
+      "samples": [
+        23664254,
+        23714892,
+        24401441,
+        24264548,
+        23410361
+      ]
+    },
+    "cpu_ticks": {
+      "median": 3,
+      "min": 2,
+      "max": 3,
+      "samples": [
+        3,
+        3,
+        2,
+        3,
+        3
+      ]
+    },
+    "sampled_query_bytes": {
+      "median": 0,
+      "min": 0,
+      "max": 0,
+      "samples": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "process_peak_rss_kib": {
+      "median": 58480,
+      "min": 58036,
+      "max": 58828,
+      "samples": [
+        58392,
+        58036,
+        58828,
+        58632,
+        58480
+      ]
+    },
+    "executions": {
+      "median": 1,
+      "min": 1,
+      "max": 1,
+      "samples": [
+        1,
+        1,
+        1,
+        1,
+        1
+      ]
+    },
+    "followers": {
+      "median": 15,
+      "min": 15,
+      "max": 15,
+      "samples": [
+        15,
+        15,
+        15,
+        15,
+        15
+      ]
+    },
+    "pooled_latency_ns": {
+      "p50": 23024919.5,
+      "p95": 23871260,
+      "p99": 23974358
+    }
+  }
+]

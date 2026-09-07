@@ -3010,3 +3010,57 @@ sides are already sorted. A membership filter is the answer to a
 different question, one where the changed set is too large to hold and
 too large to sort, and this measurement says that is not the regime a
 replicated table sits in.
+
+
+## e80 — Maintaining the supersession mask instead of rebuilding it
+
+`crates/pintail-store/tests/supersession_bitmap.rs`, release, ten million
+rows, twenty thousand changed, minimum of five runs. Both masks are
+compared for equality, so the maintained one marks exactly the rows the
+rebuilt one does.
+
+e79 made the mask cost follow the change rather than the table. It left
+one thing untouched: every scan still rebuilds it. A row's position in a
+segment does not move, so the work of finding it can be done once when
+the row arrives instead of once per query.
+
+| step | ms |
+|---|---:|
+| rebuild the mask, per scan | 1.680 |
+| mark all twenty thousand as they arrive | 0.797 |
+| the same, per changed row | 0.000040 |
+| read a mask already built | 0.063 |
+
+Forty nanoseconds per changed row is one binary search over a sorted key
+column. At two thousand updates a second that is 0.08 ms of work per
+second, whatever the query rate:
+
+| queries/s | rebuild, ms/s | maintain, ms/s |
+|---:|---:|---:|
+| 1 | 1.7 | 0.1 |
+| 5 | 8.4 | 0.4 |
+| 10 | 16.8 | 0.7 |
+| 50 | 84.0 | 3.2 |
+
+The two lines cross almost immediately because rebuilding scales with
+queries and maintaining scales with changes, and a mirror serving a
+dashboard has far more of the former.
+
+Two pieces of outside reading shaped this. A survey of incremental view
+maintenance in semiring terms gives the rule for which aggregates can be
+kept current under deletion: the payload must have an additive inverse,
+so the effect of a row can be undone. COUNT and SUM have one and MIN and
+MAX do not, which is the split e78 arrived at by argument and this
+supplies the reason for. Separately, lakehouse formats moved from
+rewriting files on delete to carrying a per-file bitmap of removed row
+positions, which is the same shape as this mask; the difference here is
+that a mirror supersedes rather than deletes, and the bitmap has to be
+rebuilt when a flush changes the segment set.
+
+**Verdict: maintain it, and derive it from what CDC already knows.** The
+apply path already has the key of every row it writes and already reads
+the segment key column to place it, so the position lookup is work that
+path can absorb. The scan then reads a bitmap. The open question is the
+lifetime: a bitmap belongs to a (segment, memtable generation) pair, so a
+flush retires it, and the cost of rebuilding one after a flush is the
+0.797 ms measured above, paid once.
