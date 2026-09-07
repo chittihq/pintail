@@ -1464,3 +1464,17 @@ frames, but would require separate evaluation logic for offsets and peer
 groups. This implementation instead bounds the retained partition with the
 query tracker and refuses a partition whose keys, state, and computed values
 do not fit. It does not promise spilling within a single window partition.
+
+## Collection aggregates spill unfinished elements
+
+GROUP_CONCAT runs retain each element's original value and order keys.
+Revival rebuilds DISTINCT identity from the original value and merges
+fragments in run order; finish performs a stable element sort when the
+aggregate has ORDER BY. JSON_ARRAYAGG retains rendered JSON fragments in
+encounter order, including nulls.
+
+Spilling a joined string would lose ordering information and would apply
+group_concat_max_len to each partial result. Keeping elements instead
+applies that byte truncation once, after all fragments are merged. The
+merged state and finished value of one group must still fit in the query
+budget; external storage within one collection value is not implemented.

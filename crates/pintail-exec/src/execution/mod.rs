@@ -6016,6 +6016,59 @@ mod tests {
     }
 
     #[test]
+    fn collection_aggregates_spill_fragments_in_order() {
+        super::set_session_group_concat_max_len(Some(127));
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..128)
+                    .map(|row| {
+                        Value::Utf8(format!(
+                            "key-{:04}-value-{:04}",
+                            (batch * 128 + row) % 256,
+                            batch % 16
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(physical("SELECT LEFT(name, 8) AS k, GROUP_CONCAT(name ORDER BY name DESC SEPARATOR '|'), GROUP_CONCAT(DISTINCT name ORDER BY name DESC), JSON_ARRAYAGG(name) FROM events GROUP BY k"), &provider, limit, Collation::default()).expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            rows.sort_by(|left, right| match (&left[0], &right[0]) {
+                (Value::Utf8(left), Value::Utf8(right)) => left.cmp(right),
+                _ => unreachable!(),
+            });
+            (rows, execution.spill_metrics())
+        };
+        let (wide, _) = execute(64 * 1024 * 1024);
+        let (tight, spill) = execute(1024 * 1024);
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 256);
+        assert!(spill.files > 0);
+        super::set_session_group_concat_max_len(None);
+    }
+
+    #[test]
     fn partitioned_window_output_spills_under_the_ceiling() {
         let batches = (0..64)
             .map(|batch| {

@@ -388,8 +388,9 @@ enum AggregateValue {
         seen: bool,
     },
     GroupConcat {
-        /// Collected `(order keys, rendered value)` rows.
-        items: Vec<(Vec<Value>, String)>,
+        /// Collected `(order keys, rendered value, original value)` rows.
+        /// The original value preserves DISTINCT identity when runs merge.
+        items: Vec<(Vec<Value>, String, Value)>,
         /// Join separator resolved at state creation.
         separator: String,
         /// Per-key `(ascending, decimal)` sort spec.
@@ -710,9 +711,8 @@ impl AggregateState {
             AggregateValue::GroupConcat { items, .. } => {
                 let value_bytes = scalar_string_memory_upper_bound(value);
                 reserve_vec_elements(items, 1, 64, memory)?;
-                memory.reserve(value_bytes)?;
-                let value = aggregate_string(value)?;
-                items.push((Vec::new(), value));
+                memory.reserve(value_bytes.saturating_add(value.heap_bytes()))?;
+                items.push((Vec::new(), aggregate_string(value)?, value.clone()));
             }
             // Handled by the intercept above the NULL skip.
             AggregateValue::JsonArrayAgg { .. } => {
@@ -734,6 +734,12 @@ impl AggregateState {
         // Merging may replace the extreme through the Value path; the cached
         // f64 guide is conservative-invalidated rather than tracked.
         self.extreme_number = None;
+        if let AggregateValue::GroupConcat { items, .. } = other.value {
+            for (keys, _, value) in items {
+                self.update_group_concat(&value, keys, memory)?;
+            }
+            return Ok(());
+        }
         if aggregate.distinct {
             if let Some(seen) = other.seen.take() {
                 for key in seen.drain_values() {
@@ -743,6 +749,14 @@ impl AggregateState {
             return Ok(());
         }
         match (&mut self.value, other.value) {
+            (
+                AggregateValue::JsonArrayAgg { items: left },
+                AggregateValue::JsonArrayAgg { items: right },
+            ) => {
+                reserve_vec_elements(left, right.len(), 0, memory)?;
+                left.extend(right);
+            }
+
             (AggregateValue::Count(left), AggregateValue::Count(right)) => {
                 *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
             }
@@ -1047,10 +1061,10 @@ impl AggregateState {
                 "group-concat update applied to an incompatible aggregate state",
             ));
         };
-        let key_bytes = keys.iter().map(Value::heap_bytes).sum::<usize>();
+        let key_bytes = estimated_row_payload_bytes(&keys).saturating_add(value.heap_bytes());
         reserve_vec_elements(items, 1, 64, memory)?;
         memory.reserve(scalar_string_memory_upper_bound(value).saturating_add(key_bytes))?;
-        items.push((keys, aggregate_string(value)?));
+        items.push((keys, aggregate_string(value)?, value.clone()));
         Ok(())
     }
 
@@ -1267,7 +1281,7 @@ impl AggregateState {
                         Ordering::Equal
                     });
                 }
-                let joined_bytes = items.iter().map(|(_, text)| text.len()).fold(
+                let joined_bytes = items.iter().map(|(_, text, _)| text.len()).fold(
                     items
                         .len()
                         .saturating_sub(1)
@@ -1277,7 +1291,7 @@ impl AggregateState {
                 memory.reserve(joined_bytes)?;
                 let mut joined = items
                     .iter()
-                    .map(|(_, text)| text.as_str())
+                    .map(|(_, text, _)| text.as_str())
                     .collect::<Vec<_>>()
                     .join(&separator);
                 // MySQL truncates at the session's byte ceiling and raises
@@ -2160,6 +2174,8 @@ fn build_hash_aggregate_scan(
         }
     }
 
+    let used_at_start = memory.used();
+    let mut spill_runs = Vec::new();
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     if group_by.is_empty() {
         reserve_hash_map_entries(
@@ -2193,6 +2209,17 @@ fn build_hash_aggregate_scan(
             memory,
         )?;
         for row in batch.selection().selected_rows() {
+            if memory.used().saturating_sub(used_at_start) > memory.limit() / 4
+                && !groups.is_empty()
+                && aggregates
+                    .iter()
+                    .all(|aggregate| aggregate.function != AggregateFunction::JsonObjectAgg)
+            {
+                spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                groups = HashMap::new();
+                memory.release(memory.used().saturating_sub(used_at_start));
+            }
+
             let group_expression_memory = group_by
                 .iter()
                 .map(|expression| expression.allocation_upper_bound(&batch, row))
@@ -2258,6 +2285,12 @@ fn build_hash_aggregate_scan(
                 memory,
             )?;
         }
+    }
+
+    if !spill_runs.is_empty() {
+        spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+        memory.release(memory.used().saturating_sub(used_at_start));
+        return merge_spilled_aggregate_groups(spill_runs, HashMap::new(), memory);
     }
 
     memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
@@ -2791,6 +2824,9 @@ struct SpilledAggregateState {
 /// Spillable mirror of [`AggregateValue`]. `i128` units travel as decimal
 /// strings so the encoding stays independent of integer width.
 enum SpilledAggregateValue {
+    GroupConcat(Vec<(Vec<Value>, Value)>),
+    JsonArrayAgg(Vec<String>),
+
     Count(u64),
     Sum(Option<Value>),
     DecimalSum {
@@ -2866,9 +2902,14 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         AggregateValue::BitFold { accumulator, seen } => {
             SpilledAggregateValue::BitFold { accumulator, seen }
         }
-        AggregateValue::GroupConcat { .. }
-        | AggregateValue::JsonArrayAgg { .. }
-        | AggregateValue::JsonObjectAgg { .. } => {
+        AggregateValue::GroupConcat { items, .. } => SpilledAggregateValue::GroupConcat(
+            items
+                .into_iter()
+                .map(|(keys, _, value)| (keys, value))
+                .collect(),
+        ),
+        AggregateValue::JsonArrayAgg { items } => SpilledAggregateValue::JsonArrayAgg(items),
+        AggregateValue::JsonObjectAgg { .. } => {
             return Err(ExecError::InvalidPhysicalPlan(
                 "aggregation spill reached a non-spillable aggregate state",
             ));
@@ -2896,6 +2937,12 @@ fn revive_aggregate_state(
     memory: &MemoryTracker,
 ) -> Result<AggregateState, ExecError> {
     let mut state = AggregateState::new(aggregate);
+    if let SpilledAggregateValue::GroupConcat(items) = spilled.value {
+        for (keys, value) in items {
+            state.update_group_concat(&value, keys, memory)?;
+        }
+        return Ok(state);
+    }
     if let Some(keys) = spilled.seen {
         for key in keys {
             state.absorb_distinct(aggregate, &key, memory)?;
@@ -2903,6 +2950,17 @@ fn revive_aggregate_state(
         return Ok(state);
     }
     state.value = match spilled.value {
+        SpilledAggregateValue::GroupConcat(_) => unreachable!("restored above"),
+        SpilledAggregateValue::JsonArrayAgg(items) => {
+            memory.reserve(
+                items
+                    .len()
+                    .saturating_mul(size_of::<String>())
+                    .saturating_add(items.iter().map(String::len).sum::<usize>()),
+            )?;
+            AggregateValue::JsonArrayAgg { items }
+        }
+
         SpilledAggregateValue::Count(count) => AggregateValue::Count(count),
         SpilledAggregateValue::AnyValue(value) => AggregateValue::AnyValue(value),
         SpilledAggregateValue::Moments {
@@ -3024,9 +3082,27 @@ const AGGREGATE_MAXIMUM: u8 = 6;
 const AGGREGATE_ANY_VALUE: u8 = 7;
 const AGGREGATE_MOMENTS: u8 = 8;
 const AGGREGATE_BIT_FOLD: u8 = 9;
+const AGGREGATE_GROUP_CONCAT: u8 = 10;
+const AGGREGATE_JSON_ARRAY: u8 = 11;
 
 fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregateState) {
     match &state.value {
+        SpilledAggregateValue::GroupConcat(items) => {
+            encoder.u8(AGGREGATE_GROUP_CONCAT);
+            encoder.count(items.len());
+            for (keys, value) in items {
+                encoder.values(keys);
+                encoder.value(value);
+            }
+        }
+        SpilledAggregateValue::JsonArrayAgg(items) => {
+            encoder.u8(AGGREGATE_JSON_ARRAY);
+            encoder.count(items.len());
+            for item in items {
+                encoder.str(item);
+            }
+        }
+
         SpilledAggregateValue::AnyValue(value) => {
             encoder.u8(AGGREGATE_ANY_VALUE);
             encoder.optional_value(value.as_ref());
@@ -3105,6 +3181,22 @@ fn decode_aggregate_state(
     decoder: &mut spill::Decoder<'_>,
 ) -> Result<SpilledAggregateState, String> {
     let value = match decoder.u8()? {
+        AGGREGATE_GROUP_CONCAT => {
+            let count = decoder.count()?;
+            let items = (0..count)
+                .map(|_| Ok((decoder.values()?, decoder.value()?)))
+                .collect::<Result<Vec<_>, String>>()?;
+            SpilledAggregateValue::GroupConcat(items)
+        }
+        AGGREGATE_JSON_ARRAY => {
+            let count = decoder.count()?;
+            SpilledAggregateValue::JsonArrayAgg(
+                (0..count)
+                    .map(|_| decoder.string())
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+
         AGGREGATE_COUNT => SpilledAggregateValue::Count(decoder.u64()?),
         AGGREGATE_ANY_VALUE => SpilledAggregateValue::AnyValue(decoder.optional_value()?),
         AGGREGATE_MOMENTS => SpilledAggregateValue::Moments {
@@ -4306,16 +4398,10 @@ fn build_direct_column_aggregate(
     // difference from here is what a spill hands back.
     let used_at_start = memory.used();
     let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
-    // GROUP_CONCAT and the JSON aggregates have no spilled form, so a map
-    // holding one keeps growing to the ceiling as it always did.
-    let spillable = aggregates.iter().all(|aggregate| {
-        !matches!(
-            aggregate.function,
-            AggregateFunction::GroupConcat
-                | AggregateFunction::JsonArrayAgg
-                | AggregateFunction::JsonObjectAgg
-        )
-    });
+    // Object aggregation still has no spill encoding.
+    let spillable = aggregates
+        .iter()
+        .all(|aggregate| !matches!(aggregate.function, AggregateFunction::JsonObjectAgg));
     let per_row_upper = group_columns
         .len()
         .saturating_mul(size_of::<Value>())

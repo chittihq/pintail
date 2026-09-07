@@ -203,9 +203,11 @@ stays readable as a list of things to fix.
   which remains covered by the query memory ceiling.
 - A window partition, including its frame state and computed values, must fit
   within the per-query memory ceiling. A larger partition is refused.
-- Four execution shapes still fail at the per-query memory ceiling instead
-  of spilling: group maps containing `GROUP_CONCAT`
-  or `JSON_ARRAYAGG`; large `IN (subquery)` membership sets; the materialized
+- A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
+  value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
+  state encoding.
+- Three execution shapes still fail at the per-query memory ceiling instead
+  of spilling: large `IN (subquery)` membership sets; the materialized
   nested-loop fallback for a correlated subquery in a join `ON` predicate;
   and a grace join whose single build key's rows exceed the ceiling.
 - Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
