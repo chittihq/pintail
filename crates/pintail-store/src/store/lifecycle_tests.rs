@@ -671,4 +671,3 @@ fn a_table_directory_renames_under_a_live_writer() {
     );
     assert_eq!(table.directory(), std::fs::canonicalize(&new).unwrap());
 }
-
