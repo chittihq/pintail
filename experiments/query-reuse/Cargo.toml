@@ -1,0 +1,23 @@
+[package]
+name = "query-reuse-lab"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+pintail-catalog = { path = "../../crates/pintail-catalog" }
+pintail-exec = { path = "../../crates/pintail-exec" }
+pintail-sql = { path = "../../crates/pintail-sql" }
+pintail-store = { path = "../../crates/pintail-store" }
+pintail-types = { path = "../../crates/pintail-types" }
+serde_json = "1"
+tempfile = "3"
+tikv-jemallocator = "0.6"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+debug = 0

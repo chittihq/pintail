@@ -2966,3 +2966,47 @@ the dense-fold work already identified as the common grouping key. A
 bounded in-memory cache makes that question self-limiting in a way a
 persisted format does not, which is a further argument for starting
 there.
+
+
+## e79 — What the overlay's mask costs, by how much changed
+
+`crates/pintail-store/tests/mask_cost.rs`, release, ten million sorted
+keys in 8,192-row blocks, changed keys scattered evenly the way an
+`UPDATE ... WHERE` scatters them, minimum of five runs. Both masks are
+compared for equality at every rate, so the faster one is not taking a
+shortcut the other refuses.
+
+The overlay decides which segment rows the memtable supersedes by walking
+both sorted sides at once. That walk visits every segment row, so its cost
+follows the table rather than the change. The alternative asks the
+opposite question: take each block's key range, and if no changed key
+falls inside it, do not examine the block at all; otherwise look up only
+the changed keys it holds.
+
+| changed rows | linear walk, ms | change-driven search, ms | ratio |
+|---:|---:|---:|---:|
+| 2 | 3.270 | 0.005 | 648x |
+| 2,000 | 6.676 | 0.266 | 25x |
+| 20,000 | 6.684 | 1.888 | 3.5x |
+| 200,000 | 7.743 | 5.886 | 1.3x |
+| 2,000,000 | 6.910 | 18.494 | 0.4x |
+
+The linear walk is flat at about 7 ms whatever changed, which is the
+property worth removing: a table that took two updates pays the same mask
+cost as one that took two million. The search follows the changes until
+roughly 2% of rows have changed, and past 20% it is slower than the walk
+and should not be used.
+
+A source taking one to two thousand updates a second puts tens of
+thousands of changed rows in the memtable between flushes, which is the
+20,000 row: 3.5 times less mask work, and the whole mask under two
+milliseconds. A quieter table gets far more.
+
+**Verdict: pick the mask by how much changed, not by range overlap.** The
+crossover is measurable and stable, both masks agree at every rate, and
+the cheap side needs no filter, no probe per row and no storage-format
+change: the sparse index already gives each block's key range, and both
+sides are already sorted. A membership filter is the answer to a
+different question, one where the changed set is too large to hold and
+too large to sort, and this measurement says that is not the regime a
+replicated table sits in.
