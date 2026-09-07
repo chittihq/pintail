@@ -258,6 +258,178 @@ fn integer_at(column: &DecodedColumn, row: usize) -> Option<i128> {
     }
 }
 
+impl DecodedColumn {
+    /// This column with `inserts` placed at their final positions
+    /// (ascending, indexing the output). Integer columns stay packed when
+    /// every inserted value is of their type or null; any other column, or
+    /// a mismatched value, is rebuilt as plain values.
+    pub(super) fn interleave(self, inserts: &[(usize, &pintail_types::Value)]) -> Self {
+        if inserts.is_empty() {
+            return self;
+        }
+        match self {
+            Self::Int64 { values, validity } => {
+                match typed_inserts(inserts, |value| match value {
+                    pintail_types::Value::Int64(value) => Some(Some(*value)),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (values, validity) = interleave_typed(values, &validity, &typed);
+                        Self::Int64 { values, validity }
+                    }
+                    None => Self::Values(interleave_values(
+                        Self::Int64 { values, validity }.into_values(),
+                        inserts,
+                    )),
+                }
+            }
+            Self::UInt64 { values, validity } => {
+                match typed_inserts(inserts, |value| match value {
+                    pintail_types::Value::UInt64(value) => Some(Some(*value)),
+                    pintail_types::Value::Null => Some(None),
+                    _ => None,
+                }) {
+                    Some(typed) => {
+                        let (values, validity) = interleave_typed(values, &validity, &typed);
+                        Self::UInt64 { values, validity }
+                    }
+                    None => Self::Values(interleave_values(
+                        Self::UInt64 { values, validity }.into_values(),
+                        inserts,
+                    )),
+                }
+            }
+            other => Self::Values(interleave_values(other.into_values(), inserts)),
+        }
+    }
+}
+
+/// The inserts as typed values (`None` for null), or `None` when one does
+/// not fit the column's type.
+fn typed_inserts<T>(
+    inserts: &[(usize, &pintail_types::Value)],
+    convert: impl Fn(&pintail_types::Value) -> Option<Option<T>>,
+) -> Option<Vec<(usize, Option<T>)>> {
+    inserts
+        .iter()
+        .map(|(at, value)| convert(value).map(|value| (*at, value)))
+        .collect()
+}
+
+/// `values` with typed `inserts` placed at their final positions; nulls
+/// take a default placeholder and clear their validity bit.
+fn interleave_typed<T: Copy + Default>(
+    values: Vec<T>,
+    validity: &ColumnValidity,
+    inserts: &[(usize, Option<T>)],
+) -> (Vec<T>, ColumnValidity) {
+    let total = values.len() + inserts.len();
+    let mut out = Vec::with_capacity(total);
+    let mut valid = Vec::with_capacity(total);
+    let mut existing = values.into_iter().enumerate();
+    let mut pending = existing.next();
+    let mut next_insert = 0;
+    while out.len() < total {
+        let at = out.len();
+        if next_insert < inserts.len() && inserts[next_insert].0 == at {
+            let (_, value) = inserts[next_insert];
+            out.push(value.unwrap_or_default());
+            valid.push(value.is_some());
+            next_insert += 1;
+        } else if let Some((index, value)) = pending {
+            out.push(value);
+            valid.push(validity.is_valid(index));
+            pending = existing.next();
+        } else {
+            // An insert position past the end: append the rest in order.
+            let (_, value) = inserts[next_insert];
+            out.push(value.unwrap_or_default());
+            valid.push(value.is_some());
+            next_insert += 1;
+        }
+    }
+    let validity = if valid.iter().all(|flag| *flag) {
+        ColumnValidity::AllValid(total)
+    } else {
+        ColumnValidity::Bytes(valid)
+    };
+    (out, validity)
+}
+
+/// Plain values with `inserts` placed at their final positions.
+fn interleave_values(
+    values: Vec<pintail_types::Value>,
+    inserts: &[(usize, &pintail_types::Value)],
+) -> Vec<pintail_types::Value> {
+    let total = values.len() + inserts.len();
+    let mut out = Vec::with_capacity(total);
+    let mut existing = values.into_iter();
+    let mut next_insert = 0;
+    while out.len() < total {
+        let at = out.len();
+        if next_insert < inserts.len() && inserts[next_insert].0 == at {
+            out.push(inserts[next_insert].1.clone());
+            next_insert += 1;
+        } else if let Some(value) = existing.next() {
+            out.push(value);
+        } else {
+            out.push(inserts[next_insert].1.clone());
+            next_insert += 1;
+        }
+    }
+    out
+}
+
+/// For each live memtable key (ascending), its position in the output that
+/// interleaves it with the surviving segment rows: the surviving rows whose
+/// key is below it, plus the memtable rows placed before it. The key column
+/// is sorted, since the segment holds one row per key in key order.
+fn insertion_positions(
+    key_column: &DecodedColumn,
+    row_count: usize,
+    kept: Option<&[std::ops::Range<usize>]>,
+    live_keys: &[i128],
+) -> Vec<usize> {
+    let mut positions = Vec::with_capacity(live_keys.len());
+    let mut range_index = 0;
+    let mut kept_before = 0_usize;
+    let mut cursor = 0_usize;
+    for (inserted, key) in live_keys.iter().enumerate() {
+        // First segment row at or past the key.
+        let (mut low, mut high) = (cursor, row_count);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if integer_at(key_column, middle).is_some_and(|value| value < *key) {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let boundary = low;
+        match kept {
+            None => kept_before = boundary,
+            Some(ranges) => {
+                // Advance through the ranges up to the boundary.
+                while range_index < ranges.len() && ranges[range_index].end <= boundary {
+                    kept_before += ranges[range_index].len();
+                    range_index += 1;
+                }
+                let partial = ranges
+                    .get(range_index)
+                    .filter(|range| range.start < boundary)
+                    .map_or(0, |range| boundary - range.start);
+                positions.push(kept_before + partial + inserted);
+                cursor = boundary;
+                continue;
+            }
+        }
+        positions.push(kept_before + inserted);
+        cursor = boundary;
+    }
+    positions
+}
+
 /// Positions (ascending) of the rows whose key the memtable holds.
 fn superseded_positions(
     column: &DecodedColumn,
@@ -1591,31 +1763,7 @@ impl ProjectedScanStream {
                 .decode_slice_plain(slice, memory_limit, prewhere)
                 .map(|chunk| vec![chunk]);
         };
-        let span = self.overlay_slice_span(slice);
-        let mut keys = std::collections::HashSet::new();
-        let mut live = Vec::new();
-        if bound_range_is_searchable(&span.0, &span.1) {
-            for (key, row) in self.snapshot.memtable.range(span) {
-                let [part] = key.parts() else {
-                    return Err(StoreError::FormatLimit(
-                        "the memtable overlay needs a single-column key".into(),
-                    ));
-                };
-                let value = match part {
-                    KeyPart::Int64(value) => i128::from(*value),
-                    KeyPart::UInt64(value) => i128::from(*value),
-                    _ => {
-                        return Err(StoreError::FormatLimit(
-                            "the memtable overlay needs an integer key".into(),
-                        ));
-                    }
-                };
-                keys.insert(value);
-                if !row.is_deleted() {
-                    live.push(row);
-                }
-            }
-        }
+        let (keys, live, live_keys) = self.overlay_span_rows(slice)?;
         if keys.is_empty() {
             return self
                 .decode_slice_plain(slice, memory_limit, prewhere)
@@ -1654,39 +1802,94 @@ impl ProjectedScanStream {
             ids.len() - 1
         });
         let caller = prewhere;
+        // Where each live memtable row belongs among the surviving segment
+        // rows, so the chunk comes out in key order: a consumer that takes
+        // the first value it meets for a group (as the source does, in key
+        // order) must meet the same one.
+        let insert_positions = std::sync::Mutex::new(Vec::new());
         let select = |columns: &[DecodedColumn], row_count: usize| {
             let kept = match caller {
                 Some((caller_ids, select)) => select(&columns[..caller_ids.len()], row_count)?,
                 None => None,
             };
             let excluded = superseded_positions(&columns[key_index], row_count, &keys);
-            if excluded.is_empty() {
-                return Ok(kept);
-            }
-            Ok(Some(subtract_positions(
-                kept.unwrap_or_else(|| std::iter::once(0..row_count).collect()),
-                &excluded,
-            )))
+            let ranges = if excluded.is_empty() {
+                kept
+            } else {
+                Some(subtract_positions(
+                    kept.unwrap_or_else(|| std::iter::once(0..row_count).collect()),
+                    &excluded,
+                ))
+            };
+            let positions = insertion_positions(
+                &columns[key_index],
+                row_count,
+                ranges.as_deref(),
+                &live_keys,
+            );
+            *insert_positions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = positions;
+            Ok(ranges)
         };
         let segment_chunk = self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)))?;
-        // The memtable rows share the allowance with the chunk they follow.
-        let remaining = decode_limit.saturating_sub(segment_chunk.retained_bytes);
-        let mut chunks = vec![segment_chunk];
-        if let Some(chunk) = self.memtable_rows_chunk(&live, remaining)? {
-            chunks.push(chunk);
+        if live.is_empty() {
+            return Ok(vec![segment_chunk]);
         }
-        Ok(chunks)
+        let positions = insert_positions
+            .into_inner()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.interleave_live_rows(segment_chunk, &positions, &live, decode_limit)
+            .map(|chunk| vec![chunk])
     }
 
-    /// Memtable rows as one column chunk in the scan's projection; `None`
-    /// when there are none.
-    fn memtable_rows_chunk(
+    /// The memtable rows of a slice's key span: every key they hold (to
+    /// mask the segment's rows by), the live rows in key order, and those
+    /// rows' keys as integers.
+    #[allow(clippy::type_complexity)]
+    fn overlay_span_rows(
         &self,
-        rows: &[&StoredRow],
-        memory_limit: usize,
-    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
-        if rows.is_empty() {
-            return Ok(None);
+        slice: &DirectSlice,
+    ) -> Result<(std::collections::HashSet<i128>, Vec<&StoredRow>, Vec<i128>), StoreError> {
+        let span = self.overlay_slice_span(slice);
+        let mut keys = std::collections::HashSet::new();
+        let mut live = Vec::new();
+        let mut live_keys = Vec::new();
+        if bound_range_is_searchable(&span.0, &span.1) {
+            for (key, row) in self.snapshot.memtable.range(span) {
+                let value = match key.parts() {
+                    [KeyPart::Int64(value)] => i128::from(*value),
+                    [KeyPart::UInt64(value)] => i128::from(*value),
+                    _ => {
+                        return Err(StoreError::FormatLimit(
+                            "the memtable overlay needs a single integer key".into(),
+                        ));
+                    }
+                };
+                keys.insert(value);
+                if !row.is_deleted() {
+                    live.push(row);
+                    live_keys.push(value);
+                }
+            }
+        }
+        Ok((keys, live, live_keys))
+    }
+
+    /// The segment chunk with the live memtable rows placed at `positions`
+    /// (one per row, ascending, indexing the output) in every projected
+    /// column.
+    fn interleave_live_rows(
+        &self,
+        segment_chunk: ProjectedColumnChunk,
+        positions: &[usize],
+        live: &[&StoredRow],
+        decode_limit: usize,
+    ) -> Result<ProjectedColumnChunk, StoreError> {
+        if positions.len() != live.len() {
+            return Err(StoreError::FormatLimit(
+                "the memtable overlay could not place its rows".into(),
+            ));
         }
         let projection = self
             .column_ids
@@ -1702,16 +1905,44 @@ impl ProjectedScanStream {
                     })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut columns = projection
-            .iter()
-            .map(|_| Vec::with_capacity(rows.len()))
-            .collect::<Vec<Vec<pintail_types::Value>>>();
-        for row in rows {
-            for (column, position) in columns.iter_mut().zip(&projection) {
-                column.push(row.values()[*position].clone());
-            }
+        let ProjectedColumnChunk {
+            columns,
+            row_count,
+            stats,
+            retained_bytes: _,
+        } = segment_chunk;
+        let columns = columns
+            .into_iter()
+            .zip(&projection)
+            .map(|(column, position)| {
+                let inserts = positions
+                    .iter()
+                    .zip(live)
+                    .map(|(at, row)| (*at, &row.values()[*position]))
+                    .collect::<Vec<_>>();
+                column.interleave(&inserts)
+            })
+            .collect::<Vec<_>>();
+        let retained_bytes = size_of::<ProjectedColumnChunk>()
+            .saturating_add(
+                columns
+                    .capacity()
+                    .saturating_mul(size_of::<DecodedColumn>()),
+            )
+            .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
+        if retained_bytes > decode_limit {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: 0,
+                requested: retained_bytes,
+                limit: decode_limit,
+            });
         }
-        values_chunk(columns, rows.len(), memory_limit).map(Some)
+        Ok(ProjectedColumnChunk {
+            columns,
+            row_count: row_count + live.len(),
+            stats,
+            retained_bytes,
+        })
     }
 
     /// The filter-first path for one row range of a direct segment: the
@@ -2355,11 +2586,9 @@ impl ProjectedScanStream {
     /// row. Ignored for a column that is absent or not an integer. Call
     /// before the first chunk is pulled.
     ///
-    /// The contract changes with it: the memtable's live rows for such a
-    /// segment follow the segment's rows as their own chunk, so chunks no
-    /// longer arrive in key order across that segment. A caller that walks
-    /// the stream by key (reconciliation does) must not name the column;
-    /// the query executor, which orders through its own operators, does.
+    /// The memtable's live rows are placed among the segment's rows by key,
+    /// so the stream stays in key order; a consumer that takes the first
+    /// value it meets for a group sees the same row the merge would show.
     pub fn enable_memtable_overlay(&mut self, key_column_id: u32) {
         let integer = self
             .snapshot

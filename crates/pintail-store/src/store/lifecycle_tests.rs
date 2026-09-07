@@ -306,7 +306,10 @@ fn a_memtable_overlap_is_masked_from_a_direct_decode() {
                 }
             }
         }
-        rows.sort_unstable();
+        assert!(
+            rows.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "the stream stays in key order"
+        );
         rows
     };
     let shape = |stream: &ProjectedScanStream| {

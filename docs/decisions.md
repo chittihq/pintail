@@ -1397,10 +1397,11 @@ unmasked; a single block that does not fit is an honest memory error.
 Two guards keep it exact. The mask takes the memtable's row as the winner
 without comparing versions, so the part is chosen only when every memtable
 row in the segment's span carries a version at least the segment's
-maximum; a stale replay keeps the merge, which compares. And the overlay
-appends the memtable rows after the segment's, so the stream is no longer
-in key order across that segment: it is opt-in through
-`enable_memtable_overlay`, which the executor calls (its operators order
-through sorts) and reconciliation, which walks the stream by key, never
-does. Composite, text and binary keys, segments only partly inside the
-scanned range, and segments retaining versions fall back to the merge.
+maximum; a stale replay keeps the merge, which compares. And the memtable's
+live rows are placed among the segment's rows by key, so the stream stays
+in key order: a `GROUP BY` or `DISTINCT` over a collated column shows the
+row the source would show first, and reconciliation could walk the stream
+by key. The overlay stays opt-in through `enable_memtable_overlay`; the
+executor names the key column, reconciliation keeps the merge. Composite,
+text and binary keys, segments only partly inside the scanned range, and
+segments retaining versions fall back to the merge.
