@@ -71,6 +71,21 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
             // scan. It is also a real tuning knob: two pools each sized to the
             // machine put twice the core count of runnable threads on it
             // whenever aggregation overlaps scanning.
+            //
+            // Stays at the CPU count by default. e65 measured a doubled pool
+            // winning under the CPU quota a typical container deployment
+            // runs under; e88 reproduced no such gain on bare metal, only
+            // added scheduling contention, so there is nothing here to
+            // weigh against leaving it alone (docs/design/
+            // production-hardening-todo.md, section H; experiments/
+            // RESULTS.md e88). Deployments that want the container quota's
+            // benefit can still opt in with the env var.
+            //
+            // A doubled pool did surface a wrong answer under `tests/e2e`
+            // while this was measured, but it is not this default's to
+            // avoid: the same check failed again with the pool back at the
+            // CPU count, at a different row and value, so the width is not
+            // the cause (G14, e90).
             let threads = std::env::var("PINTAIL_SCAN_THREADS")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())

@@ -17,7 +17,7 @@ use crate::collation::Collation;
 use rayon::prelude::*;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, PartitionedBuild, build_hash_join_state,
+    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
     normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
@@ -25,10 +25,10 @@ use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
 };
 use super::{
-    DenseJoinTable, ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker,
-    OneShotStream, PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS,
-    compare_sort_values, estimated_row_payload_bytes, reserve_hash_map_entries,
-    reserve_hash_set_entries, reserve_vec_elements, scalar_string_memory_upper_bound,
+    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker, OneShotStream,
+    PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS, compare_sort_values,
+    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_hash_set_entries,
+    reserve_vec_elements, scalar_string_memory_upper_bound,
 };
 use crate::{
     ColumnVector, RecordBatch,
@@ -117,12 +117,57 @@ pub(super) struct AggregateGroup {
     pub(super) states: Vec<AggregateState>,
 }
 
+/// Widest span (in distinct values) a bitmap will cover. `COUNT(DISTINCT)`
+/// keeps one of these per GROUP, not one per query like a join's build
+/// side, so this is kept well under a join's own dense-table cap - a query
+/// with many groups must not each pin down a multi-megabyte array.
+const DISTINCT_BITMAP_MAX_SPAN: i128 = 1 << 20;
+
+/// Distinct integer keys seen before a bitmap is tried. Below this a
+/// `HashSet`'s overhead already beats any bitmap wide enough to be exact,
+/// so there is nothing to gain from converting yet.
+const DISTINCT_BITMAP_MIN_COUNT: usize = 64;
+
+#[derive(Clone)]
+/// Boxed so the `min`/`max` tracking added for the bitmap (e86) does not
+/// grow every `DistinctSeen` (and so every `AggregateState`) by the size
+/// of two `i128`s: one lives per GROUP, of which a query can have
+/// hundreds of thousands, so that growth alone regressed a two-pass
+/// aggregate's tight memory ceiling past a spill it used to make cleanly
+/// (`tests/sqllogic/tests/two_pass_spill.rs`) even though the group's own
+/// distinct count never got near the bitmap threshold.
+struct IntsSeen {
+    set: HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>,
+    min: i128,
+    max: i128,
+}
+
+#[derive(Clone)]
+/// Boxed for the same reason as [`IntsSeen`]: an `i128` field inline in
+/// an enum variant forces the WHOLE enum to 16-byte alignment, padding
+/// `DistinctSeen` up even when this variant is never the active one -
+/// boxing both `i128`-carrying variants keeps every enum field a plain
+/// pointer-sized value, so `DistinctSeen` costs no more per group than it
+/// did before the bitmap existed.
+struct BitmapSeen {
+    min: i128,
+    bits: Vec<u64>,
+    count: usize,
+}
+
 #[derive(Clone)]
 /// DISTINCT key set. Integer-keyed values dedup through a plain i128 set
-/// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); the
-/// first non-integer key migrates the set to normalized Values.
+/// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); once
+/// enough of them span fewer than `DISTINCT_BITMAP_MAX_SPAN` values, they
+/// move again into a bitmap (e86), which trades the hash-and-probe per key
+/// for one bit test/set. A key that later widens the span past the cap
+/// demotes back to `Ints` - `Ints`'s own running span only ever grows, so
+/// this happens at most once per group. The first non-integer key
+/// migrates whichever of the two is active to normalized Values.
 enum DistinctSeen {
-    Ints(HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>),
+    Ints(Box<IntsSeen>),
+    /// Exact membership over `min..min + bits.len() * 64`.
+    Bitmap(Box<BitmapSeen>),
     Values(HashSet<Value>),
 }
 
@@ -203,9 +248,7 @@ impl DistinctSeen {
         if let Some(key) = int_distinct_key(value) {
             return self.insert_int(key, memory, collation);
         }
-        if let Self::Ints(_) = self {
-            self.migrate_to_values(memory, collation)?;
-        }
+        self.migrate_to_values(memory, collation)?;
         let Self::Values(set) = self else {
             unreachable!()
         };
@@ -232,7 +275,8 @@ impl DistinctSeen {
         collation: Collation,
     ) -> Result<bool, ExecError> {
         match self {
-            Self::Ints(set) => {
+            Self::Ints(ints) => {
+                let IntsSeen { set, min, max } = ints.as_mut();
                 reserve_hash_set_entries(
                     set,
                     1,
@@ -240,10 +284,162 @@ impl DistinctSeen {
                     0,
                     memory,
                 )?;
-                Ok(set.insert(key))
+                let inserted = set.insert(key);
+                if inserted {
+                    *min = (*min).min(key);
+                    *max = (*max).max(key);
+                }
+                if set.len() >= DISTINCT_BITMAP_MIN_COUNT && *max - *min < DISTINCT_BITMAP_MAX_SPAN
+                {
+                    self.promote_to_bitmap(memory)?;
+                }
+                Ok(inserted)
+            }
+            Self::Bitmap(bitmap) => {
+                let BitmapSeen { min, bits, count } = bitmap.as_mut();
+                let span = bits.len().saturating_mul(64);
+                if let Some(offset) = key
+                    .checked_sub(*min)
+                    .and_then(|delta| usize::try_from(delta).ok())
+                    .filter(|offset| *offset < span)
+                {
+                    let word = offset / 64;
+                    let bit = 1_u64 << (offset % 64);
+                    if bits[word] & bit != 0 {
+                        return Ok(false);
+                    }
+                    bits[word] |= bit;
+                    *count += 1;
+                    return Ok(true);
+                }
+                // Past the window the bitmap was sized to when it was
+                // built. A column's true range often only becomes apparent
+                // after many rows (id % 100_000 seen in roughly ascending
+                // order widens its observed span one value at a time for a
+                // long stretch before covering it), so growing to exactly
+                // the newly needed bound thrashed on nearly every insert
+                // just as badly as demote-then-repromote did (e86: 10M
+                // rows regressed 1.5-30x before this was caught). Doubling
+                // the needed span and biasing the extra room toward
+                // whichever side just grew amortizes the reallocation the
+                // same way `Vec`'s own growth does - a handful of
+                // reallocations total instead of one per insert. Only
+                // demotes for good when even the minimum needed span would
+                // not fit the cap.
+                let old_span = i128::try_from(span).unwrap_or(i128::MAX);
+                let needed_min = (*min).min(key);
+                let needed_max = (*min + old_span - 1).max(key);
+                if needed_max - needed_min >= DISTINCT_BITMAP_MAX_SPAN {
+                    self.demote_bitmap_to_ints(key);
+                    return self.insert_int(key, memory, collation);
+                }
+                let needed_span = needed_max - needed_min + 1;
+                let headroom_span = needed_span
+                    .saturating_mul(2)
+                    .min(DISTINCT_BITMAP_MAX_SPAN)
+                    .max(needed_span);
+                let extra = headroom_span - needed_span;
+                let (grow_min, grow_max) = if key > *min + old_span - 1 {
+                    (needed_min, needed_max + extra)
+                } else {
+                    (needed_min - extra, needed_max)
+                };
+                self.grow_bitmap(grow_min, grow_max, memory)?;
+                self.insert_int(key, memory, collation)
             }
             Self::Values(_) => self.insert_value(&int_key_value(key), memory, collation),
         }
+    }
+
+    /// Builds the bitmap over the integer set's current `[min, max]` and
+    /// switches to it (experiments/RESULTS.md e86). Only called once that
+    /// span already passed [`DISTINCT_BITMAP_MAX_SPAN`]'s check.
+    fn promote_to_bitmap(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let Self::Ints(ints) = self else {
+            return Ok(());
+        };
+        let IntsSeen { set, min, max } = ints.as_mut();
+        let span =
+            usize::try_from(*max - *min).expect("checked under DISTINCT_BITMAP_MAX_SPAN") + 1;
+        let words = span.div_ceil(64);
+        memory.reserve(words.saturating_mul(size_of::<u64>()))?;
+        let mut bits = vec![0_u64; words];
+        let count = set.len();
+        for key in set.iter() {
+            let offset = usize::try_from(key - *min).expect("within the span just computed");
+            bits[offset / 64] |= 1_u64 << (offset % 64);
+        }
+        *self = Self::Bitmap(Box::new(BitmapSeen {
+            min: *min,
+            bits,
+            count,
+        }));
+        Ok(())
+    }
+
+    /// Reallocates the bitmap to cover `[new_min, new_max]` (already
+    /// checked against [`DISTINCT_BITMAP_MAX_SPAN`]) and copies its
+    /// existing members across, without inserting anything new - the
+    /// caller's own `insert_int` retry does that.
+    fn grow_bitmap(
+        &mut self,
+        new_min: i128,
+        new_max: i128,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let Self::Bitmap(bitmap) = self else {
+            return Ok(());
+        };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
+        let new_words = usize::try_from(new_max - new_min + 1)
+            .expect("checked span")
+            .div_ceil(64);
+        memory.reserve(
+            new_words
+                .saturating_sub(bits.len())
+                .saturating_mul(size_of::<u64>()),
+        )?;
+        let mut new_bits = vec![0_u64; new_words];
+        for key in bitmap_members(*min, bits) {
+            let offset = usize::try_from(key - new_min).expect("within the new span");
+            new_bits[offset / 64] |= 1_u64 << (offset % 64);
+        }
+        *self = Self::Bitmap(Box::new(BitmapSeen {
+            min: new_min,
+            bits: new_bits,
+            count: *count,
+        }));
+        Ok(())
+    }
+
+    /// Converts an existing bitmap's members back into the general integer
+    /// set, widened to also cover `incoming`. Does not insert `incoming`
+    /// itself - the caller's own `insert_int` retry does that.
+    fn demote_bitmap_to_ints(&mut self, incoming: i128) {
+        let Self::Bitmap(bitmap) = self else {
+            return;
+        };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
+        let mut set = HashSet::with_capacity_and_hasher(
+            count.saturating_add(1),
+            std::hash::BuildHasherDefault::default(),
+        );
+        let mut max = *min + i128::try_from(bits.len().saturating_mul(64)).unwrap_or(i128::MAX) - 1;
+        for (word_index, word) in bits.iter().enumerate() {
+            let mut remaining = *word;
+            while remaining != 0 {
+                let bit = remaining.trailing_zeros();
+                remaining &= remaining - 1;
+                let offset = word_index.saturating_mul(64) + usize::try_from(bit).expect("< 64");
+                set.insert(*min + i128::try_from(offset).expect("within the bitmap's own span"));
+            }
+        }
+        let min = (*min).min(incoming);
+        max = max.max(incoming);
+        // Memory already charged when the bitmap and the set it grew from
+        // were built; this conversion is not itself charged again, matching
+        // `migrate_to_values` below.
+        *self = Self::Ints(Box::new(IntsSeen { set, min, max }));
     }
 
     /// Inserts a key that another distinct set already normalized. Text
@@ -259,9 +455,7 @@ impl DistinctSeen {
         if let Some(int) = int_distinct_key(&key) {
             return self.insert_int(int, memory, collation);
         }
-        if let Self::Ints(_) = self {
-            self.migrate_to_values(memory, collation)?;
-        }
+        self.migrate_to_values(memory, collation)?;
         let Self::Values(set) = self else {
             unreachable!()
         };
@@ -285,29 +479,60 @@ impl DistinctSeen {
         memory: &MemoryTracker,
         collation: Collation,
     ) -> Result<(), ExecError> {
-        if let Self::Ints(ints) = self {
-            let ints = std::mem::take(ints);
-            let mut set = HashSet::with_capacity(ints.len());
-            memory.reserve(
-                ints.len()
-                    .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
-            )?;
-            for key in ints {
-                if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
-                    set.insert(key);
-                }
+        let ints: Vec<i128> = match self {
+            Self::Ints(ints) => std::mem::take(&mut ints.set).into_iter().collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits).collect(),
+            Self::Values(_) => return Ok(()),
+        };
+        let mut set = HashSet::with_capacity(ints.len());
+        memory.reserve(
+            ints.len()
+                .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
+        )?;
+        for key in ints {
+            if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
+                set.insert(key);
             }
-            *self = Self::Values(set);
         }
+        *self = Self::Values(set);
         Ok(())
     }
 
     fn drain_values(self) -> Vec<Value> {
         match self {
-            Self::Ints(set) => set.into_iter().map(int_key_value).collect(),
+            Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
+                .map(int_key_value)
+                .collect(),
             Self::Values(set) => set.into_iter().collect(),
         }
     }
+}
+
+/// Every member a distinct bitmap holds, as the raw integer keys it packs.
+///
+/// Visits only the set bits (`trailing_zeros` plus clearing the lowest set
+/// bit each step), not all 64 positions of every word: a bitmap sized to a
+/// column's full range but holding a sparse subset - the common case for
+/// one parallel morsel's own partial distinct set before it merges into the
+/// group's - must not pay for the positions that are not there.
+fn bitmap_members(min: i128, bits: &[u64]) -> impl Iterator<Item = i128> + '_ {
+    bits.iter().enumerate().flat_map(move |(word_index, word)| {
+        let mut remaining = *word;
+        std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            let bit = remaining.trailing_zeros();
+            remaining &= remaining - 1;
+            Some(
+                min + i128::try_from(
+                    word_index.saturating_mul(64) + usize::try_from(bit).expect("< 64"),
+                )
+                .expect("within the bitmap's own span"),
+            )
+        })
+    })
 }
 
 #[derive(Clone)]
@@ -457,9 +682,13 @@ impl AggregateState {
         Self {
             collation: aggregate.collation,
             value,
-            seen: aggregate
-                .distinct
-                .then(|| DistinctSeen::Ints(HashSet::default())),
+            seen: aggregate.distinct.then(|| {
+                DistinctSeen::Ints(Box::new(IntsSeen {
+                    set: HashSet::default(),
+                    min: i128::MAX,
+                    max: i128::MIN,
+                }))
+            }),
             extreme_number: None,
             extreme_units: None,
         }
@@ -3503,50 +3732,29 @@ fn build_fused_inner_join_aggregate(
         *state = Some(Box::new(join));
         return Ok(None);
     }
-    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
-    // Integer-mode build keys occupying a small dense range trade the
-    // per-probe evaluate+hash for one bounds-checked index lookup. MySQL
-    // auto-increment keys make this the common case, not the exception.
-    let dense: Option<DenseJoinTable<'_>> =
-        if matches!(key_mode, JoinKeyMode::Integer) && !join.build.is_empty() {
-            let mut min = i128::MAX;
-            let mut max = i128::MIN;
-            let mut integers = true;
-            for key in join.build.keys() {
-                match key {
-                    JoinHashKey::NegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    JoinHashKey::NonNegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    _ => {
-                        integers = false;
-                        break;
-                    }
-                }
-            }
-            if integers && max - min < MAX_DENSE_SPAN {
-                let span = usize::try_from(max - min).expect("bounded span") + 1;
-                let mut table: Vec<Option<&Vec<Vec<Value>>>> = vec![None; span];
-                for (key, bucket) in join.build.iter() {
-                    let value = match key {
-                        JoinHashKey::NegativeInteger(value) => i128::from(*value),
-                        JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
-                        _ => unreachable!("verified integer keys"),
-                    };
-                    table[usize::try_from(value - min).expect("within span")] = Some(bucket);
-                }
-                Some((min, table))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, group_collation)?;
+    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x; e85):
+    // `build_hash_join_state` already finalized `join.build` to a dense,
+    // hash-free table when its keys are a plain integer set in a small
+    // range - MySQL auto-increment keys make this the common case, not the
+    // exception. What is fused-aggregate-specific is resolved here, once
+    // per distinct key: which group each bucket's rows fold into, so a
+    // probe row that hit the dense table needs no further lookup (the
+    // `plan.buckets` address map below stays for the non-dense fallback,
+    // and for grace-spilled builds, where nothing is finalized to dense).
+    let dense_group_indexes: Vec<Option<&[usize]>> = if join.build.is_dense() {
+        join.build
+            .dense_buckets()
+            .iter()
+            .map(|bucket| {
+                plan.buckets
+                    .get(&(std::ptr::from_ref(bucket) as usize))
+                    .map(Vec::as_slice)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     // What one morsel allocates: the plan's whole group set, cloned up
     // front, plus a state per aggregate per group. The groups are FIXED by
@@ -3632,7 +3840,7 @@ fn build_fused_inner_join_aggregate(
                     left_width,
                     aggregates,
                     &join.build,
-                    dense.as_ref(),
+                    &dense_group_indexes,
                     &plan,
                     memory,
                 )
@@ -3688,7 +3896,6 @@ fn build_fused_inner_join_aggregate(
             pull_us
         );
     }
-    drop(dense);
     drop(join);
     memory.release(build_reserved);
     Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
@@ -3703,7 +3910,7 @@ fn build_local_fused_join_groups(
     left_width: usize,
     aggregates: &[CompiledAggregate],
     build: &PartitionedBuild,
-    dense: Option<&DenseJoinTable<'_>>,
+    dense_group_indexes: &[Option<&[usize]>],
     plan: &JoinGroupPlan,
     parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
@@ -3724,41 +3931,49 @@ fn build_local_fused_join_groups(
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
-    let left_typed = dense.and_then(|_| {
-        left_key
-            .column_index()
-            .and_then(|column| batch.column(column))
-            .and_then(ColumnVector::typed)
-            .filter(|(typed, _)| {
-                matches!(
-                    typed,
-                    crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
-                )
-            })
-    });
+    let left_typed = build
+        .is_dense()
+        .then(|| left_key.column_index())
+        .flatten()
+        .and_then(|column| batch.column(column))
+        .and_then(ColumnVector::typed)
+        .filter(|(typed, _)| {
+            matches!(
+                typed,
+                crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
+            )
+        });
     for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
-        let matches = if let (Some((min, table)), Some((typed, validity))) = (dense, left_typed) {
+        let (matches, indexes) = if let Some((typed, validity)) = left_typed {
             if !validity.is_valid(row) {
                 continue;
             }
-            let candidate = match typed {
-                crate::batch::TypedValues::Int64(values) => i128::from(values[row]),
-                crate::batch::TypedValues::UInt64(values) => i128::from(values[row]),
+            let key = match typed {
+                crate::batch::TypedValues::Int64(values) => {
+                    let candidate = values[row];
+                    if candidate < 0 {
+                        JoinHashKey::NegativeInteger(candidate)
+                    } else {
+                        JoinHashKey::NonNegativeInteger(
+                            u64::try_from(candidate).expect("non-negative i64 fits u64"),
+                        )
+                    }
+                }
+                crate::batch::TypedValues::UInt64(values) => {
+                    JoinHashKey::NonNegativeInteger(values[row])
+                }
                 _ => unreachable!("filtered to integer projections"),
             };
-            let Some(offset) = candidate
-                .checked_sub(*min)
-                .and_then(|delta| usize::try_from(delta).ok())
-            else {
+            let Some((flat_index, matches)) = build.dense_get(&key) else {
                 continue;
             };
-            match table.get(offset) {
-                Some(Some(bucket)) => *bucket,
-                _ => continue,
-            }
+            let Some(indexes) = dense_group_indexes[flat_index] else {
+                continue;
+            };
+            (matches, indexes)
         } else {
             let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
                 continue;
@@ -3766,14 +3981,14 @@ fn build_local_fused_join_groups(
             let Some(matches) = build.get(&key) else {
                 continue;
             };
-            matches
+            let indexes = plan
+                .buckets
+                .get(&(std::ptr::from_ref(matches) as usize))
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                    "probe matched a bucket outside the resolved group plan",
+                ))?;
+            (matches, indexes.as_slice())
         };
-        let indexes = plan
-            .buckets
-            .get(&(std::ptr::from_ref(matches) as usize))
-            .ok_or(ExecError::InvalidPhysicalPlan(
-                "probe matched a bucket outside the resolved group plan",
-            ))?;
         for (right_values, group_index) in matches.iter().zip(indexes) {
             let group_index = *group_index;
             touched[group_index] = true;
@@ -5038,5 +5253,151 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }
+    }
+}
+
+#[cfg(test)]
+mod distinct_bitmap_tests {
+    use super::{
+        DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, IntsSeen, MemoryTracker,
+    };
+    use crate::collation::Collation;
+    use pintail_types::Value;
+    use std::collections::HashSet;
+
+    fn ints() -> DistinctSeen {
+        DistinctSeen::Ints(Box::new(IntsSeen {
+            set: HashSet::default(),
+            min: i128::MAX,
+            max: i128::MIN,
+        }))
+    }
+
+    /// The general (hashed) path's answer for a batch of keys, including
+    /// duplicates - what the bitmap path must reproduce exactly.
+    fn expected_count(keys: &[i128]) -> usize {
+        keys.iter().collect::<HashSet<_>>().len()
+    }
+
+    #[test]
+    fn a_narrow_span_promotes_to_a_bitmap_and_agrees_with_the_hashed_count() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        // Past DISTINCT_BITMAP_MIN_COUNT keys, all within a few hundred of
+        // each other, plus duplicates of the first few - the bitmap must
+        // count each distinct key once regardless of how many times it is
+        // seen again.
+        let mut keys: Vec<i128> = (0..(DISTINCT_BITMAP_MIN_COUNT as i128 + 50)).collect();
+        keys.extend([0, 1, 2, 2, 2]); // duplicates
+        let mut inserted_new = 0;
+        for &key in &keys {
+            if seen
+                .insert_int(key, &memory, Collation::default())
+                .expect("insert")
+            {
+                inserted_new += 1;
+            }
+        }
+        assert!(
+            matches!(seen, DistinctSeen::Bitmap(_)),
+            "a span this narrow, with more than DISTINCT_BITMAP_MIN_COUNT keys, must promote"
+        );
+        assert_eq!(inserted_new, expected_count(&keys));
+        // drain_values must recover exactly the distinct set, not the
+        // insertion count or anything bitmap-shaped.
+        let mut drained: Vec<i128> = seen
+            .drain_values()
+            .into_iter()
+            .map(|value| match value {
+                Value::Int64(value) => i128::from(value),
+                Value::UInt64(value) => i128::from(value),
+                other => panic!("unexpected value {other:?}"),
+            })
+            .collect();
+        drained.sort_unstable();
+        let mut expected: Vec<i128> = keys
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(drained, expected);
+    }
+
+    #[test]
+    fn a_span_past_the_cap_never_promotes() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        // One key far enough away that min..=max exceeds the cap.
+        seen.insert_int(
+            DISTINCT_BITMAP_MAX_SPAN + 100,
+            &memory,
+            Collation::default(),
+        )
+        .expect("insert");
+        assert!(
+            matches!(seen, DistinctSeen::Ints(_)),
+            "a span past DISTINCT_BITMAP_MAX_SPAN must stay hashed rather than allocate a huge table"
+        );
+    }
+
+    #[test]
+    fn a_bitmap_that_outgrows_its_window_demotes_and_keeps_every_member_exact() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        let mut keys: Vec<i128> = (0..(DISTINCT_BITMAP_MIN_COUNT as i128 + 10)).collect();
+        for &key in &keys {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)), "promotes first");
+        // Far outside the bitmap's window, and wide enough on its own to
+        // rule out ever re-promoting.
+        let far = DISTINCT_BITMAP_MAX_SPAN * 2;
+        keys.push(far);
+        let inserted = seen
+            .insert_int(far, &memory, Collation::default())
+            .expect("insert past the window");
+        assert!(inserted, "a genuinely new key must still count as new");
+        assert!(
+            matches!(seen, DistinctSeen::Ints(_)),
+            "outgrowing the bitmap's window demotes back to the general set"
+        );
+        let mut drained: Vec<i128> = seen
+            .drain_values()
+            .into_iter()
+            .map(|value| match value {
+                Value::Int64(value) => i128::from(value),
+                Value::UInt64(value) => i128::from(value),
+                other => panic!("unexpected value {other:?}"),
+            })
+            .collect();
+        drained.sort_unstable();
+        let mut expected = keys;
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(drained, expected);
+    }
+
+    #[test]
+    fn a_repeated_key_is_not_counted_twice_once_dense() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)));
+        assert!(
+            !seen
+                .insert_int(0, &memory, Collation::default())
+                .expect("re-insert"),
+            "a key already in the bitmap must report itself as not new"
+        );
     }
 }

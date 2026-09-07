@@ -4534,9 +4534,6 @@ fn validate_union_fields(layouts: &[Vec<OutputField>]) -> Result<(), ExecError> 
     Ok(())
 }
 
-/// Dense direct-address join table: (minimum key, per-offset build buckets).
-type DenseJoinTable<'a> = (i128, Vec<Option<&'a Vec<Vec<Value>>>>);
-
 fn scalar_string_memory_upper_bound(value: &Value) -> usize {
     match value {
         Value::Null => 0,

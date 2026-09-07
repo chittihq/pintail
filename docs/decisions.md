@@ -1605,3 +1605,69 @@ Eligibility is a syntax gate over the parsed statement rather than the
 bound plan, and it matches names rather than reasoning about position: a
 column called `version` is refused sharing. Over-refusal costs an
 opportunity; under-refusal would cost an answer.
+
+### The dense join table lives inside `PartitionedBuild`, not beside it
+
+The fused join-aggregate already built a throwaway direct-address table
+for an integer build key in a narrow span: a local `(minimum, Vec<Option<&
+bucket>>)` borrowing from the hash-partitioned build side, read for one
+query and dropped. Extending that to the general hash-join probe
+(`next_hash_join_batch`) meant holding the same kind of borrow alongside
+the `PartitionedBuild` it borrows from, across calls - a self-referential
+struct. The workspace forbids `unsafe_code` outright, and pulling in a
+crate for self-referential types is not the one dependency exception this
+repo carries, so neither of the usual ways to express that shape was
+available.
+
+The alternative taken: `PartitionedBuild` finalizes itself into the dense
+form in place. Once every row is inserted and the build did not spill,
+`finalize_dense` drains its hashed partitions into one flat
+`Vec<Vec<Vec<Value>>>` plus a per-offset index into it, when the keys are
+a plain integer set under `MAX_DENSE_SPAN` (4M slots - wide enough for
+real key ranges, capped so a sparse int column with two far-apart values
+never allocates a table sized to their gap); `get` checks that index
+first. Every reader of `get` - the general hash-join probe included -
+gets the dense path for free, with no change to its own code, and no
+reference crosses a struct boundary: the flat array is owned data, not a
+borrow.
+
+The fused join-aggregate keeps one thing of its own: which output group
+each bucket's rows fold into, resolved once per distinct key right after
+the dense table exists (not stored in `PartitionedBuild`, since only this
+one caller needs it) so a probe row that hits the dense table needs no
+further lookup. A further idea - splitting the probe into a pass that
+resolves every row's dense offset before any of them fold into a group,
+so the fold reads a stream of already-known offsets instead of resolving
+one write at a time - measured slower on a 10M-row, 100K-key fixture
+(`experiments/RESULTS.md` e85): the second pass's own allocation and
+extra traversal cost more than the resolved offsets saved. Kept as a
+single pass.
+
+### A distinct bitmap grows with headroom rather than tracking its exact bound
+
+`COUNT(DISTINCT)`'s bitset (`DistinctSeen::Bitmap`) is sized once a
+group's integer keys pass a count threshold and their span fits a cap,
+the same shape as the join's dense table. Unlike a join's build side,
+though, this bitmap keeps receiving new keys after it exists - the
+column's real range is rarely known up front, and a value can arrive at
+any time that falls outside the window the bitmap was built with.
+
+The first two shapes tried both tracked that window exactly and paid for
+it on every out-of-window insert: demoting the bitmap back to a hash set
+and immediately re-promoting it at the barely-wider span the very next
+call, and (once that was replaced) reallocating the array to the exact
+new bound each time. Both are the same failure in different clothes -
+`experiments/RESULTS.md` e86 measured the first at 1.5-30x slower than
+never bitmapping at all, on a column whose values arrive in roughly
+ascending order and so keep exceeding the window by a small amount for a
+long stretch. `Vec` and `HashSet` solved exactly this problem for their
+own resizing decades ago: grow by more than what is needed right now, so
+the added capacity absorbs many future insertions before another
+reallocation is due. The bitmap now doubles the needed span (capped at
+the same limit that gates promotion) and biases the extra room toward
+whichever side just grew, turning a reallocation-per-insert into a
+handful of reallocations for the whole column. A span that still would
+not fit even at the minimum needed width demotes to the hash set for
+good, matching the join table's own "correctness never depends on the
+range guess" rule - the guess only ever costs performance, never an
+exact answer.

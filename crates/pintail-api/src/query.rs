@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use axum::{
     Extension, Json,
@@ -7,9 +8,11 @@ use axum::{
 use pintail_meta::{DatabaseRecord, TableRecord};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_types::{DataType, KeyMode, TableSchema, Value};
-use pintail_wire::{QueryError, ReplicaEngine};
-use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value as JsonValue};
+use pintail_wire::QueryError;
+use serde::{
+    Deserialize, Serialize,
+    ser::{SerializeSeq, Serializer},
+};
 
 use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError};
 
@@ -60,9 +63,75 @@ pub(crate) struct QueryStats {
 #[derive(Serialize)]
 pub(crate) struct QueryResponse {
     fields: Vec<QueryField>,
-    rows: Vec<Vec<JsonValue>>,
+    rows: JsonRows,
     stats: QueryStats,
     truncated: bool,
+}
+
+/// The engine's own row values, serialized straight to the response writer.
+///
+/// The previous shape mapped every value through `value_to_json` into a
+/// `Vec<Vec<serde_json::Value>>` before axum's `Json` handed it to serde -
+/// one full extra tree the same size as the response, allocated and then
+/// immediately walked again to write bytes. This wrapper owns the engine's
+/// `Vec<Vec<Value>>` unchanged and implements `Serialize` directly against
+/// it, so the JSON on the wire is byte-identical (same numbers, strings,
+/// `0x`-prefixed binary, `null` for SQL NULL and non-finite floats) without
+/// ever materializing the intermediate tree.
+struct JsonRows(Vec<Vec<Value>>);
+
+impl JsonRows {
+    fn first_cell(&self) -> Option<&Value> {
+        self.0.first().and_then(|row| row.first())
+    }
+}
+
+impl Serialize for JsonRows {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut rows = serializer.serialize_seq(Some(self.0.len()))?;
+        for row in &self.0 {
+            rows.serialize_element(&JsonRow(row))?;
+        }
+        rows.end()
+    }
+}
+
+struct JsonRow<'a>(&'a [Value]);
+
+impl Serialize for JsonRow<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut cells = serializer.serialize_seq(Some(self.0.len()))?;
+        for value in self.0 {
+            cells.serialize_element(&JsonCell(value))?;
+        }
+        cells.end()
+    }
+}
+
+struct JsonCell<'a>(&'a Value);
+
+impl Serialize for JsonCell<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            Value::Null => serializer.serialize_none(),
+            Value::Boolean(value) => serializer.serialize_bool(*value),
+            Value::Int64(value) => serializer.serialize_i64(*value),
+            Value::UInt64(value) => serializer.serialize_u64(*value),
+            Value::Float64(value) => {
+                let value = value.get();
+                if value.is_finite() {
+                    serializer.serialize_f64(value)
+                } else {
+                    serializer.serialize_none()
+                }
+            }
+            // JSON callers receive the label, matching the wire surface.
+            Value::Utf8(value) | Value::Enum { label: value, .. } => {
+                serializer.serialize_str(value)
+            }
+            Value::Binary(value) => serializer.serialize_str(&format!("0x{}", encode_hex(value))),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -314,12 +383,12 @@ pub(crate) async fn table_count(
         quote_identifier(&name)
     );
     let response = execute_query(&state, &query.db, &sql).await?;
-    let count = response
-        .rows
-        .first()
-        .and_then(|row| row.first())
-        .and_then(JsonValue::as_u64)
-        .ok_or_else(|| ApiError::internal("count query did not return an unsigned integer"))?;
+    let count = match response.rows.first_cell() {
+        Some(Value::UInt64(count)) => Some(*count),
+        Some(Value::Int64(count)) => u64::try_from(*count).ok(),
+        _ => None,
+    }
+    .ok_or_else(|| ApiError::internal("count query did not return an unsigned integer"))?;
     Ok(Json(CountResponse { count }))
 }
 
@@ -336,9 +405,14 @@ async fn execute_query(
     database_id: &str,
     sql: &str,
 ) -> Result<QueryResponse, ApiError> {
-    let engine = ReplicaEngine::new(state.data_dir()?, state.metadata_path()?)
+    let debug = std::env::var_os("PINTAIL_API_DEBUG").is_some();
+    let started = Instant::now();
+    let engine = state
+        .replica_engine()?
         .with_memory_limit(state.query_memory_limit());
+    let engine_ms = started.elapsed().as_secs_f64() * 1_000.0;
     let (database_id, sql) = (database_id.to_owned(), sql.to_owned());
+    let spawn_started = Instant::now();
     let output = tokio::task::spawn_blocking(move || {
         // Nested executions belong to this HTTP query for both victim
         // selection and cancellation, just as they do on the wire path.
@@ -350,16 +424,13 @@ async fn execute_query(
     .await
     .map_err(|error| ApiError::internal(format!("query worker failed: {error}")))?
     .map_err(query_error)?;
+    let spawn_ms = spawn_started.elapsed().as_secs_f64() * 1_000.0;
     state.record_query(
         output.stats.duration_ms,
         u64::try_from(output.stats.rows).unwrap_or(u64::MAX),
     );
-    let rows = output
-        .rows
-        .iter()
-        .map(|row| row.iter().map(value_to_json).collect())
-        .collect::<Vec<_>>();
-    Ok(QueryResponse {
+    let serialize_started = Instant::now();
+    let response = QueryResponse {
         fields: output
             .fields
             .into_iter()
@@ -380,9 +451,24 @@ async fn execute_query(
             blocks_pruned: output.stats.blocks_pruned,
             blocks_decoded: output.stats.blocks_decoded,
         },
-        rows,
+        rows: JsonRows(output.rows),
         truncated: output.truncated,
-    })
+    };
+    // `rows` above only wraps the values; the actual conversion happens
+    // later when axum's `Json` extractor serializes the response body, so
+    // `serialize_ms` here is everything else in this function (mostly the
+    // `fields`/`stats` reshaping) rather than the row cost itself.
+    if debug {
+        #[allow(clippy::cast_precision_loss)]
+        let engine_reported_ms = response.stats.duration_ms as f64;
+        eprintln!(
+            "[api] query: engine={engine_ms:.2}ms spawn_blocking={spawn_ms:.2}ms \
+             (engine reported {engine_reported_ms:.2}ms of it) reshape={:.2}ms total={:.2}ms",
+            serialize_started.elapsed().as_secs_f64() * 1_000.0,
+            started.elapsed().as_secs_f64() * 1_000.0,
+        );
+    }
+    Ok(response)
 }
 
 fn query_error(error: QueryError) -> ApiError {
@@ -466,21 +552,6 @@ fn load_database(state: &ApiState, database_id: &str) -> Result<DatabaseRecord, 
         .database(database_id)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found("database does not exist"))
-}
-
-fn value_to_json(value: &Value) -> JsonValue {
-    match value {
-        Value::Null => JsonValue::Null,
-        Value::Boolean(value) => JsonValue::Bool(*value),
-        Value::Int64(value) => JsonValue::Number(Number::from(*value)),
-        Value::UInt64(value) => JsonValue::Number(Number::from(*value)),
-        Value::Float64(value) => {
-            Number::from_f64(value.get()).map_or(JsonValue::Null, JsonValue::Number)
-        }
-        // JSON callers receive the label, matching the wire surface.
-        Value::Utf8(value) | Value::Enum { label: value, .. } => JsonValue::String(value.clone()),
-        Value::Binary(value) => JsonValue::String(format!("0x{}", encode_hex(value))),
-    }
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
@@ -587,11 +658,56 @@ fn probed_table_facts(probe_json: Option<&str>) -> BTreeMap<String, ProbedTableF
 
 #[cfg(test)]
 mod tests {
-    use super::{TableSummary, durable_key_mode, query_error};
+    use super::{JsonRows, TableSummary, durable_key_mode, query_error};
     use axum::http::StatusCode;
     use pintail_meta::TableRecord;
-    use pintail_types::KeyMode;
+    use pintail_types::{KeyMode, Value};
     use pintail_wire::QueryError;
+
+    /// `JsonRows` serializes straight from `Value` without ever building a
+    /// `serde_json::Value` tree; this pins its output to the shape the old
+    /// tree-building `value_to_json` produced; for one row per variant plus
+    /// NULLs and a duplicate, so a shape this covers cannot silently drift.
+    #[test]
+    fn json_rows_matches_the_tree_building_shape_it_replaced() {
+        let rows = JsonRows(vec![
+            vec![Value::Null, Value::Boolean(true), Value::Boolean(false)],
+            vec![Value::Int64(-7), Value::UInt64(7), Value::UInt64(7)],
+            vec![
+                Value::float64(1.5),
+                Value::float64(f64::NAN),
+                Value::float64(f64::INFINITY),
+            ],
+            vec![
+                Value::Utf8("hi".to_owned()),
+                Value::Enum {
+                    index: 2,
+                    label: "b".to_owned(),
+                },
+            ],
+            vec![Value::Binary(vec![0xDE, 0xAD, 0xBE, 0xEF])],
+        ]);
+        let json = serde_json::to_value(&rows).expect("rows serialize");
+        assert_eq!(
+            json,
+            serde_json::json!([
+                [null, true, false],
+                [-7, 7, 7],
+                [1.5, null, null],
+                ["hi", "b"],
+                ["0xdeadbeef"],
+            ])
+        );
+    }
+
+    #[test]
+    fn json_rows_first_cell_reads_the_first_row_first_column() {
+        assert_eq!(JsonRows(vec![]).first_cell(), None);
+        assert_eq!(
+            JsonRows(vec![vec![Value::UInt64(42), Value::Null]]).first_cell(),
+            Some(&Value::UInt64(42))
+        );
+    }
 
     fn table(state: &str, key: Option<&str>) -> TableRecord {
         TableRecord {

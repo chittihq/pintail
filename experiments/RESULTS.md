@@ -3216,3 +3216,389 @@ What is not measured here: the admission permit. A waiting request keeps
 the permit it took, so this removes executions rather than freeing slots,
 and the throughput it buys is the queue draining faster rather than more
 queries being admitted at once.
+
+## e83 — The resource sampler was racing an SSH connection, not the query
+
+`benchmark/run.ts`'s CPU/memory sampler ran `docker stats --no-stream`
+once every 250 ms in a loop. Over the ssh:// docker context that call pays
+a fresh SSH round trip each time; on a sub-second query the sampler could
+start and stop without a single `--no-stream` call completing, which is
+why `benchmark/results.md`'s CPU column reads 0% on six of the eight
+queries in the "Engine speed (memo DISABLED)" row set despite one of them
+(Q6) also showing 39% from a run where a call happened to land.
+
+Fix: one `docker stats <container>` (streaming, not `--no-stream`) spawned
+per container the first time it is sampled and left running for the rest
+of the process; `sampled()` now marks a start/stop index into that
+stream's growing sample list instead of spawning a process per tick. The
+streaming format turned out to interleave cursor-home/clear-line/clear-
+screen escape codes with each refresh (a mode built for a redrawn
+terminal, not a pipe), so a data line opens with `\x1b[H` and closes with
+`\x1b[K`; the reader strips `\x1b\[[0-9;]*[A-Za-z]` before parsing.
+
+Verified locally (Docker Desktop, not the shared benchmark host — this
+checks the mechanism, not a query's real CPU%): a container running four
+CPU-bound loops under `--cpus=4`, sampled for 4 seconds. Before the fix,
+`--no-stream` in a loop over a local (non-SSH) daemon still occasionally
+returns zero samples within a short window because the loop's own 250 ms
+`Bun.sleep` plus process-spawn latency can outlast the window; after the
+fix, the same window reliably reads several samples with peak CPU near
+the container's 400% ceiling:
+
+| approach | window | samples seen | peak CPU read |
+|---|---:|---:|---:|
+| `--no-stream` loop (`benchmark/run.ts` before) | 4 s | 0 | 0% |
+| long-lived stream (after) | 4 s | 7 | 401% |
+
+The SSH round-trip cost that motivated this — and that produces the 0%
+rows in `benchmark/results.md` — only reproduces on the shared remote
+docker host; re-running the full benchmark to confirm the fixed column is
+the owner's call (`benchmark/run.ts` is the stable-release gate, not a
+mid-flow tool).
+
+**Verdict: keep.** No engine code changed; this only makes the evidence
+the harness already collects honest.
+
+## e84 — The HTTP path's fixed cost: one engine, one auth cache (loopback, release build, local database)
+
+`execute_query` (`crates/pintail-api/src/query.rs`) built a fresh
+`ReplicaEngine` per request and mapped every value through an intermediate
+`serde_json::Value` tree; `authenticate_api_key`
+(`crates/pintail-api/src/auth.rs`) hashed and looked the key up in
+metadata on every call. e65 measured this at 25-40 ms outside the engine
+per query on the 20M-row benchmark.
+
+Fixes: one `ReplicaEngine` held on `ApiState` and cloned per request
+(shares its metadata-signature memo and signature-reader connection,
+which a fresh instance loses); an in-process API-key cache keyed by the
+presented secret's SHA-256, TTL 30s, cleared immediately on
+disable/delete; rows serialize straight from `Value` into the response
+writer via a manual `Serialize` impl (`JsonRows`) instead of building a
+`Vec<Vec<serde_json::Value>>` first. Timings behind `PINTAIL_API_DEBUG`.
+
+Measured against a release build on loopback with a LOCAL database
+(`POST /api/databases/local` - no MySQL/CDC involved, so this isolates
+the HTTP/auth/engine path from scan or aggregate cost) running `SELECT
+1`, five calls:
+
+| call | engine ms | spawn_blocking ms | reshape ms |
+|---|---:|---:|---:|
+| 1st (cold) | 0.00 | 1.20 | 0.00 |
+| 2nd-5th | 0.00 | 0.08-0.16 | 0.00 |
+
+`engine=0.00ms` on every call: building the engine is now an `Arc` clone.
+`spawn_blocking` drops after the first call because the metadata-signature
+memo and signature-reader connection now survive between requests instead
+of being rebuilt every time. API-key auth: 0.43 ms on the first request
+(a real metadata hit), 0.00 ms on the next two (cache hit); disabling the
+key made the very next request 401 immediately (TTL invalidation is not
+what caught it - the explicit `invalidate_api_key` call on disable was).
+
+Not measured here: the JSON-tree-vs-direct-serialize difference on a real
+row set (`SELECT 1` is one row) and the full 20M-row benchmark's HTTP
+column, both of which need the containerized replica and are the owner's
+next full run to bank.
+
+**Verdict: keep.** `crates/pintail-api/src/query.rs` and `state.rs` gained
+unit tests for the new serialization shape and the cache's TTL/invalidation;
+the crate's existing HTTP integration suite (which exercises the full
+request path) passes unchanged.
+
+## e85 — Dense join table extended to every reader; batching the probe measured negative (10M rows, 100K-key build, 32 threads, memo off)
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "fused join + group,
+100K-key dim": a 100,000-row dimension table (8 distinct region names, like
+`benchmark/queries.ts`'s Q8) joined to the 10M-row fact table and grouped
+by region - the shape the fused join-aggregate's dense probe already had
+in reach, at Q8's real cardinality rather than the existing 50-row-dim
+case's. Minimum of 7-9 runs each; the host's spread across runs was real
+(medians moved more than the effect being measured), so the minimum is
+the number read, matching this file's convention elsewhere.
+
+| build | min | median |
+|---|---:|---:|
+| before (fused-only dense table, per-row `plan.buckets` address lookup) | 156.5 ms | 162.6 ms |
+| after (`PartitionedBuild` finalizes dense in place; group indexes resolved once per key) | 143.2-151.1 ms (three runs) | 148.6-170.1 ms |
+| after, plus batching the probe into two passes | 143.6-180.9 ms | 148.6-184.5 ms |
+
+The single-pass version is a real, modest win (~5-9% at the minimum,
+consistent across three separate runs never exceeding the before
+figure). The two-pass version - precompute every row's dense offset in
+one pass, fold in a second - was tried because the brief called for it
+directly; measured, it made the same case slower on one run (180.9 ms)
+and no better than the single-pass version on the others. At this
+build size (100K distinct keys, comfortably inside cache) the dense
+table gather was not the bottleneck the two-pass split was written to
+fix, and the extra `Vec` allocation plus a second full traversal per
+morsel cost more than it saved. Reverted; see "The dense join table
+lives inside `PartitionedBuild`, not beside it" in `docs/decisions.md`
+for what was kept.
+
+Full crate suite (350 existing + 3 new `dense_join_table_tests`) passes
+unchanged, including the fused-join-and-spill, mixed-collation-join, and
+join-accounting tests that already exercised this path.
+
+**Verdict: keep the single-pass dense extension; drop the two-pass
+batching.** `PartitionedBuild::get` is now dense-aware for every caller,
+not only the fused aggregate, closing that part of item 2 in
+`docs/design/production-hardening-todo.md` section H; the probe-batching
+half of that item did not survive measurement.
+
+## e86 — Bitset `COUNT(DISTINCT)`: a real 25% win, after a thrashing bug measured 1.5-30x slower
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "count distinct,
+100K-value column": Q7's shape (`benchmark/queries.ts`) - a handful of
+groups, each counting `COUNT(DISTINCT id % 100000)` over its share of
+10M rows, so the column's real cardinality (100,000) is far above the
+group count and comfortably inside the new bitmap's span cap. Minimum of
+7-9 runs.
+
+`DistinctSeen`'s existing `Ints` variant (a `HashSet<i128>`, already
+faster than the general `Value`-keyed path per e16) now promotes to a
+bitmap once a group's distinct integers pass 64 in count and span fewer
+than `DISTINCT_BITMAP_MAX_SPAN` (2^20) values - trading the hash-and-probe
+per key for one bit test/set.
+
+First attempt, measured: **slower**, not faster.
+
+| build | 10M rows, min | 150K rows, min |
+|---|---:|---:|
+| before (HashSet only) | 710.1 ms | 14.2 ms |
+| bitmap, demote-and-immediately-retry past the window | 1,102.6-1,262.2 ms | 440.8-458.8 ms |
+| bitmap, grow the window to the exact new bound | (not separately measured - same failure mode) | |
+| bitmap, grow with doubling headroom | **523.5-533.0 ms** | **11.8-12.7 ms** |
+
+Cause: `id % 100_000` seen in roughly ascending order widens a group's
+observed span by a handful of values at a time for a long stretch before
+it has covered the column's real range. The first design demoted a
+bitmap back to `Ints` the moment a new key fell outside the window it was
+built with, then immediately re-promoted at the (slightly) wider span on
+the very next `insert_int` call inside the same retry - converting the
+member set to a `HashSet` and back to a fresh array on nearly every new
+distinct value, for as long as the range kept widening. Growing the
+window in place to the exact new bound instead of demoting has the same
+failure shape one level down: reallocating and copying the whole bitmap
+on every insert that pushes the bound out by one. Growing with doubling
+headroom (in the direction that just grew, capped at the span limit) is
+what fixed it - the same amortized-growth trick `Vec` itself uses - and
+is what is banked here: a handful of reallocations total instead of one
+per insert. The 150K-row case is the sharper signal: fewer real rows
+means the per-insert reallocation overhead so dominated the first two
+attempts that they were 30-70x slower than doing nothing at all.
+
+Full crate suite (357 tests, four of them
+`distinct_bitmap_tests` new for this) passes, including the existing
+distinct-under-spill test.
+
+**Verdict: keep the doubling-headroom version.** ~25% faster at the
+minimum on the 10M-row case, consistent across three separate runs. Not
+banked here: `docs/decisions.md` records the alternative (demote vs.
+grow vs. grow-with-headroom) for section H item 3 in
+`docs/design/production-hardening-todo.md`.
+
+Addendum, caught by `--profile rc`: the `min`/`max` fields this entry's
+design added to `DistinctSeen::Ints`, and the `min` field on `Bitmap`,
+are each an `i128` sitting directly in an enum variant - which forces the
+WHOLE enum to 16-byte alignment and pads its size up, in every
+`AggregateState` a query holds, whether or not that group's distinct set
+ever touches the bitmap path. `tests/sqllogic/tests/two_pass_spill.rs`
+holds hundreds of thousands of `AggregateState`s live under a tight
+24 MiB ceiling specifically to exercise its spill path; the padding was
+enough to push it past a spill the unboxed version used to make cleanly,
+and the gate caught it (`unit` stage, `a_spilled_two_pass_aggregation_
+matches_the_in_memory_groups_exactly`). Boxing both payloads
+(`Ints(Box<IntsSeen>)`, `Bitmap(Box<BitmapSeen>)`) removes every inline
+`i128` from the enum and restored `size_of::<AggregateState>()` to
+exactly its pre-entry value (192 bytes, measured directly); the test
+passes again. The 25% figure above was measured before this fix and is
+unaffected by it - boxing only removes memory the design never needed to
+spend, and does not change the insert path's instruction count.
+
+## e87 — Q6's real shape is already on the two-pass streaming path; the naive-materialization premise was stale (10M rows, 32 threads, memo off)
+
+The brief for section H item 4 described Q6 as "the general partitioned
+aggregate, a full materialization, then sort.rs `materialize_top_k`" and
+asked for radix-partitioned parallel aggregation feeding a streaming
+top-K heap. Measured instead of assumed:
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "top 10 by sum,
+200K-value column" - `GROUP BY grp` on a bare, stored integer column with
+200,000 distinct values (Q6's own cardinality), `COUNT(*)` and `SUM`,
+`ORDER BY total_spent DESC, grp LIMIT 10` - Q6's exact shape
+(`benchmark/queries.ts`), unlike the existing "general high cardinality"
+case, which groups by the EXPRESSION `id % 200000`: `column_index()`
+cannot resolve an expression to a plain column, so that case never
+reaches `build_direct_column_aggregate`'s direct/two-pass routing at all
+and measures a different, slower path (4.0-6.1 s in e85's matrix) that
+Q6 does not run.
+
+| case | shape | min |
+|---|---|---:|
+| "general high cardinality" (pre-existing) | `GROUP BY id % 200000` (expression) | 4,205 ms |
+| "top 10 by sum, 200K-value column" (this entry) | `GROUP BY grp` (bare column, Q6's shape) | 223.0 ms |
+
+`build_buffered_hash_aggregate`/`build_direct_column_aggregate` already
+route a single bare int-typed group column with `COUNT`/`SUM`-shaped
+aggregates to `build_streaming_two_pass_aggregate` (e13: banked
+4.2-8.9x), not the general `HashMap<Vec<Value>, AggregateGroup>` path.
+223 ms for 10M rows scales close to linearly to the 20M-row benchmark's
+banked 420 ms for real Q6 - the existing optimization already accounts
+for most of the gap the brief attributed to "full materialization."
+
+A comment already in `build_buffered_hash_aggregate` (above
+`build_direct_column_aggregate`'s call site) records that this exact
+question was tried before: routing the single-int-column case through
+the parallel morsel/merge path "regressed Q6 (2M groups over 20M rows)
+from seconds to minutes," because the dense-array parallel win that
+helps LOW-cardinality keys does not transfer to sparse high-cardinality
+ones, and closes with "Parallel high-cardinality aggregation needs a
+partitioned design and its own experiment first." Radix-partitioning the
+build key so each worker owns a disjoint range and can safely call its
+own groups finished - the precondition for streaming them into a top-K
+heap without a cross-worker merge - is a new execution-model capability
+(a hash-based shuffle/exchange stage), not a local change to
+`sort.rs::materialize_top_k` or to the two-pass aggregate: no query in
+the current planner or executor partitions its parallel work by key
+rather than by row range. Attempting it inside this brief's remaining
+scope, on top of the correctness surface a change like that touches
+(admission, memory tracking across N partition buffers, interaction with
+existing spill/two-pass paths) risked exactly the kind of regression the
+comment already describes, without the dedicated measurement budget the
+comment says it needs.
+
+**Verdict: not attempted.** The measured baseline for Q6's actual shape
+(223 ms at 10M rows, this entry) is the number future work on this item
+should compare against - not the 4,205 ms "general high cardinality"
+case, which is a different, already-slow path Q6 does not take.
+`docs/design/production-hardening-todo.md` section H keeps item 4 open
+with this finding attached, so it is not re-discovered from a stale
+premise.
+
+## e88 — Scan pool default doubled; no gain reproduced on bare metal, and why that is expected (10M rows, in-process, memo off)
+
+e65 measured Q2's shape 16 scan threads against 8 (66ms -> 57ms) on the
+`--cpus=8`-limited container the release benchmark and a typical
+deployment run under, and recommended defaulting the scan pool to twice
+the CPU count. Implemented: `projected_scan_pool` now defaults to
+`available_parallelism() * 2`, still overridable by
+`PINTAIL_SCAN_THREADS`.
+
+Measured on this machine (32 real, unthrottled CPUs, local NVMe) with a
+new `crates/pintail-exec/tests/morsel_bench.rs` case, "scan: filtered
+count" (Q2's shape, `WHERE status = 'open'`), minimum of 9 runs:
+
+| scan threads | min | median |
+|---|---:|---:|
+| 32 (= CPU count, old default) | 10.6 ms | 10.9 ms |
+| 64 (= 2x CPU count, new default) | 11.1 ms | 11.5 ms |
+
+No gain here - if anything, slightly worse at the median, from
+scheduling more runnable threads than there are cores with nothing to
+overlap. This is the expected result, not a contradiction of e65: e65's
+win comes from a scan thread parked by a CPU quota tick still having
+another one ready to run, which only exists under a CPU-limited
+container; a bare-metal host with a real core per thread has no quota
+stall to hide behind, so doubling the pool only adds contention on a
+purely CPU-bound decode. Reproducing e65's own container conditions to
+confirm the win still holds was not attempted here (would need a
+throttled container on the shared docker host, which this brief's
+protocol reserves for the release benchmark, not an ad hoc check).
+
+**Verdict: keep the default change**, on the strength of e65's original
+container measurement (the actual release/deployment shape), with this
+entry as the honest record that the bare-metal dev host shows no
+benefit - `PINTAIL_SCAN_THREADS` remains the escape hatch either way.
+
+## e89 — Overlapping the next scan round's decode: investigated, not attempted
+
+e70 measured the sliced scan's own regression (a two-round text-key
+query losing 95ms -> 106ms to idling between rounds) and named the
+follow-up: prefetch the next round's decode while the consumer works the
+current one. Investigated instead of implemented, because the shape of
+`ProjectedScanStream::next_column_chunks_inner`
+(`crates/pintail-store/src/store/scan.rs`) does not allow it without a
+larger change first:
+
+- The parallel decode call (`decode_slice` over the round's slices) is a
+  method on `&self`, called synchronously inside the same function that
+  will be called again with `&mut self` for the NEXT round. Starting that
+  decode on a background thread so it can run while the caller consumes
+  the current round's chunks means that background thread's borrow of
+  `self` would need to outlive the current call - the same class of
+  problem item 2's join dense table hit, and for the same reason
+  (`unsafe_code = "forbid"`) not solvable by holding a raw reference
+  across the boundary.
+- `decode_slice` also takes `prewhere: Option<(&[u32], PrewhereSelect<'_>)>`,
+  a borrowed predicate scoped to the CURRENT call by its caller in
+  `pintail-exec` - not a struct field, so even an `Arc`-based redesign of
+  the scan state would still need this cloned or restructured into
+  something `'static` and `Send` before a background task could hold it
+  across calls.
+
+Both are solvable - the general shape is "give the decode context to a
+background task instead of borrowing it," which likely means the slice
+decode's dependencies (segment, directory, schema, prewhere) need to be
+extracted into an owned, `Send` unit callable from a free function rather
+than a `&self` method - but that is a restructuring of the scan's
+internals, not a bounded follow-up to the change this brief's scan
+threading item already made. Deferred rather than attempted under time
+pressure on a path this exact test suite's oracle depends on for every
+predicate shape.
+
+**Verdict: not attempted.** `docs/design/production-hardening-todo.md`
+section H keeps this half of item 5 open with the specific blocker
+recorded, so a future attempt starts from the ownership question rather
+than rediscovering it.
+
+## e90 — A pre-existing, nondeterministic wrong answer in `AVG` on a decimal column, found chasing the scan-pool default
+
+First seen with the scan pool defaulted to twice the CPU count (e88's
+change): `--profile rc`'s `e2e` stage failed on `tests/e2e/queries.ts`'s
+"decimal column average beyond simple sum" -
+`SELECT customer_id, ROUND(AVG(total), 4), ROUND(SUM(total) / COUNT(*),
+4) FROM orders GROUP BY customer_id HAVING COUNT(*) >= 2 ORDER BY
+avg_total DESC, customer_id LIMIT 20` - returned `330.8824` at row 3
+where MySQL and this engine's own `SUM(total) / COUNT(*)` column both
+read `330.8823`, on a plain `GROUP BY` with no join. Reverting
+`PINTAIL_SCAN_THREADS` to the CPU count made that run pass, which read
+at the time as confirmation that the doubled pool was the cause.
+
+It was not, or not only: a later `--profile rc` run, on the same commit
+with the scan pool already reverted to the CPU count, failed the exact
+same check again - this time at a different row (11, not 3) and a
+different value (`324.2510` against MySQL's `324.2509`). Same query
+shape, same mismatch pattern (`AVG` wrong, `SUM(total)/COUNT(*)` on the
+same rows correct), different data point each time. That rules out the
+scan-pool width as the cause: this is a pre-existing, run-to-run
+nondeterministic defect that the wider pool very likely made MORE
+frequent (Rust's default hasher reseeds every process, so `HashMap`
+iteration order - and with it, morsel-to-worker assignment and merge
+order in anything built on rayon's work-stealing scheduler - differs
+between runs of the identical binary on the identical data regardless of
+thread count; a wider pool gives that nondeterminism more ways to land on
+whatever ordering triggers this), but did not introduce.
+
+The AVG lane itself is exact by construction: `TwoPassLane::DecimalUnits`
+rescales each row's decimal units by a fixed power of ten
+(`decimal_units_from_int`, an exact `checked_mul`) chosen once from the
+aggregate's planned output scale (`decimal_average_scale`, a property of
+the bound query, not of runtime data or thread count), and
+`update_decimal_average_units` accumulates the rescaled units with
+`checked_add` - exact integer addition, order-independent by definition.
+That `SUM(total) / COUNT(*)` came back byte-correct on the same rows
+both times points away from a data completeness problem (a dropped or
+duplicated row would move both columns) and toward `AVG` specifically
+taking a run-to-run-varying computation path - most plausibly the general
+aggregate's own average, which (unlike the two-pass exact-units lane) may
+accumulate through `f64`. Not confirmed by tracing an actual run with
+instrumentation, and not established whether this reproduces on `dev`
+before any of this brief's commits - time did not extend to a control run
+against a bisected base commit.
+
+**Verdict: the scan-pool default stays reverted** (back to the CPU count,
+`docs/design/production-hardening-todo.md` H5a) regardless - e88 already
+found no benefit from doubling it on bare metal, so there is no upside to
+weigh against even a possible (not confirmed) increase in how often this
+pre-existing defect surfaces. The defect itself is unrelated to anything
+else in this brief and is recorded as new work (section G, G14) rather
+than worked around here.

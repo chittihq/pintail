@@ -29,6 +29,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on a host with four cores to share, sixteen executions becoming one in
   both. `PINTAIL_DISABLE_SHARED_QUERIES` turns it off.
 
+- The benchmark's resource sampler now reads one long-lived `docker stats`
+  stream per container instead of a fresh `docker stats --no-stream` call
+  every 250 ms, which on the shared remote docker host regularly took
+  longer than the query it was sampling and reported 0% CPU. The README's
+  generated benchmark table now shows the memo-off "engine speed" table
+  first and the memo-hit table second, so the headline comparison is the
+  one where both engines execute.
+- The HTTP query path no longer builds a fresh query engine and looks up
+  the API key against metadata on every request: one engine is held for
+  the process's life and cloned per call, and a validated API key is
+  cached for 30 seconds (cleared immediately on disable or delete). Rows
+  serialize straight from the engine's values into the response instead
+  of through an intermediate JSON tree first. The benchmark can now time
+  Pintail over its MySQL wire protocol beside the HTTP call, so the engine
+  is measured the way a BI tool actually reaches it.
+- A join's build side now finalizes itself into a hash-free, direct-index
+  table in place when its keys are a plain integer set in a narrow range,
+  instead of that table existing only inside the fused join-aggregate:
+  every reader of the build side benefits, and the fused join-aggregate
+  additionally resolves which output group each build row folds into once
+  per distinct key rather than once per probe row.
+- `COUNT(DISTINCT)` over an integer column now dedups through a bitmap
+  once a group's distinct values pass a count threshold and fit a span
+  cap, instead of always hashing into a set; the bitmap grows with
+  headroom as the column's real range becomes apparent, the same way a
+  growing `Vec` or `HashSet` amortizes its own resizing.
+
 ### Fixed
 
 - Resuming a paused table could leave it silently stale. A replication
@@ -58,7 +85,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   more shapes.
 
 ## [0.1.2-rc10] - 2026-09-07
-
 ### Added
 
 - One table can be paused while the rest of its database keeps

@@ -542,49 +542,126 @@ async function verifyCounts(
   log(`all engines expose ${orderRows.toLocaleString()} orders`)
 }
 
-/// Polls docker stats for one container while an engine is being measured.
-/// CPU% is cumulative across cores (an 8-cpu container can read 800%).
-function startResourceSampler(container: string) {
-  const samples: { cpuPct: number; memMb: number }[] = []
-  let active = true
-  const loop = (async () => {
-    while (active) {
-      try {
-        const out = (
-          await docker('stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}', container)
-        ).stdout
-        const [cpuText, memText] = out.split('|')
-        const cpuPct = Number.parseFloat(cpuText)
-        // MemUsage reads "512.3MiB / 8GiB": only the usage half decides
-        // the unit, or the ever-present GiB limit inflates MiB by 1024.
-        const usageText = memText.split('/')[0]
-        const memValue = Number.parseFloat(usageText)
-        const memMb = usageText.includes('GiB')
-          ? memValue * 1024
-          : usageText.includes('KiB')
-            ? memValue / 1024
-            : memValue
-        if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
-          samples.push({ cpuPct, memMb })
+type ResourceSample = { cpuPct: number; memMb: number }
+
+// One `docker stats` per container, spawned once and left streaming for the
+// life of the run. A one-shot `docker stats --no-stream` call over the
+// ssh:// context pays a fresh SSH round trip per call, which on the shared
+// remote daemon routinely runs longer than the query it was meant to
+// measure, so a query timed in the hundreds of milliseconds could complete
+// (and stop the sampler) before its single sample ever came back, reading
+// as 0% CPU. Reading lines off one long-lived stream removes the per-sample
+// process spawn: samples land at the daemon's own stats cadence instead of
+// racing an SSH connection.
+class ResourceStream {
+  private samples: ResourceSample[] = []
+  private ready: Promise<void>
+  private proc: ReturnType<typeof Bun.spawn>
+
+  constructor(container: string) {
+    this.proc = Bun.spawn(
+      ['docker', 'stats', '--format', '{{.CPUPerc}}|{{.MemUsage}}', container],
+      { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' },
+    )
+    this.ready = this.pump()
+  }
+
+  private async pump() {
+    const reader = this.proc.stdout.pipeThrough(new TextDecoderStream()).getReader()
+    let buffered = ''
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffered += value
+        let newline: number
+        while ((newline = buffered.indexOf('\n')) !== -1) {
+          const line = buffered.slice(0, newline)
+          buffered = buffered.slice(newline + 1)
+          this.recordLine(line)
         }
-      } catch {
-        // Container gone or stats hiccup: keep sampling.
       }
-      if (active) await Bun.sleep(250)
+    } catch {
+      // Stream closed underneath us (container removed mid-run): stop pumping.
     }
-  })()
+  }
+
+  private recordLine(rawLine: string) {
+    // Streaming `docker stats` is written for a redrawn terminal, not a
+    // pipe: every refresh interleaves cursor-home/clear-line/clear-screen
+    // codes with the data, so a data-bearing line still opens with
+    // `\x1b[H` and closes with `\x1b[K`.
+    const line = rawLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    const [cpuText, memText] = line.split('|')
+    if (cpuText === undefined || memText === undefined) return
+    const cpuPct = Number.parseFloat(cpuText)
+    // MemUsage reads "512.3MiB / 8GiB": only the usage half decides the
+    // unit, or the ever-present GiB limit inflates MiB by 1024.
+    const usageText = memText.split('/')[0] ?? ''
+    const memValue = Number.parseFloat(usageText)
+    const memMb = usageText.includes('GiB')
+      ? memValue * 1024
+      : usageText.includes('KiB')
+        ? memValue / 1024
+        : memValue
+    if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
+      this.samples.push({ cpuPct, memMb })
+    }
+  }
+
+  /// Samples collected so far; a window taken between two calls to this is
+  /// the resources used during that window.
+  count(): number {
+    return this.samples.length
+  }
+
+  since(startIndex: number): ResourceSample[] {
+    return this.samples.slice(startIndex)
+  }
+
+  stop() {
+    this.proc.kill('SIGTERM')
+    return this.ready
+  }
+}
+
+const resourceStreams = new Map<string, ResourceStream>()
+
+function resourceStreamFor(container: string): ResourceStream {
+  let stream = resourceStreams.get(container)
+  if (!stream) {
+    stream = new ResourceStream(container)
+    resourceStreams.set(container, stream)
+  }
+  return stream
+}
+
+async function stopResourceStreams() {
+  const streams = [...resourceStreams.values()]
+  resourceStreams.clear()
+  await Promise.all(streams.map((stream) => stream.stop()))
+}
+
+function summarizeSamples(samples: ResourceSample[]): EngineResources {
+  if (samples.length === 0) return { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 }
+  return {
+    cpuPeakPct: Math.round(Math.max(...samples.map((sample) => sample.cpuPct))),
+    cpuAvgPct: Math.round(
+      samples.reduce((total, sample) => total + sample.cpuPct, 0) / samples.length,
+    ),
+    memPeakMb: Math.round(Math.max(...samples.map((sample) => sample.memMb))),
+  }
+}
+
+/// Marks a window on one container's long-lived stats stream while an
+/// engine is being measured. CPU% is cumulative across cores (an 8-cpu
+/// container can read 800%).
+function startResourceSampler(container: string) {
+  const stream = resourceStreamFor(container)
+  const startIndex = stream.count()
   return {
     async stop(): Promise<EngineResources> {
-      active = false
-      await loop
-      if (samples.length === 0) return { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 }
-      return {
-        cpuPeakPct: Math.round(Math.max(...samples.map((sample) => sample.cpuPct))),
-        cpuAvgPct: Math.round(
-          samples.reduce((total, sample) => total + sample.cpuPct, 0) / samples.length,
-        ),
-        memPeakMb: Math.round(Math.max(...samples.map((sample) => sample.memMb))),
-      }
+      return summarizeSamples(stream.since(startIndex))
     },
   }
 }
@@ -627,6 +704,45 @@ async function mysqlColdQuery(sql: string): Promise<unknown[][]> {
     mysqlConnection = await waitForMysql(mysqlEndpoint.host, mysqlEndpoint.port, 240)
     await mysqlConnection.query('USE benchmark_db')
     return run()
+  }
+}
+
+/// A query function reaching Pintail over its MySQL wire protocol rather
+/// than `/api/query` - the path a BI tool actually uses, and one HTTP's
+/// own fixed cost (auth, JSON) cannot show. Username is the database name
+/// and password is an API key secret, same as any other MySQL client.
+function makePintailWireQuery(
+  endpoint: { host: string; port: number },
+  databaseName: string,
+  secret: string,
+): (sql: string) => Promise<unknown[][]> {
+  let connection: mysql.Connection | undefined
+  const connect = () =>
+    mysql.createConnection({
+      host: endpoint.host,
+      port: endpoint.port,
+      user: databaseName,
+      password: secret,
+      database: databaseName,
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10_000,
+    })
+  return async function pintailWireQuery(sql: string): Promise<unknown[][]> {
+    connection ??= await connect()
+    const run = async () => {
+      const [rows] = await connection!.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+      return rows as unknown as unknown[][]
+    }
+    try {
+      return await run()
+    } catch (error) {
+      log(`Pintail wire connection dropped (${error}); reconnecting and retrying`)
+      connection?.destroy()
+      connection = await connect()
+      return run()
+    }
   }
 }
 
@@ -875,7 +991,15 @@ async function runQueries(
   pintailUrl: string,
   token: string,
   databaseId: string,
-  options: { memoDisabled?: boolean } = {},
+  options: {
+    memoDisabled?: boolean
+    /// Runs the same statement over Pintail's MySQL wire protocol, the way
+    /// a BI tool reaches it, timed beside the HTTP call rather than instead
+    /// of it. Absent when no wire endpoint was set up for this run (the
+    /// non-containerized "smoke" path skips it).
+    pintailWireQuery?: (sql: string) => Promise<unknown[][]>
+    pintailWireContainer?: string
+  } = {},
 ): Promise<QueryResult[]> {
   const results: QueryResult[] = []
   const warmups = WARMUP_COUNT
@@ -1007,6 +1131,7 @@ async function runQueries(
       pintailExplain = undefined
     }
     // Shuffled per query from the run seed, so no engine is always last.
+    const wireQuery = options.pintailWireQuery
     const measurements = await inShuffledOrder(engineOrder, {
       pintail: () =>
         sampled(containerizedPintail ? pintailName : undefined, () =>
@@ -1029,6 +1154,23 @@ async function runQueries(
                 runs,
               ).then((run) => ({ values: [run.value], timing: run.timing })),
         ),
+      // Additive: the same statement over the wire protocol a BI tool would
+      // actually use, timed beside (not instead of) the HTTP measurement
+      // above. Absent from `timings`/`resources` when no wire connection was
+      // set up for this run.
+      ...(wireQuery
+        ? {
+            pintailWire: () =>
+              sampled(options.pintailWireContainer, () =>
+                query.coldOnly
+                  ? measuredVariants(variants, (variant) => wireQuery(variant.sql))
+                  : measured(() => wireQuery(query.sql), warmups, runs).then((run) => ({
+                      values: [run.value],
+                      timing: run.timing,
+                    })),
+              ),
+          }
+        : {}),
       clickhouse: () =>
         sampled(clickhouseName, () =>
           query.coldOnly
@@ -1064,6 +1206,8 @@ async function runQueries(
     })
     const pintailRun = measurements.pintail.value
     resources.pintail = measurements.pintail.resources
+    const pintailWireRun = measurements.pintailWire?.value
+    if (measurements.pintailWire) resources.pintailWire = measurements.pintailWire.resources
     const clickhouseRun = measurements.clickhouse.value
     resources.clickhouse = measurements.clickhouse.resources
     const clickhouseFinalRun = measurements.clickhouseFinal.value
@@ -1087,6 +1231,7 @@ async function runQueries(
       coldOnly: query.coldOnly === true,
       timings: {
         pintail: pintailRun.timing,
+        ...(pintailWireRun ? { pintailWire: pintailWireRun.timing } : {}),
         clickhouse: clickhouseRun.timing,
         clickhouseFinal: clickhouseFinalRun.timing,
         mysql: mysqlTiming,
@@ -1097,8 +1242,17 @@ async function runQueries(
       pintailExplain,
     })
     if (!pintailMatchesMysql) log(`RESULT MISMATCH: pintail differs from MySQL on ${query.name}`)
+    if (pintailWireRun) {
+      const pintailWireMatchesMysql = pintailWireRun.values.every(
+        (value, index) => canonicalRows(value) === mysqlCanonicals[index],
+      )
+      if (!pintailWireMatchesMysql) {
+        log(`RESULT MISMATCH: pintail (wire) differs from MySQL on ${query.name}`)
+      }
+    }
     log(
-      `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
+      `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms` +
+        `${pintailWireRun ? ` (wire ${pintailWireRun.timing.medianMs} ms)` : ''} | ` +
         `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
         `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ` +
         `${speedup.toFixed(1)}× vs MySQL | ${speedupVsClickhouse.toFixed(2)}× vs CH`,
@@ -1304,18 +1458,30 @@ function publishResults(
           'comparison: the table at the top measures a cache hit against',
           "ClickHouse's execution, which is a different question.",
           '',
-          '| Query | MySQL | Pintail (no memo) | CH MergeTree | CH RMT+FINAL | vs CH |',
-          '|---|---:|---:|---:|---:|---:|',
+          ...(engineResults.some((row) => row.timings.pintailWire)
+            ? [
+                "Pintail (wire) reaches the same query over Pintail's MySQL wire",
+                'protocol - the path a BI tool actually uses - timed beside the',
+                "HTTP call, not instead of it; the gap between the two is HTTP's",
+                'own fixed cost (auth, JSON, connection setup).',
+                '',
+              ]
+            : []),
+          '| Query | MySQL | Pintail (no memo) | Pintail (wire) | CH MergeTree | CH RMT+FINAL | vs CH |',
+          '|---|---:|---:|---:|---:|---:|---:|',
           ...engineResults
             .filter((row) => !row.coldOnly)
-            .map(
-              (row) =>
+            .map((row) => {
+              const wireMs = row.timings.pintailWire?.medianMs
+              return (
                 `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
                 `${row.pintailMs.toLocaleString()} ms | ` +
+                `${wireMs === undefined ? 'n/a' : `${wireMs.toLocaleString()} ms`} | ` +
                 `${row.clickhouseMs.toLocaleString()} ms | ` +
                 `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
-                `${row.speedupVsClickhouse.toFixed(2)}× |`,
-            ),
+                `${row.speedupVsClickhouse.toFixed(2)}× |`
+              )
+            }),
           '',
         ]
       : []),
@@ -1343,8 +1509,9 @@ function publishResults(
     '## Resources during measured runs',
     '',
     'Peak container CPU (cumulative across 8 cores, so up to 800%) and peak',
-    'memory, sampled via `docker stats` every 250 ms while each engine ran.',
-    'MySQL shows n/a when its cold baseline came from the cache.',
+    'memory, sampled from one long-lived `docker stats` stream per container',
+    "at the daemon's own update cadence while each engine ran. MySQL shows",
+    'n/a when its cold baseline came from the cache.',
     '',
     '| Query | Pintail CPU | Pintail mem | CH CPU | CH mem | MySQL CPU | MySQL mem |',
     '|---|---:|---:|---:|---:|---:|---:|',
@@ -1371,6 +1538,7 @@ function publishResults(
 }
 
 async function cleanup() {
+  await stopResourceStreams()
   // Engine logs outlive failures: a crashed pintail container's last lines
   // are the only evidence once cleanup removes it (run #10, socket-closed).
   try {
@@ -1544,6 +1712,7 @@ async function main() {
 
   let pintailUrl: string
   let dsn: string
+  let pintailWireEndpoint: { host: string; port: number }
   if (containerizedPintail) {
     log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
     await docker('build', '--tag', pintailImage, repository)
@@ -1556,6 +1725,8 @@ async function main() {
       networkName,
       '--publish',
       '0:8080',
+      '--publish',
+      '0:3306',
       // A NAMED volume, so the replica survives the container. The engine
       // track restarts pintail with its result memo disabled, and reattaching
       // the same replica turns that into a ~30s restart instead of another
@@ -1570,6 +1741,7 @@ async function main() {
     const pintailPort = await publishedPort(pintailName, 8080)
     pintailUrl = `http://${urlHost(host)}:${pintailPort}`
     dsn = `mysql://benchmark:benchmarkpass@${mysqlName}:3306/benchmark_db`
+    pintailWireEndpoint = { host: urlHost(host), port: await publishedPort(pintailName, 3306) }
   } else {
     const binary = await buildPintail()
     const httpPort = await freePort()
@@ -1596,6 +1768,7 @@ async function main() {
       },
     )
     dsn = `mysql://benchmark:benchmarkpass@${urlHost(host)}:${mysqlPort}/benchmark_db`
+    pintailWireEndpoint = { host: '127.0.0.1', port: wirePort }
   }
   await waitForHttp(pintailUrl)
   const setup = await api<{ token: string }>(pintailUrl, '/api/auth/setup', {
@@ -1604,11 +1777,20 @@ async function main() {
   })
   const databaseId = await createReplica(pintailUrl, setup.token, dsn)
   await verifyCounts(clickhouseUrl, pintailUrl, setup.token, databaseId)
+  // A key scoped to this replica, used only to reach the wire port below -
+  // never logged or written to the results artifact.
+  const wireKey = await api<{ secret: string }>(
+    pintailUrl,
+    `/api/databases/${databaseId}/api-keys`,
+    { method: 'POST', token: setup.token, body: { name: 'benchmark-wire', scopes: ['query'] } },
+  )
+  const pintailWireQuery = makePintailWireQuery(pintailWireEndpoint, 'benchmark_db', wireKey.secret)
   const results = await runQueries(
     mysqlConnection,
     pintailUrl,
     setup.token,
     databaseId,
+    { pintailWireQuery, pintailWireContainer: containerizedPintail ? pintailName : undefined },
   )
 
   // The engine track. Everything above measures pintail with its settled
@@ -1634,6 +1816,8 @@ async function main() {
       networkName,
       '--publish',
       '0:8080',
+      '--publish',
+      '0:3306',
       '--volume',
       `${pintailVolumeName}:/var/lib/pintail`,
       ...engineLimits,
@@ -1646,12 +1830,19 @@ async function main() {
     const enginePort = await publishedPort(pintailName, 8080)
     const engineUrl = `http://${urlHost(host)}:${enginePort}`
     await waitForHttp(engineUrl)
+    // The ephemeral wire port is re-published on every restart; the key
+    // itself survives on the named volume, so only the connection is new.
+    const engineWireQuery = makePintailWireQuery(
+      { host: urlHost(host), port: await publishedPort(pintailName, 3306) },
+      'benchmark_db',
+      wireKey.secret,
+    )
     engineResults = await runQueries(
       mysqlConnection,
       engineUrl,
       setup.token,
       databaseId,
-      { memoDisabled: true },
+      { memoDisabled: true, pintailWireQuery: engineWireQuery, pintailWireContainer: pintailName },
     )
 
     // Concurrency, on the same memo-disabled server so both engines are

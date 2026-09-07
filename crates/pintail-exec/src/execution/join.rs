@@ -45,12 +45,25 @@ pub(super) const BUILD_PARTITIONS: usize = 64;
 /// each small enough to stay in cache while it is written.
 pub(super) struct PartitionedBuild {
     partitions: Vec<HashMap<JoinHashKey, Vec<Vec<Value>>>>,
+    /// Set once, after every build row was inserted, when the keys are a
+    /// plain integer set spanning fewer than [`MAX_DENSE_SPAN`] values:
+    /// (minimum key, per-offset index into `dense_buckets`). `get` and the
+    /// other read accessors consult this first, trading a probe row's
+    /// hash-and-compare for one bounds-checked array index. `partitions`
+    /// is left as an emptied skeleton rather than cleared away, since
+    /// nothing reads it again once this is `Some` - only the build phase
+    /// (`entry_or_default`, `reserve_for_key`, `slot`, `drain`, `clear`)
+    /// touches it, and that phase is over by the time this is set.
+    dense_index: Option<(i128, Vec<Option<usize>>)>,
+    dense_buckets: Vec<Vec<Vec<Value>>>,
 }
 
 impl PartitionedBuild {
     fn with_partitions(count: usize) -> Self {
         Self {
             partitions: (0..count.max(1)).map(|_| HashMap::new()).collect(),
+            dense_index: None,
+            dense_buckets: Vec::new(),
         }
     }
 
@@ -67,8 +80,93 @@ impl PartitionedBuild {
         }
     }
 
+    /// The dense slot a key resolves to, when this build finalized to a
+    /// dense table and the key is the plain integer variant that mode
+    /// requires. `Some` only while dense; the general (hashed) path never
+    /// calls this directly - `get` already dispatches to it.
+    fn dense_offset(&self, key: &JoinHashKey) -> Option<usize> {
+        let (min, index) = self.dense_index.as_ref()?;
+        let value = match key {
+            JoinHashKey::NegativeInteger(value) => i128::from(*value),
+            JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
+            _ => return None,
+        };
+        *index.get(usize::try_from(value.checked_sub(*min)?).ok()?)?
+    }
+
     pub(super) fn get(&self, key: &JoinHashKey) -> Option<&Vec<Vec<Value>>> {
+        if self.dense_index.is_some() {
+            return self
+                .dense_offset(key)
+                .map(|offset| &self.dense_buckets[offset]);
+        }
         self.partitions[self.slot(key)].get(key)
+    }
+
+    /// Like [`Self::get`], but also returns the flat index into
+    /// [`Self::dense_buckets`] a caller can use to keep its own array (one
+    /// entry per distinct key, built once) aligned to this bucket - the
+    /// fused join-aggregate's precomputed group indexes, in particular.
+    /// `None` whenever `get` would return through the hashed path instead.
+    pub(super) fn dense_get(&self, key: &JoinHashKey) -> Option<(usize, &Vec<Vec<Value>>)> {
+        let offset = self.dense_offset(key)?;
+        Some((offset, &self.dense_buckets[offset]))
+    }
+
+    pub(super) const fn is_dense(&self) -> bool {
+        self.dense_index.is_some()
+    }
+
+    /// Every distinct bucket, in the order [`Self::dense_get`]'s flat index
+    /// addresses - only meaningful once [`Self::is_dense`].
+    pub(super) fn dense_buckets(&self) -> &[Vec<Vec<Value>>] {
+        &self.dense_buckets
+    }
+
+    /// Moves every bucket into a flat, densely-addressable array when the
+    /// build key is a plain integer whose span fits [`MAX_DENSE_SPAN`] -
+    /// `MySQL` auto-increment keys make this the common case, not the
+    /// exception. Idempotent; a no-op once already dense. Must run only
+    /// after every insert for this build is done: nothing re-populates
+    /// `partitions` afterward.
+    pub(super) fn finalize_dense(&mut self) {
+        if self.dense_index.is_some() || self.is_empty() {
+            return;
+        }
+        let mut min = i128::MAX;
+        let mut max = i128::MIN;
+        for key in self.keys() {
+            match key {
+                JoinHashKey::NegativeInteger(value) => {
+                    min = min.min(i128::from(*value));
+                    max = max.max(i128::from(*value));
+                }
+                JoinHashKey::NonNegativeInteger(value) => {
+                    min = min.min(i128::from(*value));
+                    max = max.max(i128::from(*value));
+                }
+                _ => return,
+            }
+        }
+        if max - min >= MAX_DENSE_SPAN {
+            return;
+        }
+        let span = usize::try_from(max - min).expect("bounded span") + 1;
+        let mut index: Vec<Option<usize>> = vec![None; span];
+        let mut buckets = Vec::with_capacity(self.len());
+        for partition in &mut self.partitions {
+            for (key, bucket) in partition.drain() {
+                let value = match key {
+                    JoinHashKey::NegativeInteger(value) => i128::from(value),
+                    JoinHashKey::NonNegativeInteger(value) => i128::from(value),
+                    _ => unreachable!("verified integer keys above"),
+                };
+                index[usize::try_from(value - min).expect("within span")] = Some(buckets.len());
+                buckets.push(bucket);
+            }
+        }
+        self.dense_index = Some((min, index));
+        self.dense_buckets = buckets;
     }
 
     pub(super) fn partitions(&self) -> usize {
@@ -85,24 +183,30 @@ impl PartitionedBuild {
     }
 
     pub(super) fn is_empty(&self) -> bool {
+        if self.dense_index.is_some() {
+            return self.dense_buckets.is_empty();
+        }
         self.partitions.iter().all(HashMap::is_empty)
     }
 
     /// Distinct keys across every partition.
     pub(super) fn len(&self) -> usize {
+        if self.dense_index.is_some() {
+            return self.dense_buckets.len();
+        }
         self.partitions.iter().map(HashMap::len).sum()
     }
 
-    pub(super) fn keys(&self) -> impl Iterator<Item = &JoinHashKey> {
+    pub(super) fn values(&self) -> Box<dyn Iterator<Item = &Vec<Vec<Value>>> + '_> {
+        if self.dense_index.is_some() {
+            Box::new(self.dense_buckets.iter())
+        } else {
+            Box::new(self.partitions.iter().flat_map(HashMap::values))
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &JoinHashKey> {
         self.partitions.iter().flat_map(HashMap::keys)
-    }
-
-    pub(super) fn values(&self) -> impl Iterator<Item = &Vec<Vec<Value>>> {
-        self.partitions.iter().flat_map(HashMap::values)
-    }
-
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&JoinHashKey, &Vec<Vec<Value>>)> {
-        self.partitions.iter().flat_map(HashMap::iter)
     }
 
     fn drain(&mut self) -> impl Iterator<Item = (JoinHashKey, Vec<Vec<Value>>)> + '_ {
@@ -650,6 +754,13 @@ pub(super) fn build_hash_join_state(
                 grace = Some(partitions);
             }
         }
+    }
+    // A build that stayed resident (no grace spill) is never mutated again:
+    // every remaining reader only probes it. Dense direct-address probe
+    // (experiments/RESULTS.md e04, 2.4-4.2x; e85 extends it to every reader
+    // of `get`, not only the fused join-aggregate).
+    if grace.is_none() {
+        build.finalize_dense();
     }
     Ok(HashJoinState {
         build,
@@ -2648,6 +2759,124 @@ mod tests {
         assert_ne!(
             super::normalized_collation_text("a", Collation::Utf8mb40900AiCi),
             super::normalized_collation_text("a ", Collation::Utf8mb40900AiCi)
+        );
+    }
+}
+
+#[cfg(test)]
+mod dense_join_table_tests {
+    use super::{JoinHashKey, PartitionedBuild};
+    use pintail_types::Value;
+
+    /// Inserts one row per `(key, payload)` pair without going through
+    /// `build_hash_join_state`'s batch/memory machinery - a bare
+    /// `PartitionedBuild` is enough to test `finalize_dense` and its
+    /// accessors directly. A key mentioned more than once produces a bucket
+    /// with more than one row, covering duplicates.
+    fn build(rows: &[(JoinHashKey, u64)]) -> PartitionedBuild {
+        let mut build = PartitionedBuild::with_partitions(4);
+        for (key, payload) in rows {
+            build
+                .entry_or_default(key.clone())
+                .push(vec![Value::UInt64(*payload)]);
+        }
+        build
+    }
+
+    fn payloads(bucket: &[Vec<Value>]) -> Vec<u64> {
+        let mut values: Vec<u64> = bucket
+            .iter()
+            .map(|row| match row.first() {
+                Some(Value::UInt64(value)) => *value,
+                other => panic!("unexpected row {other:?}"),
+            })
+            .collect();
+        values.sort_unstable();
+        values
+    }
+
+    #[test]
+    fn a_narrow_integer_span_with_duplicates_finalizes_dense_and_matches_the_hashed_result() {
+        let rows = [
+            (JoinHashKey::NonNegativeInteger(10), 1),
+            (JoinHashKey::NonNegativeInteger(10), 2), // duplicate key, second row
+            (JoinHashKey::NonNegativeInteger(11), 3),
+            (JoinHashKey::NegativeInteger(-5), 4),
+        ];
+        let mut hashed = build(&rows);
+        // Captured before finalizing: the answer the general (hashed) path
+        // gives, which the dense path below must reproduce exactly.
+        let expected: Vec<(JoinHashKey, Vec<u64>)> = rows
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .map(|key| {
+                let expected = payloads(hashed.get(&key).expect("row was inserted"));
+                (key, expected)
+            })
+            .collect();
+        assert!(!hashed.is_dense());
+
+        hashed.finalize_dense();
+        assert!(hashed.is_dense(), "a span of 16 fits MAX_DENSE_SPAN");
+        assert_eq!(hashed.len(), 3, "three distinct keys, one with two rows");
+        for (key, expected) in &expected {
+            let dense = payloads(hashed.get(key).expect("dense get finds the same key"));
+            assert_eq!(&dense, expected, "dense and hashed paths must agree");
+            let (flat_index, via_dense_get) = hashed
+                .dense_get(key)
+                .expect("dense_get mirrors get once dense");
+            assert_eq!(&payloads(via_dense_get), expected);
+            assert!(flat_index < hashed.dense_buckets().len());
+        }
+        assert!(
+            hashed.get(&JoinHashKey::NonNegativeInteger(999)).is_none(),
+            "a key never inserted must miss on the dense path too"
+        );
+    }
+
+    #[test]
+    fn a_span_past_max_dense_span_never_finalizes() {
+        let mut build = build(&[
+            (JoinHashKey::NonNegativeInteger(0), 1),
+            // MAX_DENSE_SPAN is 1 << 22; this key alone puts the span past it.
+            (JoinHashKey::NonNegativeInteger(1 << 23), 2),
+        ]);
+        build.finalize_dense();
+        assert!(
+            !build.is_dense(),
+            "a span this wide must stay on the hashed path rather than allocate a huge table"
+        );
+        assert_eq!(
+            payloads(build.get(&JoinHashKey::NonNegativeInteger(0)).expect("row")),
+            vec![1]
+        );
+        assert_eq!(
+            payloads(
+                build
+                    .get(&JoinHashKey::NonNegativeInteger(1 << 23))
+                    .expect("row")
+            ),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn a_non_integer_key_never_finalizes() {
+        let mut build = build(&[]);
+        build
+            .entry_or_default(JoinHashKey::Scalar(Value::Utf8("a".to_owned())))
+            .push(vec![Value::UInt64(1)]);
+        build.finalize_dense();
+        assert!(!build.is_dense());
+        assert_eq!(
+            payloads(
+                build
+                    .get(&JoinHashKey::Scalar(Value::Utf8("a".to_owned())))
+                    .expect("row")
+            ),
+            vec![1]
         );
     }
 }
