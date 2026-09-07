@@ -52,14 +52,18 @@ fn report_row() -> Vec<Value> {
 
 #[test]
 #[ignore = "a layout measurement, not a gate"]
+// The ratios below are printed to one decimal place; the precision a cast
+// to f64 gives up is far below what a printed measurement resolves.
+#[allow(clippy::cast_precision_loss)]
 fn a_materialized_row_costs_far_more_than_it_carries() {
+    const ROWS: usize = 3_200;
+
     println!("size_of::<Value>()   = {}", size_of::<Value>());
     println!("size_of::<String>()  = {}", size_of::<String>());
     println!("size_of::<Vec<Value>>() = {}", size_of::<Vec<Value>>());
     println!("size_of::<Box<[Value]>>() = {}", size_of::<Box<[Value]>>());
     println!("size_of::<Box<str>>() = {}", size_of::<Box<str>>());
 
-    const ROWS: usize = 3_200;
     let clock = Instant::now();
     let rows: Vec<Vec<Value>> = (0..ROWS).map(|_| report_row()).collect();
     let build = clock.elapsed();
@@ -75,7 +79,10 @@ fn a_materialized_row_costs_far_more_than_it_carries() {
     println!("  Value structs       = {inline} bytes");
     println!("  heap for its text   = {heap} bytes");
     println!("  Vec header          = {vec_header} bytes");
-    println!("  total               = {} bytes", inline + heap + vec_header);
+    println!(
+        "  total               = {} bytes",
+        inline + heap + vec_header
+    );
     println!("  payload it carries  = {payload} bytes");
     println!(
         "  overhead factor     = {:.1}x",
@@ -142,7 +149,7 @@ fn sorting_on_keys_before_building_rows_is_the_lever() {
         let mut keys: Vec<(u64, usize)> = (0..ROWS)
             .map(|id| (u64::try_from(id).expect("small"), id))
             .collect();
-        keys.sort_by(|left, right| right.0.cmp(&left.0));
+        keys.sort_by_key(|entry| std::cmp::Reverse(entry.0));
         keys.truncate(KEPT);
         let rows: Vec<Vec<Value>> = keys
             .iter()

@@ -67,6 +67,10 @@ fn segment_partials(first: u64, last: u64) -> BTreeMap<&'static str, Partial> {
 
 #[test]
 #[ignore = "a measurement over a large in-process table, not a gate"]
+// One reading, top to bottom: building the segments, folding their
+// partials and running the engine over the same rows belong together, and
+// splitting them would hide what is being compared.
+#[allow(clippy::too_many_lines, clippy::items_after_statements)]
 fn a_grouped_aggregate_from_per_segment_partials() {
     let directory = tempfile::tempdir().expect("directory");
     let mut store =
