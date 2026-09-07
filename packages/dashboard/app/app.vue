@@ -194,7 +194,11 @@ async function submitAuth() {
 </script>
 
 <template>
-  <Toaster position="top-right" />
+  <!-- Below the header, not over it: the header's right side carries Add
+       database and the theme toggle, and a toast at the top right covered
+       them for as long as it lived. A click on a covered control waits for
+       the toast rather than acting, which is what the browser gate saw. -->
+  <Toaster position="top-right" :offset="{ top: '4.25rem', right: '0.75rem' }" />
 
   <div v-if="booting" class="text-muted-foreground flex min-h-svh items-center justify-center gap-3 font-mono text-sm tracking-wide uppercase" aria-live="polite">
     <div class="bg-primary text-primary-foreground grid size-8 place-items-center font-mono text-xs font-extrabold">PT</div>
