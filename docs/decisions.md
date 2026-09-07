@@ -1370,3 +1370,37 @@ incident's other half: a burst of short reports met a two-second wait and a
 fourteen-slot general pool and was refused with 1040 rather than queued.
 Raising the ceiling is one answer; waiting longer is the other, and the
 operator now has both.
+
+### A segment the memtable overlaps is decoded directly, with a mask
+
+Scan parts used to be direct only when no memtable row fell inside the
+segment's key range; one did, and the whole segment went through the
+row-wise merge, which decodes keys, versions and tombstones as cells and
+materializes values row by row at roughly 0.2 to 0.9 microseconds a row.
+Under live replication that is the normal state of every table that
+receives updates, for as long as the memtable takes to reach its flush
+size. The measured effect on a 300K-row segment: a count 0.7 ms direct,
+52 ms merged; block-level refinement did not help because scattered
+updates touch every block.
+
+An `Overlay` part now serves such a segment through the direct path. The
+executor names the user column that carries the table's single integer
+key (from the catalog's key definition, never inferred); the slice decodes
+that column as one more filter-first predicate column, the rows whose key
+the memtable holds (updated or deleted) are cut out of the surviving ranges
+after the caller's own predicate ranges are coalesced, so a bridged gap
+can never resurrect a superseded row, and the memtable's live rows in the
+slice's key span follow as their own chunk. A slice that does not fit its
+memory allowance is halved at a block boundary rather than decoded
+unmasked; a single block that does not fit is an honest memory error.
+
+Two guards keep it exact. The mask takes the memtable's row as the winner
+without comparing versions, so the part is chosen only when every memtable
+row in the segment's span carries a version at least the segment's
+maximum; a stale replay keeps the merge, which compares. And the overlay
+appends the memtable rows after the segment's, so the stream is no longer
+in key order across that segment: it is opt-in through
+`enable_memtable_overlay`, which the executor calls (its operators order
+through sorts) and reconciliation, which walks the stream by key, never
+does. Composite, text and binary keys, segments only partly inside the
+scanned range, and segments retaining versions fall back to the merge.

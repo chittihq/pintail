@@ -292,6 +292,32 @@ prints.
   to the segment's end. Closed 2026-09-07: each stream seeks to the range's
   lower bound and the merge stops at the upper bound.
 
+- [x] **G7. One memtable row merged a whole segment.** Any memtable row
+  inside a segment's key range sent the segment through the row-wise
+  merge, the normal state of every replicated table between flushes.
+  Closed 2026-09-07: the `Overlay` part decodes the segment directly with
+  the superseded rows masked by the key column; see "A segment the
+  memtable overlaps is decoded directly" in `docs/decisions.md`.
+- [ ] **G8. The partial-range memory fallback may drop key bounds.** A
+  bounded direct decode that fails on memory retries over physical rows
+  `0..row_count`, and the range decoder applies no key bounds, so
+  out-of-range rows could surface when the smaller slices fit. Found by
+  inspection during the overlay review; not reproduced.
+- [ ] **G9. SMA pruning does not consider stale memtable versions.** A
+  segment row failing a predicate can be pruned while a lower-version
+  memtable row for the same key passes it; the merge would have kept the
+  segment's version. Found by inspection; not reproduced.
+- [ ] **G10. Two overlapping segments never compact.** `compaction_plan`
+  returns before the overlap check when the manifest holds fewer segments
+  than the fan-in (four), so an update-heavy table flushed once sits on a
+  base and an overlapping tail and merges on every scan until two more
+  flushes arrive.
+- [ ] **G11. The `auto_resync` repair recopies the whole database.** The
+  supervisor starts a forced snapshot for flagged keyless tables, so one
+  flagged table resets every table's store; with the not-ready guard the
+  whole database answers not ready for the copy. The per-table resync is
+  the scoped path.
+
 ## F. Still open from earlier reviews
 
 - The rename orphan left in `snapshotting` (owner decision 2026-09-05:

@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 
-use pintail_types::{PrimaryKey, StoredRow};
+use pintail_types::{KeyPart, PrimaryKey, StoredRow};
 use rayon::prelude::*;
 
 use super::{TableSnapshot, projected_scan_pool};
@@ -177,13 +177,121 @@ pub(super) enum ScanPart {
         lo: std::ops::Bound<PrimaryKey>,
         hi: std::ops::Bound<PrimaryKey>,
     },
+    /// One unique-key segment, wholly inside the scanned range, whose key
+    /// span holds memtable rows. Decoded directly, column by column, with
+    /// the rows the memtable supersedes masked out by their key and the
+    /// memtable's live rows added; the row-wise merge is not paid. Needs
+    /// the table's key column named (see
+    /// [`ProjectedScanStream::enable_memtable_overlay`]); without it the
+    /// part falls back to a merge over the segment.
+    Overlay {
+        segment: segment::SegmentMeta,
+    },
     MemtableOnly {
         lo: std::ops::Bound<PrimaryKey>,
         hi: std::ops::Bound<PrimaryKey>,
     },
 }
 
+/// The overlay part in progress: the segment's block boundaries, so a slice
+/// knows the key span it covers and which memtable rows belong to it.
+pub(super) struct OverlayState {
+    sparse: Vec<(u64, PrimaryKey)>,
+}
+
 /// Whether `key` lies within the inclusive/exclusive bound pair.
+/// Row-major values as one column chunk, charged to `memory_limit`.
+fn values_chunk(
+    columns: Vec<Vec<pintail_types::Value>>,
+    row_count: usize,
+    memory_limit: usize,
+) -> Result<ProjectedColumnChunk, StoreError> {
+    let retained_bytes = size_of::<ProjectedColumnChunk>()
+        .saturating_add(
+            columns
+                .capacity()
+                .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
+        )
+        .saturating_add(
+            columns
+                .iter()
+                .map(|values| {
+                    values
+                        .capacity()
+                        .saturating_mul(size_of::<pintail_types::Value>())
+                        .saturating_add(values.iter().map(pintail_types::Value::heap_bytes).sum())
+                })
+                .sum(),
+        );
+    if retained_bytes > memory_limit {
+        return Err(StoreError::MemoryLimitExceeded {
+            used: 0,
+            requested: retained_bytes,
+            limit: memory_limit,
+        });
+    }
+    Ok(ProjectedColumnChunk {
+        columns: columns.into_iter().map(DecodedColumn::Values).collect(),
+        row_count,
+        stats: ScanStats::default(),
+        retained_bytes,
+    })
+}
+
+/// The integer at `row` of a decoded key column, whatever shape the decode
+/// produced it in.
+fn integer_at(column: &DecodedColumn, row: usize) -> Option<i128> {
+    match column {
+        DecodedColumn::Int64 { values, .. } | DecodedColumn::NativeUnits { values, .. } => {
+            values.get(row).map(|value| i128::from(*value))
+        }
+        DecodedColumn::UInt64 { values, .. } => values.get(row).map(|value| i128::from(*value)),
+        DecodedColumn::Values(values) => match values.get(row)? {
+            pintail_types::Value::Int64(value) => Some(i128::from(*value)),
+            pintail_types::Value::UInt64(value) => Some(i128::from(*value)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Positions (ascending) of the rows whose key the memtable holds.
+fn superseded_positions(
+    column: &DecodedColumn,
+    row_count: usize,
+    keys: &std::collections::HashSet<i128>,
+) -> Vec<usize> {
+    (0..row_count)
+        .filter(|row| integer_at(column, *row).is_some_and(|key| keys.contains(&key)))
+        .collect()
+}
+
+/// `ranges` with the ascending `excluded` positions cut out.
+fn subtract_positions(
+    ranges: Vec<std::ops::Range<usize>>,
+    excluded: &[usize],
+) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::with_capacity(ranges.len() + excluded.len());
+    let mut next = 0;
+    for range in ranges {
+        let mut cursor = range.start;
+        while next < excluded.len() && excluded[next] < range.start {
+            next += 1;
+        }
+        while next < excluded.len() && excluded[next] < range.end {
+            if excluded[next] > cursor {
+                out.push(cursor..excluded[next]);
+            }
+            cursor = excluded[next] + 1;
+            next += 1;
+        }
+        if cursor < range.end {
+            out.push(cursor..range.end);
+        }
+    }
+    out
+}
+
 /// Whether `key` lies beyond the upper bound `hi`.
 fn bound_below(hi: &std::ops::Bound<PrimaryKey>, key: &PrimaryKey) -> bool {
     use std::ops::Bound::{Excluded, Included, Unbounded};
@@ -258,6 +366,11 @@ pub struct ProjectedScanStream {
     /// the current part as they are reached.
     pub(super) slices: VecDeque<DirectSlice>,
     pub(super) merge: Option<MergedProjectedStream>,
+    /// The user column that carries the table's single integer key, when
+    /// the caller named it; what lets an [`ScanPart::Overlay`] mask the rows
+    /// the memtable supersedes from a packed column instead of merging.
+    pub(super) overlay_key: Option<u32>,
+    pub(super) overlay: Option<OverlayState>,
 }
 
 pub(super) struct MergedProjectedStream {
@@ -1008,10 +1121,31 @@ impl ProjectedScanStream {
         self.direct_range = None;
         self.direct_slice_rows = None;
         self.slices.clear();
+        self.overlay = None;
         match part {
             ScanPart::Direct { segments } => {
                 self.segments = segments;
                 self.next_segment = 0;
+            }
+            ScanPart::Overlay { segment } => {
+                let sparse = if self.overlay_key.is_some() {
+                    segment::read_sparse_index(&self.snapshot.directory, &segment).ok()
+                } else {
+                    None
+                };
+                let Some(sparse) = sparse else {
+                    // No key column named, or no index to place slices by:
+                    // the merge answers for the whole segment as before.
+                    self.parts.push_front(ScanPart::Merge {
+                        lo: std::ops::Bound::Included(segment.min_key.clone()),
+                        hi: std::ops::Bound::Included(segment.max_key.clone()),
+                        segments: vec![segment],
+                    });
+                    return self.advance_part();
+                };
+                self.segments = vec![segment];
+                self.next_segment = 0;
+                self.overlay = Some(OverlayState { sparse });
             }
             ScanPart::DirectRange {
                 segment,
@@ -1146,38 +1280,7 @@ impl ProjectedScanStream {
             }
             return Ok(None);
         }
-        let retained_bytes = size_of::<ProjectedColumnChunk>()
-            .saturating_add(
-                columns
-                    .capacity()
-                    .saturating_mul(size_of::<Vec<pintail_types::Value>>()),
-            )
-            .saturating_add(
-                columns
-                    .iter()
-                    .map(|values| {
-                        values
-                            .capacity()
-                            .saturating_mul(size_of::<pintail_types::Value>())
-                            .saturating_add(
-                                values.iter().map(pintail_types::Value::heap_bytes).sum(),
-                            )
-                    })
-                    .sum(),
-            );
-        if retained_bytes > memory_limit {
-            return Err(StoreError::MemoryLimitExceeded {
-                used: 0,
-                requested: retained_bytes,
-                limit: memory_limit,
-            });
-        }
-        Ok(Some(ProjectedColumnChunk {
-            columns: columns.into_iter().map(DecodedColumn::Values).collect(),
-            row_count,
-            stats: ScanStats::default(),
-            retained_bytes,
-        }))
+        values_chunk(columns, row_count, memory_limit).map(Some)
     }
 
     /// Decodes several independently visible segments concurrently.
@@ -1243,36 +1346,78 @@ impl ProjectedScanStream {
                 } => (segment.clone(), *start_row, *end_row),
             };
             return match self.decode_slice(&slice, memory_limit, prewhere) {
-                // Too large for the budget whole: block-sized row slices,
-                // unfiltered, and the caller's predicate still runs over
-                // every row.
+                Err(StoreError::MemoryLimitExceeded { .. }) if self.overlay.is_some() => {
+                    // The overlay must mask every slice it decodes, so a
+                    // slice that does not fit is halved at a block boundary
+                    // rather than decoded unmasked in pieces.
+                    match self.split_overlay_slice(&slice) {
+                        Some((head, tail)) => {
+                            self.slices.push_front(tail);
+                            self.slices.push_front(head);
+                            self.next_column_chunks_inner(1, memory_limit, prewhere)
+                        }
+                        None => Err(StoreError::MemoryLimitExceeded {
+                            used: 0,
+                            requested: 0,
+                            limit: memory_limit,
+                        }),
+                    }
+                }
                 Err(StoreError::MemoryLimitExceeded { .. }) if end_row - start_row > 1 => self
                     .decode_direct_range_within(segment, start_row, end_row, memory_limit)
                     .map(|chunk| vec![chunk]),
-                other => other.map(|chunk| vec![chunk]),
+                other => other,
             };
         }
         let per_chunk_limit = memory_limit / chunk_count;
-        let decoded = projected_scan_pool()?.install(|| {
-            taken
-                .par_iter()
-                .map(|slice| self.decode_slice(slice, per_chunk_limit, prewhere))
-                .collect()
-        });
+        let decoded: Result<Vec<Vec<ProjectedColumnChunk>>, StoreError> = projected_scan_pool()?
+            .install(|| {
+                taken
+                    .par_iter()
+                    .map(|slice| self.decode_slice(slice, per_chunk_limit, prewhere))
+                    .collect()
+            });
         if matches!(decoded, Err(StoreError::MemoryLimitExceeded { .. })) {
-            // Hand the slices back in order and try half as many at once.
             for slice in taken.into_iter().rev() {
                 self.slices.push_front(slice);
             }
             return self.next_column_chunks_inner(chunk_count.div_ceil(2), memory_limit, prewhere);
         }
-        decoded
+        decoded.map(|chunks| chunks.into_iter().flatten().collect())
     }
 
-    /// Cuts direct segments into slices until at least `wanted` are queued
-    /// or the part's segments run out. A segment wholly inside the scanned
-    /// key range and larger than a slice becomes block-aligned ranges; any
-    /// other segment stays one unit and decodes as it always did.
+    /// Halves an overlay slice at the block boundary nearest its middle;
+    /// `None` when it is a single block.
+    fn split_overlay_slice(&self, slice: &DirectSlice) -> Option<(DirectSlice, DirectSlice)> {
+        let sparse = &self.overlay.as_ref()?.sparse;
+        let (segment, start_row, end_row) = match slice {
+            DirectSlice::Whole(segment) => (segment, 0, segment.row_count),
+            DirectSlice::Range {
+                segment,
+                start_row,
+                end_row,
+            } => (segment, *start_row, *end_row),
+        };
+        let middle = start_row + (end_row - start_row) / 2;
+        let boundary = sparse
+            .iter()
+            .map(|(row, _)| *row)
+            .filter(|row| *row > start_row && *row < end_row)
+            .min_by_key(|row| row.abs_diff(middle))?;
+        Some((
+            DirectSlice::Range {
+                segment: segment.clone(),
+                start_row,
+                end_row: boundary,
+            },
+            DirectSlice::Range {
+                segment: segment.clone(),
+                start_row: boundary,
+                end_row,
+            },
+        ))
+    }
+
     fn fill_direct_slices(&mut self, wanted: usize) -> Result<(), StoreError> {
         while self.slices.len() < wanted {
             let Some(segment) = self.segments.get(self.next_segment).cloned() else {
@@ -1311,6 +1456,19 @@ impl ProjectedScanStream {
         slice: &DirectSlice,
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        if self.overlay.is_some() {
+            return self.decode_overlay_slice(slice, memory_limit, prewhere);
+        }
+        self.decode_slice_plain(slice, memory_limit, prewhere)
+            .map(|chunk| vec![chunk])
+    }
+
+    fn decode_slice_plain(
+        &self,
+        slice: &DirectSlice,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
     ) -> Result<ProjectedColumnChunk, StoreError> {
         match slice {
             DirectSlice::Whole(segment) => {
@@ -1328,6 +1486,156 @@ impl ProjectedScanStream {
                 prewhere,
             ),
         }
+    }
+
+    /// The key span a direct slice covers, from the segment's block
+    /// boundaries: the first key of its first block up to (excluding) the
+    /// first key of the block after it, or the segment's last key.
+    fn overlay_slice_span(
+        &self,
+        slice: &DirectSlice,
+    ) -> (std::ops::Bound<PrimaryKey>, std::ops::Bound<PrimaryKey>) {
+        use std::ops::Bound::{Excluded, Included};
+        let sparse = self
+            .overlay
+            .as_ref()
+            .map(|state| state.sparse.as_slice())
+            .unwrap_or_default();
+        match slice {
+            DirectSlice::Whole(segment) => (
+                Included(segment.min_key.clone()),
+                Included(segment.max_key.clone()),
+            ),
+            DirectSlice::Range {
+                segment,
+                start_row,
+                end_row,
+            } => {
+                let lo = sparse
+                    .iter()
+                    .find(|(row, _)| *row == *start_row)
+                    .map_or_else(
+                        || Included(segment.min_key.clone()),
+                        |(_, key)| Included(key.clone()),
+                    );
+                let hi = sparse.iter().find(|(row, _)| *row == *end_row).map_or_else(
+                    || Included(segment.max_key.clone()),
+                    |(_, key)| Excluded(key.clone()),
+                );
+                (lo, hi)
+            }
+        }
+    }
+
+    /// Decodes a slice of an overlay part: the segment's rows minus those
+    /// whose key the memtable holds (updated or deleted since the flush),
+    /// followed by the memtable's live rows for the slice's key span. The
+    /// mask rides the filter-first path as one more predicate column, so a
+    /// slice with no memtable rows in its span costs what a direct slice
+    /// costs, and one with a few costs one extra packed column.
+    fn decode_overlay_slice(
+        &self,
+        slice: &DirectSlice,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        let Some(key_id) = self.overlay_key else {
+            return self
+                .decode_slice_plain(slice, memory_limit, prewhere)
+                .map(|chunk| vec![chunk]);
+        };
+        let span = self.overlay_slice_span(slice);
+        let mut keys = std::collections::HashSet::new();
+        let mut live = Vec::new();
+        if bound_range_is_searchable(&span.0, &span.1) {
+            for (key, row) in self.snapshot.memtable.range(span) {
+                let [part] = key.parts() else {
+                    return Err(StoreError::FormatLimit(
+                        "the memtable overlay needs a single-column key".into(),
+                    ));
+                };
+                let value = match part {
+                    KeyPart::Int64(value) => i128::from(*value),
+                    KeyPart::UInt64(value) => i128::from(*value),
+                    _ => {
+                        return Err(StoreError::FormatLimit(
+                            "the memtable overlay needs an integer key".into(),
+                        ));
+                    }
+                };
+                keys.insert(value);
+                if !row.is_deleted() {
+                    live.push(row);
+                }
+            }
+        }
+        if keys.is_empty() {
+            return self
+                .decode_slice_plain(slice, memory_limit, prewhere)
+                .map(|chunk| vec![chunk]);
+        }
+        let mut ids = prewhere.map_or_else(Vec::new, |(ids, _)| ids.to_vec());
+        let key_index = ids.iter().position(|id| *id == key_id).unwrap_or_else(|| {
+            ids.push(key_id);
+            ids.len() - 1
+        });
+        let caller = prewhere;
+        let select = |columns: &[DecodedColumn], row_count: usize| {
+            let kept = match caller {
+                Some((caller_ids, select)) => select(&columns[..caller_ids.len()], row_count)?,
+                None => None,
+            };
+            let excluded = superseded_positions(&columns[key_index], row_count, &keys);
+            if excluded.is_empty() {
+                return Ok(kept);
+            }
+            Ok(Some(subtract_positions(
+                kept.unwrap_or_else(|| std::iter::once(0..row_count).collect()),
+                &excluded,
+            )))
+        };
+        let segment_chunk = self.decode_slice_plain(slice, memory_limit, Some((&ids, &select)))?;
+        let mut chunks = vec![segment_chunk];
+        if let Some(chunk) = self.memtable_rows_chunk(&live, memory_limit)? {
+            chunks.push(chunk);
+        }
+        Ok(chunks)
+    }
+
+    /// Memtable rows as one column chunk in the scan's projection; `None`
+    /// when there are none.
+    fn memtable_rows_chunk(
+        &self,
+        rows: &[&StoredRow],
+        memory_limit: usize,
+    ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let projection = self
+            .column_ids
+            .iter()
+            .map(|id| {
+                self.snapshot
+                    .schema
+                    .columns()
+                    .iter()
+                    .position(|column| column.id() == *id)
+                    .ok_or_else(|| {
+                        StoreError::FormatLimit(format!("unknown projected column id {id}"))
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut columns = projection
+            .iter()
+            .map(|_| Vec::with_capacity(rows.len()))
+            .collect::<Vec<Vec<pintail_types::Value>>>();
+        for row in rows {
+            for (column, position) in columns.iter_mut().zip(&projection) {
+                column.push(row.values()[*position].clone());
+            }
+        }
+        values_chunk(columns, rows.len(), memory_limit).map(Some)
     }
 
     /// The filter-first path for one row range of a direct segment: the
@@ -1965,6 +2273,42 @@ impl ProjectedScanStream {
     }
 
     /// Returns the scanned key range.
+    /// Names the user column holding the table's single integer key. A
+    /// segment the memtable overlaps can then be decoded directly, with the
+    /// superseded rows masked out by that column, instead of merged row by
+    /// row. Ignored for a column that is absent or not an integer. Call
+    /// before the first chunk is pulled.
+    ///
+    /// The contract changes with it: the memtable's live rows for such a
+    /// segment follow the segment's rows as their own chunk, so chunks no
+    /// longer arrive in key order across that segment. A caller that walks
+    /// the stream by key (reconciliation does) must not name the column;
+    /// the query executor, which orders through its own operators, does.
+    pub fn enable_memtable_overlay(&mut self, key_column_id: u32) {
+        let integer = self
+            .snapshot
+            .schema
+            .columns()
+            .iter()
+            .find(|column| column.id() == key_column_id)
+            .is_some_and(|column| {
+                matches!(
+                    column.data_type(),
+                    pintail_types::DataType::Int8
+                        | pintail_types::DataType::Int16
+                        | pintail_types::DataType::Int32
+                        | pintail_types::DataType::Int64
+                        | pintail_types::DataType::UInt8
+                        | pintail_types::DataType::UInt16
+                        | pintail_types::DataType::UInt32
+                        | pintail_types::DataType::UInt64
+                )
+            });
+        if integer {
+            self.overlay_key = Some(key_column_id);
+        }
+    }
+
     #[must_use]
     pub fn key_range(&self) -> (&PrimaryKey, &PrimaryKey) {
         (&self.start, &self.end)

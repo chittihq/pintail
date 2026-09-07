@@ -334,7 +334,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         }
         let value_bounds = sma_column_bounds(&scan.predicates);
         if unique_keys.is_none()
-            && let Some(stream) = snapshot
+            && let Some(mut stream) = snapshot
                 .scan_projected_range_stream_pruned(
                     &start,
                     &end,
@@ -355,6 +355,12 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 [key_id] => scan.projected_column_ids.iter().position(|id| id == key_id),
                 _ => None,
             };
+            // A single-column key lets a segment the memtable overlaps be
+            // decoded directly with the superseded rows masked by that
+            // column, instead of merged row by row.
+            if let [key_id] = scan.table.key_column_ids.as_slice() {
+                stream.enable_memtable_overlay(*key_id);
+            }
             // Bounded so merging never costs more than it saves.
             #[allow(clippy::items_after_statements)]
             const DELTA_ROW_CAP: usize = 4096;

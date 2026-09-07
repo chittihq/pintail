@@ -2666,3 +2666,22 @@ response is flushed (or at 64 KiB); nodelay = the same plus `TCP_NODELAY`.
 **Verdict: keep the buffering, leave `TCP_NODELAY` off.** The per-row
 system calls were the cost; with one write per response there is nothing
 left for Nagle to delay, and the option is neutral within noise.
+
+## e73 — Direct decode with a memtable mask (300K-row segment, executor, release, memo off)
+
+One unique-key segment of 300K rows and four columns, then 40 and then
+2,000 scattered memtable updates; minimum of five runs, milliseconds.
+Before = the memtable overlap sends the segment through the row-wise
+merge; after = the overlay masks the superseded rows from a direct decode.
+
+| query | no memtable | 40 updates before | 40 after | 2,000 before | 2,000 after |
+|---|---:|---:|---:|---:|---:|
+| `COUNT(*)` with a trivial predicate | 0.7 | 51.7 | 4.3 | 52.2 | 7.4 |
+| five-key `IN` on a non-key column, three columns | 60.5 | 127.3 | 64.9 | 128.6 | 67.5 |
+| three-key `IN` on the key, `SUM` | 36.0 | 92.5 | 39.4 | 93.3 | 41.8 |
+| full four-column scan | 38.6 | — | 42.7 | — | 46.1 |
+
+**Verdict: keep.** A table under live replication now scans at direct
+speed plus one packed key column; the merge remains for the shapes the
+overlay declines (stale versions, composite keys, partial segments,
+version-retaining segments, key-ordered consumers).

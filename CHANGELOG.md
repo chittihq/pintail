@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- A segment the memtable overlaps is decoded directly, with the rows the
+  memtable supersedes masked out by the key column and the memtable's live
+  rows added, instead of merged row by row. Under live replication a table
+  keeps its latest updates in the memtable for as long as the memtable takes
+  to fill, and one such row used to send the whole segment through the
+  row-wise merge: on a 300K-row segment with forty scattered updates, a
+  count took 52 ms instead of 0.7 ms, a five-key filter 128 ms instead of
+  61, a three-key lookup 93 ms instead of 36. With the overlay those read
+  4 ms, 65 ms and 39 ms; with two thousand scattered updates 7 ms, 68 ms
+  and 42 ms. The overlay applies to a single-column integer key when every
+  memtable row in the segment's span is at least as new as the segment; a
+  composite or text key, a stale replay, a partially scanned segment or a
+  segment retaining versions keeps the merge. Reconciliation, which walks
+  the stream by key, keeps the merge as well.
+
 ## [0.1.2-rc6] - 2026-09-07
 
 ### Performance

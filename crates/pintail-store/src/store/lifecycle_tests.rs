@@ -204,3 +204,178 @@ fn merge_on_read_over_a_key_range_answers_from_the_newest_versions() {
     }
     assert!(amounts(3001, 4000).is_empty());
 }
+
+/// A unique-key segment the memtable overlaps is decoded directly with the
+/// superseded rows masked by the key column and the memtable's live rows
+/// added, once the key column is named; without the name it merges as
+/// before. Both answer the same, including at block boundaries.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_memtable_overlap_is_masked_from_a_direct_decode() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "amount", DataType::Int64, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 1_000,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    let row = |id: u64, amount: i64, version: u64, deleted: bool| {
+        StoredRow::new(
+            key(id),
+            vec![
+                pintail_types::Value::UInt64(id),
+                pintail_types::Value::Int64(amount),
+            ],
+            version,
+            deleted,
+        )
+    };
+    // Seventy blocks of a thousand rows, keys 2..=140000 step 2.
+    table
+        .ingest(
+            (1..=70_000)
+                .map(|n| row(n * 2, i64::try_from(n).unwrap(), 1, false))
+                .collect(),
+        )
+        .unwrap();
+    table.flush().unwrap();
+    assert_eq!(table.manifest.segments.len(), 1);
+    // Updates, deletes and inserts, several on block boundaries: 2000 is the
+    // last key of block 0, 2002 the first of block 1, 2001 lies between
+    // them, 140000 is the segment's last key.
+    let mut model: std::collections::BTreeMap<u64, Option<i64>> = (1..=70_000_u64)
+        .map(|n| (n * 2, Some(i64::try_from(n).unwrap())))
+        .collect();
+    let ops = [
+        (6_000_u64, -1_i64, false),
+        (2_000, 0, true),
+        (2_002, -2, false),
+        (2_001, -3, false),
+        (140_000, -4, false),
+        (140_001, -5, false),
+        (300_000, -6, false),
+        (14_000, 0, true),
+        (14_001, -7, false),
+    ];
+    table
+        .ingest(
+            ops.iter()
+                .map(|(id, amount, deleted)| row(*id, *amount, 2, *deleted))
+                .collect(),
+        )
+        .unwrap();
+    for (id, amount, deleted) in ops {
+        model.insert(id, if deleted { None } else { Some(amount) });
+    }
+    let expected = model
+        .iter()
+        .filter_map(|(id, amount)| amount.map(|amount| (*id, amount)))
+        .collect::<Vec<_>>();
+
+    let snapshot = table.snapshot();
+    let drain = |mut stream: ProjectedScanStream| {
+        let mut rows = Vec::new();
+        loop {
+            let chunks = stream.next_column_chunks(3, usize::MAX).unwrap();
+            if chunks.is_empty() {
+                break;
+            }
+            for chunk in chunks {
+                let mut columns = chunk
+                    .into_decoded_columns()
+                    .into_iter()
+                    .map(DecodedColumn::into_values);
+                let ids = columns.next().unwrap();
+                let amounts = columns.next().unwrap();
+                for (id, amount) in ids.into_iter().zip(amounts) {
+                    match (id, amount) {
+                        (pintail_types::Value::UInt64(id), pintail_types::Value::Int64(amount)) => {
+                            rows.push((id, amount));
+                        }
+                        other => panic!("unexpected row {other:?}"),
+                    }
+                }
+            }
+        }
+        rows.sort_unstable();
+        rows
+    };
+    let shape = |stream: &ProjectedScanStream| {
+        stream
+            .parts
+            .iter()
+            .map(|part| match part {
+                super::scan::ScanPart::Overlay { .. } => "overlay",
+                super::scan::ScanPart::Merge { .. } => "merge",
+                super::scan::ScanPart::Direct { .. }
+                | super::scan::ScanPart::DirectRange { .. } => "direct",
+                super::scan::ScanPart::MemtableOnly { .. } => "memtable",
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let mut overlay = snapshot
+        .scan_projected_range_stream(&key(0), &key(400_000), &[1, 2])
+        .unwrap()
+        .expect("streaming scan");
+    overlay.enable_memtable_overlay(1);
+    assert_eq!(shape(&overlay), ["overlay", "memtable"]);
+    assert_eq!(drain(overlay), expected);
+
+    // The key column unnamed: the same part merges instead.
+    let fallback = snapshot
+        .scan_projected_range_stream(&key(0), &key(400_000), &[1, 2])
+        .unwrap()
+        .expect("streaming scan");
+    assert_eq!(shape(&fallback), ["overlay", "memtable"]);
+    assert_eq!(drain(fallback), expected);
+
+    // A projection without the key column still masks by it.
+    let mut amounts_only = snapshot
+        .scan_projected_range_stream(&key(0), &key(400_000), &[2])
+        .unwrap()
+        .expect("streaming scan");
+    amounts_only.enable_memtable_overlay(1);
+    let mut total = 0_i64;
+    loop {
+        let chunks = amounts_only.next_column_chunks(3, usize::MAX).unwrap();
+        if chunks.is_empty() {
+            break;
+        }
+        for chunk in chunks {
+            for value in chunk.into_decoded_columns().remove(0).into_values() {
+                let pintail_types::Value::Int64(amount) = value else {
+                    panic!("unexpected {value:?}")
+                };
+                total += amount;
+            }
+        }
+    }
+    assert_eq!(
+        total,
+        expected.iter().map(|(_, amount)| amount).sum::<i64>()
+    );
+
+    // A memtable row older than the segment's newest version cannot be
+    // masked in unseen: the segment merges again and the segment's version
+    // wins, as the merge decides.
+    table.ingest(vec![row(8_000, -99, 0, false)]).unwrap();
+    let snapshot = table.snapshot();
+    let mut stale = snapshot
+        .scan_projected_range_stream(&key(0), &key(400_000), &[1, 2])
+        .unwrap()
+        .expect("streaming scan");
+    stale.enable_memtable_overlay(1);
+    assert_eq!(shape(&stale), ["merge", "memtable"]);
+    let rows = drain(stale);
+    assert_eq!(rows, expected, "the stale row changes nothing");
+}

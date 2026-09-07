@@ -619,9 +619,27 @@ impl TableSnapshot {
             }
             let lo_bound = std::ops::Bound::Included(part_lo.clone());
             let hi_bound = std::ops::Bound::Included(part_hi.clone());
-            let direct =
-                next - index == 1 && all_unique && !memtable_has_rows(&lo_bound, &hi_bound);
-            if direct {
+            let single_unique = next - index == 1 && all_unique;
+            let direct = single_unique && !memtable_has_rows(&lo_bound, &hi_bound);
+            // A whole unique segment the memtable overlaps decodes directly
+            // with the superseded rows masked out; it needs no row-wise
+            // visibility resolution. The mask takes the memtable's version
+            // as the winner without comparing, so every memtable row in the
+            // span has to be at least as new as anything in the segment; a
+            // stale replay inside the span keeps the merge, which compares.
+            let overlay = single_unique
+                && !direct
+                && *start <= segments[index].min_key
+                && *end >= segments[index].max_key
+                && self
+                    .memtable
+                    .range((lo_bound.clone(), hi_bound.clone()))
+                    .all(|(_, row)| row.version() >= segments[index].max_version);
+            if overlay {
+                parts.push_back(ScanPart::Overlay {
+                    segment: segments[index].clone(),
+                });
+            } else if direct {
                 // Coalesce runs of direct clusters so parallel prefetch keeps
                 // its full width across them.
                 if let Some(ScanPart::Direct { segments: previous }) = parts.back_mut() {
@@ -670,6 +688,8 @@ impl TableSnapshot {
             direct_slice_rows: None,
             slices: std::collections::VecDeque::new(),
             merge: None,
+            overlay_key: None,
+            overlay: None,
         }))
     }
 
