@@ -69,9 +69,9 @@ fn expr_columns<'a>(expr: &'a BoundExpr, out: &mut Vec<&'a BoundColumn>) -> bool
             out.push(column);
             true
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            expr_columns(expr, out)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => expr_columns(expr, out),
         BoundExprKind::Binary { left, right, .. } => {
             expr_columns(left, out) && expr_columns(right, out)
         }

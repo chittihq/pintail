@@ -1507,3 +1507,28 @@ A row-bounded replay keeps these decisions in one place and avoids copying
 probe files. For a single equal key its comparisons correspond to candidate
 output pairs; a partition containing many colliding distinct keys can incur
 quadratic comparison work. Each candidate pair and predicate must fit.
+
+## Prepared membership owns external IN storage
+
+Subquery resolution previously replaced every IN result with a literal
+argument list before expression compilation. Large sets now become a
+prepared membership node whose shared resource owns the temporary runs.
+Small sets retain the literal-list representation, and existing integer
+join-membership optimizations remain available. The runtime node is
+installed after physical planning; frontend visitors only traverse its
+operand, and persistent aggregate signatures decline to cache it.
+
+The set spills at a quarter of its allowance. Integer and text keys route
+set values and probes through the same hash partition; exact-decimal and
+mixed-type comparisons share one partition and use the existing comparison
+rules. Every probe scans one partition, retains one candidate, and checks
+interruption while reading. Shared expression clones serialize probes so
+they share the reserved comparison scratch. An explicitly collated operand
+uses the same coercibility result as the in-memory IN expression.
+
+A paged binary-search index could reduce repeated reads, but requires an
+ordering consistent with every mixed-type equality coercion. Hash routing
+with a conservative common partition closes the memory failure without
+introducing a second equality definition. It can still perform quadratic
+comparison work for skew or mixed types. Correlated sets use the same
+storage switch for the current outer tuple; large disk sets are not memoized.

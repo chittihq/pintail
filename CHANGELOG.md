@@ -31,6 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lookup and lane dispatch move out of the row loop; larger key domains
   return to the existing partitioned aggregate without changing results.
 
+- Large `IN` subquery sets spill into query-owned membership partitions
+  instead of becoming an oversized literal list. Probes preserve NULL and
+  `NOT IN` outcomes, comparison collation, and exact-decimal coercions;
+  sets that fit retain the memory path.
+
 - A grace join no longer rejects a key whose build rows exceed the memory
   ceiling after repeated partitioning. It replays the build rows from disk
   for each probe and serves matches in bounded chunks, keeping unmatched

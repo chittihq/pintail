@@ -259,9 +259,9 @@ impl BoundExpr {
             BoundExprKind::Scalar { function, args } => {
                 json_text_producer(*function) || args.iter().any(Self::reads_json_text)
             }
-            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-                expr.reads_json_text()
-            }
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => expr.reads_json_text(),
             BoundExprKind::Binary { left, right, .. } => {
                 left.reads_json_text() || right.reads_json_text()
             }
@@ -284,7 +284,9 @@ impl BoundExpr {
                     argument.collect_explicit_collations(collations);
                 }
             }
-            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => {
                 expr.collect_explicit_collations(collations);
             }
             BoundExprKind::Binary { left, right, .. } => {
@@ -307,7 +309,9 @@ impl BoundExpr {
                     );
                 }
             }
-            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => {
                 expr.collect_source_collations(collations);
             }
             BoundExprKind::Binary { left, right, .. } => {
@@ -350,9 +354,52 @@ impl BoundExpr {
     }
 }
 
+/// Failure while probing a query-owned membership set.
+#[derive(Debug)]
+pub enum MembershipError {
+    /// The query was cancelled.
+    Cancelled,
+    /// The query deadline elapsed.
+    TimedOut,
+    /// Storage or comparison failed.
+    Failed(String),
+}
+
+/// Query-owned membership prepared after physical planning. The frontend
+/// never constructs this interface; execution supplies its storage strategy.
+pub trait MembershipLookup: std::fmt::Debug + Send + Sync {
+    /// SQL membership before NOT is applied, including the NULL outcome.
+    ///
+    /// # Errors
+    /// Returns a storage or comparison error from the prepared set.
+    fn lookup(&self, value: &Value) -> Result<Value, MembershipError>;
+}
+
+/// Shared lifetime for a prepared membership resource and its spill files.
+#[derive(Clone, Debug)]
+pub struct PreparedMembership(pub std::sync::Arc<dyn MembershipLookup>);
+
+impl PartialEq for PreparedMembership {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for PreparedMembership {}
+
 /// Operations represented by a bound scalar expression.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BoundExprKind {
+    /// Membership lowered by execution after physical planning.
+    PreparedIn {
+        /// Value tested against the prepared set.
+        expr: Box<BoundExpr>,
+        /// Query-owned memory or disk resource.
+        membership: PreparedMembership,
+        /// Whether membership is negated.
+        negated: bool,
+    },
+
     /// Stable catalog column reference.
     Column(BoundColumn),
     /// Positional grouping-key reference after hash aggregation.
@@ -1334,7 +1381,9 @@ impl BoundQuery {
                     );
                 }
             }
-            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => {
                 self.collect_result_collations(expr, collations);
             }
             BoundExprKind::Binary { left, right, .. } => {

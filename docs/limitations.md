@@ -206,8 +206,11 @@ stays readable as a list of things to fix.
 - A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
   value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
   state encoding.
-- Large `IN (subquery)` membership sets still materialize and fail at the
-  query ceiling instead of using an external membership index.
+- External `IN` membership probes scan their hash partition. Highly skewed
+  sets can require quadratic comparisons across many probes; mixed-type and
+  exact-decimal comparisons use a common partition to preserve coercion
+  semantics. A correlated external set is rebuilt for each uncached outer
+  tuple. One value and its comparison scratch must fit in the query budget.
 - A grace join partition that cannot be reduced by hashing replays the
   build file for each probe row. This can require quadratic comparisons
   when many distinct keys collide through every hash pass. One candidate
@@ -218,8 +221,8 @@ stays readable as a list of things to fix.
 - Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
   `global_spill_limit_bytes`; exhausting either limit fails the query before
   the write crosses the ceiling.
-- Dependent correlated execution reruns its bounded inner plan for each outer
-  row and does not cache repeated parameter tuples. Nullable correlated
+- Dependent correlated execution can rerun its inner plan for each outer
+  row when memoization is unavailable. Nullable correlated
   `NOT IN` shapes that cannot be proven safe still reject rather than risk a
   different answer.
 - Cross joins require catalog cardinalities and reject estimates above one

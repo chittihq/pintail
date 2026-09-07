@@ -2,6 +2,7 @@ mod aggregate;
 mod budget;
 mod error;
 mod join;
+pub(crate) mod membership;
 mod memo;
 mod morsel;
 mod sort;
@@ -983,7 +984,9 @@ fn collect_expression_tables(expression: &BoundExpr, tables: &mut BTreeSet<Relat
                 column.relation_name.to_ascii_lowercase(),
             ));
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             collect_expression_tables(expr, tables);
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -1915,6 +1918,7 @@ impl Execution {
         #[cfg(test)]
         let serial = budget_serial::Serial::acquire();
         let mut subquery_bytes = 0;
+        let query_spill = spill::QuerySpill::new();
         resolve_plan_subqueries(
             &mut plan,
             provider,
@@ -1922,9 +1926,11 @@ impl Execution {
             deadline,
             &mut subquery_bytes,
             collation,
+            &query_spill,
         )?;
         let output_fields = plan.output_fields();
         let mut memory = MemoryTracker::with_deadline(memory_limit, deadline);
+        memory.spill = query_spill;
         if profiled {
             memory.profile = Some(std::sync::Arc::new(ProfileSink::default()));
         }
@@ -1988,6 +1994,7 @@ fn resolve_plan_subqueries(
     deadline: Option<Instant>,
     retained_bytes: &mut usize,
     collation: Collation,
+    query_spill: &spill::QuerySpill,
 ) -> Result<(), ExecError> {
     match plan {
         PhysicalPlan::Recursive { anchor, member, .. } => {
@@ -1998,6 +2005,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_plan_subqueries(
                 member,
@@ -2006,6 +2014,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::Scan(scan) => {
@@ -2017,6 +2026,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
         }
@@ -2031,6 +2041,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::SetOp { left, right, .. } => {
@@ -2041,6 +2052,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_plan_subqueries(
                 right,
@@ -2049,6 +2061,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::Window { input, windows, .. } => {
@@ -2063,6 +2076,7 @@ fn resolve_plan_subqueries(
                         deadline,
                         retained_bytes,
                         collation,
+                        query_spill,
                     )?;
                 }
                 for expr in &mut window.partition_by {
@@ -2073,6 +2087,7 @@ fn resolve_plan_subqueries(
                         deadline,
                         retained_bytes,
                         collation,
+                        query_spill,
                     )?;
                 }
                 for key in &mut window.order_by {
@@ -2083,6 +2098,7 @@ fn resolve_plan_subqueries(
                         deadline,
                         retained_bytes,
                         collation,
+                        query_spill,
                     )?;
                 }
             }
@@ -2093,6 +2109,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::CrossJoin { inputs, .. } | PhysicalPlan::UnionAll { inputs } => {
@@ -2104,6 +2121,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
         }
@@ -2122,6 +2140,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_plan_subqueries(
                 right,
@@ -2130,6 +2149,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_expr_subqueries(
                 left_key,
@@ -2138,6 +2158,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_expr_subqueries(
                 right_key,
@@ -2146,6 +2167,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             for (extra_left, extra_right) in extra_keys {
                 resolve_expr_subqueries(
@@ -2155,6 +2177,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
                 resolve_expr_subqueries(
                     extra_right,
@@ -2163,6 +2186,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
         }
@@ -2179,6 +2203,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_plan_subqueries(
                 right,
@@ -2187,6 +2212,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_expr_subqueries(
                 condition,
@@ -2195,6 +2221,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::Filter { input, predicate } => {
@@ -2205,6 +2232,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_expr_subqueries(
                 predicate,
@@ -2213,6 +2241,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         PhysicalPlan::HashAggregate {
@@ -2227,6 +2256,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             for expression in group_by {
                 resolve_expr_subqueries(
@@ -2236,6 +2266,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
             for aggregate in aggregates {
@@ -2247,6 +2278,7 @@ fn resolve_plan_subqueries(
                         deadline,
                         retained_bytes,
                         collation,
+                        query_spill,
                     )?;
                 }
                 for (key, _) in &mut aggregate.order_within {
@@ -2257,6 +2289,7 @@ fn resolve_plan_subqueries(
                         deadline,
                         retained_bytes,
                         collation,
+                        query_spill,
                     )?;
                 }
             }
@@ -2269,6 +2302,7 @@ fn resolve_plan_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             for projection in expressions {
                 resolve_expr_subqueries(
@@ -2278,6 +2312,7 @@ fn resolve_plan_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
         }
@@ -2296,6 +2331,7 @@ fn resolve_expr_subqueries(
     deadline: Option<Instant>,
     retained_bytes: &mut usize,
     collation: Collation,
+    query_spill: &spill::QuerySpill,
 ) -> Result<(), ExecError> {
     match &mut expression.kind {
         BoundExprKind::ScalarSubquery(query) if bound_query_has_outer_refs(query) => {}
@@ -2343,6 +2379,7 @@ fn resolve_expr_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             if bound_query_has_outer_refs(query) {
                 return Ok(());
@@ -2351,14 +2388,37 @@ fn resolve_expr_subqueries(
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let values = materialize_subquery(
+            let values = match membership::materialize_membership(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
-                None,
-                collation,
-            )?;
+                expr.text_collation()
+                    .and_then(Collation::from_mysql_name)
+                    .unwrap_or(collation),
+                query_spill,
+                expr.data_type,
+                projection_type,
+            )? {
+                membership::MaterializedMembership::Memory(values) => values,
+                membership::MaterializedMembership::External(membership, bytes) => {
+                    if retained_bytes.saturating_add(bytes) > memory_limit {
+                        return Err(ExecError::MemoryLimitExceeded {
+                            used: *retained_bytes,
+                            requested: bytes,
+                            limit: memory_limit,
+                            scope: MemoryScope::Query,
+                        });
+                    }
+                    *retained_bytes += bytes;
+                    expression.kind = BoundExprKind::PreparedIn {
+                        expr: expr.clone(),
+                        membership,
+                        negated: *negated,
+                    };
+                    return Ok(());
+                }
+            };
             reserve_subquery_values(&values, memory_limit, retained_bytes)?;
             let mut args = Vec::with_capacity(values.len() + 1);
             args.push((**expr).clone());
@@ -2372,7 +2432,9 @@ fn resolve_expr_subqueries(
                 args,
             };
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             resolve_expr_subqueries(
                 expr,
                 provider,
@@ -2380,6 +2442,7 @@ fn resolve_expr_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -2390,6 +2453,7 @@ fn resolve_expr_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
             resolve_expr_subqueries(
                 right,
@@ -2398,6 +2462,7 @@ fn resolve_expr_subqueries(
                 deadline,
                 retained_bytes,
                 collation,
+                query_spill,
             )?;
         }
         BoundExprKind::Scalar { args, .. } => {
@@ -2409,6 +2474,7 @@ fn resolve_expr_subqueries(
                     deadline,
                     retained_bytes,
                     collation,
+                    query_spill,
                 )?;
             }
         }
@@ -2495,9 +2561,9 @@ fn bound_window_has_outer_refs(window: &BoundWindow) -> bool {
 fn bound_expr_has_outer_refs(expression: &BoundExpr) -> bool {
     match &expression.kind {
         BoundExprKind::Column(column) => column.outer,
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            bound_expr_has_outer_refs(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => bound_expr_has_outer_refs(expr),
         BoundExprKind::Binary { left, right, .. } => {
             bound_expr_has_outer_refs(left) || bound_expr_has_outer_refs(right)
         }
@@ -2523,9 +2589,9 @@ fn expression_has_dependent_subquery(expression: &BoundExpr) -> bool {
         BoundExprKind::InSubquery { expr, query, .. } => {
             bound_query_has_outer_refs(query) || expression_has_dependent_subquery(expr)
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            expression_has_dependent_subquery(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => expression_has_dependent_subquery(expr),
         BoundExprKind::Binary { left, right, .. } => {
             expression_has_dependent_subquery(left) || expression_has_dependent_subquery(right)
         }
@@ -2543,9 +2609,9 @@ fn expression_has_subquery(expression: &BoundExpr) -> bool {
         BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::ExistsSubquery { .. }
         | BoundExprKind::InSubquery { .. } => true,
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            expression_has_subquery(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => expression_has_subquery(expr),
         BoundExprKind::Binary { left, right, .. } => {
             expression_has_subquery(left) || expression_has_subquery(right)
         }
@@ -2672,7 +2738,9 @@ fn substitute_outer_expr(
                 expression.kind = BoundExprKind::Literal(value);
             }
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             substitute_outer_expr(expr, batch, row, columns, key)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -2747,6 +2815,8 @@ fn dependent_subquery_values(
     Ok(values)
 }
 
+// One arm per scalar expression shape, including the membership storage choice.
+#[allow(clippy::too_many_lines)]
 pub(super) fn resolve_dependent_expr_subqueries(
     expression: &mut BoundExpr,
     context: &DependentRow<'_>,
@@ -2779,7 +2849,54 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let values = dependent_subquery_values(query, context, memo, None)?;
+            let slot = memo.next_slot();
+            let mut resolved = (**query).clone();
+            let mut key = Vec::new();
+            substitute_outer_query(
+                &mut resolved,
+                context.batch,
+                context.row,
+                context.columns,
+                &mut key,
+            )?;
+            let values = if let Some(values) = memo.get(slot, &key) {
+                values
+            } else {
+                match membership::materialize_membership(
+                    resolved,
+                    context.provider,
+                    dependent_subquery_memory_limit(context.memory, context.batch)?,
+                    context.memory.deadline,
+                    expr.text_collation()
+                        .and_then(Collation::from_mysql_name)
+                        .unwrap_or(context.collation),
+                    context.memory.spill(),
+                    expr.data_type,
+                    projection_type,
+                )? {
+                    membership::MaterializedMembership::Memory(values) => {
+                        memo.insert(context.memory, slot, key, &values);
+                        values
+                    }
+                    membership::MaterializedMembership::External(membership, bytes) => {
+                        context.memory.reserve(bytes)?;
+                        let needle =
+                            CompiledExpr::compile(expr, context.columns, context.collation)?
+                                .evaluate(context.batch, context.row)?;
+                        let value = membership
+                            .0
+                            .lookup(&needle)
+                            .map_err(membership::execution_error)?;
+                        drop(membership);
+                        context.memory.release(bytes);
+                        expression.kind = BoundExprKind::Literal(match value {
+                            Value::Boolean(value) => Value::Boolean(value != *negated),
+                            other => other,
+                        });
+                        return Ok(());
+                    }
+                }
+            };
             let mut args = Vec::with_capacity(values.len().saturating_add(1));
             args.push((**expr).clone());
             args.extend(values.into_iter().map(|value| BoundExpr {
@@ -2792,7 +2909,9 @@ pub(super) fn resolve_dependent_expr_subqueries(
                 args,
             };
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             resolve_dependent_expr_subqueries(expr, context, memo)?;
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -5881,7 +6000,7 @@ mod tests {
         let plan = physical("SELECT 'needle' IN (SELECT name FROM events)");
         assert!(matches!(
             Execution::start(plan, &provider, 800, Collation::default()),
-            Err(ExecError::MemoryLimitExceeded { limit: 800, .. })
+            Err(ExecError::MemoryLimitExceeded { limit, .. }) if limit <= 800
         ));
     }
 
@@ -6015,6 +6134,68 @@ mod tests {
         );
         assert!(execution.next_batch().expect("end").is_none());
         assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn large_in_membership_spills_and_preserves_nulls() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..128)
+                    .map(|row| {
+                        if batch == 0 && row == 0 {
+                            Value::Null
+                        } else {
+                            Value::Utf8(format!(
+                                "key-{:05}-with-a-retained-membership-payload",
+                                batch * 128 + row
+                            ))
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit, sql: &str| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution =
+                Execution::start(physical(sql), &provider, limit, Collation::default())
+                    .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let sql = "SELECT 'missing' NOT IN (SELECT name FROM events), 'key-00001-with-a-retained-membership-payload' IN (SELECT name FROM events), 'KEY-00001-WITH-A-RETAINED-MEMBERSHIP-PAYLOAD' COLLATE utf8mb4_bin IN (SELECT name FROM events)";
+        let (wide, _) = execute(64 * 1024 * 1024, sql);
+        let (tight, spill) = execute(512 * 1024, sql);
+        assert_eq!(tight, wide);
+        assert_eq!(
+            tight,
+            vec![vec![Value::Null, Value::Boolean(true), Value::Null]]
+        );
+        assert!(spill.files > 0);
+        let correlated = "SELECT l.k IN (SELECT r.name FROM events r WHERE LENGTH(r.name) > LENGTH(l.k)) FROM (SELECT 'x' AS k) l";
+        let (wide, _) = execute(64 * 1024 * 1024, correlated);
+        let (tight, spill) = execute(512 * 1024, correlated);
+        assert_eq!(tight, wide);
+        assert_eq!(tight, vec![vec![Value::Boolean(false)]]);
+        assert!(spill.files > 0);
     }
 
     #[test]

@@ -1457,7 +1457,9 @@ fn build_prewhere_spec(
 fn collect_predicate_columns(expr: &BoundExpr, ids: &mut Vec<u32>) {
     match &expr.kind {
         BoundExprKind::Column(column) => ids.push(column.column_id),
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             collect_predicate_columns(expr, ids);
         }
         BoundExprKind::Binary { left, right, .. } => {

@@ -278,6 +278,12 @@ impl Eq for CompiledRegex {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CompiledExpr {
+    PreparedIn {
+        expr: Box<Self>,
+        membership: pintail_sql::PreparedMembership,
+        negated: bool,
+    },
+
     Column(usize),
     Literal(Value),
     Unary {
@@ -712,6 +718,16 @@ impl CompiledExpr {
         collation: Collation,
     ) -> Result<Self, ExecError> {
         match &expr.kind {
+            BoundExprKind::PreparedIn {
+                expr,
+                membership,
+                negated,
+            } => Ok(Self::PreparedIn {
+                expr: Box::new(Self::compile(expr, columns, collation)?),
+                membership: membership.clone(),
+                negated: *negated,
+            }),
+
             BoundExprKind::Window(_) => Err(ExecError::InvalidPhysicalPlan(
                 "window expressions must be lowered before compilation",
             )),
@@ -804,6 +820,7 @@ impl CompiledExpr {
     /// combines this with the scan's projected column ids.
     pub(crate) fn deterministic_signature(&self) -> Option<String> {
         match self {
+            Self::PreparedIn { .. } => None,
             Self::Column(index) => Some(format!("c{index}")),
             Self::Literal(value) => Some(format!("l{value:?}")),
             Self::Unary {
@@ -861,6 +878,22 @@ impl CompiledExpr {
 
     pub(crate) fn evaluate(&self, batch: &RecordBatch, row: usize) -> Result<Value, ExecError> {
         match self {
+            Self::PreparedIn {
+                expr,
+                membership,
+                negated,
+            } => {
+                let value = expr.evaluate(batch, row)?;
+                let result = membership
+                    .0
+                    .lookup(&value)
+                    .map_err(crate::execution::membership::execution_error)?;
+                Ok(match result {
+                    Value::Boolean(value) => Value::Boolean(value != *negated),
+                    other => other,
+                })
+            }
+
             Self::Column(index) => batch
                 .column(*index)
                 .and_then(|column| column.value(row))
@@ -1075,6 +1108,9 @@ impl CompiledExpr {
     #[allow(clippy::too_many_lines)]
     pub(crate) fn allocation_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         match self {
+            Self::PreparedIn { expr, .. } => {
+                expr.allocation_upper_bound(batch, row).saturating_mul(16)
+            }
             Self::Column(index) => batch
                 .column(*index)
                 .and_then(|column| column.value(row))
@@ -1313,7 +1349,7 @@ impl CompiledExpr {
                     24
                 }
             }
-            Self::IsNull { .. } => 1,
+            Self::PreparedIn { .. } | Self::IsNull { .. } => 1,
             Self::Scalar { function, args, .. } => {
                 let bound = |index: usize| {
                     args.get(index)
@@ -4150,9 +4186,10 @@ fn literal_regex_arguments(function: ScalarFunction, args: &[BoundExpr]) -> Opti
 
 pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
     match &expr.kind {
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            bound_regex_memory_upper_bound(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. }
+        | BoundExprKind::InSubquery { expr, .. } => bound_regex_memory_upper_bound(expr),
         BoundExprKind::Binary { left, right, .. } => bound_regex_memory_upper_bound(left)
             .saturating_add(bound_regex_memory_upper_bound(right)),
         BoundExprKind::Scalar { function, args } => {
@@ -4164,7 +4201,6 @@ pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
                     .saturating_mul(REGEX_PROGRAM_MEMORY_UPPER_BOUND),
             )
         }
-        BoundExprKind::InSubquery { expr, .. } => bound_regex_memory_upper_bound(expr),
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
@@ -5222,7 +5258,7 @@ enum LikeToken {
     AnyMany,
 }
 
-fn evaluate_in_list(
+pub(crate) fn evaluate_in_list(
     values: &[Value],
     negated: bool,
     exact_decimal: bool,
