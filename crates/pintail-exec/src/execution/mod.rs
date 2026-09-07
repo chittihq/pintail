@@ -97,6 +97,18 @@ pub fn set_session_group_concat_max_len(limit: Option<usize>) {
     SESSION_GROUP_CONCAT_WARNINGS.set(0);
 }
 
+/// The `group_concat_max_len` this thread's executions observe.
+#[must_use]
+pub fn session_group_concat_max_len() -> usize {
+    SESSION_GROUP_CONCAT_MAX_LEN.get()
+}
+
+/// The recursive-CTE iteration cap this thread's executions observe.
+#[must_use]
+pub fn session_cte_max_recursion_depth() -> u64 {
+    SESSION_CTE_MAX_RECURSION_DEPTH.get()
+}
+
 /// Takes the number of `GROUP_CONCAT` results truncated by the last statement.
 #[must_use]
 pub fn take_session_group_concat_warnings() -> u64 {

@@ -464,6 +464,19 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// The installed session zone's identity, or `None` for the host zone.
+///
+/// Two executions observe the same clock offset only when this matches, so
+/// a caller deciding whether one execution can answer another's request
+/// puts this in the comparison.
+#[must_use]
+pub fn session_time_zone_key() -> Option<String> {
+    SESSION_TIME_ZONE.get().map(|zone| match zone {
+        SessionZone::Fixed(offset) => format!("f{}", offset.local_minus_utc()),
+        SessionZone::Named(zone) => format!("n{}", zone.name()),
+    })
+}
+
 /// Installs the session time zone that `NOW`/`CURDATE`/`CURTIME` observe on
 /// this thread ("SYSTEM" or `None` restores the host zone). Numeric offsets
 /// use `MySQL`'s `[-13:59, +14:00]` range; names resolve case-insensitively
