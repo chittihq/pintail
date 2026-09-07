@@ -72,23 +72,27 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
             // machine put twice the core count of runnable threads on it
             // whenever aggregation overlaps scanning.
             //
-            // Defaults to twice the CPU count, not the CPU count itself
-            // (experiments/RESULTS.md e65, e79): under the CPU quota the
-            // release benchmark and a typical container deployment run
-            // under, a scan thread parked on a throttled quota tick still
-            // leaves others runnable, and doubling the pool measured 57ms
-            // against 66ms on Q2's shape at 8 CPUs. e79 found no such gain
-            // on bare metal with no quota to hide behind - scan threads
-            // there are genuinely CPU-bound, and doubling them past the
-            // core count adds scheduling contention instead. Both
-            // deployments can still override this with the env var.
+            // Stays at the CPU count by default. e65 measured a doubled pool
+            // winning under the CPU quota a typical container deployment
+            // runs under; e79 reproduced no such gain on bare metal, only
+            // added scheduling contention - and doubling it past the core
+            // count on THIS host surfaced a genuine wrong answer under
+            // `tests/e2e` ("decimal column average beyond simple sum"
+            // returned 330.8824 against MySQL's 330.8823, gone the moment
+            // the pool went back to the core count). That is a real
+            // concurrency defect in the scan or aggregate merge path at
+            // higher scan parallelism, not something this default change
+            // should paper over by staying off it (docs/design/
+            // production-hardening-todo.md, section H; experiments/
+            // RESULTS.md e79). Deployments that still want the container
+            // quota's benefit can opt in with the env var once that defect
+            // is found and fixed.
             let threads = std::env::var("PINTAIL_SCAN_THREADS")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
                 .filter(|threads| *threads > 0)
                 .unwrap_or_else(|| {
-                    std::thread::available_parallelism()
-                        .map_or(2, |cpus| cpus.get().saturating_mul(2))
+                    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
                 });
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)

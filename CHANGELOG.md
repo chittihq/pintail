@@ -34,10 +34,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cap, instead of always hashing into a set; the bitmap grows with
   headroom as the column's real range becomes apparent, the same way a
   growing `Vec` or `HashSet` amortizes its own resizing.
-- The scan thread pool now defaults to twice the CPU count instead of
-  the CPU count, matching how it measured faster under the CPU quota a
-  typical container deployment runs under (`PINTAIL_SCAN_THREADS` still
-  overrides it either way).
 
 ### Added
 

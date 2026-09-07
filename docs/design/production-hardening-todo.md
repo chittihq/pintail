@@ -325,6 +325,23 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
+- [ ] **G13. `AVG` on a decimal column answers wrong at higher scan
+  parallelism.** `SELECT customer_id, AVG(total) FROM orders GROUP BY
+  customer_id HAVING COUNT(*) >= 2` (`tests/e2e/queries.ts`, "decimal
+  column average beyond simple sum") returned `330.8824` against MySQL's
+  `330.8823` with the scan pool at twice the CPU count; correct at the
+  CPU count, on the same binary and data. `SUM(total) / COUNT(*)` on the
+  same rows is correct at both thread counts, which rules out a dropped
+  or duplicated row and points at `AVG` specifically taking a different
+  computation path at some scan-thread counts - the two-pass lane's own
+  average is exact integer arithmetic top to bottom
+  (`decimal_units_from_int` then `checked_add`, both order-independent),
+  so the general aggregate's average (which is not known to be exact -
+  it may accumulate through `f64`) is the leading suspect, reached
+  because the scan pool's width changes batch boundaries and path
+  selection reads runtime batch shape. Found while closing item 5 in
+  section H below (e81 in `experiments/RESULTS.md`); not traced past
+  ruling out the exact lane.
 
 ## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
 
@@ -381,12 +398,15 @@ G2 and G3 above are their own brief; this section is everything else the
   and its own experiment first" - unchanged by this brief. Next attempt
   should start from the 223 ms baseline in e78, not the 4.2 s figure this
   item was written against.
-- [x] **H5a. Scan pool defaults to twice the CPU count.** e65 measured
-  sixteen scan threads beating eight on an 8-CPU host. Closed: the scan
-  pool (not the execution pool) now defaults to `2 x` CPU count, still
-  overridable by `PINTAIL_SCAN_THREADS`. No gain reproduced on bare metal
-  with no CPU quota to hide behind (e79) - kept on the strength of e65's
-  own container measurement, the actual deployment shape.
+- [ ] **H5a. Scan pool default width.** e65 measured sixteen scan
+  threads beating eight on an 8-CPU host; tried defaulting the scan pool
+  (not the execution pool) to `2 x` CPU count. Reverted: no gain
+  reproduced on bare metal with no CPU quota to hide behind (e79), and at
+  twice the CPU count `tests/e2e` caught a real wrong answer in `AVG` on
+  a decimal column (G13 above; e81) that the CPU-count default does not
+  trigger. Stays at the CPU count, still overridable by
+  `PINTAIL_SCAN_THREADS` for a deployment that wants e65's container
+  benefit once G13 is found and fixed.
 - [ ] **H5b. Overlap the sliced scan's rounds.** e70 noted the sliced
   scan idles between rounds. Investigated, not attempted: the round
   decode is a `&self` method call inside the same function later called
