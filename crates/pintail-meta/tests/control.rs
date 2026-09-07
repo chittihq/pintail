@@ -294,6 +294,7 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
     }];
     metadata
         .register_restored_database(&RestoredDatabase {
+            backup_created_at: "2026-07-29T23:00:00Z",
             id: "restored",
             name: "app recovery",
             probe_json: "{\"database\":\"app\"}",
@@ -315,6 +316,20 @@ fn restored_database_is_registered_side_by_side_without_source_credentials() {
     assert!(restored.encrypted_dsn.is_empty());
     assert_eq!(restored.mode, "paused");
     assert_eq!(restored.state, "restored");
+    assert_eq!(
+        restored.restored_backup_created_at.as_deref(),
+        Some("2026-07-29T23:00:00Z")
+    );
+    let reopened = MetaStore::open(&data_dir.path().join("pintail-meta.db")).unwrap();
+    assert_eq!(
+        reopened
+            .database("restored")
+            .unwrap()
+            .unwrap()
+            .restored_backup_created_at,
+        restored.restored_backup_created_at
+    );
+    assert!(source.restored_backup_created_at.is_none());
     assert_eq!(restored.effective_mode.as_deref(), Some("cdc"));
     let table = &metadata.tables("restored").unwrap()[0];
     assert_eq!(table.state, "restored");

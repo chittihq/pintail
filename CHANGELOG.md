@@ -27,6 +27,10 @@ rounding stays integral, and prepared result bytes follow the advertised type.
 
 ### Added
 
+Restored databases report the installed backup timestamp and `data_age_seconds`
+in the API, with a restored-data age gauge in metrics. The timestamp survives
+restarts; old restores with no recorded timestamp report an unknown age.
+
 The RC validation profile runs Metabase schema sync and saved time-grain and
 filter questions, plus JDBC metadata discovery and prepared-result checks.
 Connection probes return all requested session variables, and complex

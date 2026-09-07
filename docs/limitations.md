@@ -445,6 +445,11 @@ stays readable as a list of things to fix.
   Metabase smoke matrix.
 ## Operations and backup
 
+- A restored copy is not refreshed automatically and provides no failover or
+  promotion. Its reported data age measures the installed backup manifest's
+  creation time, excluding source replication lag and capture-to-publication
+  delay; it is not a source freshness guarantee. Older restores without that
+  timestamp report an unknown age.
 
 - Memory cancellation is cooperative, and allocator RSS may stay high after
   a query releases its reservations. The watchdog waits five seconds between

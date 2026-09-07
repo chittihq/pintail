@@ -74,6 +74,8 @@ pub struct NewBackup<'a> {
 
 /// Control-plane values restored alongside verified table objects.
 pub struct RestoredDatabase<'a> {
+    /// Backup manifest creation time, distinct from the restore operation time.
+    pub backup_created_at: &'a str,
     pub id: &'a str,
     pub name: &'a str,
     pub probe_json: &'a str,
@@ -344,14 +346,15 @@ impl MetaStore {
             .execute(
                 "INSERT INTO databases (\
                    id, name, mysql_dsn_encrypted, mode, effective_mode, state, \
-                   probe_json, created_at, updated_at\
-                 ) VALUES (?1, ?2, X'', 'paused', ?3, 'restored', ?4, ?5, ?5)",
+                   probe_json, created_at, updated_at, restored_backup_created_at\
+                 ) VALUES (?1, ?2, X'', 'paused', ?3, 'restored', ?4, ?5, ?5, ?6)",
                 (
                     restored.id,
                     restored.name,
                     restored.effective_mode,
                     restored.probe_json,
                     restored.now,
+                    restored.backup_created_at,
                 ),
             )
             .context("failed to register restored database")?;

@@ -14,6 +14,8 @@ use crate::{ApiState, audit, auth::AuthPrincipal, error::ApiError, state::random
 
 #[derive(Serialize)]
 pub(crate) struct DatabaseResponse {
+    restored_backup_created_at: Option<String>,
+    data_age_seconds: Option<u64>,
     id: String,
     name: String,
     mode: String,
@@ -577,6 +579,12 @@ const fn default_reconcile_interval() -> u64 {
 impl From<DatabaseRecord> for DatabaseResponse {
     fn from(record: DatabaseRecord) -> Self {
         Self {
+            data_age_seconds: crate::backup::restored_data_age(
+                record.restored_backup_created_at.as_deref(),
+                &record.state,
+                Utc::now(),
+            ),
+            restored_backup_created_at: record.restored_backup_created_at,
             id: record.id,
             name: record.name,
             mode: record.mode,

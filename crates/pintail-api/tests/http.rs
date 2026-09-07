@@ -323,6 +323,76 @@ async fn metrics_expose_prometheus_runtime_storage_and_control_plane_facts() {
 }
 
 #[tokio::test]
+async fn restored_data_age_survives_restart_and_is_exposed_by_api_and_metrics() {
+    let data = tempfile::tempdir().unwrap();
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let token = setup_admin(&app).await;
+    let authorization = format!("Bearer {token}");
+    let source = create_database(&app, &authorization, "age_fixture").await;
+    let metadata = pintail_meta::MetaStore::open(&data.path().join("pintail-meta.db")).unwrap();
+    let workspace = metadata
+        .database(source["id"].as_str().unwrap())
+        .unwrap()
+        .unwrap()
+        .workspace_id
+        .unwrap();
+    let backup_time = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+    metadata
+        .register_restored_database(&pintail_meta::RestoredDatabase {
+            id: "restored-age",
+            name: "age_copy",
+            probe_json: "{}",
+            effective_mode: "cdc",
+            backup_created_at: &backup_time,
+            tables: &[],
+            checkpoint: None,
+            now: &chrono::Utc::now().to_rfc3339(),
+        })
+        .unwrap();
+    metadata
+        .set_database_workspace("restored-age", &workspace)
+        .unwrap();
+    drop(metadata);
+    drop(app);
+    let app = pintail_api::router_with_state(configured_state(data.path()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/databases/restored-age")
+                .header(header::AUTHORIZATION, &authorization)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let restored = json_response(response).await;
+    assert_eq!(restored["restored_backup_created_at"], backup_time);
+    let age = restored["data_age_seconds"].as_u64().unwrap();
+    assert!((3600..3610).contains(&age));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    let sample = text
+        .lines()
+        .find(|line| {
+            line.starts_with("pintail_restored_data_age_seconds{database=\"restored-age\"}")
+        })
+        .unwrap();
+    let age: u64 = sample.split_whitespace().last().unwrap().parse().unwrap();
+    assert!((3600..3610).contains(&age));
+}
+
+#[tokio::test]
 async fn backup_configuration_encrypts_credentials_and_never_reads_them_back() {
     let data = tempfile::tempdir().expect("API data directory");
     let app = pintail_api::router_with_state(configured_state(data.path()));

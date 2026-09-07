@@ -153,11 +153,23 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
          # HELP pintail_dead_letters Dead-letter records awaiting operator action.\n\
          # TYPE pintail_dead_letters gauge\n\
          # HELP pintail_backup_runs Backup runs by terminal or active status.\n\
-         # TYPE pintail_backup_runs gauge\n",
+         # TYPE pintail_backup_runs gauge\n\
+         # HELP pintail_restored_data_age_seconds Age of the restored backup manifest in seconds.\n\
+         # TYPE pintail_restored_data_age_seconds gauge\n",
     );
     let now = Utc::now();
     for database in &databases {
         let database_id = label(&database.id);
+        if let Some(age) = crate::backup::restored_data_age(
+            database.restored_backup_created_at.as_deref(),
+            &database.state,
+            now,
+        ) {
+            let _ = writeln!(
+                output,
+                "pintail_restored_data_age_seconds{{database=\"{database_id}\"}} {age}"
+            );
+        }
         let database_state = label(&database.state);
         let _ = writeln!(
             output,
