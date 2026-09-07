@@ -29,6 +29,12 @@ pub fn filtered_join_sql(d: &Data) -> String {
         d.domain.min(512)
     )
 }
+pub fn factorized_join_sql(d: &Data) -> String {
+    format!(
+        "SELECT d.g,SUM(f.n),SUM(f.c),SUM(f.s) FROM (SELECT k,COUNT(*) AS n,COUNT(v) AS c,SUM(v) AS s FROM facts GROUP BY k) f JOIN (SELECT k,g FROM facts WHERE id < {} AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g",
+        d.domain.min(512)
+    )
+}
 pub fn expected(case: usize, d: &Data) -> Vec<Vec<String>> {
     let null = "NULL".to_string();
     if case == 2 {

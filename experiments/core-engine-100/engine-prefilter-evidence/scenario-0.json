@@ -1,0 +1,108 @@
+{
+  "correct": true,
+  "filtered_join": true,
+  "phases": [
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 10.687978000000001,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 0
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 73.469299,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 1
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 74.69208099999999,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 2
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 74.97925699999999,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 3
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 78.60271200000001,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 4
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 80.729312,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 5
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 80.431523,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 6
+    },
+    {
+      "cases": [
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 7.4279660000000005,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < 512 AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g"
+        }
+      ],
+      "phase": 7
+    }
+  ],
+  "query_memory_limit_bytes": 268435456,
+  "record_resource_errors": true,
+  "rows": 100000,
+  "scenario": 0,
+  "seed": 9901,
+  "settled_memo_disabled": true
+}

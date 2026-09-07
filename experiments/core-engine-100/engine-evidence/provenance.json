@@ -1,0 +1,16 @@
+{
+  "source_head": "0b55126e75249fe47314612c7d5437d206f83e67",
+  "binary_sha256": "d2550271932061a64c6557cd3d248cd17aa2cad8239f9b4396af21714e80ee33",
+  "runner_sha256": "8f4a41c8117f519ed9a72932d00a503352016174cbf2203a9cf5e02184c9b7fc",
+  "parameters": {
+    "rows": 100000,
+    "out": "engine-evidence",
+    "prefilter_join": false
+  },
+  "query_memory_limit_bytes": 268435456,
+  "settled_memo_disabled": true,
+  "affinity": "0-7",
+  "rayon_workers": 4,
+  "scan_workers": 4,
+  "scope": "SQL between mutation batches; source model and textual result rendering included; resource refusals are failures, not successful timings"
+}

@@ -13,6 +13,7 @@ fn main() {
         std::fs::create_dir_all(p).unwrap();
     }
     let record_resource_errors = std::env::var_os("PINTAIL_LAB_RECORD_RESOURCE_ERRORS").is_some();
+    let factorized_join = std::env::var_os("PINTAIL_LAB_JOIN_FACTORIZED").is_some();
     let filtered_join = std::env::var_os("PINTAIL_LAB_JOIN_PREFILTER").is_some();
     let selected_case = std::env::var("PINTAIL_LAB_CASE")
         .ok()
@@ -28,7 +29,9 @@ fn main() {
             if selected_case.is_some_and(|selected| selected != case) {
                 continue;
             }
-            let sql = if case == 5 && filtered_join {
+            let sql = if case == 5 && factorized_join {
+                anchor::factorized_join_sql(&d)
+            } else if case == 5 && filtered_join {
                 anchor::filtered_join_sql(&d)
             } else {
                 anchor::sql(case, &d)
@@ -126,6 +129,6 @@ fn main() {
     }
     println!(
         "{}",
-        serde_json::json!({"rows":n,"scenario":scenario,"seed":seed,"phases":evidence,"correct":all_correct,"query_memory_limit_bytes":256usize<<20,"record_resource_errors":record_resource_errors,"filtered_join":filtered_join,"settled_memo_disabled":std::env::var_os("PINTAIL_DISABLE_SETTLED_MEMO").is_some()})
+        serde_json::json!({"rows":n,"scenario":scenario,"seed":seed,"phases":evidence,"correct":all_correct,"query_memory_limit_bytes":256usize<<20,"record_resource_errors":record_resource_errors,"filtered_join":filtered_join,"factorized_join":factorized_join,"settled_memo_disabled":std::env::var_os("PINTAIL_DISABLE_SETTLED_MEMO").is_some()})
     );
 }

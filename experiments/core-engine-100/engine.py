@@ -10,6 +10,7 @@ p=argparse.ArgumentParser()
 p.add_argument('--rows',type=int,default=100000)
 p.add_argument('--out',default='engine-evidence')
 p.add_argument('--prefilter-join',action='store_true')
+p.add_argument('--factorized-join',action='store_true')
 a=p.parse_args()
 root=Path(__file__).resolve().parent
 out=root/a.out
@@ -22,6 +23,8 @@ for scenario in range(3):
     env=dict(os.environ,PINTAIL_DISABLE_SETTLED_MEMO='1',PINTAIL_LAB_RECORD_RESOURCE_ERRORS='1',RAYON_NUM_THREADS='4',PINTAIL_SCAN_THREADS='4')
     if a.prefilter_join:
         env.update(PINTAIL_LAB_JOIN_PREFILTER='1',PINTAIL_LAB_CASE='5')
+    if a.factorized_join:
+        env.update(PINTAIL_LAB_JOIN_FACTORIZED='1',PINTAIL_LAB_CASE='5')
     r=subprocess.run(['taskset','-c','0-7',str(binary),str(a.rows),str(scenario),'9901'],env=env,capture_output=True,text=True,timeout=300)
     if r.returncode:
         (out/f'scenario-{scenario}-error.txt').write_text(r.stderr.replace(str(root),'<experiment>'))
