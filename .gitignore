@@ -37,3 +37,7 @@ REVIEW.md
 /tests/integration/wire-clients/pintail-wire-clients
 
 /tests/e2e/results-recovery-partial.md
+
+/tests/integration/wire-clients/.cache/
+/tests/integration/bi-clients/node_modules/
+/tests/integration/bi-clients/results.json

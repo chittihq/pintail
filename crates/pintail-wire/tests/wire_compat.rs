@@ -1059,6 +1059,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .expect("wire server");
 }
 
+#[allow(clippy::too_many_lines)]
 fn external_client_gate(address: std::net::SocketAddr) {
     const METADATA_CORPUS: &str =
         include_str!("../../../tests/integration/wire-clients/metadata.sql");
@@ -1158,6 +1159,19 @@ fn external_client_gate(address: std::net::SocketAddr) {
     assert!(go_output.contains(r#""bound_name":"land""#), "{go_output}");
     assert!(go_output.contains(r#""columns":2"#), "{go_output}");
     assert!(go_output.contains(r#""tables":2"#), "{go_output}");
+    let jdbc = Command::new("bun")
+        .args(["run", "client-jdbc.ts"])
+        .current_dir(&clients)
+        .env("PINTAIL_WIRE_HOST", "127.0.0.1")
+        .env("PINTAIL_WIRE_PORT", &port)
+        .output()
+        .expect("run JDBC client");
+    assert!(
+        jdbc.status.success(),
+        "JDBC failed: {}",
+        String::from_utf8_lossy(&jdbc.stderr)
+    );
+    assert!(String::from_utf8_lossy(&jdbc.stdout).contains("JDBC-PASS"));
 }
 
 #[allow(clippy::too_many_lines)]

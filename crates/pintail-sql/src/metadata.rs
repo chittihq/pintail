@@ -467,6 +467,35 @@ fn select_has_unsupported_clauses(select: &Select) -> bool {
         || select.flavor != SelectFlavor::Standard
 }
 
+/// Materialized discovery relations for expression-capable query execution.
+#[must_use]
+pub fn metadata_relations(
+    catalog: &CatalogSnapshot,
+    facts: &SourceFacts,
+) -> Vec<(&'static str, MetadataResult)> {
+    vec![
+        ("schemata", information_schemata(catalog)),
+        ("tables", information_tables(catalog)),
+        ("columns", information_columns(catalog, facts)),
+        ("statistics", information_statistics(catalog, facts)),
+        (
+            "key_column_usage",
+            information_key_column_usage(catalog, facts),
+        ),
+        (
+            "table_constraints",
+            information_table_constraints(catalog, facts),
+        ),
+        (
+            "referential_constraints",
+            information_referential_constraints(catalog, facts),
+        ),
+        ("check_constraints", information_check_constraints()),
+        ("routines", information_routines()),
+        ("views", information_views()),
+    ]
+}
+
 fn information_schema_table(
     name: &ObjectName,
     catalog: &CatalogSnapshot,

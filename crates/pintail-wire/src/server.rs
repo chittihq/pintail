@@ -1109,7 +1109,9 @@ impl Backend {
             | "character_set_connection"
             | "character_set_results") => {
                 let charset = value.to_ascii_lowercase();
-                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
+                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary")
+                    || (name == "character_set_results" && charset == "null")
+                {
                     match name {
                         "character_set_client" => session.charset_client = charset,
                         "character_set_connection" => session.charset_connection = charset,
@@ -2076,6 +2078,8 @@ fn random_salt() -> [u8; 20] {
     let mut salt = [0_u8; 20];
     rand::rng().fill_bytes(&mut salt);
     for byte in &mut salt {
+        // The greeting carries an ASCII scramble, terminated by NUL.
+        *byte &= 0x7f;
         if matches!(*byte, 0 | b'$') {
             *byte = byte.wrapping_add(1);
         }
@@ -2122,11 +2126,67 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 }
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
+    let Some(projection) = pintail_sql::connection_projection(sql) else {
+        return compatibility_single(sql, database, session);
+    };
+    let mut output = None;
+    for (expression, alias) in projection {
+        let expression = expression
+            .replace("@@session.", "@@")
+            .replace("@@global.", "@@");
+        let mut item = compatibility_single(&format!("SELECT {expression}"), database, session)?;
+        item.fields[0].name = alias;
+        if let Some(result) = &mut output {
+            let result: &mut QueryOutput = result;
+            result.fields.extend(item.fields);
+            result.rows[0].append(&mut item.rows[0]);
+        } else {
+            output = Some(item);
+        }
+    }
+    output
+}
+
+#[allow(clippy::too_many_lines)]
+fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     if normalized.starts_with("show warnings") {
         return Some(group_concat_warnings_output(session));
     }
-    let (name, value) = if normalized.starts_with("select version()") {
+    let (name, value) = if matches!(
+        normalized.as_str(),
+        "show grants" | "show grants for current_user()" | "show grants for current_user"
+    ) {
+        (
+            "Grants for current user",
+            Value::Utf8(format!(
+                "GRANT SELECT ON `{}`.* TO CURRENT_USER()",
+                database.replace('`', "``")
+            )),
+        )
+    } else if normalized.contains("@@character_set_server") {
+        ("@@character_set_server", Value::Utf8("utf8mb4".to_owned()))
+    } else if normalized.contains("@@collation_server") {
+        (
+            "@@collation_server",
+            Value::Utf8("utf8mb4_0900_ai_ci".to_owned()),
+        )
+    } else if normalized.contains("@@init_connect") {
+        ("@@init_connect", Value::Utf8(String::new()))
+    } else if normalized.contains("@@license") {
+        ("@@license", Value::Utf8("Apache-2.0".to_owned()))
+    } else if normalized.contains("@@performance_schema") {
+        ("@@performance_schema", Value::UInt64(0))
+    } else if normalized.contains("@@net_write_timeout") {
+        ("@@net_write_timeout", Value::UInt64(60))
+    } else if normalized.contains("@@transaction_isolation")
+        || normalized.contains("@@tx_isolation")
+    {
+        (
+            "@@transaction_isolation",
+            Value::Utf8("REPEATABLE-READ".to_owned()),
+        )
+    } else if normalized.starts_with("select version()") {
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
         ("DATABASE()", Value::Utf8(database.to_owned()))
@@ -2137,6 +2197,20 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         )
     } else if normalized.contains("@@version") {
         ("@@version", Value::Utf8(mysql_compat_version()))
+    } else if normalized.contains("@@wait_timeout") || normalized.contains("@@interactive_timeout")
+    {
+        (
+            "@@wait_timeout",
+            Value::UInt64(DEFAULT_WIRE_IDLE_TIMEOUT.as_secs()),
+        )
+    } else if normalized.contains("@@socket") {
+        ("@@socket", Value::Null)
+    } else if normalized.contains("@@system_time_zone") {
+        ("@@system_time_zone", Value::Utf8("UTC".to_owned()))
+    } else if normalized.contains("@@auto_increment_increment")
+        || normalized.contains("@@autocommit")
+    {
+        ("@@auto_increment_increment", Value::UInt64(1))
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
     } else if normalized.contains("@@lower_case_table_names") {
@@ -2259,6 +2333,11 @@ fn compatibility_charset_query(
     normalized: &str,
     session: &Session,
 ) -> Option<(&'static str, Value)> {
+    if normalized.contains("@@character_set_results")
+        && session.charset_results.eq_ignore_ascii_case("null")
+    {
+        return Some(("@@character_set_results", Value::Null));
+    }
     let (name, value) = if normalized.contains("@@character_set_client") {
         ("@@character_set_client", session.charset_client.clone())
     } else if normalized.contains("@@character_set_connection") {
@@ -2721,6 +2800,35 @@ fn verify_wire_key_at(
 #[cfg(test)]
 mod tests {
     use super::{QueryError, SqlRejection, error_kind};
+
+    #[test]
+    fn connection_probe_returns_every_requested_variable() {
+        let output = compatibility_query("SELECT @@max_allowed_packet AS packet, @@system_time_zone AS zone, @@session.time_zone AS session_zone, @@auto_increment_increment AS step", "analytics", &Session::default()).unwrap();
+        assert_eq!(
+            output
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["packet", "zone", "session_zone", "step"]
+        );
+        assert_eq!(output.rows[0].len(), 4);
+        assert_eq!(
+            output.rows[0][1],
+            pintail_types::Value::Utf8("UTC".to_owned())
+        );
+    }
+
+    #[test]
+    fn greeting_scrambles_are_ascii_without_terminators() {
+        for _ in 0..64 {
+            assert!(
+                super::random_salt()
+                    .iter()
+                    .all(|byte| byte.is_ascii() && !matches!(*byte, 0 | b'$'))
+            );
+        }
+    }
 
     #[test]
     fn a_local_session_refuses_the_transaction_guarantees_it_cannot_keep() {

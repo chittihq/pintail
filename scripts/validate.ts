@@ -292,6 +292,18 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'compose'),
   },
   {
+    name: 'bi-clients',
+    remote: true,
+    timeoutMinutes: 30,
+    stallMinutes: 15,
+    command: ['bash', '-c',
+      'bun install --frozen-lockfile --cwd tests/integration/wire-clients' +
+      ' && bun install --frozen-lockfile --cwd tests/integration/bi-clients' +
+      ' && "$CARGO" test --profile recovery -p pintail-wire --test wire_compat mysql_client_auth_metadata_prepared_query_and_read_only_error -- --nocapture' +
+      ' && bun run tests/integration/bi-clients/run.ts'],
+    env: { PINTAIL_EXTERNAL_WIRE_CLIENTS: '1', PINTAIL_DASHBOARD_PREBUILT: '1' },
+  },
+  {
     name: 'bench',
     remote: true,
     timeoutMinutes: 90,
@@ -348,7 +360,7 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose'],
+    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose', 'bi-clients'],
     claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
@@ -364,7 +376,7 @@ const PROFILES: Record<string, Profile> = {
   stable: {
     stages: [
       'fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80',
-      'recovery', 'browser', 'compose', 'bench', 'accept',
+      'recovery', 'browser', 'compose', 'bi-clients', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',
     caveats: [

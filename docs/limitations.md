@@ -441,8 +441,10 @@ stays readable as a list of things to fix.
   and `KILL CONNECTION` reject explicitly - terminating another session is
   not meaningful on a read-only replica and pretending otherwise would leave
   clients believing a connection died that did not.
-- DBeaver and Metabase application-level smokes are not automated in CI.
+- Desktop BI application UI flows are outside the automated driver and
+  Metabase smoke matrix.
 ## Operations and backup
+
 
 - Memory cancellation is cooperative, and allocator RSS may stay high after
   a query releases its reservations. The watchdog waits five seconds between

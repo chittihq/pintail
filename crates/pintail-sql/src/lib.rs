@@ -33,7 +33,7 @@ pub use bound::{
 pub use hints::max_execution_time_hint;
 pub use metadata::{
     ColumnFacts, ForeignKeyFacts, IndexFacts, MetadataError, MetadataField, MetadataResult,
-    SourceFacts, execute_metadata,
+    SourceFacts, execute_metadata, metadata_relations,
 };
 
 /// An error produced while parsing a SQL request.
@@ -469,4 +469,62 @@ impl Dialect for PintailDialect {
     fn allow_extract_custom(&self) -> bool {
         true
     }
+}
+
+/// A projection of connection variables or zero-argument identity functions.
+/// Tables and arbitrary expressions stay on the normal query path.
+#[must_use]
+pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
+    use sqlparser::ast::{Expr, SelectItem, SetExpr};
+    let Statement::Query(query) = parse_statement(sql).ok()? else {
+        return None;
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    if !select.from.is_empty() || select.selection.is_some() {
+        return None;
+    }
+    select
+        .projection
+        .iter()
+        .map(|item| {
+            let (expr, alias) = match item {
+                SelectItem::UnnamedExpr(expr) => (expr, None),
+                SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
+                _ => return None,
+            };
+            let text = expr.to_string();
+            let simple = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
+                && text.starts_with("@@");
+            if !simple
+                && !["VERSION()", "DATABASE()"]
+                    .iter()
+                    .any(|name| text.eq_ignore_ascii_case(name))
+            {
+                return None;
+            }
+            Some((text.clone(), alias.unwrap_or(text)))
+        })
+        .collect()
+}
+
+/// Resolves the current-database identity in a discovery statement before binding.
+pub fn resolve_database_function(statement: &mut Statement, database: &str) {
+    use sqlparser::ast::{Expr, FunctionArguments, Value, VisitMut, VisitorMut};
+    struct Resolve<'a>(&'a str);
+    impl VisitorMut for Resolve<'_> {
+        type Break = ();
+        fn post_visit_expr(&mut self, expression: &mut Expr) -> ControlFlow<()> {
+            if let Expr::Function(function) = expression
+                && function.name.to_string().eq_ignore_ascii_case("database")
+                && matches!(&function.args, FunctionArguments::List(args) if args.args.is_empty() && args.clauses.is_empty())
+                && function.over.is_none()
+            {
+                *expression = Expr::Value(Value::SingleQuotedString(self.0.to_owned()).into());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let _ = statement.visit(&mut Resolve(database));
 }

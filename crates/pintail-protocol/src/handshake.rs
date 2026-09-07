@@ -21,6 +21,8 @@ pub struct CapabilityFlags(u32);
 impl CapabilityFlags {
     /// Long password support; set by every modern client.
     pub const CLIENT_LONG_PASSWORD: Self = Self(0x0000_0001);
+    /// Column definitions contain the complete two-byte flag field.
+    pub const CLIENT_LONG_FLAG: Self = Self(0x0000_0004);
     /// Client sends a default schema in the handshake.
     pub const CLIENT_CONNECT_WITH_DB: Self = Self(0x0000_0008);
     /// Client understands the 4.1 protocol. Required.

@@ -526,6 +526,7 @@ impl ReplicaEngine {
     ///
     /// Returns the same errors as [`Self::execute`], plus
     /// [`QueryError::Interrupted`] when the deadline elapses.
+    #[allow(clippy::too_many_lines)]
     pub fn execute_with_deadline(
         &self,
         database_id: &str,
@@ -598,6 +599,27 @@ impl ReplicaEngine {
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
+        if matches!(statement, Statement::Query(_))
+            && sql.to_ascii_lowercase().contains("information_schema")
+        {
+            let mut statement = statement.clone();
+            pintail_sql::resolve_database_function(&mut statement, &replica.database.name);
+            let (metadata_catalog, metadata_provider) =
+                crate::metadata_provider::MetadataProvider::new(&catalog, &facts)?;
+            return self.execute_select(
+                &statement,
+                sql,
+                &metadata_catalog,
+                &metadata_provider,
+                &SourceFacts::default(),
+                "information_schema",
+                QueryStats::default(),
+                started,
+                max_rows,
+                deadline,
+                false,
+            );
+        }
         match statement {
             Statement::Query(_) => self.execute_select(
                 &statement,
@@ -606,10 +628,11 @@ impl ReplicaEngine {
                 &provider,
                 &facts,
                 &replica.database.name,
-                table_count,
+                provider_stats(&provider, table_count),
                 started,
                 max_rows,
                 deadline,
+                true,
             ),
             Statement::Explain { .. } => self.execute_explain(
                 &statement,
@@ -693,19 +716,20 @@ impl ReplicaEngine {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn execute_select(
         &self,
         statement: &Statement,
         sql: &str,
         catalog: &CatalogSnapshot,
-        provider: &SnapshotScanProvider<'_>,
+        provider: &impl pintail_exec::ScanProvider,
         facts: &SourceFacts,
         database_name: &str,
-        table_count: usize,
+        mut stats: QueryStats,
         started: Instant,
         max_rows: usize,
         deadline: Option<Instant>,
+        optimize: bool,
     ) -> Result<QueryOutput, QueryError> {
         let bound = Binder::new(catalog, Some(database_name))
             .with_source(sql)
@@ -756,7 +780,12 @@ impl ReplicaEngine {
         // query, and every operator below compares text with it.
         let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
             .unwrap_or_default();
-        let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
+        let logical = LogicalPlanner::plan(bound);
+        let logical = if optimize {
+            Optimizer::optimize(logical)
+        } else {
+            logical
+        };
         let physical = PhysicalPlanner::plan(logical, collation)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
         let mut execution = Execution::start_with_deadline(
@@ -799,7 +828,6 @@ impl ReplicaEngine {
                 profile.render().trim_end()
             );
         }
-        let mut stats = provider_stats(provider, table_count);
         stats.duration_ms = elapsed_ms(started);
         stats.rows = rows.len();
         stats.batches = batches;

@@ -30,3 +30,5 @@ pub use server::{
 
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
+
+mod metadata_provider;
