@@ -96,6 +96,25 @@ pub enum QueryClass {
     Short,
 }
 
+impl QueryClass {
+    /// Unknown work bounds cannot claim reserved capacity.
+    #[must_use]
+    pub fn from_cost(cost: Option<pintail_exec::AdmissionCost>) -> Self {
+        if cost.is_some_and(pintail_exec::AdmissionCost::within_budget) {
+            Self::Short
+        } else {
+            Self::General
+        }
+    }
+}
+
+/// Installs explicit reserved capacity while preserving a general slot.
+pub fn init_shared_admission_with_reserved(limit: usize, wait: Duration, reserved: usize) {
+    let _ = SHARED.set(Arc::new(QueryAdmission::with_reserved(
+        limit, wait, reserved,
+    )));
+}
+
 impl QueryAdmission {
     /// Admission bounded to `limit` concurrent queries. A zero limit is
     /// treated as unbounded so an operator cannot accidentally wedge the
@@ -120,6 +139,22 @@ impl QueryAdmission {
         Self {
             wait,
             ..Self::new(limit)
+        }
+    }
+
+    /// Configures reserved slots. Zero disables the reserve; values above
+    /// the limit are clamped so general queries retain at least one slot.
+    #[must_use]
+    pub fn with_reserved(limit: usize, wait: Duration, reserved: usize) -> Self {
+        let reserved = reserved.min(limit.saturating_sub(1));
+        Self {
+            limit,
+            available: Mutex::new(Capacity {
+                general: limit - reserved,
+                reserved,
+            }),
+            released: Condvar::new(),
+            wait,
         }
     }
 
@@ -222,6 +257,48 @@ const fn reserved_slots(limit: usize) -> usize {
 mod tests {
     use super::{QueryAdmission, QueryClass, default_max_concurrent_queries};
     use std::{sync::Arc, thread, time::Duration};
+
+    #[test]
+    fn classifier_requires_a_known_cost_inside_either_budget() {
+        use pintail_exec::AdmissionCost;
+        assert_eq!(QueryClass::from_cost(None), QueryClass::General);
+        for cost in [
+            AdmissionCost {
+                rows: 256 * 1024,
+                bytes: u64::MAX,
+            },
+            AdmissionCost {
+                rows: 1_000_000,
+                bytes: 32 * 1024 * 1024,
+            },
+        ] {
+            assert_eq!(QueryClass::from_cost(Some(cost)), QueryClass::Short);
+        }
+        assert_eq!(
+            QueryClass::from_cost(Some(AdmissionCost {
+                rows: 256 * 1024 + 1,
+                bytes: 32 * 1024 * 1024 + 1,
+            })),
+            QueryClass::General
+        );
+    }
+
+    #[test]
+    fn explicit_reserve_preserves_general_capacity_and_can_be_disabled() {
+        for (limit, requested, general, reserved) in
+            [(16, 4, 12, 4), (4, 100, 1, 3), (16, 0, 16, 0)]
+        {
+            let admission = QueryAdmission::with_reserved(limit, Duration::ZERO, requested);
+            let _general = (0..general)
+                .map(|_| admission.try_admit().unwrap())
+                .collect::<Vec<_>>();
+            assert!(admission.try_admit().is_none());
+            let _short = (0..reserved)
+                .map(|_| admission.try_admit_class(QueryClass::Short).unwrap())
+                .collect::<Vec<_>>();
+            assert!(admission.try_admit_class(QueryClass::Short).is_none());
+        }
+    }
 
     #[test]
     fn short_queries_remain_admissible_under_general_saturation() {

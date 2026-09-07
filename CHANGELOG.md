@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Short reads on a warm replica no longer lose reserved execution capacity
+  just because the whole database is large. Admission bounds the query's
+  physical inputs and operators; point lookups, small filtered aggregates,
+  and bounded listings can use the reserve. `--reserved-query-slots` and
+  `PINTAIL_RESERVED_QUERY_SLOTS` let operators size that capacity.
+
 - A malformed transaction-payload header could panic while replication read
   its next event. Oversized header field IDs return a decoding error with
   the event position, without advancing the checkpoint.

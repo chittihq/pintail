@@ -45,6 +45,11 @@ const DATABASE = 'load_db'
 const PROFILE = process.env.LOAD_PROFILE ?? 'default'
 const PRESETS: Record<string, Record<string, string>> = {
   default: {},
+  isolation: {
+    LOAD_LEVELS: '16',
+    LOAD_MAX_CONCURRENT: '16',
+    LOAD_ITERATIONS: '40',
+  },
   constrained: {
     LOAD_LEVELS: '16,64,128',
     LOAD_MEMORY_MB: '64',
@@ -142,6 +147,7 @@ interface LevelResult {
   /// level ended the replica had all of them (-1: never, within the wait).
   cdcRows?: number
   cdcConvergeMs?: number
+  point?: { completed: number; failed: number; p95Ms: number }
 }
 
 const results: LevelResult[] = []
@@ -378,7 +384,8 @@ async function dashboardPollers(running: () => boolean, count: number): Promise<
       const started = performance.now()
       try {
         await api(endpoints[turn % endpoints.length]!)
-        latencies.push(performance.now() - started)
+        const elapsed = performance.now() - started
+        latencies.push(elapsed)
       } catch (error) {
         tally(errors, String(error))
         failed += 1
@@ -408,7 +415,8 @@ async function httpQueryClients(running: () => boolean, count: number): Promise<
           method: 'POST',
           body: { db: databaseId, sql: QUERIES[turn % QUERIES.length] },
         })
-        latencies.push(performance.now() - started)
+        const elapsed = performance.now() - started
+        latencies.push(elapsed)
       } catch (error) {
         tally(errors, String(error))
         failed += 1
@@ -427,6 +435,8 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
       (CONNECTION_STORM ? ', a connection per query' : '') +
       (SIDELOADS.size ? `, with ${[...SIDELOADS].join('+')}` : ''),
   )
+  const pointLatencies: number[] = []
+  let pointFailed = 0
   const latencies: number[] = []
   const errors: Record<string, number> = {}
   let completed = 0
@@ -457,15 +467,21 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
           return
         }
       }
-      const statement = QUERIES[(index + iteration) % QUERIES.length]
+      const point = PROFILE === 'isolation' && index >= concurrency - 2
+      const statement = point
+        ? `SELECT id, amount FROM events WHERE id = ${1 + iteration % SEED_ROWS}`
+        : QUERIES[(index + iteration) % QUERIES.length]
       const started = performance.now()
       try {
         await connection.query({ sql: statement, rowsAsArray: true })
-        latencies.push(performance.now() - started)
+        const elapsed = performance.now() - started
+        latencies.push(elapsed)
+        if (point) pointLatencies.push(elapsed)
         completed += 1
       } catch (error) {
         tally(errors, String(error))
         failed += 1
+        if (point) pointFailed += 1
       }
     }
     await connection?.end().catch(() => {})
@@ -520,6 +536,10 @@ async function runLevel(concurrency: number): Promise<LevelResult> {
     dashboard,
     cdcRows,
     cdcConvergeMs,
+    point: PROFILE === 'isolation' ? {
+      completed: pointLatencies.length, failed: pointFailed,
+      p95Ms: percentile(pointLatencies.sort((a, b) => a - b), 0.95),
+    } : undefined,
   }
 }
 
@@ -636,6 +656,9 @@ function publish() {
       const errors = describeErrors(result.errors)
       return `| ${result.concurrency} | ${result.completed} | ${result.failed} | ${result.p50Ms.toFixed(0)} | ${result.p95Ms.toFixed(0)} | ${result.p99Ms.toFixed(0)} | ${result.maxMs.toFixed(0)} | ${result.peakRssMb.toFixed(0)} | ${errors || '—'} | ${side(result.http)} | ${side(result.dashboard)} | ${cdc(result)} |`
     }),
+    '',
+    ...results.filter(result => result.point).map(result =>
+      `Point lookups at ${result.concurrency} clients: ${result.point!.completed} completed, ${result.point!.failed} failed, p95 ${result.point!.p95Ms.toFixed(2)} ms. Two lookup clients share the server with fourteen report clients.`),
     '',
   ]
   writeFileSync(resultsPath('md'), lines.join('\n'))
@@ -764,6 +787,7 @@ async function main() {
     await Bun.sleep(1_000)
   }
   log('snapshot converged')
+  if (PROFILE === 'isolation') await replicaEventCount()
 
   for (const level of LEVELS) {
     const result = await runLevel(level)

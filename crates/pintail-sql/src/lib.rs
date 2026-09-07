@@ -12,7 +12,7 @@ use sqlparser::dialect::{Dialect, MySqlDialect};
 use sqlparser::parser::{Parser, ParserError};
 
 mod admission;
-pub use admission::has_bounded_admission_shape;
+pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 
 pub use sqlparser::ast::Statement;
 

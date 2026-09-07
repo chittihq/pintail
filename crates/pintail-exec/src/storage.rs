@@ -90,6 +90,44 @@ impl From<ScanStats> for PhysicalScanStats {
 }
 
 impl<'snapshot> SnapshotScanProvider<'snapshot> {
+    pub(crate) fn scan_admission_cost(&self, scan: &Scan) -> Option<(crate::AdmissionCost, bool)> {
+        let key = (scan.table.database_id, scan.table.table_id);
+        if self.not_ready.contains_key(&key) || self.unique_visibility.contains_key(&key) {
+            return None;
+        }
+        let snapshot = self.snapshots.get(&key)?;
+        if snapshot.schema().version() != scan.table.schema_version {
+            return None;
+        }
+        let Some((start, end)) = storage_key_range(scan, snapshot) else {
+            return Some((crate::AdmissionCost::default(), true));
+        };
+        let rows = snapshot.physical_range_row_upper_bound(&start, &end);
+        let width = scan
+            .projected_column_ids
+            .iter()
+            .try_fold(0_u64, |width, id| {
+                let column = snapshot
+                    .schema()
+                    .columns()
+                    .iter()
+                    .find(|column| column.id() == *id)?;
+                let bytes = match column.data_type().storage_type() {
+                    pintail_types::DataType::Boolean => 1,
+                    pintail_types::DataType::Int64
+                    | pintail_types::DataType::UInt64
+                    | pintail_types::DataType::Float64 => 8,
+                    _ => return None,
+                };
+                Some(width.saturating_add(bytes + 1))
+            });
+        // Even COUNT(*) has to read visibility and key information.
+        let bytes = width.map_or(u64::MAX, |width| {
+            rows.saturating_mul(width.saturating_add(16))
+        });
+        Some((crate::AdmissionCost { rows, bytes }, start == end))
+    }
+
     /// Sets the collation the plan resolved, so a predicate pushed into the
     /// scan decides equality the way the operators above it do.
     #[must_use]

@@ -110,6 +110,7 @@ services:
       # Longer turns a burst into latency instead of errors; zero refuses at
       # once. Fractions are accepted. Unset uses 2.
       PINTAIL_QUERY_QUEUE_WAIT_SECONDS: ${PINTAIL_QUERY_QUEUE_WAIT_SECONDS:-}
+      PINTAIL_RESERVED_QUERY_SLOTS: ${PINTAIL_RESERVED_QUERY_SLOTS:-}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk

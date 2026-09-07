@@ -370,51 +370,54 @@ impl ReplicaEngine {
         (self.data_dir.clone(), database_id.to_owned())
     }
 
-    // Only reuse a revalidated, small pinned replica for reserved work. A
-    // concurrent CDC write after this stamp does not change the pinned view.
-    // Cold/stale replicas are loaded only after obtaining general capacity.
+    // Classification reads only cached metadata. Freshness is checked under
+    // the permit; a stale candidate releases it before requesting general
+    // capacity to load storage.
     fn short_query_replica(
         &self,
         database_id: &str,
         statement: &Statement,
     ) -> Option<Arc<LoadedReplica>> {
-        if !pintail_sql::has_bounded_admission_shape(statement) {
+        if !pintail_sql::has_bounded_planning_shape(statement) {
             return None;
         }
         let key = self.cache_key(database_id);
         let replica = self.cache.peek(&key)?;
-        if replica.targets.len() > 16 {
-            return None;
+        let tiny = pintail_sql::has_bounded_admission_shape(statement)
+            && replica.targets.len() <= 16
+            && replica.targets.iter().fold(0_u64, |rows, table| {
+                rows.saturating_add(table.snapshot.physical_row_upper_bound())
+            }) <= 1024
+            && replica
+                .targets
+                .iter()
+                .map(|table| table.snapshot.schema().columns().len())
+                .sum::<usize>()
+                <= 128
+            && self.cache.cached_stamp(&key).is_some_and(|stamp| {
+                stamp.files() <= 128
+                    && stamp
+                        .tables
+                        .values()
+                        .flatten()
+                        .fold(0_u64, |bytes, file| bytes.saturating_add(file.1))
+                        <= 4 * 1024 * 1024
+            });
+        if tiny {
+            return Some(replica);
         }
-        let mut rows = 0_u64;
-        let mut columns = 0_usize;
-        for table in &replica.targets {
-            rows = rows.saturating_add(table.snapshot.physical_row_upper_bound());
-            columns = columns.saturating_add(table.snapshot.schema().columns().len());
-            if rows > 1024 || columns > 128 {
-                return None;
-            }
-        }
-        let stamp = self.replica_stamp(database_id);
-        if stamp.files() > 128 {
-            return None;
-        }
-        // The tables' files only: the metadata store grows with audit and
-        // auth history for the whole deployment and says nothing about how
-        // much this replica's queries will read.
-        let bytes = stamp
-            .tables
-            .values()
-            .flatten()
-            .fold(0_u64, |total, file| total.saturating_add(file.1));
-        if bytes > 4 * 1024 * 1024 {
-            return None;
-        }
-        match self.cache.lookup(&key, &stamp) {
-            // The size checks above must describe exactly the copy we return.
-            Lookup::Hit(current) if Arc::ptr_eq(&replica, &current) => Some(current),
-            _ => None,
-        }
+        let catalog = build_catalog(&replica).ok()?;
+        let bound = Binder::new(&catalog, Some(&replica.database.name))
+            .bind(statement)
+            .ok()?;
+        let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
+            .unwrap_or_default();
+        let physical =
+            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)), collation)
+                .ok()?;
+        let provider = build_provider(&replica).ok()?;
+        let cost = provider.admission_cost(&physical)?;
+        (QueryClass::from_cost(Some(cost)) == QueryClass::Short).then_some(replica)
     }
 
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
@@ -540,10 +543,18 @@ impl ReplicaEngine {
             } else {
                 QueryClass::General
             };
-            let permit = self
+            let mut permit = self
                 .admission
                 .try_admit_class(class)
                 .ok_or(QueryError::Overloaded)?;
+            let replica = replica.filter(|candidate| {
+                matches!(self.cache.lookup(&self.cache_key(database_id), &self.replica_stamp(database_id)),
+                    Lookup::Hit(current) if Arc::ptr_eq(candidate, &current))
+            });
+            if class == QueryClass::Short && replica.is_none() {
+                drop(permit);
+                permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
+            }
             (statement, replica, permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
@@ -1633,9 +1644,6 @@ mod admission_tests {
         let _permits = (0..3)
             .map(|_| engine.admission.try_admit().unwrap())
             .collect::<Vec<_>>();
-        assert!(matches!(
-            engine.execute("db", "SELECT id FROM a LIMIT 1", 10),
-            Err(QueryError::Overloaded)
-        ));
+        assert!(engine.execute("db", "SELECT id FROM a LIMIT 1", 10).is_ok());
     }
 }

@@ -457,11 +457,18 @@ stays readable as a list of things to fix.
   victims; prolonged pressure can still cancel successive queries. Untracked
   snapshot and response-buffer allocations cannot be attributed to a victim.
 
-- Reserved query admission currently applies only to simple queries on a
-  revalidated cached database with at most 1,024 physical rows and 4 MiB of
-  stamped files across the entire database. Short queries on larger replicas,
-  including point lookups, use the general pool and cannot use the reserve.
-  This does not isolate dashboard traffic on production-sized databases.
+- Reserved query admission requires a warm, revalidated replica and a plan
+  bounded to 256 Ki physical input rows or 32 MiB of projected fixed-width
+  input, with at most 1,000 output rows. The bound counts overlapping
+  segments and the pinned WAL tail, not estimated filter selectivity.
+  Variable-width values qualify only through the row budget. Eligibility
+  covers one table or one storage-key equality join; windows, unfiltered
+  aggregates, subqueries, and sorts without a storage-key order match use
+  general capacity. Tiny databases retain their existing eligibility rule.
+  Cold or stale replicas also need general capacity. Classification is not
+  a latency guarantee: reserved reads still share CPU, memory and storage.
+  `--reserved-query-slots` / `PINTAIL_RESERVED_QUERY_SLOTS` sizes the reserve;
+  zero disables it, and at least one general slot is retained.
 
 - The supervisor is finite-cycle rather than a permanently attached stream, so
   a newly committed event may wait for the next five-second cycle.
