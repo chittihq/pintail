@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `RENAME TABLE` within the mirrored schema is followed in CDC mode. The
+  table's store directory and every metadata row keyed by its name (the
+  table row, schema history, chunk journal, polling state and checksums,
+  dead letters, sync runs, the snapshot fence) move at the binlog position,
+  the stored probe report is refreshed so the replica lists the new name at
+  once, the stream routes later row events under the new name to the same
+  store, and nothing is recopied. A rename into another schema is treated
+  as a drop. Before, a rename quarantined the table for a resync and the
+  new name was copied afresh on the next probe.
+
 ## [0.1.2-rc8] - 2026-09-07
 
 ### Fixed

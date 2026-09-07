@@ -608,3 +608,67 @@ fn a_composite_integer_key_takes_the_overlay() {
     );
     assert_eq!(actual, expected);
 }
+/// A live table's directory moves without closing the writer: the WAL and
+/// lock handles follow, later writes and flushes land in the new place, a
+/// snapshot taken after the move reads everything, and the old path is gone.
+#[test]
+fn a_table_directory_renames_under_a_live_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let old = root.path().join("table-old");
+    let new = root.path().join("table-new");
+    let mut table = TableStore::open(&old, schema, options).unwrap();
+    let row = |id: u64| {
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap(),
+            vec![pintail_types::Value::UInt64(id)],
+            id,
+            false,
+        )
+    };
+    table.ingest(vec![row(1), row(2)]).unwrap();
+    table.flush().unwrap();
+    table.ingest(vec![row(3)]).unwrap();
+
+    table.rename_directory(&new).unwrap();
+    assert!(!old.exists(), "the old directory is gone");
+    assert_eq!(table.directory(), std::fs::canonicalize(&new).unwrap());
+
+    table.ingest(vec![row(4)]).unwrap();
+    table.flush().unwrap();
+    let ids = table
+        .snapshot()
+        .scan()
+        .unwrap()
+        .into_iter()
+        .map(|row| match row.values()[0] {
+            pintail_types::Value::UInt64(id) => id,
+            ref other => panic!("unexpected {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ids, [1, 2, 3, 4]);
+    assert!(new.join("table.wal").exists());
+    // A second writer cannot open the moved directory while this one lives.
+    assert!(
+        TableStore::open(
+            &new,
+            TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).unwrap(),
+            options
+        )
+        .is_err(),
+        "the writer lock followed the directory"
+    );
+    // Renaming onto an existing directory is refused and changes nothing.
+    std::fs::create_dir_all(root.path().join("occupied")).unwrap();
+    assert!(
+        table
+            .rename_directory(root.path().join("occupied"))
+            .is_err()
+    );
+    assert_eq!(table.directory(), std::fs::canonicalize(&new).unwrap());
+}
+

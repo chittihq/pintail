@@ -1472,6 +1472,42 @@ impl TableStore {
     }
 
     /// Returns the table directory.
+    /// Moves the table's directory to `new_directory`, keeping the writer
+    /// open: the WAL and lock handles follow the directory, the manifest
+    /// and segments are addressed relative to it from here on. A background
+    /// compaction in flight is collected first so no worker writes into the
+    /// old path. Snapshots taken before the move keep the old path and
+    /// fail on their next read, so the caller moves at a quiet boundary (a
+    /// DDL position in the stream).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a background merge fails to finish, the target
+    /// already exists, or the filesystem refuses the move.
+    pub fn rename_directory(&mut self, new_directory: impl AsRef<Path>) -> Result<(), StoreError> {
+        while self.background.is_some() {
+            self.poll_background_merge()?;
+            if self.background.is_some() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        let new_directory = new_directory.as_ref();
+        if new_directory.exists() {
+            return Err(StoreError::io(
+                "rename table directory",
+                std::io::Error::new(
+                    std::io::ErrorKind::AlreadyExists,
+                    format!("{} already exists", new_directory.display()),
+                ),
+            ));
+        }
+        std::fs::rename(&self.directory, new_directory)
+            .map_err(|error| StoreError::io("rename table directory", error))?;
+        self.directory = std::fs::canonicalize(new_directory)
+            .map_err(|error| StoreError::io("canonicalize renamed table directory", error))?;
+        Ok(())
+    }
+
     #[must_use]
     pub fn directory(&self) -> &Path {
         &self.directory

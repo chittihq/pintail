@@ -372,14 +372,14 @@ stays readable as a list of things to fix.
 - ALTER handling evolves in place for pure ADD/DROP COLUMN, pure column
   RENAME (verified mid-stream: stable column IDs carry across, rows before
   and after the rename stay intact with no resync), storage-compatible
-  MODIFY/CHANGE type changes, and index-only changes. What still marks the
-  table `needs_resync`: table RENAME (the on-disk directory identity derives
-  from the table name, so a rename is a safe resnapshot boundary),
-  storage-incompatible type changes, and key-strategy changes.
-- Renaming a table while a forced resnapshot is interrupted can leave the old
-  name recorded as `snapshotting` with `copy_complete=0` after that source name
-  is gone. This stale progress entry survives restarts; the recovery suite
-  reports that precise leftover as WARN.
+  MODIFY/CHANGE type changes, index-only changes, and table RENAME within
+  the schema (the store directory and every metadata row keyed by the name
+  move at the binlog position; no recopy). What still marks the table
+  `needs_resync`: storage-incompatible type changes and key-strategy
+  changes. A rename into another schema is treated as a drop.
+- Readers that opened a table's snapshot before a `RENAME TABLE` keep the
+  old directory and fail their next read; a client retries and the new
+  name answers. The window is the moment the rename applies.
 - Adding or removing a stable key is therefore a safe resnapshot boundary, not
   an in-place identity change. After the replacement generation is published,
   the refreshed probe promotes the table to row-level primary/unique-key CDC or

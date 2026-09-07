@@ -20,6 +20,11 @@ pub(crate) enum AlterKind {
     /// adopts the refreshed key metadata; a changed key strategy still
     /// quarantines.
     IndexOnly,
+    /// `RENAME TABLE old TO new` within the tracked schema: the store and
+    /// its metadata follow the new name, nothing is recopied.
+    RenameTable {
+        new_name: String,
+    },
     RequiresResnapshot,
 }
 
@@ -253,10 +258,15 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                     else {
                         continue;
                     };
-                    parsed.actions.push(DdlAction::Alter {
-                        table,
-                        kind: AlterKind::RequiresResnapshot,
-                    });
+                    // A rename into another schema leaves this one: the
+                    // table is gone from the mirror's point of view.
+                    match table_in_schema(&rename.new_name, database, &mut parsed)? {
+                        Some(new_name) => parsed.actions.push(DdlAction::Alter {
+                            table,
+                            kind: AlterKind::RenameTable { new_name },
+                        }),
+                        None => parsed.actions.push(DdlAction::Drop { table }),
+                    }
                 }
             }
             _ => {}
@@ -504,7 +514,17 @@ mod tests {
                 .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
-                kind: AlterKind::RequiresResnapshot,
+                kind: AlterKind::RenameTable {
+                    new_name: "archived_events".to_owned(),
+                },
+            }]
+        );
+        assert_eq!(
+            parse_ddl("RENAME TABLE app.events TO archive.events", "app")
+                .unwrap()
+                .actions,
+            vec![DdlAction::Drop {
+                table: "events".to_owned(),
             }]
         );
     }

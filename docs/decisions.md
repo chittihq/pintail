@@ -1405,3 +1405,24 @@ by key. The overlay stays opt-in through `enable_memtable_overlay`; the
 executor names the key column, reconciliation keeps the merge. Composite,
 text and binary keys, segments only partly inside the scanned range, and
 segments retaining versions fall back to the merge.
+
+### A table rename is followed, not resnapshotted
+
+`RENAME TABLE` used to quarantine the table for a resync: the store
+directory's name derives from the table name, so the rename was treated as
+a safe recopy boundary, and the new name was adopted by the next probe as a
+table the source had added. On a large table that is hours of copying for
+a change that touched no row. The rename is now applied at its binlog
+position: the metadata store renames the table row and every row keyed by
+the name in one transaction (foreign keys deferred to commit), the live
+writer moves its directory with the WAL and lock handles following (a
+background compaction is collected first), the stream's routing table
+takes the new name, the stored probe report is replaced by the one the
+DDL handler already takes so the replica lists the new name at once, and
+row events after the rename land in the same store. Metadata moves before
+the directory, so a crash between the two leaves a row whose directory is
+missing, which the restart sweep flags for resync, rather than a directory
+no row names. Snapshots opened before the rename keep the old path and
+fail their next read; the replica reloads on the directory change. A
+rename into another schema leaves the mirror and is treated as a drop; a
+rename onto a name already tracked quarantines the table as before.

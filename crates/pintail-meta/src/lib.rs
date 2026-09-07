@@ -1089,6 +1089,78 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Renames a tracked table everywhere the metadata store keys by its
+    /// name: the table row, its schema history, chunk journal, polling
+    /// state and checksums, dead letters, sync runs and the CDC snapshot
+    /// fence. One transaction, with the foreign keys that reference the
+    /// name deferred to commit so the parent and its children can move
+    /// together.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the old name is not tracked, the new name is
+    /// already tracked, or a row cannot be updated.
+    pub fn rename_table(&self, database_id: &str, old_name: &str, new_name: &str) -> Result<()> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin table rename")?;
+        transaction
+            .pragma_update(None, "defer_foreign_keys", true)
+            .context("failed to defer foreign keys for a table rename")?;
+        let taken: i64 = transaction
+            .query_row(
+                "SELECT COUNT(*) FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                (database_id, new_name),
+                |row| row.get(0),
+            )
+            .context("failed to check the new table name")?;
+        if taken > 0 {
+            bail!("cannot rename {database_id}.{old_name}: {new_name} is already tracked");
+        }
+        let changed = transaction
+            .execute(
+                "UPDATE tables SET name = ?3 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                (database_id, old_name, new_name),
+            )
+            .with_context(|| format!("failed to rename table {database_id}.{old_name}"))?;
+        if changed == 0 {
+            bail!("cannot rename {database_id}.{old_name}: it is not tracked");
+        }
+        for table in [
+            "schema_history",
+            "snapshot_chunks",
+            "poll_states",
+            "poll_chunk_states",
+            "dlq",
+            "sync_runs",
+        ] {
+            transaction
+                .execute(
+                    &format!(
+                        "UPDATE {table} SET table_name = ?3 \
+                         WHERE db_id = ?1 AND table_name = ?2 COLLATE NOCASE"
+                    ),
+                    (database_id, old_name, new_name),
+                )
+                .with_context(|| {
+                    format!("failed to move {table} rows of {database_id}.{old_name}")
+                })?;
+        }
+        transaction
+            .execute(
+                "UPDATE settings SET key = ?2 WHERE key = ?1",
+                (
+                    format!("cdc_snapshot_fence:{database_id}:{old_name}"),
+                    format!("cdc_snapshot_fence:{database_id}:{new_name}"),
+                ),
+            )
+            .context("failed to move the snapshot fence")?;
+        transaction
+            .commit()
+            .context("failed to commit table rename")
+    }
+
     /// Puts one table into `snapshotting`, leaving the rest of the database
     /// alone.
     ///

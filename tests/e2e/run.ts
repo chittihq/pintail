@@ -926,17 +926,48 @@ async function phaseSchemaDriftUnseen() {
 }
 
 async function phaseDdlDocumentedGaps() {
-  // Table rename is documented as quarantine; type changes are not part of
-  // the DDL gate. Exercise both so regressions in the documented behavior
-  // surface as WARN diffs, and improvements flip them to PASS.
-  // Rename quarantine: the renamed table never appears in the replica.
-  documentedGapTables.set('audit_log', /unknown table/)
-  documentedGapTables.set('audit_history', /unknown table/)
-  documentedMetadataGaps.push(
-    /^row \d+:\n  mysql   audit_history( \|.*)\n  pintail audit_log\1$/,
-  )
+  const phase = 'ddl-documented-gaps'
+  const check = async (name: string, run: () => Promise<void>) => {
+    try {
+      await run()
+      results.push({ phase, check: name, status: 'PASS' })
+    } catch (error) {
+      results.push({ phase, check: name, status: 'FAIL', detail: String(error) })
+      log(`FAIL ${name} — ${error}`)
+    }
+  }
+  // Type changes are not part of the DDL gate; exercised so regressions in
+  // the documented behavior surface as WARN diffs, and improvements flip
+  // them to PASS. A table rename is followed: the store and its metadata
+  // take the new name at the binlog position, rows written under the new
+  // name land in the same store, and the old name is gone on both sides,
+  // so the convergence loop below holds the renamed table to PASS.
   await sql(`RENAME TABLE audit_log TO audit_history`)
   await sql(`INSERT INTO audit_history VALUES ('post rename')`)
+  await check('a renamed table follows its new name in the replica', async () => {
+    const deadline = Date.now() + 120_000
+    let last = 'never compared'
+    for (;;) {
+      const expected = await mysqlRows('SELECT note FROM audit_history ORDER BY note')
+      try {
+        const actual = await pintailQuery('SELECT note FROM audit_history ORDER BY note')
+        const diff = diffRows(expected, actual, {})
+        if (diff === undefined) break
+        last = diff
+      } catch (error) {
+        last = String(error)
+      }
+      if (Date.now() > deadline) throw new Error(`renamed table never converged: ${last}`)
+      await Bun.sleep(POLL_MS)
+    }
+    let oldGone = false
+    try {
+      await pintailQuery('SELECT COUNT(*) FROM audit_log')
+    } catch (error) {
+      oldGone = /unknown table|doesn't exist/i.test(String(error))
+    }
+    if (!oldGone) throw new Error('the old name still answers after the rename')
+  })
   // In-place type change: replication stops applying to the table, so the
   // divergence is a row-content diff (never a missing table or an error).
   documentedGapTables.set('order_items', /^row \d+:/)

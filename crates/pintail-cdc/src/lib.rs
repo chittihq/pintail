@@ -1068,6 +1068,68 @@ async fn apply_ddl_actions(
             }
             DdlAction::Alter {
                 table,
+                kind: AlterKind::RenameTable { new_name },
+            } => {
+                let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    continue;
+                };
+                if target_indexes.contains_key(&new_name.to_ascii_lowercase()) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {new_name} is already tracked"),
+                        None,
+                    )?;
+                    continue;
+                }
+                // Metadata first, then the directory: a crash between the
+                // two leaves a row whose directory is missing, which the
+                // restart sweep flags for resync; the reverse would leave a
+                // directory no row names.
+                metadata.rename_table(database_id, &table, &new_name)?;
+                let root = targets[index]
+                    .store
+                    .directory()
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .ok_or_else(|| CdcError::Ddl("table directory has no parent".to_owned()))?;
+                let new_directory = pintail_store::table_directory(&root, &new_name);
+                if let Err(error) = targets[index].store.rename_directory(&new_directory) {
+                    quarantine_schema_change(
+                        metadata,
+                        database_id,
+                        &targets[index],
+                        index,
+                        blocked_targets,
+                        &format!("{statement}; {error}"),
+                        None,
+                    )?;
+                    continue;
+                }
+                target_indexes.remove(&table.to_ascii_lowercase());
+                target_indexes.insert(new_name.to_ascii_lowercase(), index);
+                targets[index].source.name = new_name;
+                // The replica lists tables from the stored probe report;
+                // the refreshed report already carries the new name, so
+                // storing it leaves no window in which the table is absent.
+                // Best effort: the next probe stores the same.
+                if let Ok(Some(database)) = metadata.database(database_id)
+                    && let Some(mode) = database.effective_mode.as_deref()
+                    && let Ok(json) = serde_json::to_string(&refreshed)
+                {
+                    let _ = metadata.update_database_probe(
+                        database_id,
+                        &json,
+                        mode,
+                        &Utc::now().to_rfc3339(),
+                    );
+                }
+            }
+            DdlAction::Alter {
+                table,
                 kind: AlterKind::RenameColumns(renames),
             } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
