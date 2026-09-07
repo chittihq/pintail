@@ -330,7 +330,7 @@ fn a_memtable_overlap_is_masked_from_a_direct_decode() {
         .scan_projected_range_stream(&key(0), &key(400_000), &[1, 2])
         .unwrap()
         .expect("streaming scan");
-    overlay.enable_memtable_overlay(1);
+    overlay.enable_memtable_overlay(&[1]);
     assert_eq!(shape(&overlay), ["overlay", "memtable"]);
     assert_eq!(drain(overlay), expected);
 
@@ -347,7 +347,7 @@ fn a_memtable_overlap_is_masked_from_a_direct_decode() {
         .scan_projected_range_stream(&key(0), &key(400_000), &[2])
         .unwrap()
         .expect("streaming scan");
-    amounts_only.enable_memtable_overlay(1);
+    amounts_only.enable_memtable_overlay(&[1]);
     let mut total = 0_i64;
     loop {
         let chunks = amounts_only.next_column_chunks(3, usize::MAX).unwrap();
@@ -377,7 +377,7 @@ fn a_memtable_overlap_is_masked_from_a_direct_decode() {
         .scan_projected_range_stream(&key(0), &key(400_000), &[1, 2])
         .unwrap()
         .expect("streaming scan");
-    stale.enable_memtable_overlay(1);
+    stale.enable_memtable_overlay(&[1]);
     assert_eq!(shape(&stale), ["merge", "memtable"]);
     let rows = drain(stale);
     assert_eq!(rows, expected, "the stale row changes nothing");
@@ -440,7 +440,7 @@ fn an_overlay_reached_after_another_part_is_still_masked() {
             .scan_projected_range_stream(&key(0), &key(1_000_000), &[1, 2])
             .unwrap()
             .expect("stream");
-        stream.enable_memtable_overlay(1);
+        stream.enable_memtable_overlay(&[1]);
         let (mut rows, mut total) = (0_usize, 0_i64);
         loop {
             let chunks = if single {
@@ -479,4 +479,132 @@ fn an_overlay_reached_after_another_part_is_still_masked() {
         (expected_rows, expected_total),
         "multi-chunk API"
     );
+}
+
+/// A two-part integer key is masked and interleaved part by part: updates,
+/// a delete, an insert between two rows sharing a first part, and an insert
+/// past the end all land in key order, and the stream answers as the merge
+/// would.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_composite_integer_key_takes_the_overlay() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "user_id", DataType::Int64, false),
+            Column::new(2, "course_id", DataType::Int64, false),
+            Column::new(3, "progress", DataType::Int64, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 1_000,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |user: i64, course: i64| {
+        PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(course)]).unwrap()
+    };
+    let row = |user: i64, course: i64, progress: i64, version: u64, deleted: bool| {
+        StoredRow::new(
+            key(user, course),
+            vec![
+                pintail_types::Value::Int64(user),
+                pintail_types::Value::Int64(course),
+                pintail_types::Value::Int64(progress),
+            ],
+            version,
+            deleted,
+        )
+    };
+    // 300 users x 240 courses (even course ids), 72,000 rows.
+    let mut rows = Vec::new();
+    for user in 1..=300_i64 {
+        for course in (2..=480_i64).step_by(2) {
+            rows.push(row(user, course, user + course, 1, false));
+        }
+    }
+    table.ingest(rows).unwrap();
+    table.flush().unwrap();
+    let mut model: std::collections::BTreeMap<(i64, i64), i64> = (1..=300_i64)
+        .flat_map(|user| {
+            (2..=480_i64)
+                .step_by(2)
+                .map(move |course| ((user, course), user + course))
+        })
+        .collect();
+    let ops = [
+        (7_i64, 10_i64, -1_i64, false), // update
+        (7, 11, -2, false),             // insert between (7,10) and (7,12)
+        (150, 2, 0, true),              // delete a user's first course
+        (300, 480, -3, false),          // update the last row
+        (300, 481, -4, false),          // insert past the last row
+        (301, 2, -5, false),            // insert past the last user
+    ];
+    table
+        .ingest(
+            ops.iter()
+                .map(|(user, course, progress, deleted)| {
+                    row(*user, *course, *progress, 2, *deleted)
+                })
+                .collect(),
+        )
+        .unwrap();
+    for (user, course, progress, deleted) in ops {
+        if deleted {
+            model.remove(&(user, course));
+        } else {
+            model.insert((user, course), progress);
+        }
+    }
+    let expected = model
+        .iter()
+        .map(|((user, course), progress)| (*user, *course, *progress))
+        .collect::<Vec<_>>();
+
+    let snapshot = table.snapshot();
+    let mut stream = snapshot
+        .scan_projected_range_stream(&key(0, 0), &key(1_000, 0), &[1, 2, 3])
+        .unwrap()
+        .expect("stream");
+    stream.enable_memtable_overlay(&[1, 2]);
+    assert!(matches!(
+        stream.parts.front(),
+        Some(super::scan::ScanPart::Overlay { .. })
+    ));
+    let mut actual = Vec::new();
+    loop {
+        let chunks = stream.next_column_chunks(3, usize::MAX).unwrap();
+        if chunks.is_empty() {
+            break;
+        }
+        for chunk in chunks {
+            let mut columns = chunk
+                .into_decoded_columns()
+                .into_iter()
+                .map(DecodedColumn::into_values);
+            let users = columns.next().unwrap();
+            let courses = columns.next().unwrap();
+            let progress = columns.next().unwrap();
+            for ((user, course), progress) in users.into_iter().zip(courses).zip(progress) {
+                match (user, course, progress) {
+                    (
+                        pintail_types::Value::Int64(user),
+                        pintail_types::Value::Int64(course),
+                        pintail_types::Value::Int64(progress),
+                    ) => actual.push((user, course, progress)),
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        }
+    }
+    assert!(
+        actual
+            .windows(2)
+            .all(|pair| (pair[0].0, pair[0].1) < (pair[1].0, pair[1].1)),
+        "the stream stays in key order"
+    );
+    assert_eq!(actual, expected);
 }

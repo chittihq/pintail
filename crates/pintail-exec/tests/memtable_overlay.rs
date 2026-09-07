@@ -275,3 +275,114 @@ fn an_all_deleted_first_segment_does_not_end_the_scan() {
         vec![vec![Value::UInt64(10_001)], vec![Value::UInt64(10_002)]]
     );
 }
+
+/// A table keyed by two integer columns: the executor names both, and the
+/// overlay masks and places memtable rows by the composite key.
+#[test]
+#[allow(clippy::too_many_lines)]
+fn a_composite_key_table_answers_through_the_overlay() {
+    let directory = tempfile::tempdir().expect("directory");
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "user_id", DataType::Int64, false),
+            Column::new(2, "course_id", DataType::Int64, false),
+            Column::new(3, "progress", DataType::Int64, true),
+        ],
+    )
+    .expect("schema");
+    let mut table = TableStore::open(
+        directory.path(),
+        schema.clone(),
+        StoreOptions {
+            background_compaction: false,
+            ..StoreOptions::default()
+        },
+    )
+    .expect("table");
+    let row = |user: i64, course: i64, progress: i64, version: u64, deleted: bool| {
+        StoredRow::new(
+            PrimaryKey::new(vec![KeyPart::Int64(user), KeyPart::Int64(course)]).expect("key"),
+            vec![
+                Value::Int64(user),
+                Value::Int64(course),
+                Value::Int64(progress),
+            ],
+            version,
+            deleted,
+        )
+    };
+    let mut rows = Vec::new();
+    for user in 1..=400_i64 {
+        for course in 1..=200_i64 {
+            rows.push(row(user, course, (user * course) % 101, 1, false));
+        }
+    }
+    table.bulk_ingest_snapshot(rows).expect("ingest");
+    let mut model: std::collections::BTreeMap<(i64, i64), i64> = (1..=400_i64)
+        .flat_map(|user| (1..=200_i64).map(move |course| ((user, course), (user * course) % 101)))
+        .collect();
+    let mut writes = Vec::new();
+    for k in 0..500_i64 {
+        let (user, course) = (1 + (k * 37) % 400, 1 + (k * 53) % 200);
+        writes.push(row(user, course, 1_000 + k, 2, false));
+        model.insert((user, course), 1_000 + k);
+    }
+    for k in 0..60_i64 {
+        let (user, course) = (1 + (k * 91) % 400, 1 + (k * 17) % 200);
+        writes.push(row(user, course, 0, 2, true));
+        model.remove(&(user, course));
+    }
+    for course in 201..=205 {
+        writes.push(row(7, course, -7, 2, false));
+        model.insert((7, course), -7);
+    }
+    table.ingest_cdc(writes).expect("cdc");
+    let entry = TableEntry::new(
+        TableId::new(1),
+        "t",
+        schema,
+        TableStatistics::with_row_count(80_000),
+    )
+    .expect("entry")
+    .with_key_columns([1, 2])
+    .expect("key");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
+    let fixture = Fixture {
+        _directory: directory,
+        table,
+        catalog,
+        model: std::collections::BTreeMap::new(),
+    };
+    let count = model.len() as u64;
+    let sum: i64 = model.values().sum();
+    assert_eq!(
+        fixture.run("SELECT COUNT(*), SUM(progress) FROM t"),
+        vec![vec![Value::UInt64(count), Value::Int64(sum)]]
+    );
+    let expected = model
+        .iter()
+        .filter(|((user, _), _)| *user == 7)
+        .map(|((_, course), progress)| vec![Value::Int64(*course), Value::Int64(*progress)])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fixture.run("SELECT course_id, progress FROM t WHERE user_id = 7 ORDER BY course_id"),
+        expected
+    );
+    let ordered = fixture.run("SELECT user_id, course_id FROM t");
+    let keys = ordered
+        .iter()
+        .map(|row| match (&row[0], &row[1]) {
+            (Value::Int64(user), Value::Int64(course)) => (*user, *course),
+            other => panic!("unexpected {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        keys,
+        model.keys().copied().collect::<Vec<_>>(),
+        "key order is kept"
+    );
+}

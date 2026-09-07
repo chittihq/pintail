@@ -22,6 +22,59 @@ export interface DifferentialQuery {
 }
 
 export const differentialQueries: DifferentialQuery[] = [
+  // composite keys: an all-integer pair (overlay path) and a text-led triple
+  // (merge path), churned under replication by the composite-keys phase.
+  {
+    name: 'composite: one first part, ordered by the second',
+    sql: 'SELECT class_id, user_id, minutes, joined_at FROM attendance WHERE class_id = 7 ORDER BY user_id',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: grouped by the first part',
+    sql: 'SELECT class_id, COUNT(*) AS n, SUM(minutes) AS total, MAX(user_id) AS last_user FROM attendance GROUP BY class_id ORDER BY class_id',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: exact key pairs, deleted and reinserted among them',
+    sql:
+      'SELECT class_id, user_id, minutes FROM attendance ' +
+      'WHERE (class_id = 7 AND user_id = 3) OR (class_id = 12 AND user_id = 25) OR (class_id = 30 AND user_id = 15) ' +
+      'OR (class_id = 61 AND user_id = 2) OR (class_id = 45 AND user_id = 30) ORDER BY class_id, user_id',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: a range on the first part with a filter on the second',
+    sql: 'SELECT class_id, user_id, minutes FROM attendance WHERE class_id BETWEEN 10 AND 20 AND user_id > 20 ORDER BY class_id, user_id',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: descending key order with a limit',
+    sql: 'SELECT class_id, user_id FROM attendance ORDER BY class_id DESC, user_id DESC LIMIT 15',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: nulls in a non-key column under the key order',
+    sql: 'SELECT class_id, user_id FROM attendance WHERE joined_at IS NULL ORDER BY class_id, user_id',
+    tables: ['attendance'],
+  },
+  {
+    name: 'composite: text-led key, one tenant and a user range',
+    sql: 'SELECT tenant, user_id, course_id, progress FROM enrollments WHERE tenant = \'t1\' AND user_id BETWEEN 3 AND 8 ORDER BY user_id, course_id',
+    tables: ['enrollments'],
+  },
+  {
+    name: 'composite: text-led key grouped by its first part',
+    sql: 'SELECT tenant, COUNT(*) AS n, SUM(progress) AS total FROM enrollments GROUP BY tenant ORDER BY tenant',
+    tables: ['enrollments'],
+  },
+  {
+    name: 'composite: join on two columns across both composite tables',
+    sql:
+      'SELECT a.class_id, a.user_id, e.progress FROM attendance a ' +
+      'JOIN enrollments e ON e.user_id = a.user_id AND e.course_id = a.class_id ' +
+      "WHERE e.tenant = 't2' ORDER BY a.class_id, a.user_id",
+    tables: ['attendance', 'enrollments'],
+  },
   // conformance: Chitti's adversarial seed, exercised by design intent.
   {
     name: 'conformance: triple-alias person join with a dangling FK',
