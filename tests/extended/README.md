@@ -80,3 +80,18 @@ live E2E layer exercises the current engine, not unimplemented production cache
 integration. Dedicated publication-race model checking, generated CDC histories,
 mutation testing of invalidation safeguards, and shadow comparison remain work
 for that integration. The ordinary RC/stable release gates remain required.
+
+## Initial validation
+
+The workflow passed `actionlint`; five Python runner tests passed, including
+nonzero-exit and zero-tests failure propagation. On a clean archived checkout,
+the core runner passed 22 SQL/spill tests, 180 storage/fault tests and seven
+reuse prototype tests. The SQL runner passed the fixed MySQL 8.4 corpus,
+40 generated comparisons (40 unique SQL, zero skips), and 94 equivalence
+comparisons over 20 generated bases (zero skips). Core evidence names
+`3d31c63`; the subsequent SQL smoke names `7ddae3f`.
+
+These are local harness-validation results on the authorized build machine,
+not a completed GitHub Actions release matrix. The 8.0 leg, full generated
+budget and hosted-runner E2E jobs await the first workflow execution. The
+workflow is committed locally and becomes available after it is pushed.
