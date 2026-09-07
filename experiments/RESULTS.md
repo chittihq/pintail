@@ -3019,19 +3019,33 @@ section H keeps this half of item 5 open with the specific blocker
 recorded, so a future attempt starts from the ownership question rather
 than rediscovering it.
 
-## e81 — Doubling the scan pool's default surfaced a real wrong answer under `tests/e2e`; reverted
+## e81 — A pre-existing, nondeterministic wrong answer in `AVG` on a decimal column, found chasing the scan-pool default
 
-`--profile rc`'s `e2e` stage failed deterministically with the scan pool
-defaulted to twice the CPU count (e79's change): `tests/e2e/queries.ts`'s
+First seen with the scan pool defaulted to twice the CPU count (e79's
+change): `--profile rc`'s `e2e` stage failed on `tests/e2e/queries.ts`'s
 "decimal column average beyond simple sum" -
 `SELECT customer_id, ROUND(AVG(total), 4), ROUND(SUM(total) / COUNT(*),
 4) FROM orders GROUP BY customer_id HAVING COUNT(*) >= 2 ORDER BY
-avg_total DESC, customer_id LIMIT 20` - returned `330.8824` where MySQL
-and this engine's own `SUM(total) / COUNT(*)` column both read
-`330.8823`, on a plain `GROUP BY` with no join. Reverting only
-`PINTAIL_SCAN_THREADS` back to the CPU count (32 on the build host, no
-code change) made the failure disappear; the same binary, same data, same
-query, only the scan pool's width changed.
+avg_total DESC, customer_id LIMIT 20` - returned `330.8824` at row 3
+where MySQL and this engine's own `SUM(total) / COUNT(*)` column both
+read `330.8823`, on a plain `GROUP BY` with no join. Reverting
+`PINTAIL_SCAN_THREADS` to the CPU count made that run pass, which read
+at the time as confirmation that the doubled pool was the cause.
+
+It was not, or not only: a later `--profile rc` run, on the same commit
+with the scan pool already reverted to the CPU count, failed the exact
+same check again - this time at a different row (11, not 3) and a
+different value (`324.2510` against MySQL's `324.2509`). Same query
+shape, same mismatch pattern (`AVG` wrong, `SUM(total)/COUNT(*)` on the
+same rows correct), different data point each time. That rules out the
+scan-pool width as the cause: this is a pre-existing, run-to-run
+nondeterministic defect that the wider pool very likely made MORE
+frequent (Rust's default hasher reseeds every process, so `HashMap`
+iteration order - and with it, morsel-to-worker assignment and merge
+order in anything built on rayon's work-stealing scheduler - differs
+between runs of the identical binary on the identical data regardless of
+thread count; a wider pool gives that nondeterminism more ways to land on
+whatever ordering triggers this), but did not introduce.
 
 The AVG lane itself is exact by construction: `TwoPassLane::DecimalUnits`
 rescales each row's decimal units by a fixed power of ten
@@ -3040,27 +3054,20 @@ aggregate's planned output scale (`decimal_average_scale`, a property of
 the bound query, not of runtime data or thread count), and
 `update_decimal_average_units` accumulates the rescaled units with
 `checked_add` - exact integer addition, order-independent by definition.
-That the `SUM(total) / COUNT(*)` column came back byte-correct while
-`AVG(total)` did not, on the same rows, points away from a data
-completeness problem (a dropped or duplicated row would move both
-columns) and toward `AVG` specifically taking a DIFFERENT computation
-path than the one just described at some scan-thread counts and not
-others - most plausibly the general aggregate's own average, which
-(unlike the two-pass exact-units lane) accumulates through `f64`. Which
-path a query takes is decided from runtime shape signals (the first
-batch's column types and similar heuristics), and the scan pool's width
-changes batch boundaries, which could change that decision without
-changing anything about the query itself. Not confirmed by tracing an
-actual run with instrumentation - the reproduction and the elimination of
-the exact-lane's own math as the cause are as far as this went before the
-default was reverted.
+That `SUM(total) / COUNT(*)` came back byte-correct on the same rows
+both times points away from a data completeness problem (a dropped or
+duplicated row would move both columns) and toward `AVG` specifically
+taking a run-to-run-varying computation path - most plausibly the general
+aggregate's own average, which (unlike the two-pass exact-units lane) may
+accumulate through `f64`. Not confirmed by tracing an actual run with
+instrumentation, and not established whether this reproduces on `dev`
+before any of this brief's commits - time did not extend to a control run
+against a bisected base commit.
 
-**Verdict: reverted the scan-pool default entirely** (back to the CPU
-count, `docs/design/production-hardening-todo.md` H5a), rather than ship
-a change that measured no benefit on bare metal (e79) AND exposes a real
-wrong answer under higher scan parallelism. The wrong answer itself is
-independent of this brief's change - it is a latent path-selection or
-general-average defect that already existed and was simply never
-triggered at the scan-thread counts anyone had run before - and is
-recorded as new work in section G of the hardening todo (G13) rather than
-left to be rediscovered.
+**Verdict: the scan-pool default stays reverted** (back to the CPU count,
+`docs/design/production-hardening-todo.md` H5a) regardless - e79 already
+found no benefit from doubling it on bare metal, so there is no upside to
+weigh against even a possible (not confirmed) increase in how often this
+pre-existing defect surfaces. The defect itself is unrelated to anything
+else in this brief and is recorded as new work (section G, G13) rather
+than worked around here.
