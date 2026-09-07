@@ -2890,3 +2890,54 @@ and fetch the remaining columns only for the survivors, and push a top-K
 through a left join whose build key is unique, which is what makes the
 join's own output unnecessary for the rows that lose. Neither is a layout
 change, and the layout changes are not worth doing first.
+
+
+## e78 — A grouped aggregate served from per-segment partial states
+
+`crates/pintail-exec/tests/segment_subcube.rs`, release, ten million rows
+in ten one-million-row segments, five groups, minimum of five runs, memo
+disabled so every run executes.
+
+Prompted by reading how another engine keeps materialized views current:
+a view is a trigger that runs over the block being inserted, and it stores
+partial aggregate states rather than finished numbers so later inserts can
+merge into them. Its refreshable variant instead recomputes the whole
+query on a schedule and swaps the result atomically. Two things about that
+design matter here. The partial-state idea is the valuable half. And the
+incremental form is documented as not handling updates or deletes at all,
+which a mirror of a mutable source cannot assume.
+
+This engine already folds per-segment aggregates, but only when there is
+no GROUP BY (`try_sma_fold`); the grouped case is a recorded gap in
+`docs/limitations.md`. Segments are immutable, so a grouped sub-cube
+written beside one can never go stale. The measurement asks what that
+would be worth.
+
+| shape | ms |
+|---|---:|
+| scan and aggregate, as today | 28.455 |
+| merge ten segments' partials | 0.000 |
+| merge partials, then 50,000 live memtable rows | 0.391 |
+
+The settled ratio is not the interesting number; a whole-result memo
+already serves a settled repeat. The interesting one is the last row.
+Today an ingest invalidates the memo and the next query pays the full
+28 ms again. Merging immutable per-segment partials and walking only what
+is still in the memtable answers the same query in 0.391 ms, seventy-three
+times faster, and that number holds under continuous replication because
+a flush adds one more segment's partials rather than invalidating
+anything.
+
+**Verdict: worth building, in the grouped form, for additive aggregates
+only.** COUNT and SUM merge from partials, and AVG follows from the two.
+MIN and MAX cannot survive a delete, and COUNT(DISTINCT) cannot merge
+without a sketch, so those decline the fold as the ungrouped path already
+declines DISTINCT. Unlike the append-only design that prompted this, a
+mirror sees updates and deletes: the memtable pass already carries the
+tombstones and superseded versions, so correctness comes from the same
+merge-on-read rule the scan uses, not from assuming an append-only source.
+
+The open question this does not answer is which group columns deserve a
+sub-cube. Writing one per column per segment is unbounded; the shapes
+worth it are low-cardinality columns that reports group by, which is what
+the dense-fold work already identified as the common grouping key.
