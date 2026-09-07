@@ -22,9 +22,15 @@ const THREADS = (process.env.PINTAIL_PROFILE_THREADS ?? '8x8,4x8,2x8,8x4,8x2,16x
   .split(',')
   .map((pair) => pair.trim().split('x').map(Number) as [number, number])
 const RUNS = Number(process.env.PINTAIL_PROFILE_RUNS ?? 3)
+// PINTAIL_PROFILE_QUERIES narrows the set by name (comma-separated).
+const WANTED = process.env.PINTAIL_PROFILE_QUERIES?.split(',').map((name) => name.trim())
 const QUERIES: Array<{ name: string; sql: string }> = [
   { name: 'Q2', sql: "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'shipped'" },
   { name: 'N1', sql: "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'shipped' AND id >= 1" },
+  {
+    name: 'Q3',
+    sql: 'SELECT status, COUNT(*) AS cnt, ROUND(AVG(total_amount), 2) AS avg_amt FROM orders GROUP BY status ORDER BY cnt DESC',
+  },
   {
     name: 'Q5',
     sql: "SELECT YEAR(order_date) AS yr, MONTH(order_date) AS mo, COUNT(*) AS cnt, ROUND(SUM(total_amount), 2) AS revenue FROM orders WHERE order_date >= '2023-01-01' AND order_date < '2024-01-01' GROUP BY yr, mo ORDER BY yr, mo",
@@ -33,7 +39,7 @@ const QUERIES: Array<{ name: string; sql: string }> = [
     name: 'Q8',
     sql: 'SELECT u.region, COUNT(*) AS cnt, ROUND(SUM(o.total_amount), 2) AS total FROM orders o JOIN users u ON o.user_id = u.id GROUP BY u.region ORDER BY total DESC',
   },
-]
+].filter((query) => WANTED === undefined || WANTED.includes(query.name))
 const runId = `pintail-profile-${process.pid}`
 const containerName = `${runId}-pintail`
 const volumeName = `${runId}-data`
