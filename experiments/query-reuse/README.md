@@ -114,9 +114,12 @@ late arrivals may become additional leaders, and actual counts are recorded.
 
 CPU time is the process user+system tick delta over the batch and sampler
 shutdown (including sampler work), with tick frequency recorded. At short durations, tick resolution
-limits precision. Shared query charge is sampled every 500 microseconds; it
-is a lower bound on peak tracked query bytes, not exact allocation accounting.
-It excludes fixture and materialized output allocations. Process VmHWM includes
+limits precision. Shared query charge was sampled every 500 microseconds, but the lab leaves
+the server-wide budget disabled: `reserve` skips accounting when its limit is
+zero. Consequently every `sampled_query_bytes` reading is unavailable (zero),
+not evidence of zero memory use. Per-query limits still apply. Memory findings
+below use operating-system process peaks only; a bounded shared-budget
+experiment remains necessary before integration. Process VmHWM includes
 fixture construction and reference work, so it is not query-only RSS.
 
 Dependency experiment: 10,000 invented rows, 41 refreshes, 40 single-row updates.
@@ -154,3 +157,89 @@ python3 run.py
 Long runs should use the repository's detached build-server workflow.
 The runner prints `QUERY-REUSE-DONE` only after every subprocess succeeds and
 summary evidence is written. No Docker or production resources are used.
+
+## Results and decision
+
+Five independent process repetitions per arm; all numbers below are medians.
+The corrected in-flight matrix has 80 processes. The retained initial matrix
+has 110, including the 30 dependency measurements: 190 total successful
+processes. Every measured response passed exact reference comparison. Seven
+unit/integration tests and strict all-target clippy passed on the Linux build
+machine. This standalone experiment did not run the full release gate.
+
+### 1. Share identical in-flight executions
+
+| Burst | Independent batch | Shared batch | Batch speedup | Executions, independent → shared |
+| --- | ---: | ---: | ---: | ---: |
+| 4 identical requests | 32.77 ms | 22.99 ms | 1.43× | 4 → 1 |
+| 16 identical requests | 129.60 ms | 23.71 ms | 5.47× | 16 → 1 |
+| 16 requests, 4 identical | 129.07 ms | 105.80 ms | 1.22× | 16 → 13 |
+| 16 distinct requests | 132.42 ms | 131.18 ms | No demonstrated benefit | 16 → 16 |
+
+For the 16-identical burst, independent runs ranged 126.58–133.53 ms;
+shared runs ranged 23.41–24.40 ms. Decoded blocks fell from 336 to 21 in
+all five repetitions. Median process CPU time fell from approximately
+500 to 30 ms, with coarse 10 ms tick resolution. Whole-process peak RSS
+fell from 155.19 to 57.11 MiB (63%); this includes fixture construction
+and reference queries, so it is not an isolated query-allocation claim.
+For distinct requests, peak RSS was essentially unchanged (160.26 versus
+160.41 MiB), and timing ranges overlapped. The small median difference is
+not evidence of a distinct-query optimization.
+
+This supports adopting shared execution for overlapping, eligible requests.
+It establishes higher throughput for this fixed concurrent burst, not a
+steady-state server capacity figure. Four available CPUs also explain why
+removing fifteen executions does not produce a sixteenfold wall-time gain.
+The settled-only control demonstrates why eligibility/admission should
+consider existing cheap engine reuse: coordinating an already memoized
+answer has much less work to save.
+
+### 2. Preserve results across irrelevant column updates
+
+Times are the sum of 41 refreshes, including result serialization, excluding
+separately recorded ingestion and validation queries.
+
+| Updates changing a dependency | Uncached refresh time | Reuse refresh time | Ratio | Executions, uncached → reuse |
+| --- | ---: | ---: | ---: | ---: |
+| 0 / 40 | 177.40 ms | 2.51 ms | 70.7× faster | 41 → 1 |
+| 9 / 40 (22.5%) | 180.89 ms | 42.64 ms | 4.24× faster | 41 → 10 |
+| 40 / 40 | 178.32 ms | 181.14 ms | 1.6% slower median | 41 → 41 |
+
+The no-hit ranges overlap (175.12–181.01 versus 175.25–184.48 ms), so the
+1.6% difference is descriptive, not a precise overhead estimate. It does
+show that invalidating on every update removes the benefit. Ledger tracking
+was approximately 10–11 microseconds across 40 updates, with full before-images
+already available; this excludes their acquisition/storage cost. These runs
+do not establish a meaningful process-memory reduction for dependency reuse.
+
+This supports a narrowly eligible dependency cache for repeated reads under
+updates to unused columns. The large best-case ratio depends on that update
+pattern and the existing settled-state memo on the first refresh. It is not
+a general query speedup or a claim that all CDC workloads benefit.
+
+### Integration order
+
+Implement #1 first behind explicit eligibility and resource bounds. Bind keys
+to actual database, authorization, session settings, schema, and pinned snapshot
+identity. Charge retained responses and bound followers; define cancellation
+ownership before connecting HTTP/wire clients. Verify under a sustained mixed
+workload and a finite process memory budget.
+
+Then add #2 for the conservative single-table expression subset. Publish column
+and membership epochs atomically with committed transaction snapshots; use
+conservative invalidation whenever before-images or dependency information are
+incomplete. Test real binlog events, concurrent commits, DDL, restart, eviction,
+and protocol result parity. A later experiment can test composing both ideas:
+coalesce misses for one validity token and reuse completed results while that
+token remains valid. That combination has not been measured here.
+
+The engine has evolved after the archived base. Rebase any integration onto
+current behavior and remeasure: these numbers belong to `73303d2` plus the
+recorded standalone sources, not subsequent engine commits.
+
+Raw corrected readings: [raw.jsonl](evidence/raw.jsonl),
+[summary.json](evidence/summary.json), [environment](evidence/environment.json).
+Earlier control and dependency readings: [raw.jsonl](evidence/settled/raw.jsonl),
+[summary.json](evidence/settled/summary.json),
+[environment](evidence/settled/environment.json). Both source-hash manifests
+were checked against their corresponding preserved sources.
