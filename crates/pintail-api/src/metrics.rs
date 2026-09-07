@@ -197,6 +197,11 @@ fn render(state: &ApiState) -> anyhow::Result<String> {
                 "pintail_table_needs_resync{{database=\"{database_id}\",table=\"{table_name}\"}} {}",
                 u8::from(table.state == "needs_resync")
             );
+            let _ = writeln!(
+                output,
+                "pintail_table_paused{{database=\"{database_id}\",table=\"{table_name}\"}} {}",
+                u8::from(table.paused.is_some())
+            );
         }
         let dlq = metadata.dlq_records(Some(&database.id), 1_000_000)?.len();
         let _ = writeln!(

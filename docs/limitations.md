@@ -383,6 +383,12 @@ stays readable as a list of things to fix.
 - In polling mode a `RENAME TABLE` is not observed (there is no binlog to
   carry it): the next probe adopts the new name as a table the source
   added and copies it afresh, and the old name is retired then.
+- A per-table pause applies from the next supervisor cycle, not the
+  instant the request is answered; a row event already in the cycle's
+  batch still lands. Changes skipped while a table is paused are not
+  kept anywhere: resuming recopies the table instead of replaying them,
+  and for a keyless table that recopy waits on the keyless policy the
+  same way a quarantine does.
 - Adding or removing a stable key is therefore a safe resnapshot boundary, not
   an in-place identity change. After the replacement generation is published,
   the refreshed probe promotes the table to row-level primary/unique-key CDC or

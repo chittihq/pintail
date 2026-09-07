@@ -513,13 +513,14 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
         "polling" => {
             // Quarantine is per table. In particular, a keyless table under
             // the default policy needs operator repair and must not hold up
-            // unrelated tables while it waits for that repair.
+            // unrelated tables while it waits for that repair. A paused
+            // table is left alone the same way until it is resumed.
             let mut targets = targets
                 .into_iter()
                 .filter(|target| {
                     !records.iter().any(|record| {
                         record.name.eq_ignore_ascii_case(&target.source().name)
-                            && record.state == "needs_resync"
+                            && (record.state == "needs_resync" || record.paused.is_some())
                     })
                 })
                 .collect::<Vec<_>>();
@@ -594,6 +595,12 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(display)?;
+            // Every table paused, quarantined or absent: there is nothing
+            // to poll, and the poller refuses an empty target list as a
+            // configuration error, which this is not.
+            if poll_targets.is_empty() {
+                return pool.disconnect().await.map(|()| 0).map_err(display);
+            }
             let cursor_overrides = records
                 .iter()
                 .filter_map(|table| {
@@ -698,9 +705,10 @@ fn cascade_reconciliation_due(
     Ok(records
         .into_iter()
         .filter(|record| {
-            flagged
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(&record.name))
+            record.paused.is_none()
+                && flagged
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&record.name))
                 && record
                     .last_reconcile_at
                     .as_deref()

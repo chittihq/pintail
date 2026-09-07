@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- One table can be paused while the rest of its database keeps
+  replicating: `POST /api/databases/{id}/tables/{name}/pause` and
+  `/resume`, with a Pause table / Resume table action and a paused badge
+  on the database page. A paused table's row events are passed over by
+  the CDC stream (the position still advances) and polling leaves it
+  alone. Skipped changes are not kept: resuming a table the stream
+  passed changes over for flags it for a recopy, which the supervisor's
+  automatic resync carries out for keyed tables; a table nothing changed
+  under simply moves again. A paused table is never auto-resynced,
+  cascade-reconciled or polled while paused.
+
 ## [0.1.2-rc9] - 2026-09-07
 
 ### Added

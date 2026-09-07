@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 21;
+const CURRENT_SCHEMA_VERSION: u32 = 22;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -1239,6 +1239,117 @@ impl MetaStore {
         Ok(())
     }
 
+    /// The tables an operator holds still. CDC passes their row events over
+    /// and polling leaves them alone until they are resumed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be read.
+    pub fn paused_tables(&self, database_id: &str) -> Result<BTreeSet<String>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT name FROM tables WHERE db_id = ?1 AND paused = 1 ORDER BY name")
+            .context("failed to prepare paused table query")?;
+        statement
+            .query_map([database_id], |row| row.get(0))
+            .context("failed to query paused tables")?
+            .collect::<rusqlite::Result<BTreeSet<_>>>()
+            .context("failed to decode paused tables")
+    }
+
+    /// Holds one table still. Pausing changes no other state: the table
+    /// keeps its store, its copy flags and its checkpoint position, and only
+    /// the stream and the poller skip it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table is not tracked or the flag cannot be
+    /// persisted.
+    pub fn pause_table(&self, database_id: &str, table_name: &str) -> Result<()> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE tables SET paused = 1 \
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                (database_id, table_name),
+            )
+            .with_context(|| format!("failed to pause {database_id}.{table_name}"))?;
+        if changed == 0 {
+            bail!("{database_id}.{table_name} is not a tracked table");
+        }
+        Ok(())
+    }
+
+    /// Records that the stream passed changes over for a paused table. One
+    /// write per pause: the flag is idempotent, and the stream sets it the
+    /// first time it skips a row event for the table in a run.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the flag cannot be persisted.
+    pub fn mark_table_paused_skipped(&self, database_id: &str, table_name: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "UPDATE tables SET paused_skipped = 1 \
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE AND paused = 1",
+                (database_id, table_name),
+            )
+            .with_context(|| {
+                format!("failed to record skipped changes for {database_id}.{table_name}")
+            })?;
+        Ok(())
+    }
+
+    /// Lets a paused table move again. When the stream passed changes over
+    /// while it was paused, those changes are gone, so the table is flagged
+    /// for a recopy instead of resuming stale; returns whether it was.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the table is not tracked or the state cannot be
+    /// persisted.
+    pub fn resume_table(&self, database_id: &str, table_name: &str) -> Result<bool> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin table resume")?;
+        let skipped: Option<i64> = transaction
+            .query_row(
+                "SELECT paused_skipped FROM tables \
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                (database_id, table_name),
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to read the paused table")?;
+        let Some(skipped) = skipped else {
+            bail!("{database_id}.{table_name} is not a tracked table");
+        };
+        let recopy = skipped != 0;
+        if recopy {
+            transaction
+                .execute(
+                    "UPDATE tables SET paused = 0, paused_skipped = 0, state = 'needs_resync', \
+                       last_error = 'changes were skipped while the table was paused; it is recopied' \
+                     WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                    (database_id, table_name),
+                )
+                .with_context(|| format!("failed to resume {database_id}.{table_name}"))?;
+        } else {
+            transaction
+                .execute(
+                    "UPDATE tables SET paused = 0, paused_skipped = 0 \
+                     WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
+                    (database_id, table_name),
+                )
+                .with_context(|| format!("failed to resume {database_id}.{table_name}"))?;
+        }
+        transaction
+            .commit()
+            .context("failed to commit table resume")?;
+        Ok(recopy)
+    }
+
     /// Returns included tables whose CDC stream must wait for a new snapshot.
     ///
     /// # Errors
@@ -1272,7 +1383,7 @@ impl MetaStore {
             .connection
             .prepare(
                 "SELECT name FROM tables \
-                 WHERE db_id = ?1 AND state = 'needs_resync' \
+                 WHERE db_id = ?1 AND state = 'needs_resync' AND paused = 0 \
                    AND ((pk_json IS NOT NULL AND pk_json != '[]') OR copy_pending = 1) \
                  ORDER BY name",
             )
@@ -2005,7 +2116,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 21 {
         migration_v21(connection.transaction()?)?;
     }
+    if found < 22 {
+        migration_v22(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v22(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/022_table_paused.sql"))
+        .context("failed to apply metadata migration 22")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 22")
 }
 
 fn migration_v21(transaction: Transaction<'_>) -> Result<()> {

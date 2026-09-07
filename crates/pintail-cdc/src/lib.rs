@@ -354,10 +354,22 @@ async fn run_cdc_inner(
             snapshot_fences.insert(index, (file.to_owned(), fence_position));
         }
     }
+    // A paused table is blocked the same way a quarantined one is: its row
+    // events are passed over, the position still advances, and nothing is
+    // queued for it. The events it misses are gone for good, which is why
+    // resuming it goes through a resync rather than a replay.
+    let paused_targets = metadata
+        .paused_tables(database_id)?
+        .iter()
+        .filter_map(|name| target_indexes.get(&name.to_ascii_lowercase()).copied())
+        .collect::<BTreeSet<_>>();
+    // Paused targets whose skipped changes this run has already recorded.
+    let mut paused_skipped = BTreeSet::new();
     let mut blocked_targets = metadata
         .tables_needing_resync(database_id)?
         .iter()
         .filter_map(|name| target_indexes.get(&name.to_ascii_lowercase()).copied())
+        .chain(paused_targets.iter().copied())
         .collect::<BTreeSet<_>>();
     let checkpoint = metadata
         .snapshot_checkpoint(database_id)?
@@ -367,9 +379,10 @@ async fn run_cdc_inner(
     // log: a mirror that looks stalled is usually one that resumed from an
     // older checkpoint than the operator assumed.
     pintail_log::log_info!(
-        "cdc start db={database_id} targets={} blocked={} file={} pos={} gtid={}",
+        "cdc start db={database_id} targets={} blocked={} paused={} file={} pos={} gtid={}",
         targets.len(),
         blocked_targets.len(),
+        paused_targets.len(),
         position.file,
         position.pos,
         // Presence only. A GTID set names every transaction the replica has
@@ -542,6 +555,17 @@ async fn run_cdc_inner(
                     // comparison - once several ALTERs have landed the widths
                     // disagree even on rows that place perfectly well.
                     let live = !fenced && !blocked_targets.contains(&target_index);
+                    if !fenced
+                        && paused_targets.contains(&target_index)
+                        && paused_skipped.insert(target_index)
+                    {
+                        // The first change passed over for a paused table
+                        // is what turns its resume into a recopy.
+                        metadata.mark_table_paused_skipped(
+                            database_id,
+                            &targets[target_index].source.name,
+                        )?;
+                    }
                     let mut alignment = live.then(|| {
                         RowAlignment::resolve(
                             &targets[target_index].source,

@@ -3058,6 +3058,48 @@ async function phaseControlPlane() {
       }
     }
   })
+  await check('a paused table skips its changes and is recopied on resume', async () => {
+    // Pausing holds ONE table still while the rest of the database keeps
+    // replicating. Its row events are passed over rather than kept, so the
+    // proof has three parts: a change on the paused table does not reach
+    // the replica while a change on another table does; the summary says
+    // the table is paused; and resuming after skipped changes recopies the
+    // table rather than leaving it stale.
+    const customer = async (source: boolean) => {
+      const rows = source
+        ? await mysqlRows('SELECT name FROM customers WHERE id = 1')
+        : await pintailQuery('SELECT name FROM customers WHERE id = 1')
+      return String(rows[0]?.[0])
+    }
+    const paused = await api<{ table: string; paused: boolean }>(
+      `/api/databases/${databaseId}/tables/customers/pause`,
+      { method: 'POST' },
+    )
+    if (!paused.paused) throw new Error(`pause answered ${JSON.stringify(paused)}`)
+    const summary = await tableSummary('customers')
+    if (!summary?.paused) throw new Error('the table summary does not show the pause')
+    // The pause applies from the next supervisor cycle: give it two.
+    await Bun.sleep(Number(SUPERVISOR_MS) * 2)
+    const before = await customer(false)
+    await sql(`UPDATE customers SET name = CONCAT(name, ' (while paused)') WHERE id = 1`)
+    if (!(await ordersStillReplicate(120_000))) {
+      throw new Error('another table stopped replicating while one was paused')
+    }
+    if ((await customer(false)) !== before) {
+      throw new Error('a change on the paused table reached the replica')
+    }
+    const resumed = await api<{ table: string; paused: boolean; recopy: boolean }>(
+      `/api/databases/${databaseId}/tables/customers/resume`,
+      { method: 'POST' },
+    )
+    if (resumed.paused || !resumed.recopy) {
+      throw new Error(`resume after skipped changes answered ${JSON.stringify(resumed)}`)
+    }
+    const expected = await customer(true)
+    const recopied = await waitUntil(async () => (await customer(false)) === expected, 180_000)
+    if (!recopied) throw new Error('the resumed table was not recopied with the skipped change')
+  })
+
   await check('resync recopies only the table it names', async () => {
     // The endpoint takes a table name and used to resnapshot the whole
     // database, which on a large source is hours of copying to repair one
@@ -3501,6 +3543,7 @@ interface TableSummary {
   state: string
   rows: number
   last_error?: string
+  paused?: boolean
 }
 
 async function tableSummary(table: string, database = databaseId): Promise<TableSummary | undefined> {

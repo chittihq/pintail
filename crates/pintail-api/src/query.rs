@@ -87,6 +87,9 @@ pub(crate) struct TableSummary {
     mutation_guarantee: &'static str,
     /// Required recovery when the normal mutation guarantee cannot apply.
     remediation: Option<&'static str>,
+    /// An operator holds the table still: its changes are skipped, not
+    /// buffered, until it is resumed.
+    paused: bool,
     /// Live copy progress, present only while this table is being copied.
     /// Lets a dashboard that loads mid-copy draw the bar immediately instead
     /// of waiting for the next SSE frame - reloading the page used to reset
@@ -530,6 +533,7 @@ impl TableSummary {
             key_mode,
             mutation_guarantee,
             remediation,
+            paused: record.paused.is_some(),
             progress,
         }
     }
@@ -605,6 +609,7 @@ mod tests {
             soft_delete_column: None,
             copy_complete: true,
             copy_pending: false,
+            paused: None,
         }
     }
 

@@ -205,7 +205,7 @@ async function confirmDiscard() {
   }
 }
 
-async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile') {
+async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile' | 'pause' | 'resume') {
   tableAction.value = `${table.name}:${action}`
   try {
     await runTableAction(databaseId.value, table, action)
@@ -327,6 +327,12 @@ function describeTable(table: TableSummary) {
                 </TableCell>
                 <TableCell>
                   <Badge :class="`tone-${stateTone(table.state)}`">{{ table.state }}</Badge>
+                  <Badge
+                    v-if="table.paused"
+                    data-testid="table-paused"
+                    class="tone-warning ml-1.5"
+                    title="Held still by an operator. Changes on the source are skipped, not kept, while paused; resuming after any were skipped recopies the table."
+                  >paused</Badge>
                   <div v-if="progressOf(table)" data-testid="resnapshot-progress" class="mt-1.5 w-40">
                     <div class="bg-muted h-1.5 w-full overflow-hidden rounded-full">
                       <div
@@ -353,6 +359,12 @@ function describeTable(table: TableSummary) {
                     </Button>
                     <Button variant="link" size="sm" :disabled="Boolean(tableAction)" title="Recopies only this table from the source, behind its own binlog fence" @click="onTableAction(table, 'resync')">
                       <LoaderCircle v-if="tableAction === `${table.name}:resync`" class="animate-spin" /> Resync
+                    </Button>
+                    <Button v-if="table.paused" variant="link" size="sm" :disabled="Boolean(tableAction)" title="Lets this table replicate again; changes skipped while it was paused are recovered by a recopy" @click="onTableAction(table, 'resume')">
+                      <LoaderCircle v-if="tableAction === `${table.name}:resume`" class="animate-spin" /><Play v-else /> Resume table
+                    </Button>
+                    <Button v-else variant="link" size="sm" :disabled="Boolean(tableAction)" title="Holds only this table still: its changes on the source are skipped, not kept, while the other tables keep replicating" @click="onTableAction(table, 'pause')">
+                      <LoaderCircle v-if="tableAction === `${table.name}:pause`" class="animate-spin" /><Pause v-else /> Pause table
                     </Button>
                   </div>
                 </TableCell>

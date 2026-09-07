@@ -209,7 +209,7 @@ fn upgrading_a_store_backfills_the_marker_from_the_old_states() {
     drop(connection);
 
     let upgraded = MetaStore::open(&path).expect("upgrade");
-    assert_eq!(upgraded.schema_version().expect("version"), 21);
+    assert_eq!(upgraded.schema_version().expect("version"), 22);
     let marked = upgraded
         .tables("db-1")
         .expect("tables")
@@ -419,11 +419,16 @@ fn version_twenty_upgrade_preserves_only_active_copy_intent() {
     let path = directory.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&path).unwrap();
     connection
-        .execute_batch("ALTER TABLE tables DROP COLUMN copy_pending; PRAGMA user_version=20;")
+        .execute_batch(
+            "ALTER TABLE tables DROP COLUMN copy_pending; \
+             ALTER TABLE tables DROP COLUMN paused; \
+             ALTER TABLE tables DROP COLUMN paused_skipped; \
+             PRAGMA user_version=20;",
+        )
         .unwrap();
     drop(connection);
     let store = MetaStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 21);
+    assert_eq!(store.schema_version().unwrap(), 22);
     assert!(store.table_copy_pending("db-1", "copying").unwrap());
     assert!(!store.table_copy_pending("db-1", "quarantined").unwrap());
     assert!(!store.table_copy_pending("db-1", "ready").unwrap());

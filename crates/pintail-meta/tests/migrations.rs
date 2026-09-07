@@ -5,7 +5,7 @@ fn opening_a_blank_control_plane_applies_the_initial_schema() {
 
     let metadata = pintail_meta::MetaStore::open(&database_path).expect("metadata store");
 
-    assert_eq!(metadata.schema_version().expect("schema version"), 21);
+    assert_eq!(metadata.schema_version().expect("schema version"), 22);
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn reopening_an_initialized_control_plane_is_idempotent() {
     pintail_meta::MetaStore::open(&database_path).expect("first open");
     let reopened = pintail_meta::MetaStore::open(&database_path).expect("second open");
 
-    assert_eq!(reopened.schema_version().expect("schema version"), 21);
+    assert_eq!(reopened.schema_version().expect("schema version"), 22);
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn version_one_control_plane_upgrades_polling_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -103,7 +103,7 @@ fn version_two_control_plane_upgrades_polling_checksums_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let exists: bool = connection
@@ -134,7 +134,7 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let orphaned_column: bool = connection
@@ -168,7 +168,7 @@ fn version_four_control_plane_upgrades_api_configuration_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let api_scopes: bool = connection
@@ -214,7 +214,7 @@ fn version_five_control_plane_upgrades_wire_auth_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let native_hash: bool = connection
@@ -254,7 +254,7 @@ fn version_six_control_plane_upgrades_backup_state_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let backup_tables: i64 = connection
@@ -310,7 +310,7 @@ fn version_seven_adds_restored_table_state_without_losing_children() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     connection
@@ -351,7 +351,7 @@ fn version_twelve_control_plane_gains_caching_sha2_verifiers_in_place() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     drop(upgraded);
     let connection = rusqlite::Connection::open(database_path).expect("inspect upgrade");
     let caching_sha2: bool = connection
@@ -440,7 +440,7 @@ fn version_seventeen_widens_table_states_without_losing_rows() {
     drop(connection);
 
     let upgraded = pintail_meta::MetaStore::open(&database_path).expect("upgrade metadata");
-    assert_eq!(upgraded.schema_version().expect("schema version"), 21);
+    assert_eq!(upgraded.schema_version().expect("schema version"), 22);
     let carried = upgraded.tables("db-1").expect("tables survive the rebuild");
     assert_eq!(carried.len(), 1);
     assert_eq!(carried[0].name, "orders");
@@ -469,4 +469,84 @@ fn version_seventeen_widens_table_states_without_losing_rows() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn a_paused_table_resumes_plain_unless_changes_were_skipped() {
+    // Pausing touches only the pause flags; resuming a table nothing
+    // changed under leaves its state alone, while one the stream passed
+    // changes over for is flagged for the recopy that restores it.
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = pintail_meta::MetaStore::open(&data_dir.path().join("pintail-meta.db"))
+        .expect("open metadata");
+    let connection =
+        rusqlite::Connection::open(data_dir.path().join("pintail-meta.db")).expect("connection");
+    connection
+        .execute(
+            "INSERT INTO databases (\
+               id, name, mysql_dsn_encrypted, mode, state, created_at, updated_at\
+             ) VALUES ('db-1', 'shop', X'00', 'auto', 'streaming', 'now', 'now')",
+            [],
+        )
+        .expect("seed database");
+    connection
+        .execute(
+            "INSERT INTO tables (db_id, name, state, pk_json, rows_synced, schema_version) \
+             VALUES ('db-1', 'orders', 'streaming', '[\"id\"]', 42, 3)",
+            [],
+        )
+        .expect("seed table");
+    drop(connection);
+
+    assert!(metadata.pause_table("db-1", "missing").is_err());
+    metadata
+        .pause_table("db-1", "ORDERS")
+        .expect("pause by any spelling");
+    let paused = &metadata.tables("db-1").expect("tables")[0];
+    assert_eq!(
+        paused.paused.map(|pause| pause.skipped_changes),
+        Some(false)
+    );
+    assert_eq!(paused.state, "streaming", "pausing changes no other state");
+    assert_eq!(
+        metadata
+            .paused_tables("db-1")
+            .expect("paused set")
+            .into_iter()
+            .collect::<Vec<_>>(),
+        vec!["orders".to_owned()]
+    );
+
+    assert!(!metadata.resume_table("db-1", "orders").expect("resume"));
+    let resumed = &metadata.tables("db-1").expect("tables")[0];
+    assert_eq!(resumed.paused, None);
+    assert_eq!(resumed.state, "streaming");
+
+    metadata.pause_table("db-1", "orders").expect("pause again");
+    metadata
+        .mark_table_paused_skipped("db-1", "orders")
+        .expect("record skipped changes");
+    let skipped = &metadata.tables("db-1").expect("tables")[0];
+    assert_eq!(
+        skipped.paused.map(|pause| pause.skipped_changes),
+        Some(true)
+    );
+    assert!(metadata.resume_table("db-1", "orders").expect("resume"));
+    let recopied = &metadata.tables("db-1").expect("tables")[0];
+    assert_eq!(recopied.paused, None);
+    assert_eq!(
+        recopied.state, "needs_resync",
+        "skipped changes mean a recopy"
+    );
+    assert!(
+        metadata
+            .tables_needing_resync("db-1")
+            .expect("resync set")
+            .contains("orders")
+    );
+    // The skip flag only ever applies to a paused table.
+    metadata
+        .mark_table_paused_skipped("db-1", "orders")
+        .expect("no-op on a running table");
+    assert_eq!(metadata.tables("db-1").expect("tables")[0].paused, None);
 }

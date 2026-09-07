@@ -667,16 +667,16 @@ async function main() {
 
     // Pause. The button label is the state: it flips to Resume only if the
     // server accepted, because the page renders database.mode.
-    await page!.getByRole('button', { name: 'Pause' }).click()
-    await page!.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 15_000 })
+    await page!.getByRole('button', { name: 'Pause', exact: true }).click()
+    await page!.getByRole('button', { name: 'Resume', exact: true }).waitFor({ timeout: 15_000 })
     await reopen()
-    await page!.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 15_000 })
+    await page!.getByRole('button', { name: 'Resume', exact: true }).waitFor({ timeout: 15_000 })
 
     // Resume, likewise.
-    await page!.getByRole('button', { name: 'Resume' }).click()
-    await page!.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 15_000 })
+    await page!.getByRole('button', { name: 'Resume', exact: true }).click()
+    await page!.getByRole('button', { name: 'Pause', exact: true }).waitFor({ timeout: 15_000 })
     await reopen()
-    await page!.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 15_000 })
+    await page!.getByRole('button', { name: 'Pause', exact: true }).waitFor({ timeout: 15_000 })
 
     // The Requested mode select reaches modes the pause button cannot, and
     // every one of them used to be confirmed as "Replication resumed".
@@ -726,6 +726,31 @@ async function main() {
       if (Date.now() > deadline) throw new Error('database never returned to streaming')
       await Bun.sleep(2_000)
       await page!.getByRole('link', { name: DATABASE }).first().click()
+    }
+  })
+
+  await check('pausing one table shows on its row and survives a reload', async () => {
+    // The row action is server state the page re-polls, so each assertion
+    // is made after leaving and re-entering the page, as the database-level
+    // pause check does. The row is found by its table name so the
+    // per-table buttons are never confused with the header's Pause.
+    const reopen = async () => {
+      await page!.getByRole('link', { name: 'Databases', exact: true }).click()
+      await page!.getByRole('link', { name: DATABASE }).first().click()
+      await page!.getByRole('heading', { name: DATABASE }).waitFor({ timeout: 15_000 })
+    }
+    const row = () => page!.getByRole('row').filter({ has: page!.getByText('events', { exact: true }) }).first()
+    await reopen()
+    await row().getByRole('button', { name: 'Pause table' }).click()
+    await page!.getByText('events paused').waitFor({ timeout: 15_000 })
+    await reopen()
+    await row().getByTestId('table-paused').waitFor({ timeout: 15_000 })
+    await row().getByRole('button', { name: 'Resume table' }).click()
+    await page!.getByText('events resumed').waitFor({ timeout: 15_000 })
+    await reopen()
+    await row().getByRole('button', { name: 'Pause table' }).waitFor({ timeout: 15_000 })
+    if (await row().getByTestId('table-paused').count() > 0) {
+      throw new Error('the paused badge stayed after the table was resumed')
     }
   })
 

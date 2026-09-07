@@ -528,7 +528,7 @@ export function useControlPlane() {
     return done
   }
 
-  async function runTableAction(databaseId: string, table: TableSummary, action: 'resync' | 'reconcile') {
+  async function runTableAction(databaseId: string, table: TableSummary, action: 'resync' | 'reconcile' | 'pause' | 'resume') {
     // The supervisor holds the per-database job lock for the whole of every
     // replication cycle, so a click frequently lands on a 409 that clears
     // itself within seconds. Retrying briefly is the e2e harness's codified
@@ -538,10 +538,16 @@ export function useControlPlane() {
     try {
       for (let attempt = 0; ; attempt += 1) {
         try {
-          await request(
+          const answer = await request<{ recopy?: boolean }>(
             `/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(table.name)}/${action}`,
             { method: 'POST' },
           )
+          if (action === 'resume') {
+            toast(answer.recopy
+              ? `${table.name} resumed; changes were skipped while paused, so it is being recopied`
+              : `${table.name} resumed; replication picks it up on the next cycle`)
+            return
+          }
           break
         } catch (failure) {
           const busy = failure instanceof ApiFailure && failure.status === 409
@@ -551,6 +557,8 @@ export function useControlPlane() {
       }
       if (action === 'resync') {
         toast(`${table.name} resnapshot accepted; other tables keep replicating`)
+      } else if (action === 'pause') {
+        toast(`${table.name} paused; its changes are skipped, not kept, until it is resumed`)
       } else {
         toast(`${table.name} reconciliation accepted`)
       }

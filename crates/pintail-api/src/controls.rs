@@ -763,6 +763,108 @@ fn finish_reconcile(
     state.release_job(database_id);
 }
 
+/// One table's pause switch, as the API answers it.
+#[derive(Serialize)]
+pub(crate) struct TablePause {
+    pub(crate) table: String,
+    pub(crate) paused: bool,
+    /// Resuming found changes skipped while paused, so the table is being
+    /// recopied rather than resumed stale.
+    pub(crate) recopy: bool,
+}
+
+/// Holds one table still: CDC passes its row events over and polling
+/// leaves it alone until `resume`. Metadata only, so it takes no job slot
+/// and applies from the next supervisor cycle.
+pub(crate) async fn pause(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path((database_id, table_name)): Path<(String, String)>,
+) -> Result<Json<TablePause>, ApiError> {
+    let table = table_for_pause(&principal, &state, &database_id, &table_name)?;
+    state
+        .metadata()?
+        .pause_table(&database_id, &table)
+        .map_err(ApiError::internal)?;
+    audit::record(
+        &state,
+        &principal,
+        "table.pause",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"table": table.clone()})),
+    );
+    state.publish(ApiEvent::database(
+        "table.pause",
+        &database_id,
+        format!("{table} is paused: its changes are skipped, not kept, until it is resumed"),
+    ));
+    Ok(Json(TablePause {
+        table,
+        paused: true,
+        recopy: false,
+    }))
+}
+
+/// Lets a paused table move again from the next supervisor cycle. Changes
+/// the stream passed over while the table was paused are gone, so a table
+/// that had any is flagged for a recopy instead of resuming stale.
+pub(crate) async fn resume(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path((database_id, table_name)): Path<(String, String)>,
+) -> Result<Json<TablePause>, ApiError> {
+    let table = table_for_pause(&principal, &state, &database_id, &table_name)?;
+    let recopy = state
+        .metadata()?
+        .resume_table(&database_id, &table)
+        .map_err(ApiError::internal)?;
+    audit::record(
+        &state,
+        &principal,
+        "table.resume",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"table": table.clone(), "recopy": recopy})),
+    );
+    state.publish(ApiEvent::database(
+        "table.resume",
+        &database_id,
+        if recopy {
+            format!(
+                "{table} is resumed; changes were skipped while it was paused, so it is recopied"
+            )
+        } else {
+            format!("{table} is resumed: replication picks it up on the next cycle")
+        },
+    ));
+    Ok(Json(TablePause {
+        table,
+        paused: false,
+        recopy,
+    }))
+}
+
+/// The tracked table a pause or resume names, spelled as metadata has it.
+fn table_for_pause(
+    principal: &AuthPrincipal,
+    state: &ApiState,
+    database_id: &str,
+    table_name: &str,
+) -> Result<String, ApiError> {
+    principal.require_operator()?;
+    principal.authorize_database(database_id)?;
+    crate::databases::load_database(state, principal, database_id)?;
+    require_table(state, database_id, table_name)?;
+    state.require_replicated(database_id, "a table pause")?;
+    state
+        .metadata()?
+        .tables(database_id)
+        .map_err(ApiError::internal)?
+        .into_iter()
+        .find(|table| table.name.eq_ignore_ascii_case(table_name))
+        .map(|table| table.name)
+        .ok_or_else(|| ApiError::not_found("table does not exist"))
+}
+
 fn require_table(state: &ApiState, database_id: &str, table_name: &str) -> Result<(), ApiError> {
     let metadata = state.metadata()?;
     if metadata

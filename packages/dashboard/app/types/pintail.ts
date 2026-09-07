@@ -140,6 +140,9 @@ export interface TableSummary {
   key_mode: 'primary' | 'unique' | 'append_row_id' | null
   mutation_guarantee: 'row_level_cdc' | 'reconciled_polling' | 'generation_replacement' | 'insert_only' | 'quarantined'
   remediation: 'resnapshot' | 'resnapshot_after_update_or_delete' | null
+  /** An operator holds the table still: its changes are skipped, not kept,
+   *  until it is resumed; a resume after skipped changes recopies it. */
+  paused: boolean
   /** Live copy progress, present only while this table is being copied.
    *  elapsed_seconds rather than a timestamp, so the client reconstructs the
    *  start time from its own clock instead of trusting clock agreement. */

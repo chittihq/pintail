@@ -463,10 +463,10 @@ async function main() {
 
       // Pause and resume under load - the flow that used to unschedule the
       // database forever.
-      await page!.getByRole('button', { name: 'Pause' }).click()
-      await page!.getByRole('button', { name: 'Resume' }).waitFor({ timeout: 30_000 })
-      await page!.getByRole('button', { name: 'Resume' }).click()
-      await page!.getByRole('button', { name: 'Pause' }).waitFor({ timeout: 30_000 })
+      await page!.getByRole('button', { name: 'Pause', exact: true }).click()
+      await page!.getByRole('button', { name: 'Resume', exact: true }).waitFor({ timeout: 30_000 })
+      await page!.getByRole('button', { name: 'Resume', exact: true }).click()
+      await page!.getByRole('button', { name: 'Pause', exact: true }).waitFor({ timeout: 30_000 })
     } finally {
       dripping = false
       await drip

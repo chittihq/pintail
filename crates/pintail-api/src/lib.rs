@@ -62,7 +62,7 @@ use crate::backup::{
     get_config as get_backup_config, list as list_backups, put_config as put_backup_config,
     restore as restore_backup, start as start_backup,
 };
-use crate::controls::{reconcile, resync};
+use crate::controls::{pause, reconcile, resume, resync};
 use crate::databases::{
     create as create_database, create_local as create_local_database, delete as delete_database,
     get as get_database, list as list_databases, probe_database, set_mode,
@@ -324,6 +324,8 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/databases/{id}/snapshot/status", get(snapshot_status))
         .route("/databases/{id}/tables/{name}/resync", post(resync))
         .route("/databases/{id}/tables/{name}/reconcile", post(reconcile))
+        .route("/databases/{id}/tables/{name}/pause", post(pause))
+        .route("/databases/{id}/tables/{name}/resume", post(resume))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
     // Access logging is applied to /api only. The dashboard asset routes and
     // /health would otherwise bury every real request: a container health

@@ -678,7 +678,7 @@ async fn table_controls_require_authentication_and_a_known_table() {
     let database = create_database(&app, &authorization, "app").await;
     let database_id = database["id"].as_str().expect("database ID");
 
-    for action in ["resync", "reconcile"] {
+    for action in ["resync", "reconcile", "pause", "resume"] {
         let unauthorized = app
             .clone()
             .oneshot(

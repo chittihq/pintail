@@ -175,6 +175,17 @@ pub struct TableRecord {
     /// table flagged for a resync it has not started keeps its store whole
     /// and this false; an interrupted copy has this true.
     pub copy_pending: bool,
+    /// Present while an operator holds the table still: its row events are
+    /// passed over and polling skips it until it is resumed.
+    pub paused: Option<PausedTable>,
+}
+
+/// What a paused table has been through since it was paused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PausedTable {
+    /// The stream passed changes over while the table was paused. Those
+    /// changes are gone; resuming such a table queues a recopy.
+    pub skipped_changes: bool,
 }
 
 /// Durable database-scoped API key metadata.
@@ -1366,7 +1377,8 @@ impl MetaStore {
             .prepare(
                 "SELECT db_id, name, state, pk_json, cursor_column, sort_key_json, \
                         rows_synced, last_error, last_reconcile_at, schema_version, \
-                        orphaned_at, soft_delete_column, copy_complete, copy_pending \
+                        orphaned_at, soft_delete_column, copy_complete, copy_pending, \
+                        paused, paused_skipped \
                  FROM tables WHERE db_id = ?1 ORDER BY name COLLATE NOCASE",
             )
             .context("failed to prepare table query")?;
@@ -1916,6 +1928,9 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
         soft_delete_column: row.get(11)?,
         copy_complete: row.get::<_, i64>(12)? != 0,
         copy_pending: row.get::<_, i64>(13)? != 0,
+        paused: (row.get::<_, i64>(14)? != 0).then(|| PausedTable {
+            skipped_changes: row.get::<_, i64>(15).unwrap_or(0) != 0,
+        }),
     })
 }
 
