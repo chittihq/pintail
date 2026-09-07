@@ -2971,45 +2971,94 @@ there.
 ## e79 — What the overlay's mask costs, by how much changed
 
 `crates/pintail-store/tests/mask_cost.rs`, release, ten million sorted
-keys in 8,192-row blocks, changed keys scattered evenly the way an
-`UPDATE ... WHERE` scatters them, minimum of five runs. Both masks are
-compared for equality at every rate, so the faster one is not taking a
-shortcut the other refuses.
+keys, minimum of five runs. All three masks are compared for equality at
+every rate and every shape, so a faster one is not taking a shortcut the
+others refuse.
 
-The overlay decides which segment rows the memtable supersedes by walking
-both sorted sides at once. That walk visits every segment row, so its cost
-follows the table rather than the change. The alternative asks the
-opposite question: take each block's key range, and if no changed key
-falls inside it, do not examine the block at all; otherwise look up only
-the changed keys it holds.
+**This entry replaces an earlier reading that was wrong in a way that
+reached the shipped code.** The first version of this measurement timed a
+mask built block by block - skip a block whose key range holds no change,
+binary-search inside the block otherwise - while `overlay_positions`
+actually does a plain lookup of each changed key against the whole key
+column. The blocked variant searches thirteen levels in a warm 64 KiB
+block; the real one searches twenty-three levels across eighty megabytes.
+Timing the wrong algorithm put the crossover at about one row in five,
+and `SEARCHED_OVERLAY_SHARE` was set from it, so every table between one
+and five percent changed took the slower path. Corrected below and in the
+constant.
 
-| changed rows | linear walk, ms | change-driven search, ms | ratio |
-|---:|---:|---:|---:|
-| 2 | 3.270 | 0.005 | 648x |
-| 2,000 | 6.676 | 0.266 | 25x |
-| 20,000 | 6.684 | 1.888 | 3.5x |
-| 200,000 | 7.743 | 5.886 | 1.3x |
-| 2,000,000 | 6.910 | 18.494 | 0.4x |
+The first version also changed only keys the segment already held, so the
+insert path - a changed key that supersedes nothing and has to be placed
+after the survivors and the inserts below it - was never timed, and it
+scattered every change evenly, which is the shape the search does worst
+on.
 
-The linear walk is flat at about 7 ms whatever changed, which is the
-property worth removing: a table that took two updates pays the same mask
-cost as one that took two million. The search follows the changes until
-roughly 2% of rows have changed, and past 20% it is slower than the walk
-and should not be used.
+Three masks. **Linear** walks both sorted sides at once, visiting every
+segment row, so its cost follows the table. **Searched** looks each
+changed key up in the whole key column: what ships. **Narrowed** does the
+same but starts each lookup where the last one landed, since the changed
+keys are sorted.
 
-A source taking one to two thousand updates a second puts tens of
-thousands of changed rows in the memtable between flushes, which is the
-20,000 row: 3.5 times less mask work, and the whole mask under two
-milliseconds. A quieter table gets far more.
+Times in milliseconds, minimum of five runs:
 
-**Verdict: pick the mask by how much changed, not by range overlap.** The
-crossover is measurable and stable, both masks agree at every rate, and
-the cheap side needs no filter, no probe per row and no storage-format
-change: the sparse index already gives each block's key range, and both
-sides are already sorted. A membership filter is the answer to a
-different question, one where the changed set is too large to hold and
-too large to sort, and this measurement says that is not the regime a
-replicated table sits in.
+| shape | changed | linear | searched | narrowed |
+|---|---:|---:|---:|---:|
+| scattered | 2 | 1.85 | 0.001 | 0.000 |
+| scattered | 2,000 | 4.01 | 0.14 | 0.62 |
+| scattered | 20,000 | 4.15 | 1.57 | 11.98 |
+| scattered | 50,000 | 4.28 | 3.15 | 18.80 |
+| scattered | 100,000 | 4.12 | 4.16 | 22.15 |
+| scattered | 200,000 | 4.09 | 4.91 | 20.06 |
+| scattered | 2,000,000 | 5.78 | 19.63 | 92.28 |
+| clustered | 20,000 | 3.84 | 0.19 | 0.40 |
+| clustered | 100,000 | 3.91 | 0.90 | 2.35 |
+| clustered | 200,000 | 3.97 | 1.78 | 5.03 |
+| clustered | 500,000 | 4.16 | 4.49 | 13.61 |
+| half inserts | 20,000 | 4.04 | 1.58 | 11.65 |
+| half inserts | 100,000 | 4.43 | 4.17 | 22.63 |
+| all inserts | 20,000 | 4.09 | 1.58 | 11.55 |
+| all inserts | 100,000 | 4.24 | 4.14 | 22.41 |
+
+Four readings.
+
+**The linear walk is flat at about four milliseconds whatever changed.**
+That is the property worth removing: a table that took two updates pays
+the same mask cost as one that took two million.
+
+**The real crossover is one percent, not five.** Scattered changes, which
+is the worst shape, break even at 100,000 of ten million rows. The
+constant is now one in two hundred rather than one in twenty, choosing
+the search only where it clearly wins rather than where the two are
+level.
+
+**Inserts cost what updates cost.** The half-insert and all-insert arms
+track the scattered arm to within a few percent at every rate, so the
+placement arithmetic is not a hidden cost - which also means the equality
+assertion, not the timing, is what those arms are worth.
+
+**Narrowing the search makes it far worse, and that is the useful
+surprise.** Resuming each lookup from the previous match looks like a
+strict improvement: a shorter search over a shrinking slice. It is three
+to seven times slower than searching the whole column. A binary search
+from a fixed base touches the same first ten levels every time and they
+stay in cache; moving the base makes every search start on a cold line.
+The obvious optimization is refuted, and the blocked variant that the
+first version of this measurement accidentally timed is the shape worth
+revisiting instead - it keeps a fixed base within each block.
+
+**Clustered changes are far cheaper than scattered ones** - 20,000
+changes cost 0.19 ms clustered against 1.57 ms scattered, and the
+crossover moves out past two percent. Updates in practice cluster towards
+recent rows. The threshold does not look at the shape, and could: the
+memtable keys are sorted, so the span between the first and the last,
+against the segment's, separates the two cases for the price of two
+comparisons. Not built; recorded as measured.
+
+**Verdict: pick the mask by how much changed, not by range overlap** -
+with the crossover taken from the algorithm that ships. A membership
+filter is the answer to a different question, one where the changed set
+is too large to hold and too large to sort, and this measurement says
+that is not the regime a replicated table sits in.
 
 
 ## e80 — Maintaining the supersession mask instead of rebuilding it
@@ -3024,27 +3073,38 @@ one thing untouched: every scan still rebuilds it. A row's position in a
 segment does not move, so the work of finding it can be done once when
 the row arrives instead of once per query.
 
-| step | ms |
-|---|---:|
-| rebuild the mask, per scan | 1.680 |
-| mark all twenty thousand as they arrive | 0.797 |
-| the same, per changed row | 0.000040 |
-| read a mask already built | 0.063 |
+Two shapes of change, because the first version of this measurement had
+only the scattered one and read the pessimistic end as the answer.
+Scattered changes touch every part of the key column and no lookup reuses
+a line the last one warmed; clustered changes, which is what a burst of
+recent activity leaves, reuse the same lines repeatedly.
 
-Forty nanoseconds per changed row is one binary search over a sorted key
-column. At two thousand updates a second that is 0.08 ms of work per
-second, whatever the query rate:
+| step | scattered, ms | clustered, ms |
+|---|---:|---:|
+| rebuild the mask, per scan | 1.572 | 0.169 |
+| mark all twenty thousand as they arrive | 0.718 | 0.184 |
+| the same, per changed row | 36 ns | 9 ns |
+| read a mask already built | 0.062 | 0.062 |
 
-| queries/s | rebuild, ms/s | maintain, ms/s |
-|---:|---:|---:|
-| 1 | 1.7 | 0.1 |
-| 5 | 8.4 | 0.4 |
-| 10 | 16.8 | 0.7 |
-| 50 | 84.0 | 3.2 |
+At two thousand updates a second, work per second by query rate:
 
-The two lines cross almost immediately because rebuilding scales with
-queries and maintaining scales with changes, and a mirror serving a
-dashboard has far more of the former.
+| queries/s | rebuild, ms/s | maintain, ms/s | rebuild clustered | maintain clustered |
+|---:|---:|---:|---:|---:|
+| 1 | 1.6 | 0.1 | 0.2 | 0.1 |
+| 5 | 7.9 | 0.4 | 0.8 | 0.3 |
+| 10 | 15.7 | 0.7 | 1.7 | 0.6 |
+| 50 | 78.6 | 3.2 | 8.5 | 3.1 |
+
+**The clustered column is the one that changes the verdict's size.**
+Rebuilding a clustered mask costs 0.169 ms, nine times less than a
+scattered one, so maintaining it is worth 1.7x at ten queries a second
+rather than 22x. The scattered figures are the ceiling on the value here,
+not the expectation, and the earlier version of this entry quoted the
+ceiling.
+
+Rebuilding still scales with queries and maintaining with changes, so the
+lines cross either way; how far apart they run afterwards depends on a
+shape this measurement now reports instead of assuming.
 
 Two pieces of outside reading shaped this. A survey of incremental view
 maintenance in semiring terms gives the rule for which aggregates can be
@@ -3073,11 +3133,19 @@ four columns, twenty thousand of them changed and flushed so the scan
 meets two overlapping segments. The comparison is the same rows and the
 same columns with nothing to merge.
 
+**Re-timed.** The first reading built and measured the merging store, then
+built and measured the direct one, so the two arms met different allocator
+and page-cache states and a hundredfold ratio rested on the order they ran
+in. Both stores are now built before either is measured, a warm-up round
+of each is discarded, and the arms alternate - swapping which goes first
+inside each round. The result is unchanged, which is what the re-timing
+was for.
+
 | scan | ms |
 |---|---:|
-| direct, one segment, packed columns | 14.4 |
-| merging, 1% of rows changed | 1546.7 |
-| the merge costs | 107x |
+| direct, one segment, packed columns | 13.6 |
+| merging, 1% of rows changed | 1445.4 |
+| the merge costs | 106x |
 
 One row in a hundred changing makes the scan a hundred times slower. Two
 things account for it and neither is the winner-selection logic, which is
@@ -3093,7 +3161,8 @@ at 32 bytes to carry 8, with an allocation for every string.
 
 Removing the two transposes the merging path used to do between those
 steps, turning its fetch into rows and back into columns, was measured at
-1546.7 against 1433.7 ms: about 6%. Worth keeping, since the work was
+1546.7 against 1433.7 ms on the earlier, ordering-sensitive setup: about
+6%. Worth keeping, since the work was
 pure waste, but it is not the cliff and this records that plainly.
 
 **The fix is to make a merging scan look like a direct one.** At one

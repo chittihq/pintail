@@ -2,6 +2,17 @@
 //! scan or maintained as rows arrive. Ignored: a measurement, not a gate.
 //! Run with `cargo test --release -p pintail-store --test
 //! supersession_bitmap -- --ignored --nocapture`.
+//!
+//! Both arms run over two shapes of change. Evenly scattered keys touch
+//! every part of the key column and no lookup reuses a cache line the
+//! last one warmed; clustered keys, which is what a burst of recent
+//! activity leaves, reuse the same lines repeatedly. The first version of
+//! this measurement had only the scattered shape, and a per-change cost
+//! read from it is the pessimistic end rather than the range.
+//!
+//! Not varied, deliberately: how dense the key VALUES are. The keys are
+//! one contiguous array whatever they hold, and the mask is indexed by row
+//! position, so sparse values change neither the search nor the bitmap.
 use std::time::Instant;
 
 const SEGMENT_ROWS: usize = 10_000_000;
@@ -51,20 +62,42 @@ fn count_survivors(bits: &[u64], rows: usize) -> usize {
 #[test]
 #[ignore = "a measurement over a large key column, not a gate"]
 fn maintaining_the_mask_beats_rebuilding_it_once_queries_repeat() {
-    const CHANGED: usize = 20_000;
     let keys: Vec<i64> = (0..SEGMENT_ROWS)
         .map(|n| i64::try_from(n).expect("small"))
         .collect();
-    let stride = SEGMENT_ROWS / CHANGED;
-    let changed: Vec<i64> = (0..CHANGED)
-        .map(|n| i64::try_from(n * stride).expect("small"))
-        .collect();
+    for (shape, changed) in [
+        ("scattered", scattered_changes()),
+        ("clustered", clustered_changes()),
+    ] {
+        one_shape(&keys, shape, &changed);
+    }
+}
 
+const CHANGED: usize = 20_000;
+
+/// Evenly spread over the segment: every part of the key column is
+/// touched.
+fn scattered_changes() -> Vec<i64> {
+    let stride = SEGMENT_ROWS / CHANGED;
+    (0..CHANGED)
+        .map(|n| i64::try_from(n * stride).expect("small"))
+        .collect()
+}
+
+/// A contiguous run at the end, as recent activity leaves.
+fn clustered_changes() -> Vec<i64> {
+    let first = SEGMENT_ROWS - CHANGED;
+    (0..CHANGED)
+        .map(|n| i64::try_from(first + n).expect("small"))
+        .collect()
+}
+
+fn one_shape(keys: &[i64], shape: &str, changed: &[i64]) {
     let mut rebuild = f64::MAX;
     let mut reference = Vec::new();
     for _ in 0..5 {
         let clock = Instant::now();
-        reference = build_mask(&keys, &changed);
+        reference = build_mask(keys, changed);
         rebuild = rebuild.min(clock.elapsed().as_secs_f64());
     }
 
@@ -73,8 +106,8 @@ fn maintaining_the_mask_beats_rebuilding_it_once_queries_repeat() {
     for _ in 0..5 {
         let mut bits = vec![0_u64; keys.len().div_ceil(64)];
         let clock = Instant::now();
-        for key in &changed {
-            apply_one(&keys, &mut bits, *key);
+        for key in changed {
+            apply_one(keys, &mut bits, *key);
         }
         apply_all = apply_all.min(clock.elapsed().as_secs_f64());
         maintained = bits;
@@ -90,7 +123,8 @@ fn maintaining_the_mask_beats_rebuilding_it_once_queries_repeat() {
     }
     assert_eq!(survivors, SEGMENT_ROWS - CHANGED);
 
-    println!("{SEGMENT_ROWS} rows, {CHANGED} changed, minimum of 5 runs");
+    println!();
+    println!("{SEGMENT_ROWS} rows, {CHANGED} changed, {shape}, minimum of 5 runs");
     println!("  rebuild the mask per scan   = {:8.3} ms", rebuild * 1e3);
     println!(
         "  mark all {CHANGED} as they arrive = {:8.3} ms",

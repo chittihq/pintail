@@ -489,10 +489,17 @@ fn searched_overlay_positions(
     (excluded, inserts)
 }
 
-/// One row in twenty: past this share of the segment, looking each change up
-/// costs more than walking both sides once. Measured crossover is nearer one
-/// in five; this leaves room for a segment whose keys are dearer to compare.
-const SEARCHED_OVERLAY_SHARE: usize = 20;
+/// One row in two hundred: past this share of the segment, looking each
+/// change up costs more than walking both sides once.
+///
+/// The first value here was one in twenty, taken from a measurement that
+/// timed a mask built block by block rather than the whole-column lookup
+/// this actually does. Timed against the real thing, a walk of ten million
+/// keys costs about four milliseconds whatever changed, while the lookups
+/// grow with the changes and pass it at one percent. Half of that is the
+/// threshold, so the search is chosen only where it clearly wins rather
+/// than where the two are level.
+const SEARCHED_OVERLAY_SHARE: usize = 200;
 
 fn overlay_positions(
     key_columns: &[&DecodedColumn],
