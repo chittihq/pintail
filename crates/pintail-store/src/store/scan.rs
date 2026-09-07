@@ -1584,18 +1584,21 @@ impl ProjectedScanStream {
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
         let mut work = VecDeque::from([slice]);
-        let mut chunks = Vec::new();
+        let mut chunks: Vec<ProjectedColumnChunk> = Vec::new();
         while let Some(slice) = work.pop_front() {
-            match self.decode_slice(&slice, memory_limit, prewhere) {
+            // The pieces of one slice share its allowance: what the pieces
+            // already decoded retain comes off what the next may take.
+            let retained = chunks
+                .iter()
+                .map(|chunk| chunk.retained_bytes)
+                .sum::<usize>();
+            let remaining = memory_limit.saturating_sub(retained);
+            match self.decode_slice(&slice, remaining, prewhere) {
                 Ok(decoded) => chunks.extend(decoded),
-                Err(StoreError::MemoryLimitExceeded { .. }) => {
-                    let (head, tail) = self.split_overlay_slice(&slice).ok_or(
-                        StoreError::MemoryLimitExceeded {
-                            used: 0,
-                            requested: 0,
-                            limit: memory_limit,
-                        },
-                    )?;
+                Err(error @ StoreError::MemoryLimitExceeded { .. }) => {
+                    // A single block that does not fit is the real answer,
+                    // with the request that failed.
+                    let (head, tail) = self.split_overlay_slice(&slice).ok_or(error)?;
                     work.push_front(tail);
                     work.push_front(head);
                 }
@@ -2691,4 +2694,153 @@ fn rows_to_columns(
         }
     }
     Ok(columns)
+}
+
+#[cfg(test)]
+mod overlay_primitive_tests {
+    use super::{
+        ColumnValidity, DecodedColumn, insertion_positions, subtract_positions,
+        superseded_positions,
+    };
+    use pintail_types::Value;
+
+    fn packed(values: &[u64]) -> DecodedColumn {
+        DecodedColumn::UInt64 {
+            values: values.to_vec(),
+            validity: ColumnValidity::AllValid(values.len()),
+        }
+    }
+
+    fn plain(values: &[u64]) -> DecodedColumn {
+        DecodedColumn::Values(values.iter().map(|value| Value::UInt64(*value)).collect())
+    }
+
+    #[test]
+    fn superseded_positions_read_packed_and_plain_keys_alike() {
+        let keys = [4_i128, 8, 16].into_iter().collect();
+        let expected = vec![1, 3, 7];
+        let values = [2_u64, 4, 6, 8, 10, 12, 14, 16];
+        assert_eq!(superseded_positions(&packed(&values), 8, &keys), expected);
+        assert_eq!(superseded_positions(&plain(&values), 8, &keys), expected);
+        // Signed keys and unsigned keys past the signed range are distinct.
+        let signed = DecodedColumn::Int64 {
+            values: vec![-3, -1, 0, 1],
+            validity: ColumnValidity::AllValid(4),
+        };
+        let keys = [-1_i128, i128::from(u64::MAX)].into_iter().collect();
+        assert_eq!(superseded_positions(&signed, 4, &keys), vec![1]);
+        let large = packed(&[1, u64::MAX]);
+        assert_eq!(superseded_positions(&large, 2, &keys), vec![1]);
+        // Every row superseded, and no row.
+        let keys = [2_i128, 4, 6, 8].into_iter().collect();
+        assert_eq!(
+            superseded_positions(&packed(&[2, 4, 6, 8]), 4, &keys),
+            vec![0, 1, 2, 3]
+        );
+        assert!(superseded_positions(&packed(&[1, 3]), 2, &keys).is_empty());
+    }
+
+    #[test]
+    fn subtracting_positions_cuts_every_range_exactly() {
+        let all: Vec<std::ops::Range<usize>> = std::iter::once(0..10_usize).collect();
+        assert_eq!(subtract_positions(all.clone(), &[]), vec![0..10]);
+        assert_eq!(subtract_positions(all.clone(), &[0]), vec![1..10]);
+        assert_eq!(subtract_positions(all.clone(), &[9]), vec![0..9]);
+        assert_eq!(
+            subtract_positions(all.clone(), &[3, 4, 5]),
+            vec![0..3, 6..10]
+        );
+        assert!(subtract_positions(all, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]).is_empty());
+        // Positions outside the kept ranges are ignored; positions inside
+        // several ranges cut each.
+        let kept = vec![2..5_usize, 8..12];
+        assert_eq!(
+            subtract_positions(kept, &[0, 3, 6, 8, 11, 20]),
+            vec![2..3, 4..5, 9..11]
+        );
+    }
+
+    #[test]
+    fn insertion_positions_count_surviving_rows_and_earlier_inserts() {
+        // Segment keys 10, 20, 30, 40; rows 1 and 2 (keys 20, 30) kept.
+        let keys = packed(&[10, 20, 30, 40]);
+        let kept: Vec<std::ops::Range<usize>> = std::iter::once(1..3_usize).collect();
+        // 5 goes before everything: position 0. 25 goes after key 20 (one
+        // kept row before it) plus the one insert before it: 2. 45 goes
+        // after both kept rows and both earlier inserts: 4.
+        assert_eq!(
+            insertion_positions(&keys, 4, Some(&kept), &[5, 25, 45]),
+            vec![0, 2, 4]
+        );
+        // Without a kept list every segment row survives.
+        assert_eq!(
+            insertion_positions(&keys, 4, None, &[5, 25, 45]),
+            vec![0, 3, 6]
+        );
+        // Consecutive inserts between the same two rows stack.
+        assert_eq!(
+            insertion_positions(&keys, 4, None, &[21, 22, 23]),
+            vec![2, 3, 4]
+        );
+        // An insert past every row lands at the end.
+        assert_eq!(insertion_positions(&keys, 4, Some(&[]), &[99]), vec![0]);
+        assert_eq!(insertion_positions(&keys, 4, None, &[99]), vec![4]);
+    }
+
+    #[test]
+    fn interleave_keeps_integer_columns_packed_and_falls_back_for_others() {
+        let column = DecodedColumn::Int64 {
+            values: vec![10, 30],
+            validity: ColumnValidity::AllValid(2),
+        };
+        let (a, b, c) = (Value::Int64(5), Value::Int64(20), Value::Int64(40));
+        let merged = column.interleave(&[(0, &a), (2, &b), (4, &c)]);
+        match merged {
+            DecodedColumn::Int64 { values, validity } => {
+                assert_eq!(values, vec![5, 10, 20, 30, 40]);
+                assert!(matches!(validity, ColumnValidity::AllValid(5)));
+            }
+            other => panic!("expected a packed column, got {other:?}"),
+        }
+        // A null insert clears its validity bit and keeps the column packed.
+        let column = DecodedColumn::Int64 {
+            values: vec![1, 2],
+            validity: ColumnValidity::Bytes(vec![true, false]),
+        };
+        let merged = column.interleave(&[(1, &Value::Null)]);
+        match merged {
+            DecodedColumn::Int64 { values, validity } => {
+                assert_eq!(values, vec![1, 0, 2]);
+                assert_eq!(
+                    (0..3).map(|row| validity.is_valid(row)).collect::<Vec<_>>(),
+                    vec![true, false, false]
+                );
+            }
+            other => panic!("expected a packed column, got {other:?}"),
+        }
+        // A value of another type rebuilds the column as plain values.
+        let column = DecodedColumn::Int64 {
+            values: vec![1, 2],
+            validity: ColumnValidity::AllValid(2),
+        };
+        let text = Value::Utf8("x".to_owned());
+        let merged = column.interleave(&[(2, &text)]);
+        assert_eq!(
+            merged.into_values(),
+            vec![
+                Value::Int64(1),
+                Value::Int64(2),
+                Value::Utf8("x".to_owned())
+            ]
+        );
+        // Plain columns interleave at the front, middle and end.
+        let column = DecodedColumn::Values(vec![Value::UInt64(2), Value::UInt64(4)]);
+        let (a, b, c) = (Value::UInt64(1), Value::UInt64(3), Value::UInt64(5));
+        assert_eq!(
+            column
+                .interleave(&[(0, &a), (2, &b), (4, &c)])
+                .into_values(),
+            [1_u64, 2, 3, 4, 5].map(Value::UInt64).to_vec()
+        );
+    }
 }

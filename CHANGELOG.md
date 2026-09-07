@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The pieces of an overlay slice halved for memory share the slice's
+  allowance: what the pieces already decoded retain comes off what the next
+  may take, and a single block that does not fit reports the request that
+  failed instead of an empty memory error.
+- The insert-only aggregate delta never found its settled base entry: the
+  two spelled the memo key differently, so a grouped aggregate after an
+  insert-only batch always recomputed. The keys now agree.
+
 ## [0.1.2-rc7] - 2026-09-07
 
 ### Performance

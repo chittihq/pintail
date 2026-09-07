@@ -110,15 +110,23 @@ release requirement).
 
 Queries under live replication have a generated layer in the unit stage:
 `crates/pintail-exec/tests/live_replication_queries.rs` runs a seeded
-sequence of change batches (inserts past the end and into gaps, updates,
-deletes), stale replays of older versions, flushes and compactions over a
-fact and a dimension table, and after every step checks nine query shapes
-(whole-table and grouped aggregates, key lookups mixing live, deleted and
-absent keys, a key range, a two-column filter-first predicate, a nullable
-column under an ordered limit, extremes, a small-probe join grouped by the
-dimension, and the scan's own key order) against an in-memory model, on a
-table below the streaming threshold and on two above it. The settled memo
-stays on, as in production.
+sequence of change batches (inserts past the end and into holes left in the
+key space, updates that move a collated group's first-seen spelling,
+deletes, dimension-only changes), insert-only batches after a flush (the
+aggregate memo's delta path), stale replays of strictly older versions for
+flushed keys, batches hugging direct slice boundaries, flushes and
+compactions over a fact and a dimension table. After every step it checks
+aggregates, a collated `GROUP BY` whose representative must be the lowest
+key's spelling, full rows for live, deleted and absent keys, a key range,
+a filter-first predicate with a third column projected, a nullable column
+under an ordered limit, a limit pushed into the scan, extremes, a join on
+a non-key column and one on the storage key, and the scan's key order
+against an in-memory model; every fifth step compares every row and pins a
+reader across a change, a flush and a compaction. Each scenario the
+generator claims is counted and required. Three fixtures run: below the
+streaming threshold, above it, and across several direct slices. The
+settled memo stays on, as in production; failures name the fixture, seed,
+step and the last operations.
 
 The store's recovery has two generated layers of its own, both in the unit
 gate. The crash fuzz (`crates/pintail-store/tests/crash_fuzz.rs`) kills a

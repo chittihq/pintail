@@ -1537,10 +1537,12 @@ pub(super) fn build_hash_aggregate(
                 }
         })
     {
+        // Spelled exactly as the settled entry above spells its own key,
+        // or the delta never finds the base it is meant to extend.
         let key = (
             delta.directory.clone(),
             delta.generation,
-            format!("{};{signature}", delta.scan),
+            format!("p{:?};{signature}", delta.scan),
         );
         let base = SETTLED_AGGREGATE_MEMO
             .lock()
