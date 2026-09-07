@@ -268,3 +268,76 @@ fn a_report_shaped_decimal_average_is_exact_over_live_rows() {
     expected.sort();
     assert_eq!(out, expected);
 }
+
+/// The corpus shape that fails: `AVG(total)` and `SUM(total) / COUNT(*)`
+/// over the same column in one statement, both rounded to four places.
+///
+/// `MySQL` defines `AVG` as the sum divided by the count at the same
+/// widened scale, so the two projections must agree row for row. When the
+/// gate caught this disagreeing, the average was the wrong one and the
+/// division was right - so the invariant, not the literal value, is what
+/// pins it.
+#[test]
+fn an_average_agrees_with_the_sum_over_the_count_in_one_statement() {
+    let rows = large_fixture();
+    for live in [0, rows.len() / 4] {
+        let out = run_split(
+            "SELECT grp, ROUND(AVG(total), 4) AS avg_total, \
+             ROUND(SUM(total) / COUNT(*), 4) AS mean_check FROM orders \
+             GROUP BY grp HAVING COUNT(*) >= 2 ORDER BY avg_total DESC, grp LIMIT 20",
+            &rows,
+            live,
+        );
+        assert_eq!(out.len(), 20, "the limit keeps twenty groups (live={live})");
+        for row in &out {
+            assert_eq!(
+                row[1], row[2],
+                "AVG and SUM/COUNT must agree for group {} (live={live})",
+                row[0]
+            );
+        }
+    }
+}
+
+/// Realistic magnitudes rather than a single cent: values in the hundreds
+/// with two fraction digits, several thousand rows, several hundred
+/// groups. A double's error over a sum of this size is around the fourth
+/// fraction digit, which is exactly where the corpus query rounds, so if
+/// the engine ever reaches its inexact average this is the fixture that
+/// should show it.
+#[test]
+fn an_average_agrees_with_the_sum_over_the_count_on_realistic_values() {
+    const GROUPS: u64 = 500;
+    const PER_GROUP: u64 = 14;
+    let mut rows = Vec::new();
+    let mut id = 1_u64;
+    // A cheap deterministic spread; the point is varied cents, not entropy.
+    let mut seed = 0x2545_F491_4F6C_DD1D_u64;
+    for grp in 1..=GROUPS {
+        for _ in 0..PER_GROUP {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let cents = 10_000 + (seed >> 33) % 90_000;
+            rows.push(row(id, grp, &format!("{}.{:02}", cents / 100, cents % 100)));
+            id += 1;
+        }
+    }
+    for live in [0, rows.len() / 3] {
+        let out = run_split(
+            "SELECT grp, ROUND(AVG(total), 4) AS avg_total, \
+             ROUND(SUM(total) / COUNT(*), 4) AS mean_check FROM orders \
+             GROUP BY grp HAVING COUNT(*) >= 2 ORDER BY grp",
+            &rows,
+            live,
+        );
+        assert_eq!(out.len(), usize::try_from(GROUPS).expect("small"));
+        for row in &out {
+            assert_eq!(
+                row[1], row[2],
+                "AVG and SUM/COUNT must agree for group {} (live={live})",
+                row[0]
+            );
+        }
+    }
+}
