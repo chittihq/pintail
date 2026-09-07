@@ -6492,6 +6492,70 @@ mod tests {
     }
 
     #[test]
+    fn a_spilled_sort_orders_enums_by_declaration_like_an_unspilled_one() {
+        // MySQL orders an ENUM by its declared position, not its label, so
+        // a sort that spills has to carry the ordinal through the run. The
+        // labels here are deliberately in the opposite order to the
+        // declaration: comparing text would reverse the result.
+        let labels = ["zulu", "yankee", "xray", "whiskey", "victor"];
+        let batches = (0..48)
+            .map(|batch| {
+                let values = (0..512)
+                    .map(|row| {
+                        let ordinal = (batch * 512 + row) % 5;
+                        Value::Enum {
+                            index: u64::try_from(ordinal + 1).expect("small"),
+                            label: format!(
+                                "{}-{:04}",
+                                labels[usize::try_from(ordinal).expect("small")],
+                                (batch * 512 + row) % 97
+                            ),
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    values.len(),
+                    vec![ColumnVector::new(DataType::Utf8, values).expect("grades")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT name FROM events ORDER BY name"),
+                &provider,
+                limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .and_then(|column| column.value(row))
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let (memory, memory_spill) = execute(64 * 1024 * 1024);
+        let (spilled, spill) = execute(512 * 1024);
+        assert_eq!(memory_spill.files, 0);
+        assert!(spill.files > 0, "the tight execution must use spill files");
+        assert_eq!(
+            spilled, memory,
+            "a spilled sort must order enums the way an in-memory one does"
+        );
+    }
+
+    #[test]
     fn a_spilled_aggregate_serves_a_result_larger_than_its_ceiling() {
         // 20,000 groups whose finished rows come to several times the tight
         // ceiling: the map spills while grouping, and the merged result must

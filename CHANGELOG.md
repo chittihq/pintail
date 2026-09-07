@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A query that spilled ordered `ENUM` values by their label instead of
+  their declared position, so it answered differently from the same query
+  that stayed in memory. `MySQL` orders the type by declaration, which is
+  what the in-memory comparison already did; the spill format wrote an
+  enum as plain text and dropped the ordinal it sorts by. Spilled records
+  now carry it. This reached every spilling operator, and the window and
+  collection-aggregate paths added in this release made it reachable from
+  more shapes.
+
 ## [0.1.2-rc10] - 2026-09-07
 
 ### Added
