@@ -31,6 +31,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lookup and lane dispatch move out of the row loop; larger key domains
   return to the existing partitioned aggregate without changing results.
 
+- A correlated subquery in a join `ON` predicate no longer requires both
+  inputs and the complete output to fit in memory. The replayed side and
+  accumulated output spill independently, while the left input is read in
+  batches and the predicate memo yields space before starving inner queries.
+
 - Group maps containing `GROUP_CONCAT` and `JSON_ARRAYAGG` spill their
   unfinished fragments instead of failing when the map fills the query
   ceiling. Ordered concatenation retains its element keys across runs,

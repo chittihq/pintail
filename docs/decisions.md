@@ -1478,3 +1478,17 @@ group_concat_max_len to each partial result. Keeping elements instead
 applies that byte truncation once, after all fragments are merged. The
 merged state and finished value of one group must still fit in the query
 budget; external storage within one collection value is not implemented.
+
+## Correlated ON replays a bounded right side
+
+The nested-loop fallback stages the right side, retaining an eighth of the
+query ceiling before moving it to a replayable run. It reads the left side
+in batches and evaluates candidates individually. Output has its own
+resident prefix and spills to a run when necessary. The predicate memo is
+reclaimed when less than half the budget remains, leaving space for the
+next dependent inner execution.
+
+Choosing a side by cardinality could reduce rereads for inner joins. Keeping
+the left side as the probe instead preserves the existing encounter order
+and the left, semi, anti, and scalar matching rules with one evaluation
+loop. Side selection and multi-row probe tiles remain future optimizations.

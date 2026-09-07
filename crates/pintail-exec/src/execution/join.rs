@@ -1826,10 +1826,129 @@ thread_local! {
     };
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A replayable nested-loop side or result. Its resident prefix is replaced
+/// by one append-only run as soon as its share of the query budget fills.
+struct LoopRows {
+    rows: Vec<Vec<Value>>,
+    writer: Option<spill::RunWriter>,
+    run: Option<spill::ClosedRun>,
+    reserved: usize,
+}
+
+impl LoopRows {
+    fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            writer: None,
+            run: None,
+            reserved: 0,
+        }
+    }
+
+    fn push(&mut self, row: Vec<Value>, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let bytes = estimated_row_payload_bytes(&row);
+        if self.writer.is_none()
+            && (self.reserved + bytes > memory.limit() / 8
+                || bytes.saturating_mul(2) > memory.remaining())
+        {
+            let mut writer = spill::RunWriter::create("pintail-loop-", memory.spill())
+                .map_err(|error| ExecError::Source(error.to_string()))?;
+            for row in &self.rows {
+                write_loop_row(&mut writer, row)?;
+            }
+            self.rows = Vec::new();
+            memory.release(self.reserved);
+            self.reserved = 0;
+            self.writer = Some(writer);
+        }
+        if let Some(writer) = &mut self.writer {
+            memory.ensure_transient(bytes)?;
+            write_loop_row(writer, &row)?;
+        } else {
+            self.reserved += reserve_vec_elements(&mut self.rows, 1, 0, memory)?;
+            memory.reserve(bytes)?;
+            self.reserved += bytes;
+            self.rows.push(row);
+        }
+        Ok(())
+    }
+
+    fn seal(&mut self) -> Result<(), ExecError> {
+        if let Some(writer) = self.writer.take() {
+            self.run = Some(
+                writer
+                    .finish()
+                    .map_err(|error| ExecError::Source(error.to_string()))?,
+            );
+        }
+        Ok(())
+    }
+
+    fn reader(&self) -> Result<LoopReader<'_>, ExecError> {
+        if let Some(run) = &self.run {
+            Ok(LoopReader::Disk(
+                run.open()
+                    .map_err(|error| ExecError::Source(error.to_string()))?,
+            ))
+        } else {
+            Ok(LoopReader::Memory(self.rows.iter()))
+        }
+    }
+
+    fn finish(
+        mut self,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<super::SortedRows, ExecError> {
+        self.seal()?;
+        if let Some(run) = self.run {
+            super::sort::SpilledMerge::new(vec![run], &[], Vec::new(), None, collation, memory)
+                .map(super::SortedRows::Spilled)
+        } else {
+            Ok(super::SortedRows::Memory(super::MaterializedRows {
+                rows: self.rows,
+                position: 0,
+                spilled: None,
+            }))
+        }
+    }
+}
+
+fn write_loop_row(writer: &mut spill::RunWriter, row: &[Value]) -> Result<(), ExecError> {
+    let mut encoder = spill::Encoder::new();
+    encoder.values(row);
+    writer
+        .write(&encoder.finish())
+        .map_err(|error| ExecError::Source(error.to_string()))
+}
+
+enum LoopReader<'a> {
+    Memory(std::slice::Iter<'a, Vec<Value>>),
+    Disk(spill::RunReader),
+}
+
+impl LoopReader<'_> {
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+        match self {
+            Self::Memory(rows) => Ok(rows.next().cloned()),
+            Self::Disk(reader) => reader
+                .next()
+                .map_err(|error| ExecError::Source(error.to_string()))?
+                .map(|payload| {
+                    spill::Decoder::new(payload)
+                        .values()
+                        .map_err(ExecError::Source)
+                })
+                .transpose(),
+        }
+    }
+}
+
+// Keep the candidate ownership and each join kind in one evaluation loop.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) fn execute_nested_loop_join(
-    left_rows: &[Vec<Value>],
-    right_rows: &[Vec<Value>],
+    left_input: &mut PullOperator,
+    right_input: &mut PullOperator,
     left_columns: &[BoundColumn],
     right_columns: &[BoundColumn],
     kind: BoundJoinKind,
@@ -1837,98 +1956,128 @@ pub(super) fn execute_nested_loop_join(
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
     collation: Collation,
-) -> Result<Vec<Vec<Value>>, ExecError> {
+) -> Result<super::SortedRows, ExecError> {
     let mut columns = left_columns.to_vec();
     columns.extend_from_slice(right_columns);
     let column_types = columns
         .iter()
         .map(|column| column.data_type)
         .collect::<Vec<_>>();
-    let mut output = Vec::new();
+    let mut right_rows = LoopRows::new();
+    while let Some(batch) = right_input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            right_rows.push(batch_row(&batch, row)?, memory)?;
+        }
+    }
+    right_rows.seal()?;
+    let mut output = LoopRows::new();
     // One memo for the whole join: the ON condition's subqueries are keyed
     // by the (left, right) values they substitute, and a nested loop
     // revisits the same right row once per left row.
     let mut memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
-    for left in left_rows {
-        memory.check_interruption()?;
-        let mut matches = 0_usize;
-        for right in right_rows {
-            memory.ensure_transient(
-                estimated_row_payload_bytes(left)
-                    .saturating_add(estimated_row_payload_bytes(right)),
-            )?;
-            let mut candidate = left.clone();
-            candidate.extend(right.iter().cloned());
-            let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
-            let batch = RecordBatch::new(1, vectors)?;
-            let mut predicate = condition.clone();
-            let context = super::DependentRow {
-                batch: &batch,
-                row: 0,
-                columns: &columns,
-                provider,
-                memory,
-                collation,
-            };
-            memo.begin_row();
-            resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
-            let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
-            if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
-                continue;
-            }
-            matches = matches.saturating_add(1);
-            match kind {
-                BoundJoinKind::Inner | BoundJoinKind::Left => {
-                    push_nested_join_row(&mut output, candidate, memory)?;
+    while let Some(left_batch) = left_input.next_batch(memory)? {
+        let batch_bytes = left_batch.estimated_bytes();
+        memory.reserve(batch_bytes)?;
+        for row in left_batch.selection().selected_rows() {
+            let left = batch_row(&left_batch, row)?;
+            let left_bytes = estimated_row_payload_bytes(&left);
+            memory.reserve(left_bytes)?;
+            memory.check_interruption()?;
+            let mut matches = 0_usize;
+            let mut replay = right_rows.reader()?;
+            while let Some(right) = replay.next_row()? {
+                memory.ensure_transient(
+                    estimated_row_payload_bytes(&left)
+                        .saturating_add(estimated_row_payload_bytes(&right)),
+                )?;
+                let right_bytes = estimated_row_payload_bytes(&right);
+                let candidate_bytes = left_bytes.saturating_add(right_bytes);
+                memory.reserve(right_bytes.saturating_add(candidate_bytes))?;
+                let mut candidate = left.clone();
+                candidate.extend(right.iter().cloned());
+                let candidate_batch_bytes = estimated_record_batch_bytes(
+                    std::slice::from_ref(&candidate),
+                    column_types.len(),
+                );
+                memory.reserve(candidate_batch_bytes)?;
+                let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
+                let batch = RecordBatch::new(1, vectors)?;
+                let mut predicate = condition.clone();
+                let context = super::DependentRow {
+                    batch: &batch,
+                    row: 0,
+                    columns: &columns,
+                    provider,
+                    memory,
+                    collation,
+                };
+                if memory.remaining() < memory.limit() / 2 {
+                    super::record_dependent_memo(memo.finish(memory));
+                    memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
                 }
-                BoundJoinKind::Scalar => {
-                    if matches > 1 {
-                        return Err(ExecError::ScalarSubqueryRows { rows: matches });
+                memo.begin_row();
+                resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
+                let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
+                let accepted = predicate_truth(&predicate.evaluate(&batch, 0)?)?;
+                drop(batch);
+                drop(right);
+                memory.release(
+                    right_bytes
+                        .saturating_add(candidate_bytes)
+                        .saturating_add(candidate_batch_bytes),
+                );
+                if !accepted {
+                    continue;
+                }
+                matches = matches.saturating_add(1);
+                match kind {
+                    BoundJoinKind::Inner | BoundJoinKind::Left => {
+                        output.push(candidate, memory)?;
                     }
-                    push_nested_join_row(&mut output, candidate, memory)?;
+                    BoundJoinKind::Scalar => {
+                        if matches > 1 {
+                            return Err(ExecError::ScalarSubqueryRows { rows: matches });
+                        }
+                        output.push(candidate, memory)?;
+                    }
+                    BoundJoinKind::Semi => break,
+                    BoundJoinKind::Anti => {}
+                    BoundJoinKind::Cross => {
+                        return Err(ExecError::InvalidPhysicalPlan(
+                            "nested-loop ON evaluation cannot represent a cross join",
+                        ));
+                    }
                 }
-                BoundJoinKind::Semi => break,
-                BoundJoinKind::Anti => {}
-                BoundJoinKind::Cross => {
-                    return Err(ExecError::InvalidPhysicalPlan(
-                        "nested-loop ON evaluation cannot represent a cross join",
-                    ));
+            }
+            match kind {
+                BoundJoinKind::Left | BoundJoinKind::Scalar if matches == 0 => {
+                    let mut row = left.clone();
+                    row.extend(std::iter::repeat_n(Value::Null, right_columns.len()));
+                    output.push(row, memory)?;
                 }
+                BoundJoinKind::Semi if matches > 0 => {
+                    output.push(left.clone(), memory)?;
+                }
+                BoundJoinKind::Anti if matches == 0 => {
+                    output.push(left.clone(), memory)?;
+                }
+                BoundJoinKind::Inner
+                | BoundJoinKind::Left
+                | BoundJoinKind::Scalar
+                | BoundJoinKind::Semi
+                | BoundJoinKind::Anti => {}
+                BoundJoinKind::Cross => unreachable!("cross joins return above"),
             }
+            drop(left);
+            memory.release(left_bytes);
         }
-        match kind {
-            BoundJoinKind::Left | BoundJoinKind::Scalar if matches == 0 => {
-                let mut row = left.clone();
-                row.extend(std::iter::repeat_n(Value::Null, right_columns.len()));
-                push_nested_join_row(&mut output, row, memory)?;
-            }
-            BoundJoinKind::Semi if matches > 0 => {
-                push_nested_join_row(&mut output, left.clone(), memory)?;
-            }
-            BoundJoinKind::Anti if matches == 0 => {
-                push_nested_join_row(&mut output, left.clone(), memory)?;
-            }
-            BoundJoinKind::Inner
-            | BoundJoinKind::Left
-            | BoundJoinKind::Scalar
-            | BoundJoinKind::Semi
-            | BoundJoinKind::Anti => {}
-            BoundJoinKind::Cross => unreachable!("cross joins return above"),
-        }
+        memory.release(batch_bytes);
     }
     super::record_dependent_memo(memo.finish(memory));
-    Ok(output)
-}
-
-fn push_nested_join_row(
-    output: &mut Vec<Vec<Value>>,
-    row: Vec<Value>,
-    memory: &MemoryTracker,
-) -> Result<(), ExecError> {
-    reserve_vec_elements(output, 1, 0, memory)?;
-    memory.reserve(estimated_row_payload_bytes(&row))?;
-    output.push(row);
-    Ok(())
+    let retained = right_rows.reserved;
+    drop(right_rows);
+    memory.release(retained);
+    output.finish(memory, collation)
 }
 
 #[cfg(test)]

@@ -3927,8 +3927,6 @@ fn build_operator_inner(
         } => {
             let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
             let (mut right, right_columns) = build_operator(*right, provider, memory, collation)?;
-            let left_rows = materialize(&mut left, memory)?;
-            let right_rows = materialize(&mut right, memory)?;
             let mut output_columns = left_columns.clone();
             if !matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) {
                 output_columns.extend(right_columns.clone());
@@ -3938,8 +3936,8 @@ fn build_operator_inner(
                 .map(|column| column.data_type)
                 .collect::<Vec<_>>();
             let rows = execute_nested_loop_join(
-                &left_rows,
-                &right_rows,
+                &mut left,
+                &mut right,
                 &left_columns,
                 &right_columns,
                 kind,
@@ -3949,10 +3947,14 @@ fn build_operator_inner(
                 collation,
             )?;
             Ok((
-                PullOperator::Rows {
-                    rows,
-                    cursor: 0,
+                PullOperator::Sort {
+                    input: Box::new(PullOperator::Empty),
+                    keys: Vec::new(),
+                    trim: column_types.len(),
                     column_types,
+                    top_k: None,
+                    state: Some(rows),
+                    collation,
                 },
                 output_columns,
             ))
@@ -6013,6 +6015,50 @@ mod tests {
         );
         assert!(execution.next_batch().expect("end").is_none());
         assert!(execution.memory().used() > 0);
+    }
+
+    #[test]
+    fn correlated_join_on_spills_its_replayed_side_and_output() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..8)
+                    .map(|row| {
+                        Value::Utf8(format!("key-{:04}-{}", batch * 8 + row, "x".repeat(1024)))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(physical("SELECT l.name FROM events l JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = l.name)"), &provider, limit, Collation::default()).expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .expect("column")
+                            .value(row)
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        let (wide, _) = execute(64 * 1024 * 1024);
+        let (tight, spill) = execute(256 * 1024);
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 512);
+        assert!(spill.files > 0);
     }
 
     #[test]

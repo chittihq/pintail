@@ -206,10 +206,11 @@ stays readable as a list of things to fix.
 - A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
   value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
   state encoding.
-- Three execution shapes still fail at the per-query memory ceiling instead
-  of spilling: large `IN (subquery)` membership sets; the materialized
-  nested-loop fallback for a correlated subquery in a join `ON` predicate;
-  and a grace join whose single build key's rows exceed the ceiling.
+- Large `IN (subquery)` membership sets and a grace join whose single build
+  key's rows exceed the ceiling still fail instead of spilling.
+- The correlated join `ON` fallback replays the right side once per left
+  row; it has no cardinality-based side selection. Each candidate pair and
+  its dependent inner execution must fit within the remaining query budget.
 - Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
   `global_spill_limit_bytes`; exhausting either limit fails the query before
   the write crosses the ceiling.
