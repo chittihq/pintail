@@ -14,6 +14,9 @@ use sqlparser::parser::{Parser, ParserError};
 mod admission;
 pub use admission::has_bounded_admission_shape;
 
+mod repeatable;
+pub use repeatable::is_repeatable_statement;
+
 pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};
