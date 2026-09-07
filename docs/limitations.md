@@ -238,6 +238,17 @@ stays readable as a list of things to fix.
   stable table in the statement, including uncorrelated subqueries.
 - Grouped sub-cubes and predicate-covered blocks are not covered by the
   persistent per-segment SMA fold.
+- `AVG` over a `DECIMAL` column has returned a value one unit in the last
+  place away from `MySQL`'s, rarely and not repeatably: twice in gate runs
+  over the same corpus, at a different row and a different value each
+  time, while `SUM(...) / COUNT(*)` over the same rows stayed exact. The
+  engine keeps an exact scaled-integer average and an `f64` one, and the
+  `f64` one is order-dependent, so partitioning and merge order can move
+  the last digit. The exact path is the one taken for every decimal shape
+  reproducible in process - ungrouped, grouped, grouped under `HAVING`,
+  ordered by the average under a `LIMIT`, and over a segment merged with
+  live rows - so what selects the inexact path is not yet known and the
+  defect has no reproduction. Tracked as G14.
 
 ## Snapshot engine
 

@@ -4,7 +4,15 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.2-rc11] - 2026-09-07
+
+### Known issues
+
+- `AVG` over a `DECIMAL` column can answer one unit in the last place away
+  from `MySQL`, rarely and not repeatably; `SUM(...) / COUNT(*)` over the
+  same rows stays exact. Seen twice in gate runs and not reproducible on
+  demand, so this release ships with it open rather than claiming a fix.
+  `docs/limitations.md` records what is and is not known about it.
 
 ### Performance
 
