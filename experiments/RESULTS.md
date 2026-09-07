@@ -2865,6 +2865,24 @@ banked here: `docs/decisions.md` records the alternative (demote vs.
 grow vs. grow-with-headroom) for section H item 3 in
 `docs/design/production-hardening-todo.md`.
 
+Addendum, caught by `--profile rc`: the `min`/`max` fields this entry's
+design added to `DistinctSeen::Ints`, and the `min` field on `Bitmap`,
+are each an `i128` sitting directly in an enum variant - which forces the
+WHOLE enum to 16-byte alignment and pads its size up, in every
+`AggregateState` a query holds, whether or not that group's distinct set
+ever touches the bitmap path. `tests/sqllogic/tests/two_pass_spill.rs`
+holds hundreds of thousands of `AggregateState`s live under a tight
+24 MiB ceiling specifically to exercise its spill path; the padding was
+enough to push it past a spill the unboxed version used to make cleanly,
+and the gate caught it (`unit` stage, `a_spilled_two_pass_aggregation_
+matches_the_in_memory_groups_exactly`). Boxing both payloads
+(`Ints(Box<IntsSeen>)`, `Bitmap(Box<BitmapSeen>)`) removes every inline
+`i128` from the enum and restored `size_of::<AggregateState>()` to
+exactly its pre-entry value (192 bytes, measured directly); the test
+passes again. The 25% figure above was measured before this fix and is
+unaffected by it - boxing only removes memory the design never needed to
+spend, and does not change the insert path's instruction count.
+
 ## e78 — Q6's real shape is already on the two-pass streaming path; the naive-materialization premise was stale (10M rows, 32 threads, memo off)
 
 The brief for section H item 4 described Q6 as "the general partitioned
