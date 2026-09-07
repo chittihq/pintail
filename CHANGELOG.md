@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2-rc7] - 2026-09-07
+
 ### Performance
 
 - A segment the memtable overlaps is decoded directly, with the rows the
@@ -22,6 +24,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   composite or text key, a stale replay, a partially scanned segment or a
   segment retaining versions keeps the merge. Reconciliation, which walks
   the stream by key, keeps the merge as well.
+
+### Fixed
+
+- A table whose copy a restart interrupted was served from its partial
+  store: the interrupted copy is flagged for resync with the copy still
+  owed, and the flag alone read as a whole store. The copy-pending flag now
+  decides, so a table flagged for a resync it has not started (a
+  quarantine) keeps serving and an interrupted copy is refused as not ready.
+- A wire response body at or past the writer's 64 KiB buffer streams
+  straight from the caller's slice, and a buffer a large response grew
+  shrinks back, so a pooled connection no longer keeps its largest
+  response's capacity.
+- `PINTAIL_QUERY_QUEUE_WAIT_SECONDS` set to a finite value no duration can
+  hold (1e30) is refused at configuration instead of panicking.
 
 ## [0.1.2-rc6] - 2026-09-07
 
