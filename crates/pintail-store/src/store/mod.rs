@@ -71,12 +71,24 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
             // scan. It is also a real tuning knob: two pools each sized to the
             // machine put twice the core count of runnable threads on it
             // whenever aggregation overlaps scanning.
+            //
+            // Defaults to twice the CPU count, not the CPU count itself
+            // (experiments/RESULTS.md e65, e79): under the CPU quota the
+            // release benchmark and a typical container deployment run
+            // under, a scan thread parked on a throttled quota tick still
+            // leaves others runnable, and doubling the pool measured 57ms
+            // against 66ms on Q2's shape at 8 CPUs. e79 found no such gain
+            // on bare metal with no quota to hide behind - scan threads
+            // there are genuinely CPU-bound, and doubling them past the
+            // core count adds scheduling contention instead. Both
+            // deployments can still override this with the env var.
             let threads = std::env::var("PINTAIL_SCAN_THREADS")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
                 .filter(|threads| *threads > 0)
                 .unwrap_or_else(|| {
-                    std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+                    std::thread::available_parallelism()
+                        .map_or(2, |cpus| cpus.get().saturating_mul(2))
                 });
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)

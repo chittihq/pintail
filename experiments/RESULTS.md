@@ -2924,3 +2924,79 @@ case, which is a different, already-slow path Q6 does not take.
 `docs/design/production-hardening-todo.md` section H keeps item 4 open
 with this finding attached, so it is not re-discovered from a stale
 premise.
+
+## e79 — Scan pool default doubled; no gain reproduced on bare metal, and why that is expected (10M rows, in-process, memo off)
+
+e65 measured Q2's shape 16 scan threads against 8 (66ms -> 57ms) on the
+`--cpus=8`-limited container the release benchmark and a typical
+deployment run under, and recommended defaulting the scan pool to twice
+the CPU count. Implemented: `projected_scan_pool` now defaults to
+`available_parallelism() * 2`, still overridable by
+`PINTAIL_SCAN_THREADS`.
+
+Measured on this machine (32 real, unthrottled CPUs, local NVMe) with a
+new `crates/pintail-exec/tests/morsel_bench.rs` case, "scan: filtered
+count" (Q2's shape, `WHERE status = 'open'`), minimum of 9 runs:
+
+| scan threads | min | median |
+|---|---:|---:|
+| 32 (= CPU count, old default) | 10.6 ms | 10.9 ms |
+| 64 (= 2x CPU count, new default) | 11.1 ms | 11.5 ms |
+
+No gain here - if anything, slightly worse at the median, from
+scheduling more runnable threads than there are cores with nothing to
+overlap. This is the expected result, not a contradiction of e65: e65's
+win comes from a scan thread parked by a CPU quota tick still having
+another one ready to run, which only exists under a CPU-limited
+container; a bare-metal host with a real core per thread has no quota
+stall to hide behind, so doubling the pool only adds contention on a
+purely CPU-bound decode. Reproducing e65's own container conditions to
+confirm the win still holds was not attempted here (would need a
+throttled container on the shared docker host, which this brief's
+protocol reserves for the release benchmark, not an ad hoc check).
+
+**Verdict: keep the default change**, on the strength of e65's original
+container measurement (the actual release/deployment shape), with this
+entry as the honest record that the bare-metal dev host shows no
+benefit - `PINTAIL_SCAN_THREADS` remains the escape hatch either way.
+
+## e80 — Overlapping the next scan round's decode: investigated, not attempted
+
+e70 measured the sliced scan's own regression (a two-round text-key
+query losing 95ms -> 106ms to idling between rounds) and named the
+follow-up: prefetch the next round's decode while the consumer works the
+current one. Investigated instead of implemented, because the shape of
+`ProjectedScanStream::next_column_chunks_inner`
+(`crates/pintail-store/src/store/scan.rs`) does not allow it without a
+larger change first:
+
+- The parallel decode call (`decode_slice` over the round's slices) is a
+  method on `&self`, called synchronously inside the same function that
+  will be called again with `&mut self` for the NEXT round. Starting that
+  decode on a background thread so it can run while the caller consumes
+  the current round's chunks means that background thread's borrow of
+  `self` would need to outlive the current call - the same class of
+  problem item 2's join dense table hit, and for the same reason
+  (`unsafe_code = "forbid"`) not solvable by holding a raw reference
+  across the boundary.
+- `decode_slice` also takes `prewhere: Option<(&[u32], PrewhereSelect<'_>)>`,
+  a borrowed predicate scoped to the CURRENT call by its caller in
+  `pintail-exec` - not a struct field, so even an `Arc`-based redesign of
+  the scan state would still need this cloned or restructured into
+  something `'static` and `Send` before a background task could hold it
+  across calls.
+
+Both are solvable - the general shape is "give the decode context to a
+background task instead of borrowing it," which likely means the slice
+decode's dependencies (segment, directory, schema, prewhere) need to be
+extracted into an owned, `Send` unit callable from a free function rather
+than a `&self` method - but that is a restructuring of the scan's
+internals, not a bounded follow-up to the change this brief's scan
+threading item already made. Deferred rather than attempted under time
+pressure on a path this exact test suite's oracle depends on for every
+predicate shape.
+
+**Verdict: not attempted.** `docs/design/production-hardening-todo.md`
+section H keeps this half of item 5 open with the specific blocker
+recorded, so a future attempt starts from the ownership question rather
+than rediscovering it.

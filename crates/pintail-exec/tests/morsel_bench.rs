@@ -175,6 +175,14 @@ struct Case {
 
 const CASES: &[Case] = &[
     Case {
+        label: "scan: filtered count",
+        // Q2's shape (benchmark/queries.ts): almost pure scan - the
+        // aggregate itself is one counter - so its time is the scan pool's
+        // own width and I/O overlap, not anything downstream.
+        sql: "SELECT COUNT(*) FROM facts WHERE status = 'open'",
+        limit: 512 << 20,
+    },
+    Case {
         label: "two-pass int key",
         sql: "SELECT grp, COUNT(*), SUM(amount) FROM facts GROUP BY grp",
         limit: 512 << 20,

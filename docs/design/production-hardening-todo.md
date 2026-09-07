@@ -381,11 +381,20 @@ G2 and G3 above are their own brief; this section is everything else the
   and its own experiment first" - unchanged by this brief. Next attempt
   should start from the 223 ms baseline in e78, not the 4.2 s figure this
   item was written against.
-- [ ] **H5. Scan follow-ups already measured.** e65 measured sixteen scan
-  threads beating eight on an 8-CPU host; default the scan pool (not the
-  execution pool) to twice the CPU count. e70 noted the sliced scan idles
-  between rounds; prefetch the next slice while the consumer works the
-  current one.
+- [x] **H5a. Scan pool defaults to twice the CPU count.** e65 measured
+  sixteen scan threads beating eight on an 8-CPU host. Closed: the scan
+  pool (not the execution pool) now defaults to `2 x` CPU count, still
+  overridable by `PINTAIL_SCAN_THREADS`. No gain reproduced on bare metal
+  with no CPU quota to hide behind (e79) - kept on the strength of e65's
+  own container measurement, the actual deployment shape.
+- [ ] **H5b. Overlap the sliced scan's rounds.** e70 noted the sliced
+  scan idles between rounds. Investigated, not attempted: the round
+  decode is a `&self` method call inside the same function later called
+  with `&mut self`, and also takes a per-call borrowed `prewhere`
+  predicate - both need to become an owned, `Send`, cross-call unit
+  before a background prefetch is possible without `unsafe`, which the
+  workspace forbids. See e80 in `experiments/RESULTS.md` for the specific
+  blocker.
 
 ## F. Still open from earlier reviews
 
