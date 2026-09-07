@@ -2937,7 +2937,32 @@ mirror sees updates and deletes: the memtable pass already carries the
 tombstones and superseded versions, so correctness comes from the same
 merge-on-read rule the scan uses, not from assuming an append-only source.
 
+Where the state should live follows from what it costs to build. One
+segment's partials take 6.8 ms to compute from its rows, so a cache built
+lazily in memory pays that once per segment and nothing after:
+
+| strategy | first query after a flush | every query after |
+|---|---:|---:|
+| scan, as today | 22.5 ms | 22.5 ms |
+| build partials lazily, keep them in memory | 7.2 ms | 0.34 ms |
+| build them during the flush | 0.34 ms | 0.34 ms |
+
+The third row is not a faster algorithm; it is the same work moved to
+where the rows are already in hand. A flush reads every row it writes, so
+folding a sub-cube into that pass costs almost nothing, and the first
+query after a flush stops paying for it.
+
+That argues for both, in order. An in-memory cache keyed by segment needs
+no format change and no migration, is bounded by eviction, and can be
+dropped whole under memory pressure because it is only ever a cache of
+something the segment can recompute. Building at flush time is the second
+step and removes the remaining cost. Persisting it beside the segment is
+the third, and only that one survives a restart.
+
 The open question this does not answer is which group columns deserve a
 sub-cube. Writing one per column per segment is unbounded; the shapes
 worth it are low-cardinality columns that reports group by, which is what
-the dense-fold work already identified as the common grouping key.
+the dense-fold work already identified as the common grouping key. A
+bounded in-memory cache makes that question self-limiting in a way a
+persisted format does not, which is a further argument for starting
+there.

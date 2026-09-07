@@ -69,8 +69,8 @@ fn segment_partials(first: u64, last: u64) -> BTreeMap<&'static str, Partial> {
 #[ignore = "a measurement over a large in-process table, not a gate"]
 fn a_grouped_aggregate_from_per_segment_partials() {
     let directory = tempfile::tempdir().expect("directory");
-    let mut store = TableStore::open(directory.path(), schema(), StoreOptions::default())
-        .expect("store");
+    let mut store =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("store");
     let mut cubes = Vec::new();
     for segment in 0..SEGMENTS {
         let first = segment * PER_SEGMENT + 1;
@@ -110,9 +110,8 @@ fn a_grouped_aggregate_from_per_segment_partials() {
         )
         .expect("plan");
         let clock = Instant::now();
-        let mut execution =
-            Execution::start(physical, &provider, 512 << 20, Collation::default())
-                .expect("execution");
+        let mut execution = Execution::start(physical, &provider, 512 << 20, Collation::default())
+            .expect("execution");
         let mut produced = 0;
         while let Some(batch) = execution.next_batch().expect("pull") {
             produced += batch.visible_row_count();
@@ -170,8 +169,30 @@ fn a_grouped_aggregate_from_per_segment_partials() {
         live_best = live_best.min(clock.elapsed().as_secs_f64());
     }
 
+    // What one segment's sub-cube costs to build. A flush already reads
+    // every row it writes, so building it there is close to free; building
+    // it lazily on first query is this, once per segment.
+    let mut build_best = f64::MAX;
+    for _ in 0..5 {
+        let clock = Instant::now();
+        let cube = segment_partials(1, PER_SEGMENT);
+        build_best = build_best.min(clock.elapsed().as_secs_f64());
+        assert_eq!(cube.len(), 5);
+    }
+
     println!("{rows} rows in {SEGMENTS} segments, {groups} groups, minimum of 5 runs");
-    println!("  scan and aggregate            = {:9.3} ms", scan_best * 1e3);
+    println!(
+        "  build one segment's partials  = {:9.3} ms",
+        build_best * 1e3
+    );
+    println!(
+        "  first query after a flush     = {:9.3} ms  (merge cached + build the new segment + memtable)",
+        (merge_best + build_best + (live_best - merge_best)) * 1e3
+    );
+    println!(
+        "  scan and aggregate            = {:9.3} ms",
+        scan_best * 1e3
+    );
     println!(
         "  merge {SEGMENTS} segments' partials    = {:9.3} ms  ({merged_groups} groups)",
         merge_best * 1e3
