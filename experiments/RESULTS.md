@@ -2730,3 +2730,65 @@ tests (three ignored measurements). No spill implementation was added.
 the text aggregate's total is below the original 120 ms target. The fused
 profile attributes later direct input pulls to the aggregate, so its self
 time is not an isolated CPU-kernel measurement.
+
+
+## e75 — Multi-column packed predicates and direct delta decode (synthetic, in-process)
+
+The morsel fixture's integer grouping column supplies the selective
+predicate; its increasing unsigned key supplies the range that excludes
+nothing. Ten million generated rows, 32 scan and execution threads, release
+build, memo disabled, five profiled runs per case. Values are milliseconds,
+minimum / median. The baseline includes the dense-fold slice, which does
+not change filtered COUNT execution.
+
+| case | before min / median | after min / median |
+|---|---:|---:|
+| count, one predicate | 9.6 / 10.4 | 7.9 / 9.4 |
+| count, two predicates | 37.5 / 38.4 | 9.7 / 10.5 |
+| two-column result, one predicate | 187.8 / 214.2 | 198.3 / 202.0 |
+| two-column result, two predicates | 175.4 / 187.3 | 17.6 / 18.2 |
+| 150K rows: count, one predicate | 0.4 / 0.5 | 0.3 / 0.4 |
+| 150K rows: count, two predicates | 2.8 / 2.9 | 0.9 / 0.9 |
+
+The increasing key used delta bit packing, which the direct integer
+reader declined. It decoded temporary normalized values and cells before
+copying into its packed destination. Streaming deltas directly into that
+destination first reduced the conjunction to 14.0/14.8 ms, but let prefetch
+retain more slices: peak reservation rose from 74.9 to 151.8 MiB.
+That intermediate result did not meet the memory target.
+
+The complete change fuses a multi-column integer conjunction when all
+projected columns are predicate inputs. It borrows the decoded columns
+for exact signed/unsigned comparisons and compacts their survivors before
+retaining the prefetch round, without decoding them again. Single-column
+scans retain their existing path; non-integer or unsupported predicates
+retain their existing evaluator. The outer filters still verify survivors.
+The eligibility flag is computed at use rather than enlarging every scan.
+The workspace report-shape gate also exposed a pre-existing join admission
+double count: binned keys were reserved individually and added again to
+the transient estimate. Direct decoding admitted larger inputs and exposed
+that overcount at a 24 MiB ceiling. The check now includes the live batch
+and incoming key, with previous keys counted once through the tracker.
+A batch occupying more than half the remaining headroom also bins at most
+1,024 rows before inserting, allowing the existing resident-map spill valve
+to run before the temporary key list fills the ceiling.
+The unchanged report-shape regression is checked with the full workspace build;
+crate-only builds had passed even before this correction. Slice and round
+sizing are unchanged, and G12's missing aggregate transient floor is untouched.
+The count-conjunction scan self time
+is now 9.7/10.4 ms, down from 37.3/38.2 ms; its peak reservation is 3.1 MiB.
+The single-predicate baseline reserves 76.5 MiB. Before the footprint-only
+correction, the same kernels measured 7.6/8.6 ms for the conjunction and
+8.5/9.0 ms for the single predicate. The controls varied between rounds;
+no speedup is claimed for either single-predicate control. Small-table conjunctions
+remain slower than a single predicate, while improving over their baseline.
+
+Tests compare signed and unsigned delta kernels against generic decoding
+with duplicates, NULLs and disjoint ranges, reject overflow even in an
+unselected suffix, and compare packed predicate scans with general
+expressions over nullable generated columns and values above i64::MAX.
+Final workspace clippy and formatting passed, followed by all 941 workspace
+tests (28 ignored tests, including measurements and external harnesses).
+
+**Verdict: keep.** The large-table conjunction costs less than 1.5 times
+the single predicate at both minimum and median, and peak reservation falls.

@@ -3,7 +3,7 @@ mod encoding;
 use encoding::{
     compare_cells, compress_block_for_storage, decode_integer_base, decode_payload,
     decoded_heap_upper_bound, decompress_block, encode_payload, hll_registers, select_encoding,
-    unpack, unpack_signed_into, unpack_unsigned_into,
+    unpack, unpack_delta_each, unpack_signed_into, unpack_unsigned_into,
 };
 
 use std::{
@@ -3454,6 +3454,17 @@ fn decode_int_payload_into(
     null_bitmap: &[u8],
     sink: IntSink<'_>,
 ) -> Result<bool, String> {
+    if matches!(encoding, Encoding::DeltaBitPacked) {
+        return decode_delta_payload_into(
+            bytes,
+            logical_type,
+            row_count,
+            non_null_count,
+            null_bitmap,
+            sink,
+        )
+        .map(|()| true);
+    }
     if !matches!(encoding, Encoding::BitPacked) {
         return Ok(false);
     }
@@ -3511,6 +3522,78 @@ fn decode_int_payload_into(
         return Err("encoding produced too few values".to_owned());
     }
     Ok(true)
+}
+
+/// Delta blocks use the same typed destination as ordinary packed blocks,
+/// rather than allocating normalized values, cells, then a typed copy.
+fn decode_delta_payload_into(
+    bytes: &[u8],
+    logical_type: LogicalType,
+    row_count: usize,
+    non_null_count: usize,
+    null_bitmap: &[u8],
+    sink: IntSink<'_>,
+) -> Result<(), String> {
+    let IntSink {
+        builder,
+        mut ranges,
+    } = sink;
+    let mut decoder = Decoder::new(bytes);
+    let first = decode_integer_base(&mut decoder, logical_type)?;
+    if non_null_count == row_count
+        && ranges.covers_all(row_count)
+        && let Some(destination) = builder.int_bulk()
+    {
+        match destination {
+            IntBulkDestination::Signed { values, validity } => {
+                values.reserve(non_null_count);
+                unpack_delta_each(&mut decoder, non_null_count, first, logical_type, |value| {
+                    values.push(i64::try_from(value).map_err(|_| "delta signed integer overflow")?);
+                    Ok(())
+                })?;
+                validity.extend_valid(non_null_count);
+            }
+            IntBulkDestination::Unsigned { values, validity } => {
+                values.reserve(non_null_count);
+                unpack_delta_each(&mut decoder, non_null_count, first, logical_type, |value| {
+                    values
+                        .push(u64::try_from(value).map_err(|_| "delta unsigned integer overflow")?);
+                    Ok(())
+                })?;
+                validity.extend_valid(non_null_count);
+            }
+        }
+    } else {
+        let mut row = 0;
+        let is_null = |row: usize| null_bitmap[row / 8] & (1 << (row % 8)) != 0;
+        unpack_delta_each(&mut decoder, non_null_count, first, logical_type, |value| {
+            while row < row_count && is_null(row) {
+                if ranges.contains(row) {
+                    builder.push(Cell::Null)?;
+                }
+                row += 1;
+            }
+            if row >= row_count {
+                return Err("encoding produced too many values".to_owned());
+            }
+            if ranges.contains(row) {
+                builder.push_integer(value)?;
+            }
+            row += 1;
+            Ok(())
+        })?;
+        while row < row_count {
+            if !is_null(row) {
+                return Err("encoding produced too few values".to_owned());
+            }
+            if ranges.contains(row) {
+                builder.push(Cell::Null)?;
+            }
+            row += 1;
+        }
+    }
+    decoder.finish()?;
+    Ok(())
 }
 
 /// Ascending membership test over sorted, disjoint block-relative row
@@ -5188,5 +5271,119 @@ mod native_units_tests {
             Value::Utf8("not-a-decimal".to_owned()),
         ]);
         assert_eq!(probe_native_column(decimal, &rows, 0), None);
+    }
+}
+
+#[cfg(test)]
+mod delta_direct_tests {
+    use super::*;
+
+    fn check(logical_type: LogicalType, nullable: bool, ranges: Vec<(usize, usize)>) {
+        let count = 4096_usize;
+        let mut bitmap = vec![0_u8; count.div_ceil(8)];
+        let cells: Vec<Cell> = (0..count)
+            .filter_map(|row| {
+                if nullable && (row % 11 == 0 || row + 1 == count) {
+                    bitmap[row / 8] |= 1 << (row % 8);
+                    return None;
+                }
+                Some(match logical_type {
+                    LogicalType::Int64 => {
+                        Cell::Int64(i64::try_from(row / 2).expect("small") - 1200)
+                    }
+                    LogicalType::UInt64 => {
+                        Cell::UInt64((1_u64 << 63) + u64::try_from(row / 2).expect("small"))
+                    }
+                    _ => unreachable!(),
+                })
+            })
+            .collect();
+        let payload =
+            encode_payload(logical_type, Encoding::DeltaBitPacked, &cells).expect("encode");
+        let decoded = decode_payload(
+            &payload,
+            logical_type,
+            Encoding::DeltaBitPacked,
+            cells.len(),
+        )
+        .expect("general decode");
+        let mut expected = ColumnBuilder::new_for_column(logical_type, None, count);
+        let mut values = decoded.into_iter();
+        for row in 0..count {
+            let cell = if bitmap[row / 8] & (1 << (row % 8)) != 0 {
+                Cell::Null
+            } else {
+                values.next().expect("value")
+            };
+            if ranges.iter().any(|&(lo, hi)| (lo..hi).contains(&row)) {
+                expected.push(cell).expect("push");
+            }
+        }
+        let mut actual = ColumnBuilder::new_for_column(logical_type, None, count);
+        assert!(
+            decode_int_payload_into(
+                &payload,
+                logical_type,
+                Encoding::DeltaBitPacked,
+                count,
+                cells.len(),
+                &bitmap,
+                IntSink {
+                    builder: &mut actual,
+                    ranges: RangeCursor::new(ranges)
+                }
+            )
+            .expect("direct decode")
+        );
+        assert_eq!(
+            actual.finish().into_values(),
+            expected.finish().into_values()
+        );
+    }
+
+    #[test]
+    fn delta_signed_bulk_and_nullable_ranges_match_general_decode() {
+        check(LogicalType::Int64, false, vec![(0, 4096)]);
+        check(
+            LogicalType::Int64,
+            true,
+            vec![(0, 13), (511, 1041), (3900, 4096)],
+        );
+    }
+
+    #[test]
+    fn delta_unsigned_bulk_and_nullable_ranges_match_general_decode() {
+        check(LogicalType::UInt64, false, vec![(0, 4096)]);
+        check(
+            LogicalType::UInt64,
+            true,
+            vec![(0, 13), (511, 1041), (3900, 4096)],
+        );
+    }
+
+    #[test]
+    fn delta_overflow_in_an_unselected_suffix_is_rejected() {
+        // A valid delta header whose increment overflows the first value.
+        let mut payload = Encoder::new();
+        payload.u64(u64::MAX);
+        payload.u8(1);
+        payload.bytes(&[1], "deltas").expect("payload");
+        let payload = payload.finish();
+        let mut builder = ColumnBuilder::new_for_column(LogicalType::UInt64, None, 1);
+        assert!(
+            decode_int_payload_into(
+                &payload,
+                LogicalType::UInt64,
+                Encoding::DeltaBitPacked,
+                2,
+                2,
+                &[0],
+                IntSink {
+                    builder: &mut builder,
+                    ranges: RangeCursor::new(vec![(0, 1)])
+                }
+            )
+            .is_err()
+        );
     }
 }

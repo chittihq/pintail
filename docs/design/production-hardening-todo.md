@@ -261,12 +261,18 @@ prints.
   remaining ceiling (one slice under 64 MiB), and rows in flight are bounded
   by width times a slice whatever the segment size; see "The scan's work
   unit is a segment slice" in `docs/decisions.md`.
-- [ ] **G2. A second predicate on the same scan costs five times the
+- [x] **G2. A second predicate on the same scan costs five times the
   first.** `WHERE status = 2` scans in 25 ms; `WHERE id >= 1 AND
   status = 2` in 132 ms with twice the peak reservation, even though the
   extra predicate excludes nothing and now stays on the packed kernel.
   Establish which of the two-predicate paths (no prewhere, since every
   projected column is a predicate column) pays the difference.
+  Closed 2026-09-07: delta-packed integer columns decode directly into
+  their typed buffers. A multi-column all-integer predicate projection
+  evaluates borrowed buffers and retains exact survivors from that decode.
+  The synthetic count conjunction fell from 37.5/38.4 to 9.7/10.5 ms
+  minimum/median, versus 7.9/9.4 ms for the single predicate; peak
+  reservation fell from 74.9 to 3.1 MiB. See e75. Scan sizing is unchanged.
 - [x] **G3. Five-group aggregation spends 18 ns per row in the
   aggregate.** `GROUP BY status` over ten million rows: 114 ms in the
   scan, 179 ms of aggregate self time for five groups. That is the

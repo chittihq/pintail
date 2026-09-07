@@ -21,6 +21,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- Multi-column integer scan predicates reuse their decoded columns and
+  retain only qualifying rows. Increasing integer columns decode packed
+  deltas directly, avoiding temporary cells and a second conversion pass;
+  adding a predicate no longer multiplies the scan's working set.
+
 - Low-cardinality text and bounded integer GROUP BY keys fold packed
   integer sums and counts directly into worker-local dense slots. Column
   lookup and lane dispatch move out of the row loop; larger key domains

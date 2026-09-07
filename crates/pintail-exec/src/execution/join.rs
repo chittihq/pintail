@@ -512,122 +512,143 @@ pub(super) fn build_hash_join_state(
         collation: None,
     };
     while let Some(batch) = right.next_batch(memory)? {
-        let mut used_before_batch = memory.used();
         let batch_bytes = batch.estimated_bytes();
-        // Keys first, binned by the partition each will land in; the inserts
-        // follow one partition at a time.
-        let mut binned: Vec<Vec<(JoinHashKey, usize)>> = vec![Vec::new(); build.partitions()];
-        // Keys are held for the whole batch before any of them are inserted, so
-        // they are charged as they accumulate. Without this a batch of long
-        // text keys allocates every normalized key at once and passes the
-        // query's ceiling before a single per-row check runs.
-        let mut binned_bytes = 0_usize;
-        for row in batch.selection().selected_rows() {
-            let value = right_key.evaluate(&batch, row)?;
-            if !matches!(value, Value::Null) {
-                match &mut key_bounds {
-                    None => {
-                        memory.reserve(value.heap_bytes().saturating_mul(2))?;
-                        key_bounds = Some((value.clone(), value.clone()));
-                    }
-                    Some((minimum, maximum)) => {
-                        if compare_sort_values(&value, minimum, bound_order, collation)
-                            == Ordering::Less
-                        {
-                            *minimum = value.clone();
+        // A wide upstream join can return more than a scan-sized batch.
+        // Bin it in bounded pieces when it occupies most of the headroom,
+        // so resident insertion reaches its spill valve before keys alone
+        // exhaust the ceiling. Ordinary batches retain their partition walk.
+        let bin_rows = if batch_bytes > memory.remaining() / 2 {
+            1024
+        } else {
+            batch.row_count().max(1)
+        };
+        let mut rows = batch.selection().selected_rows().peekable();
+        while rows.peek().is_some() {
+            let mut used_before_batch = memory.used();
+            // Keys first, binned by the partition each will land in; the inserts
+            // follow one partition at a time.
+            let mut binned: Vec<Vec<(JoinHashKey, usize)>> = vec![Vec::new(); build.partitions()];
+            // Keys are held for the whole batch before any of them are inserted, so
+            // they are charged as they accumulate. Without this a batch of long
+            // text keys allocates every normalized key at once and passes the
+            // query's ceiling before a single per-row check runs.
+            let mut binned_bytes = 0_usize;
+            for row in rows.by_ref().take(bin_rows) {
+                let value = right_key.evaluate(&batch, row)?;
+                if !matches!(value, Value::Null) {
+                    match &mut key_bounds {
+                        None => {
+                            memory.reserve(value.heap_bytes().saturating_mul(2))?;
+                            key_bounds = Some((value.clone(), value.clone()));
                         }
-                        if compare_sort_values(&value, maximum, bound_order, collation)
-                            == Ordering::Greater
-                        {
-                            *maximum = value.clone();
+                        Some((minimum, maximum)) => {
+                            if compare_sort_values(&value, minimum, bound_order, collation)
+                                == Ordering::Less
+                            {
+                                *minimum = value.clone();
+                            }
+                            if compare_sort_values(&value, maximum, bound_order, collation)
+                                == Ordering::Greater
+                            {
+                                *maximum = value.clone();
+                            }
                         }
                     }
                 }
+                let Some(key) = normalized_join_key(value, key_mode)? else {
+                    continue;
+                };
+                let Some(key) = composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)?
+                else {
+                    continue;
+                };
+                let retained = key
+                    .heap_bytes()
+                    .saturating_add(size_of::<(JoinHashKey, usize)>());
+                // Previously binned keys are already reserved. Only the incoming
+                // key and the live batch are additional to the tracker here.
+                memory.ensure_transient(batch_bytes.saturating_add(retained))?;
+                memory.reserve(retained)?;
+                binned_bytes = binned_bytes.saturating_add(retained);
+                binned[build.slot(&key)].push((key, row));
             }
-            let Some(key) = normalized_join_key(value, key_mode)? else {
-                continue;
-            };
-            let Some(key) = composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)?
-            else {
-                continue;
-            };
-            let retained = key
-                .heap_bytes()
-                .saturating_add(size_of::<(JoinHashKey, usize)>());
-            memory.ensure_transient(batch_bytes.saturating_add(binned_bytes))?;
-            memory.reserve(retained)?;
-            binned_bytes = binned_bytes.saturating_add(retained);
-            binned[build.slot(&key)].push((key, row));
-        }
-        for (key, row) in binned.into_iter().flatten() {
-            if let Some(grace) = grace.as_mut() {
-                let values = batch_row(&batch, row)?;
-                grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
-                continue;
-            }
-            match insert_resident_row(&mut build, key, &batch, row, batch_bytes, right_key, memory)
-            {
-                Ok(()) => {}
-                Err(ExecError::MemoryLimitExceeded { .. }) if !build.is_empty() => {
-                    // Out of memory with rows to spill: either the query's
-                    // own ceiling landed inside one batch, past the
-                    // proactive half-ceiling valve below, or the process
-                    // budget refused what the query ceiling allowed. Both
-                    // used to fail the query, and under load the second was
-                    // the common one: every admitted query is entitled to
-                    // its own ceiling, but their sum is not, so the budget
-                    // is a spill signal here, not a verdict. Drain the map
-                    // to partitions and route this row there.
-                    let mut partitions = GraceJoin::create();
-                    for (key, bucket) in build.drain() {
-                        let target = grace_partition(&key, 0);
-                        for values in bucket {
-                            partitions.build_files[target].append(&key, &values, memory)?;
-                        }
-                    }
-                    // Everything this batch reserved beyond its binned keys,
-                    // plus the map from earlier batches; a partial insert's
-                    // reservations are included because the map is empty now.
-                    let this_batch = memory
-                        .used()
-                        .saturating_sub(used_before_batch)
-                        .saturating_sub(binned_bytes);
-                    memory.release(build_reserved.saturating_add(this_batch));
-                    build_reserved = 0;
-                    used_before_batch = memory.used().saturating_sub(binned_bytes);
-                    let value = right_key.evaluate(&batch, row)?;
-                    let key = normalized_join_key(value, key_mode)?
-                        .and_then(|key| {
-                            composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)
-                                .transpose()
-                        })
-                        .transpose()?
-                        .expect("the key was binned, so it normalizes");
+            for (key, row) in binned.into_iter().flatten() {
+                if let Some(grace) = grace.as_mut() {
                     let values = batch_row(&batch, row)?;
-                    partitions.build_files[grace_partition(&key, 0)]
-                        .append(&key, &values, memory)?;
-                    grace = Some(partitions);
+                    grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
+                    continue;
                 }
-                Err(error) => return Err(error),
-            }
-        }
-        memory.release(binned_bytes);
-        build_reserved =
-            build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
-        // Proactive spill at half the ceiling, like sort and aggregation:
-        // drain the resident map into partition files and route the rest
-        // of the build (and later the probe) through them.
-        if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
-            let mut partitions = GraceJoin::create();
-            for (key, bucket) in build.drain() {
-                let target = grace_partition(&key, 0);
-                for values in bucket {
-                    partitions.build_files[target].append(&key, &values, memory)?;
+                match insert_resident_row(
+                    &mut build,
+                    key,
+                    &batch,
+                    row,
+                    batch_bytes,
+                    right_key,
+                    memory,
+                ) {
+                    Ok(()) => {}
+                    Err(ExecError::MemoryLimitExceeded { .. }) if !build.is_empty() => {
+                        // Out of memory with rows to spill: either the query's
+                        // own ceiling landed inside one batch, past the
+                        // proactive half-ceiling valve below, or the process
+                        // budget refused what the query ceiling allowed. Both
+                        // used to fail the query, and under load the second was
+                        // the common one: every admitted query is entitled to
+                        // its own ceiling, but their sum is not, so the budget
+                        // is a spill signal here, not a verdict. Drain the map
+                        // to partitions and route this row there.
+                        let mut partitions = GraceJoin::create();
+                        for (key, bucket) in build.drain() {
+                            let target = grace_partition(&key, 0);
+                            for values in bucket {
+                                partitions.build_files[target].append(&key, &values, memory)?;
+                            }
+                        }
+                        // Everything this batch reserved beyond its binned keys,
+                        // plus the map from earlier batches; a partial insert's
+                        // reservations are included because the map is empty now.
+                        let this_batch = memory
+                            .used()
+                            .saturating_sub(used_before_batch)
+                            .saturating_sub(binned_bytes);
+                        memory.release(build_reserved.saturating_add(this_batch));
+                        build_reserved = 0;
+                        used_before_batch = memory.used().saturating_sub(binned_bytes);
+                        let value = right_key.evaluate(&batch, row)?;
+                        let key = normalized_join_key(value, key_mode)?
+                            .and_then(|key| {
+                                composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)
+                                    .transpose()
+                            })
+                            .transpose()?
+                            .expect("the key was binned, so it normalizes");
+                        let values = batch_row(&batch, row)?;
+                        partitions.build_files[grace_partition(&key, 0)]
+                            .append(&key, &values, memory)?;
+                        grace = Some(partitions);
+                    }
+                    Err(error) => return Err(error),
                 }
             }
-            memory.release(build_reserved);
-            build_reserved = 0;
-            grace = Some(partitions);
+            memory.release(binned_bytes);
+            build_reserved =
+                build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
+            // Proactive spill at half the ceiling, like sort and aggregation:
+            // drain the resident map into partition files and route the rest
+            // of the build (and later the probe) through them.
+            if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
+                let mut partitions = GraceJoin::create();
+                for (key, bucket) in build.drain() {
+                    let target = grace_partition(&key, 0);
+                    for values in bucket {
+                        partitions.build_files[target].append(&key, &values, memory)?;
+                    }
+                }
+                memory.release(build_reserved);
+                build_reserved = 0;
+                grace = Some(partitions);
+            }
         }
     }
     Ok(HashJoinState {

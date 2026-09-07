@@ -652,6 +652,53 @@ pub(super) fn unpack_signed_into(
     Ok(())
 }
 
+/// Reconstructs monotone integer values straight from packed deltas.
+/// The callback sees every non-NULL value, including rows a range excludes,
+/// so corrupt overflows cannot hide in an unselected prefix or suffix.
+pub(super) fn unpack_delta_each(
+    decoder: &mut Decoder<'_>,
+    value_count: usize,
+    first: i128,
+    logical_type: LogicalType,
+    mut emit: impl FnMut(i128) -> Result<(), String>,
+) -> Result<(), String> {
+    if value_count == 0 {
+        return Err("delta block cannot be empty".to_owned());
+    }
+    let (width, bytes) = unpack_header(decoder, value_count - 1)?;
+    let mask = width_mask(width);
+    let maximum = match logical_type {
+        LogicalType::Int64 => i128::from(i64::MAX),
+        LogicalType::UInt64 => i128::from(u64::MAX),
+        _ => return Err("delta destination must be integer".to_owned()),
+    };
+    let mut current = first;
+    emit(current)?;
+    let mut reader = BitReader::new(bytes);
+    // Every delta is nonnegative and at most mask. If even that worst
+    // cumulative endpoint fits, all intermediate additions fit as well.
+    let bounded = i128::try_from(value_count - 1)
+        .ok()
+        .and_then(|count| i128::from(mask).checked_mul(count))
+        .and_then(|span| first.checked_add(span))
+        .is_some_and(|last| last <= maximum);
+    if bounded {
+        for _ in 1..value_count {
+            current += i128::from(reader.read(width, mask));
+            emit(current)?;
+        }
+        return Ok(());
+    }
+    for _ in 1..value_count {
+        current = current
+            .checked_add(i128::from(reader.read(width, mask)))
+            .filter(|value| *value <= maximum)
+            .ok_or_else(|| "integer delta overflow".to_owned())?;
+        emit(current)?;
+    }
+    Ok(())
+}
+
 /// The unsigned twin of [`unpack_signed_into`].
 pub(super) fn unpack_unsigned_into(
     decoder: &mut Decoder<'_>,

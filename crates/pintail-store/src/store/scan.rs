@@ -2035,6 +2035,15 @@ impl ProjectedScanStream {
         let predicate_blocks_pruned = fetch.blocks_pruned;
         let predicate_blocks_decoded = fetch.blocks_decoded;
         let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+        if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+            return retain_predicate_fetch(
+                fetch,
+                ranges.as_deref(),
+                row_count,
+                usize::from(start_row == 0),
+                &scan_budget,
+            );
+        }
         let predicate_reserved = fetch.reserved_bytes;
         drop(fetch);
         scan_budget.release(predicate_reserved);
@@ -2135,6 +2144,15 @@ impl ProjectedScanStream {
             let predicate_blocks_pruned = fetch.blocks_pruned;
             let predicate_blocks_decoded = fetch.blocks_decoded;
             let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+            if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+                return retain_predicate_fetch(
+                    fetch,
+                    ranges.as_deref(),
+                    row_count,
+                    1,
+                    &scan_budget,
+                );
+            }
             let predicate_reserved = fetch.reserved_bytes;
             drop(fetch);
             scan_budget.release(predicate_reserved);
@@ -2732,6 +2750,87 @@ fn rows_to_columns(
         }
     }
     Ok(columns)
+}
+
+fn packed_integer_column(column: &DecodedColumn) -> bool {
+    matches!(
+        column,
+        DecodedColumn::Int64 { .. } | DecodedColumn::UInt64 { .. }
+    )
+}
+
+/// An all-predicate integer projection already decoded every output column.
+/// Compact those buffers before the prefetch round retains them; rereading
+/// identical blocks would add both decode work and a second working set.
+fn retain_predicate_fetch(
+    mut fetch: segment::ProjectedColumnFetch,
+    ranges: Option<&[std::ops::Range<usize>]>,
+    rows: usize,
+    segments_read: usize,
+    memory: &segment::ScanMemoryBudget<'_>,
+) -> Result<ProjectedColumnChunk, StoreError> {
+    fn compact<T: Copy>(values: &mut Vec<T>, ranges: &[std::ops::Range<usize>]) {
+        let mut written = 0;
+        for range in ranges {
+            values.copy_within(range.clone(), written);
+            written += range.len();
+        }
+        values.truncate(written);
+        values.shrink_to_fit();
+    }
+    let selected = ranges.map_or(rows, |ranges| {
+        ranges.iter().map(std::iter::ExactSizeIterator::len).sum()
+    });
+    if let Some(ranges) = ranges {
+        // A selector is an API callback; validate before indexing or copying.
+        if ranges
+            .iter()
+            .any(|range| range.start > range.end || range.end > rows)
+            || ranges.windows(2).any(|pair| pair[0].end > pair[1].start)
+        {
+            return Err(StoreError::FormatLimit(
+                "invalid predicate row ranges".to_owned(),
+            ));
+        }
+        for column in &mut fetch.columns {
+            let validity = match column {
+                DecodedColumn::Int64 { values, validity } => {
+                    compact(values, ranges);
+                    validity
+                }
+                DecodedColumn::UInt64 { values, validity } => {
+                    compact(values, ranges);
+                    validity
+                }
+                _ => unreachable!("checked integer projection"),
+            };
+            match validity {
+                ColumnValidity::AllValid(count) => *count = selected,
+                ColumnValidity::Bytes(bits) => compact(bits, ranges),
+            }
+        }
+    }
+    let retained_bytes = size_of::<ProjectedColumnChunk>()
+        + fetch.columns.capacity() * size_of::<DecodedColumn>()
+        + fetch
+            .columns
+            .iter()
+            .map(DecodedColumn::retained_bytes)
+            .sum::<usize>();
+    memory.release(fetch.reserved_bytes);
+    memory.reserve(retained_bytes)?;
+    Ok(ProjectedColumnChunk {
+        columns: fetch.columns,
+        row_count: selected,
+        stats: ScanStats {
+            segments_read,
+            blocks_read: fetch.blocks_read,
+            blocks_pruned: fetch.blocks_pruned,
+            blocks_decoded: fetch.blocks_decoded,
+            ..ScanStats::default()
+        },
+        retained_bytes,
+    })
 }
 
 #[cfg(test)]
