@@ -32,7 +32,8 @@ for i in range(8):
  lines.append('| '+p[0]['phase']+' | '+' | '.join(f'{median(x[k] for x in p):.2f}' for k in ['scan_ms','query_ms','writer_ms','cycle_ms'])+' |')
 lines += ['',f"Actual writer/query overlap was nonzero in {sum(p['writer_overlap_ms']>0 for p in active):,} of {len(active):,} changing-state readings. The raw records include overlap duration; a short writer is not represented as sustained load.",'',
 '## Actual engine and MySQL checks','','`engine-evidence/` contains the ten equivalent SQL queries through the real parser,','binder, optimizer and executor at all eight states and three distributions, with','settled-result memoization disabled. SQL anchors run between mutation batches, not',
-'concurrently with their writer. Those timings include SQL planning and textual','result rendering; they are contextual baselines, not paired speedup comparisons with','the external kernels. `oracle-evidence/result.json` records the isolated MySQL 8.4','transactional comparison. Native binlog delivery and source-to-query lag are not covered','by direct decoded ingestion, and no integrated optimization is certified by this oracle.','',
+'concurrently with their writer. Those timings include SQL planning and textual','result rendering; they are contextual baselines, not paired speedup comparisons with','the external kernels. `oracle-evidence/result.json` records the isolated MySQL 8.4','transactional comparison (240 exact checks); the factorized spelling has a separate',
+'24-check transactional comparison in `oracle-factorized-verified/`. Native binlog delivery and source-to-query lag are not covered','by direct decoded ingestion, and no integrated optimization is certified by this oracle.','',
 '## Unresolved correctness boundary','','[F1](FINDINGS.md) preserves a minimal reproducer: an ancient version submitted directly','to the store after full compaction has retired a deletion marker can resurrect the key.','Native CDC reachability has not been established. The performance matrix excludes that','invalid state and never counts it as a passing replay test.','',
 '## Interpretation limits','','These are finite batches with one reader and one writer, not a sustained update-rate','soak, multi-client admission test or cross-table transaction test. Join inputs are mutable','views of one table. Integer domains are bounded; dense strategies need guarded fallbacks.','String collations, DECIMAL, ENUM, schema evolution and spill budgets need integration','coverage. Peak RSS includes fixture, independent model and correctness checks; it is not','candidate-only memory. The system allocator differs from the shipped allocator.','Automatic background compaction is disabled for repeatable phase boundaries; explicit',
 'compaction races the query on the writer thread. Cycle time is finite-batch service',
@@ -52,6 +53,32 @@ for item in regimes:
 regime_lines+=['',f"These add {6*len(regimes)} processes and {48*len(regimes)} checked snapshots. Selection is recorded in [regime-selection.json](regime-selection.json).",'']
 position=lines.index('## Coverage and evidence')
 lines[position:position]=regime_lines
+engine=json.loads((lab/'engine-evidence/summary.json').read_text())
+prefilter=json.loads((lab/'engine-prefilter-evidence/summary.json').read_text())
+assert engine['exact_answers']+engine['resource_refusals']==240
+assert prefilter['exact_answers']+prefilter['resource_refusals']==24
+native=['### Resource-limited SQL outcomes','',f"At 100,000 invented rows and a fixed 256 MiB query cap, {engine['exact_answers']} of 240 SQL answers were exact and {engine['resource_refusals']} executions refused with a resource error. A refusal is not counted as a successful timing.",'','| SQL workload | Exact answers / 24 | Resource refusals | Median successful query ms |','|---|---:|---:|---:|']
+engine_rows=[q for scenario in range(3) for phase in json.loads((lab/f'engine-evidence/scenario-{scenario}.json').read_text())['phases'] for q in phase['cases']]
+for c in range(1,11):
+    rr=[r for r in engine_rows if r['case']==c]
+    ok=[r['ms'] for r in rr if r['correct']]
+    elapsed=f"{median(ok):.2f}" if ok else '—'
+    native.append(f"| {labels[c-1]} | {len(ok)} | {len(rr)-len(ok)} | {elapsed} |")
+native+=['','An additional native SQL experiment filters the dimension in a derived table before','the equality join, preserving duplicates, grouping, NULL handling and the expected','answer. It uses the same memory cap and changing fixtures; it does not change the','production optimizer or install the factorized prototype.','',f"That spelling produced {prefilter['exact_answers']} exact answers and {prefilter['resource_refusals']} resource refusals across 24 states. The unmodified query and any refusals remain in the evidence.",'']
+position=lines.index('## Unresolved correctness boundary')
+lines[position:position]=native
+factorized=json.loads((lab/'engine-factorized-evidence/summary.json').read_text())
+assert factorized['exact_answers']==24 and factorized['resource_refusals']==0
+native_factor=['### Factorization through the real SQL executor','','The selected join mechanism was also expressed as SQL: aggregate the fact input by','join key, then join the filtered dimension and sum the partial counts/sums. All 24','states returned exact answers at the same 256 MiB cap. This is a query-shape experiment','in the actual engine, not an installed optimizer rule.','', '| Distribution | Prefiltered join median dirty ms | Factorized join median dirty ms | Total dirty query ratio |','|---|---:|---:|---:|']
+for scenario in range(3):
+    def timings(directory):
+        r=json.loads((lab/f'{directory}/scenario-{scenario}.json').read_text())
+        return [p['cases'][0]['ms'] for p in r['phases'][1:7]]
+    before=timings('engine-prefilter-evidence');after=timings('engine-factorized-evidence')
+    native_factor.append(f"| {['uniform','hot-key skew','key-clustered'][scenario]} | {median(before):.2f} | {median(after):.2f} | {sum(before)/sum(after):.2f}× |")
+native_factor+=['','These are single-seed, sequential SQL anchor timings between mutation batches. The','concurrent writer/cycle evidence belongs to the independently confirmed external','prototype above. The uniform and clustered regressions rule out blanket adoption.','A production rule must establish type/NULL/duplicate semantics, reserve memory and','choose based on expected fanout; none of those integration claims is made here.','']
+position=lines.index('## Unresolved correctness boundary')
+lines[position:position]=native_factor
 (lab/'RESULTS.md').write_text('\n'.join(lines))
 (lab/'confirmation-summary.json').write_text(json.dumps(holdout,indent=2)+'\n')
 # Raw latency and memory distribution remains descriptive, explicitly not an SLO.

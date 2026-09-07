@@ -1,0 +1,262 @@
+[
+  {
+    "case": 1,
+    "variant": 1,
+    "name": "selective-predicate-first",
+    "processes": 3,
+    "changing_query_speedup": 0.9994592058555278,
+    "changing_cycle_speedup": 1.0098596512796343,
+    "operator_only_speedup": 1.2127918131438074,
+    "min_process_speedup": 0.976194940151093,
+    "max_process_speedup": 1.0038624127519602,
+    "scenario_medians": {
+      "0": 0.9994592058555278,
+      "1": 0.976194940151093,
+      "2": 1.0038624127519602
+    },
+    "phase_medians": {
+      "settled": 0.9682741321151525,
+      "sparse-memtable": 1.0025303718689644,
+      "sparse-flushed-overlap": 0.9958583406163609,
+      "dense-hot-memtable": 0.9944761267840538,
+      "dense-flushed-overlap": 1.0029358738216934,
+      "mixed-overlap": 1.0003709409534387,
+      "stale-replay": 1.0004505380604527,
+      "compacted": 1.01400149189248
+    }
+  },
+  {
+    "case": 2,
+    "variant": 3,
+    "name": "sorted-two-way",
+    "processes": 3,
+    "changing_query_speedup": 1.1163966939075398,
+    "changing_cycle_speedup": 1.038804885158821,
+    "operator_only_speedup": 1.7340105634263605,
+    "min_process_speedup": 1.081263829052651,
+    "max_process_speedup": 1.1772597984294675,
+    "scenario_medians": {
+      "0": 1.081263829052651,
+      "1": 1.1772597984294675,
+      "2": 1.1163966939075398
+    },
+    "phase_medians": {
+      "settled": 1.4754503238308654,
+      "sparse-memtable": 1.1496001070545518,
+      "sparse-flushed-overlap": 1.1339908722190863,
+      "dense-hot-memtable": 1.1527282798699292,
+      "dense-flushed-overlap": 1.119972000820064,
+      "mixed-overlap": 1.0909445350567424,
+      "stale-replay": 1.1073037143857773,
+      "compacted": 1.5863247763744113
+    }
+  },
+  {
+    "case": 3,
+    "variant": 6,
+    "name": "parallel-local-hash",
+    "processes": 3,
+    "changing_query_speedup": 0.9924221455021108,
+    "changing_cycle_speedup": 1.0188855538473476,
+    "operator_only_speedup": 1.563151375442982,
+    "min_process_speedup": 0.9601968701139831,
+    "max_process_speedup": 1.09720197368109,
+    "scenario_medians": {
+      "0": 0.9924221455021108,
+      "1": 0.9601968701139831,
+      "2": 1.09720197368109
+    },
+    "phase_medians": {
+      "settled": 1.0745448007769036,
+      "sparse-memtable": 1.0135447061878131,
+      "sparse-flushed-overlap": 0.9979783719650075,
+      "dense-hot-memtable": 1.0118089113229862,
+      "dense-flushed-overlap": 1.0113807446619045,
+      "mixed-overlap": 0.9385218366187962,
+      "stale-replay": 1.0025915403442776,
+      "compacted": 1.0897206058131896
+    }
+  },
+  {
+    "case": 4,
+    "variant": 2,
+    "name": "dense-heap",
+    "processes": 3,
+    "changing_query_speedup": 1.0461964804220374,
+    "changing_cycle_speedup": 0.9824340934386978,
+    "operator_only_speedup": 4.420211561903601,
+    "min_process_speedup": 0.9973554660872667,
+    "max_process_speedup": 1.1751006239589519,
+    "scenario_medians": {
+      "0": 0.9973554660872667,
+      "1": 1.0461964804220374,
+      "2": 1.1751006239589519
+    },
+    "phase_medians": {
+      "settled": 1.7111631522623343,
+      "sparse-memtable": 1.0150776800233055,
+      "sparse-flushed-overlap": 1.0946531312037027,
+      "dense-hot-memtable": 1.069188152507547,
+      "dense-flushed-overlap": 1.0653510044508636,
+      "mixed-overlap": 1.0185422426586963,
+      "stale-replay": 1.0153765397896928,
+      "compacted": 1.7706251343162198
+    }
+  },
+  {
+    "case": 5,
+    "variant": 7,
+    "name": "parallel-dense-probe",
+    "processes": 3,
+    "changing_query_speedup": 1.0115007860608067,
+    "changing_cycle_speedup": 1.0712591588484202,
+    "operator_only_speedup": 5.727087731314742,
+    "min_process_speedup": 1.0050172459751878,
+    "max_process_speedup": 1.6724226776628783,
+    "scenario_medians": {
+      "0": 1.0050172459751878,
+      "1": 1.6724226776628783,
+      "2": 1.0115007860608067
+    },
+    "phase_medians": {
+      "settled": 2.0187812273895624,
+      "sparse-memtable": 0.9894303363002721,
+      "sparse-flushed-overlap": 0.987774731649811,
+      "dense-hot-memtable": 1.035704740482014,
+      "dense-flushed-overlap": 1.0148274840868434,
+      "mixed-overlap": 1.1385745955719562,
+      "stale-replay": 1.0228474752915542,
+      "compacted": 1.95796233154419
+    }
+  },
+  {
+    "case": 6,
+    "variant": 5,
+    "name": "parallel-local-bitmaps",
+    "processes": 3,
+    "changing_query_speedup": 1.0520884700291364,
+    "changing_cycle_speedup": 1.028706614157067,
+    "operator_only_speedup": 3.895344133450647,
+    "min_process_speedup": 0.9836157634608518,
+    "max_process_speedup": 1.1106480982682772,
+    "scenario_medians": {
+      "0": 1.1106480982682772,
+      "1": 1.0520884700291364,
+      "2": 0.9836157634608518
+    },
+    "phase_medians": {
+      "settled": 1.837101579149569,
+      "sparse-memtable": 1.092018489607385,
+      "sparse-flushed-overlap": 1.0824994834687198,
+      "dense-hot-memtable": 1.0291755357091172,
+      "dense-flushed-overlap": 1.0253590413376792,
+      "mixed-overlap": 1.0298523360515048,
+      "stale-replay": 1.0354873520293146,
+      "compacted": 1.7919651244531243
+    }
+  },
+  {
+    "case": 7,
+    "variant": 2,
+    "name": "quickselect-prefix",
+    "processes": 3,
+    "changing_query_speedup": 1.0310136122035298,
+    "changing_cycle_speedup": 1.0085036261693274,
+    "operator_only_speedup": 7.337631826240584,
+    "min_process_speedup": 1.025252996429271,
+    "max_process_speedup": 1.0648869283466371,
+    "scenario_medians": {
+      "0": 1.0310136122035298,
+      "1": 1.025252996429271,
+      "2": 1.0648869283466371
+    },
+    "phase_medians": {
+      "settled": 1.936209746110578,
+      "sparse-memtable": 1.0063047921711672,
+      "sparse-flushed-overlap": 1.0376425710193957,
+      "dense-hot-memtable": 1.0360283976618587,
+      "dense-flushed-overlap": 1.0515722669541454,
+      "mixed-overlap": 1.0618731611160193,
+      "stale-replay": 1.0185925039346704,
+      "compacted": 2.0768529814534706
+    }
+  },
+  {
+    "case": 8,
+    "variant": 7,
+    "name": "parallel-halo-windows",
+    "processes": 3,
+    "changing_query_speedup": 1.1085146637417689,
+    "changing_cycle_speedup": 1.0497938840280723,
+    "operator_only_speedup": 1.8704087438691255,
+    "min_process_speedup": 1.0726122752686025,
+    "max_process_speedup": 1.275568172693803,
+    "scenario_medians": {
+      "0": 1.0726122752686025,
+      "1": 1.275568172693803,
+      "2": 1.1085146637417689
+    },
+    "phase_medians": {
+      "settled": 1.3224981623284637,
+      "sparse-memtable": 1.1416486924282276,
+      "sparse-flushed-overlap": 1.0782182444013824,
+      "dense-hot-memtable": 1.1166634331477536,
+      "dense-flushed-overlap": 1.0969254729115743,
+      "mixed-overlap": 1.119910245847167,
+      "stale-replay": 1.1219255591256188,
+      "compacted": 1.435826364704297
+    }
+  },
+  {
+    "case": 9,
+    "variant": 3,
+    "name": "dense-membership-bitmap",
+    "processes": 3,
+    "changing_query_speedup": 1.002275250525794,
+    "changing_cycle_speedup": 0.954919470025643,
+    "operator_only_speedup": 3.087630725432857,
+    "min_process_speedup": 0.9909245923814339,
+    "max_process_speedup": 1.0081093239433576,
+    "scenario_medians": {
+      "0": 1.0081093239433576,
+      "1": 0.9909245923814339,
+      "2": 1.002275250525794
+    },
+    "phase_medians": {
+      "settled": 1.3833140691301014,
+      "sparse-memtable": 1.0115036125648813,
+      "sparse-flushed-overlap": 0.9988534298603569,
+      "dense-hot-memtable": 1.0195586913168928,
+      "dense-flushed-overlap": 1.010998101248962,
+      "mixed-overlap": 1.0082509457527764,
+      "stale-replay": 1.0001487794059352,
+      "compacted": 1.5565565160339063
+    }
+  },
+  {
+    "case": 10,
+    "variant": 10,
+    "name": "demand-bitmap-dense-fold",
+    "processes": 3,
+    "changing_query_speedup": 1.1435104589370055,
+    "changing_cycle_speedup": 1.0506052462762319,
+    "operator_only_speedup": 54.49588029522712,
+    "min_process_speedup": 1.120645231290692,
+    "max_process_speedup": 1.1512552955356765,
+    "scenario_medians": {
+      "0": 1.1435104589370055,
+      "1": 1.120645231290692,
+      "2": 1.1512552955356765
+    },
+    "phase_medians": {
+      "settled": 3.439033563460676,
+      "sparse-memtable": 1.1540472399193848,
+      "sparse-flushed-overlap": 1.1310030830068132,
+      "dense-hot-memtable": 1.1389694901484095,
+      "dense-flushed-overlap": 1.135268600760523,
+      "mixed-overlap": 1.128609155810103,
+      "stale-replay": 1.155902477086346,
+      "compacted": 3.5182773163768486
+    }
+  }
+]

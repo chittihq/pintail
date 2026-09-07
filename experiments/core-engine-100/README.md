@@ -1,7 +1,9 @@
 # Ten core workloads × ten optimization approaches
 
-Status: implementation and measurement in progress. Isolated experiments only;
-no production path is changed. Base: `e8e7af0`.
+Status: the 100-approach changing-data screen and independent confirmations are
+complete. [Results and resource failures](RESULTS.md) include native SQL follow-ups
+and transactional MySQL checks. No production engine path is changed. The measured
+engine base is `51665c5`; each evidence directory records its experiment commit.
 
 Workloads, in execution order:
 1. Filter and project a columnar scan.
@@ -37,8 +39,10 @@ CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path experiments/core
 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo clippy --manifest-path experiments/core-engine-100/Cargo.toml --all-targets -- -D warnings
 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo build --release --manifest-path experiments/core-engine-100/Cargo.toml
 ```
-The executable arguments are `CASE VARIANT ROWS SCENARIO SEED ROUNDS`; variant
-zero is the reference and 1..10 are alternatives. It emits one JSON record.
+The optional static kernel executable accepts `CASE VARIANT ROWS SCENARIO SEED
+ROUNDS`; it is a development aid, not the update-aware evidence path. The measured
+`live` binary accepts `CASE VARIANT ROWS SCENARIO SEED`, and `run.py` drives it.
+Variant zero is the reference and 1..10 are alternatives.
 
 ## Required live-update contract — owner direction, 2026-09-08
 
@@ -123,3 +127,32 @@ writer, not a multi-client fairness test; system allocator; no per-query tracked
 memory budget in the external algorithms. RSS is whole-process high-water usage.
 Dense strategies rely on bounded fixture domains and need guarded fallbacks before
 integration. The explicit post-retirement replay failure remains in FINDINGS.md.
+
+
+## Reproduce the follow-up checks
+
+After building the binaries on the build host:
+```
+python3 experiments/core-engine-100/confirm.py
+python3 experiments/core-engine-100/engine.py
+python3 experiments/core-engine-100/engine.py --prefilter-join --out engine-prefilter-evidence
+python3 experiments/core-engine-100/engine.py --factorized-join --out engine-factorized-evidence
+PINTAIL_DISABLE_SETTLED_MEMO=1 python3 experiments/core-engine-100/oracle.py --rows 1000
+PINTAIL_DISABLE_SETTLED_MEMO=1 PINTAIL_LAB_JOIN_FACTORIZED=1 python3 experiments/core-engine-100/oracle.py --rows 1000 --cases 5 --out oracle-factorized-verified
+python3 experiments/core-engine-100/report.py experiments/core-engine-100
+```
+Use a fresh checkout/output location for new measurements; confirmation refuses to
+overwrite existing raw records. `engine.py` explicitly records resource refusals
+as `correct: false` and reports counts, never a passing gate. The fixed SQL memory
+ceiling is 256 MiB. SQL anchors run between commits; the prototype matrix races its
+writer. Automatic background compaction is disabled in the controlled fixture,
+and explicit compaction runs on the writer thread. Cycle time is finite-batch cost,
+not sustained update throughput or source-to-query CDC lag.
+
+The distribution-specific confirmations are selected in `regime-selection.json`:
+for each selection, run `run.py` with its case/scenario and variants `0,<variant>`,
+`--rows 200000 --repeats 3 --seed-base 17011 --out regime-<case>-<scenario>`.
+The complete scan includes four columns before external kernels execute; physical
+pushdown/fusion and maintained indexes require separate integrated experiments.
+Oracle SQL/TSV exports remain local and reproducible; committed manifests retain
+their SHA-256 hashes alongside the query records and differential outcomes.
