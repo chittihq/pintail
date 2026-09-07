@@ -1465,7 +1465,7 @@ groups. This implementation instead bounds the retained partition with the
 query tracker and refuses a partition whose keys, state, and computed values
 do not fit. It does not promise spilling within a single window partition.
 
-## Collection aggregates spill unfinished elements
+### Collection aggregates spill unfinished elements
 
 GROUP_CONCAT runs retain each element's original value and order keys.
 Revival rebuilds DISTINCT identity from the original value and merges
@@ -1479,7 +1479,7 @@ applies that byte truncation once, after all fragments are merged. The
 merged state and finished value of one group must still fit in the query
 budget; external storage within one collection value is not implemented.
 
-## Correlated ON replays a bounded right side
+### Correlated ON replays a bounded right side
 
 The nested-loop fallback stages the right side, retaining an eighth of the
 query ceiling before moving it to a replayable run. It reads the left side
@@ -1493,7 +1493,7 @@ the left side as the probe instead preserves the existing encounter order
 and the left, semi, anti, and scalar matching rules with one evaluation
 loop. Side selection and multi-row probe tiles remain future optimizations.
 
-## Oversized grace keys use a row-bounded replay
+### Oversized grace keys use a row-bounded replay
 
 Hash repartitioning remains the first response when a grace partition does
 not fit. At its depth bound, the join replays one build row at a time for
@@ -1508,7 +1508,7 @@ probe files. For a single equal key its comparisons correspond to candidate
 output pairs; a partition containing many colliding distinct keys can incur
 quadratic comparison work. Each candidate pair and predicate must fit.
 
-## Prepared membership owns external IN storage
+### Prepared membership owns external IN storage
 
 Subquery resolution previously replaced every IN result with a literal
 argument list before expression compilation. Large sets now become a
