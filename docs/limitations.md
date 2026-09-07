@@ -250,6 +250,14 @@ stays readable as a list of things to fix.
   live rows - so what selects the inexact path is not yet known and the
   defect has no reproduction. Tracked as G14.
 
+  One path that could produce exactly this has since been closed: the
+  two-pass lane for a column whose batch storage is `Float64` was chosen
+  without asking whether the planner had typed the average as an exact
+  decimal, so an exact average could accumulate through an `f64`. That
+  guard is now in place. It is not confirmed to be the cause - the defect
+  was never reproduced, before or after - so this entry stays until a gate
+  run that would have failed passes for a reason that can be pointed at.
+
 ## Snapshot engine
 
 - A missing `FLUSH TABLES WITH READ LOCK` privilege can be allowed explicitly,

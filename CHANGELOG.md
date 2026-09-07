@@ -4,6 +4,20 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- An `AVG` the planner typed as an exact decimal could accumulate through
+  an `f64`. The two-pass lane is chosen from the batch column's storage
+  type, and the arm for a `Float64` column returned the float accumulator
+  without asking whether the aggregate required exactness - the arm beside
+  it, for a decimal column, does ask. Since `f64` addition is not
+  associative, an average that fell through could move with how the rows
+  were split across workers. This is the shape of the open `AVG`
+  correctness finding, though that one was never reproduced and is not
+  claimed fixed.
+
 ## [0.1.2-rc11] - 2026-09-07
 
 ### Known issues
