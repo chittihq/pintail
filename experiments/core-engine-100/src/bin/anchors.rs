@@ -12,6 +12,12 @@ fn main() {
     if let Some(p) = &export {
         std::fs::create_dir_all(p).unwrap();
     }
+    let record_resource_errors = std::env::var_os("PINTAIL_LAB_RECORD_RESOURCE_ERRORS").is_some();
+    let filtered_join = std::env::var_os("PINTAIL_LAB_JOIN_PREFILTER").is_some();
+    let selected_case = std::env::var("PINTAIL_LAB_CASE")
+        .ok()
+        .map(|s| s.parse::<usize>().unwrap());
+    let mut all_correct = true;
     let mut f = Fixture::new(n, seed, scenario);
     let mut evidence = Vec::new();
     for phase in 0..8 {
@@ -19,10 +25,27 @@ fn main() {
         let snapshot = f.table.snapshot();
         let mut cases = Vec::new();
         for case in 1..=10 {
-            let sql = anchor::sql(case, &d);
+            if selected_case.is_some_and(|selected| selected != case) {
+                continue;
+            }
+            let sql = if case == 5 && filtered_join {
+                anchor::filtered_join_sql(&d)
+            } else {
+                anchor::sql(case, &d)
+            };
             let expected = anchor::expected(case, &d);
             let start = Instant::now();
-            let actual = anchor::execute(&snapshot, &d, &sql);
+            let actual = match anchor::try_execute(&snapshot, &d, &sql) {
+                Ok(actual) => actual,
+                Err(error @ pintail_exec::ExecError::MemoryLimitExceeded { .. })
+                    if record_resource_errors =>
+                {
+                    all_correct = false;
+                    cases.push(serde_json::json!({"case":case,"sql":sql,"ms":start.elapsed().as_secs_f64()*1000.,"correct":false,"resource_error":error.to_string()}));
+                    continue;
+                }
+                Err(error) => panic!("engine anchor case={case} phase={phase}: {error}"),
+            };
             let ms = start.elapsed().as_secs_f64() * 1000.;
             assert_eq!(actual, expected, "engine anchor case={case} phase={phase}");
             cases.push(serde_json::json!({"case":case,"sql":sql,"ms":ms,"rows":actual.len(),"correct":true}));
@@ -103,6 +126,6 @@ fn main() {
     }
     println!(
         "{}",
-        serde_json::json!({"rows":n,"scenario":scenario,"seed":seed,"phases":evidence,"correct":true})
+        serde_json::json!({"rows":n,"scenario":scenario,"seed":seed,"phases":evidence,"correct":all_correct,"query_memory_limit_bytes":256usize<<20,"record_resource_errors":record_resource_errors,"filtered_join":filtered_join,"settled_memo_disabled":std::env::var_os("PINTAIL_DISABLE_SETTLED_MEMO").is_some()})
     );
 }

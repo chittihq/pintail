@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 10,
+      "variant": 10,
+      "name": "demand-bitmap-dense-fold",
+      "processes": 3,
+      "changing_query_speedup": 1.1435104589370055,
+      "changing_cycle_speedup": 1.0506052462762319,
+      "operator_only_speedup": 54.49588029522712,
+      "min_process_speedup": 1.120645231290692,
+      "max_process_speedup": 1.1512552955356765,
+      "scenario_medians": {
+        "0": 1.1435104589370055,
+        "1": 1.120645231290692,
+        "2": 1.1512552955356765
+      },
+      "phase_medians": {
+        "settled": 3.439033563460676,
+        "sparse-memtable": 1.1540472399193848,
+        "sparse-flushed-overlap": 1.1310030830068132,
+        "dense-hot-memtable": 1.1389694901484095,
+        "dense-flushed-overlap": 1.135268600760523,
+        "mixed-overlap": 1.128609155810103,
+        "stale-replay": 1.155902477086346,
+        "compacted": 3.5182773163768486
+      }
+    }
+  ]
+}

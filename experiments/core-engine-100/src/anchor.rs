@@ -4,7 +4,7 @@ use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
 use pintail_exec::{
-    Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
+    ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, SnapshotScanProvider,
     collation::Collation,
 };
 use pintail_sql::{Binder, parse_statement};
@@ -22,6 +22,12 @@ pub fn sql(case: usize, d: &Data) -> String {
 8=>{let w=if d.scenario==1{255}else{63};format!("SELECT id,SUM(v) OVER (ORDER BY id ROWS {w} PRECEDING),COUNT(v) OVER (ORDER BY id ROWS {w} PRECEDING),MIN(v) OVER (ORDER BY id ROWS {w} PRECEDING) FROM facts ORDER BY id")},
 9=>"SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id".into(),
 10=>"SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128".into(),_=>unreachable!()}
+}
+pub fn filtered_join_sql(d: &Data) -> String {
+    format!(
+        "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN (SELECT k,g FROM facts WHERE id < {} AND MOD(id,7) <> 0) d ON f.k=d.k GROUP BY d.g ORDER BY d.g",
+        d.domain.min(512)
+    )
 }
 pub fn expected(case: usize, d: &Data) -> Vec<Vec<String>> {
     let null = "NULL".to_string();
@@ -120,6 +126,13 @@ fn render(v: &Value) -> String {
     }
 }
 pub fn execute(snapshot: &TableSnapshot, d: &Data, sql: &str) -> Vec<Vec<String>> {
+    try_execute(snapshot, d, sql).unwrap()
+}
+pub fn try_execute(
+    snapshot: &TableSnapshot,
+    d: &Data,
+    sql: &str,
+) -> Result<Vec<Vec<String>>, ExecError> {
     let db = DatabaseId::new(1);
     let table = TableId::new(1);
     let catalog = CatalogSnapshot::new([DatabaseEntry::new(
@@ -143,9 +156,9 @@ pub fn execute(snapshot: &TableSnapshot, d: &Data, sql: &str) -> Vec<Vec<String>
         Collation::default(),
     )
     .unwrap();
-    let mut exec = Execution::start(plan, &provider, 256 << 20, Collation::default()).unwrap();
+    let mut exec = Execution::start(plan, &provider, 256 << 20, Collation::default())?;
     let mut out = Vec::new();
-    while let Some(batch) = exec.next_batch().unwrap() {
+    while let Some(batch) = exec.next_batch()? {
         for i in batch.selection().selected_rows() {
             out.push(
                 batch
@@ -156,5 +169,5 @@ pub fn execute(snapshot: &TableSnapshot, d: &Data, sql: &str) -> Vec<Vec<String>
             );
         }
     }
-    out
+    Ok(out)
 }

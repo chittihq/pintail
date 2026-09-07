@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 8,
+      "variant": 7,
+      "name": "parallel-halo-windows",
+      "processes": 3,
+      "changing_query_speedup": 1.1085146637417689,
+      "changing_cycle_speedup": 1.0497938840280723,
+      "operator_only_speedup": 1.8704087438691255,
+      "min_process_speedup": 1.0726122752686025,
+      "max_process_speedup": 1.275568172693803,
+      "scenario_medians": {
+        "0": 1.0726122752686025,
+        "1": 1.275568172693803,
+        "2": 1.1085146637417689
+      },
+      "phase_medians": {
+        "settled": 1.3224981623284637,
+        "sparse-memtable": 1.1416486924282276,
+        "sparse-flushed-overlap": 1.0782182444013824,
+        "dense-hot-memtable": 1.1166634331477536,
+        "dense-flushed-overlap": 1.0969254729115743,
+        "mixed-overlap": 1.119910245847167,
+        "stale-replay": 1.1219255591256188,
+        "compacted": 1.435826364704297
+      }
+    }
+  ]
+}

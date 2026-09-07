@@ -1,0 +1,31 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 5,
+      "variant": 10,
+      "name": "factorized-fact-aggregate",
+      "processes": 3,
+      "changing_query_speedup": 2.0576232816630093,
+      "changing_cycle_speedup": 1.442138442395246,
+      "operator_only_speedup": 47.212261008713156,
+      "min_process_speedup": 1.6911520017968706,
+      "max_process_speedup": 2.109334461274525,
+      "scenario_medians": {
+        "1": 2.0576232816630093
+      },
+      "phase_medians": {
+        "settled": 23.393624033236165,
+        "sparse-memtable": 2.9925030942909934,
+        "sparse-flushed-overlap": 2.772281138994564,
+        "dense-hot-memtable": 1.7171638158365667,
+        "dense-flushed-overlap": 1.7685281652188225,
+        "mixed-overlap": 1.6828532256053264,
+        "stale-replay": 1.6664770507232731,
+        "compacted": 10.497284938106727
+      }
+    }
+  ]
+}

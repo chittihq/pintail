@@ -1,0 +1,31 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 10,
+      "variant": 3,
+      "name": "dense-decorrelation",
+      "processes": 3,
+      "changing_query_speedup": 1.2203528886543402,
+      "changing_cycle_speedup": 1.0628791650667908,
+      "operator_only_speedup": 39.001382760595476,
+      "min_process_speedup": 1.1802331035510747,
+      "max_process_speedup": 1.2644582836509835,
+      "scenario_medians": {
+        "1": 1.2203528886543402
+      },
+      "phase_medians": {
+        "settled": 6.545054822645341,
+        "sparse-memtable": 1.3669328158418392,
+        "sparse-flushed-overlap": 1.3382797187987499,
+        "dense-hot-memtable": 1.1929054807414974,
+        "dense-flushed-overlap": 1.219700800540736,
+        "mixed-overlap": 1.139008406881307,
+        "stale-replay": 1.096866445633287,
+        "compacted": 3.5044529091934797
+      }
+    }
+  ]
+}

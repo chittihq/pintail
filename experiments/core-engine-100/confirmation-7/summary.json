@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 7,
+      "variant": 2,
+      "name": "quickselect-prefix",
+      "processes": 3,
+      "changing_query_speedup": 1.0310136122035298,
+      "changing_cycle_speedup": 1.0085036261693274,
+      "operator_only_speedup": 7.337631826240584,
+      "min_process_speedup": 1.025252996429271,
+      "max_process_speedup": 1.0648869283466371,
+      "scenario_medians": {
+        "0": 1.0310136122035298,
+        "1": 1.025252996429271,
+        "2": 1.0648869283466371
+      },
+      "phase_medians": {
+        "settled": 1.936209746110578,
+        "sparse-memtable": 1.0063047921711672,
+        "sparse-flushed-overlap": 1.0376425710193957,
+        "dense-hot-memtable": 1.0360283976618587,
+        "dense-flushed-overlap": 1.0515722669541454,
+        "mixed-overlap": 1.0618731611160193,
+        "stale-replay": 1.0185925039346704,
+        "compacted": 2.0768529814534706
+      }
+    }
+  ]
+}
