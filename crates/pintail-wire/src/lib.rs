@@ -4,6 +4,7 @@ mod admission;
 mod engine;
 mod limits;
 mod observe;
+mod presentation;
 mod replica_cache;
 mod server;
 

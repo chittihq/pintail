@@ -141,7 +141,7 @@ let mysqlServerVersion = ''
 /// Wire queries that met a table mid-copy and waited for it.
 let notReadyWaits = 0
 
-async function pintailQuery(sql: string): Promise<unknown[][]> {
+async function pintailQuery(sql: string, metadata?: (fields: mysql.FieldPacket[]) => void): Promise<unknown[][]> {
   for (let attempt = 0; ; attempt += 1) {
     if (!pintailWire) {
       pintailWire = await mysql.createConnection({
@@ -166,7 +166,8 @@ async function pintailQuery(sql: string): Promise<unknown[][]> {
     }
     const connection = pintailWire
     try {
-      const [rows] = await connection.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+      const [rows, fields] = await connection.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+      metadata?.(fields)
       return rows as unknown as unknown[][]
     } catch (error) {
       // A table whose copy is running answers "not ready" rather than a
@@ -226,9 +227,37 @@ function corpusPool(): mysql.Pool {
   return mysqlPool
 }
 
-async function poolRows(sql: string): Promise<unknown[][]> {
-  const [rows] = await corpusPool().query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+async function poolRows(sql: string, metadata?: (fields: mysql.FieldPacket[]) => void): Promise<unknown[][]> {
+  const [rows, fields] = await corpusPool().query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+  metadata?.(fields)
   return rows as unknown as unknown[][]
+}
+
+// Key membership, default and temporary-field flags describe a source execution
+// plan, not the result value contract. Keep raw differences in the evidence.
+function clientColumnFlags(field: mysql.FieldPacket): number {
+  let mask = 1 | 16 | 32 | 64 | 128 | 256 | 1024 | 2048
+  // Numeric BINARY_FLAG changes when an expression becomes a temporary field.
+  if ([0, 1, 2, 3, 4, 5, 8, 9, 13, 16, 246].includes(field.columnType)) mask &= ~128
+  return field.flags & mask
+}
+
+function diffColumnMetadata(expected: mysql.FieldPacket[], actual: mysql.FieldPacket[]): string | undefined {
+  const differences: string[] = []
+  if (expected.length !== actual.length) differences.push(`column count ${expected.length} != ${actual.length}`)
+  for (const [index, field] of expected.entries()) {
+    const other = actual[index]
+    if (!other) continue
+    for (const key of ['columnType', 'flags', 'decimals', 'characterSet', 'columnLength'] as const) {
+      const left = key === 'flags' ? clientColumnFlags(field) : field[key]
+      const right = key === 'flags' ? clientColumnFlags(other) : other[key]
+      if (left !== right) differences.push(`column ${index} (${field.name}) ${key}: mysql=${left} pintail=${right}`)
+      if (key === 'flags' && field.flags !== other.flags) {
+        log(`metadata flags column ${index} (${field.name}): mysql=${field.flags} pintail=${other.flags}; contract=${left}/${right}`)
+      }
+    }
+  }
+  return differences.length ? differences.join('\n') : undefined
 }
 
 // ---------------------------------------------------------------------------
@@ -401,8 +430,9 @@ async function verifyCorpus(phase: string) {
       return
     }
     let expected: unknown[][]
+    let expectedFields: mysql.FieldPacket[] = []
     try {
-      expected = await poolRows(query.sql)
+      expected = await poolRows(query.sql, (fields) => { expectedFields = fields })
     } catch (error) {
       settled[index] = {
         phase,
@@ -413,8 +443,9 @@ async function verifyCorpus(phase: string) {
       return
     }
     try {
-      const actual = await pintailQuery(query.sql)
-      const diff = diffRows(expected, actual, { csvColumns: query.csvColumns })
+      let actualFields: mysql.FieldPacket[] = []
+      const actual = await pintailQuery(query.sql, (fields) => { actualFields = fields })
+      const diff = [diffRows(expected, actual, { csvColumns: query.csvColumns }), diffColumnMetadata(expectedFields, actualFields)].filter(Boolean).join('\n') || undefined
       const failure = query.documentedGap ? ('WARN' as const) : ('FAIL' as const)
       settled[index] = {
         phase,

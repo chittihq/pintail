@@ -12,6 +12,8 @@
 pub enum ColumnType {
     /// `DECIMAL` in its modern, exact representation.
     MysqlTypeNewdecimal = 0xf6,
+    /// An ENUM expression retaining its declared domain.
+    MysqlTypeEnum = 0xf7,
     /// 8-bit integer.
     MysqlTypeTiny = 0x01,
     /// 16-bit integer.
@@ -59,6 +61,12 @@ pub enum ColumnType {
 pub struct ColumnFlags(u16);
 
 impl ColumnFlags {
+    /// Preserves every flag advertised by a source declaration.
+    #[must_use]
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+
     /// The column never yields NULL.
     pub const NOT_NULL_FLAG: Self = Self(0x0001);
     /// The column is part of the primary key.

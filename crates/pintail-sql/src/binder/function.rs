@@ -184,6 +184,7 @@ pub(super) fn bind_window_function(
             let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
             (
                 WindowFunction::Aggregate(BoundAggregate {
+                    declared: true,
                     function: aggregate_function,
                     expr,
                     distinct: false,
@@ -974,7 +975,10 @@ pub(super) fn bind_cast(
         );
     }
     bind_scalar(
-        ScalarFunction::Cast(target),
+        ScalarFunction::DeclaredCast {
+            target,
+            characters: declared_characters(data_type),
+        },
         vec![bind_expr_inner(
             expr, tables, aggregates, windows, subqueries,
         )?],
@@ -1024,11 +1028,27 @@ pub(super) fn bind_convert(
         }
     };
     bind_scalar(
-        ScalarFunction::Cast(target),
+        ScalarFunction::DeclaredCast {
+            target,
+            characters: data_type.as_ref().and_then(declared_characters),
+        },
         vec![bind_expr_inner(
             expr, tables, aggregates, windows, subqueries,
         )?],
     )
+}
+
+fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
+    match data_type {
+        SqlDataType::Char(Some(sqlparser::ast::CharacterLength::IntegerLength {
+            length, ..
+        }))
+        | SqlDataType::Character(Some(sqlparser::ast::CharacterLength::IntegerLength {
+            length,
+            ..
+        })) => u32::try_from(*length).ok(),
+        _ => None,
+    }
 }
 
 fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
@@ -1235,7 +1255,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::Ceil { decimal: true }
         | ScalarFunction::Floor { decimal: true }
         | ScalarFunction::Sign
-        | ScalarFunction::JsonDepth => (Some(DataType::Int64), args[0].nullable),
+        | ScalarFunction::JsonDepth | ScalarFunction::PackedDateParts { .. } => (Some(DataType::Int64), args[0].nullable),
         ScalarFunction::Truncate { decimal: true } => {
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));
@@ -1260,7 +1280,10 @@ pub(super) fn bind_scalar(
         ScalarFunction::Round { decimal: false }
         | ScalarFunction::Ceil { decimal: false }
         | ScalarFunction::Floor { decimal: false } => (
-            Some(DataType::Float64),
+            Some(match args[0].data_type.map(DataType::storage_type) {
+                Some(data_type @ (DataType::Int64 | DataType::UInt64)) => data_type,
+                _ => DataType::Float64,
+            }),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Abs { .. } => (
@@ -1460,7 +1483,7 @@ pub(super) fn bind_scalar(
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::Cast(target) => (Some(target), args[0].nullable),
+        ScalarFunction::Cast(target) | ScalarFunction::DeclaredCast { target, .. } => (Some(target), args[0].nullable),
         ScalarFunction::Now => (Some(DataType::DateTime64 { fsp: 0 }), false),
         ScalarFunction::CurrentDate => (Some(DataType::Date32), false),
         ScalarFunction::Curtime => (Some(DataType::Time64 { fsp: 0 }), false),

@@ -56,6 +56,8 @@ pub(crate) const AUTOCOMMIT_REQUIRED: &str = "autocommit cannot be disabled on a
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)] // independent per-column wire facts
 pub struct QueryField {
+    /// Presentation metadata retained independently of execution carriers.
+    pub wire_column: Option<pintail_protocol::Column>,
     pub name: String,
     pub data_type: Option<DataType>,
     pub nullable: bool,
@@ -710,6 +712,7 @@ impl ReplicaEngine {
             .bind(statement)
             .map_err(|error| query_bind_error(&error))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);
+        let wire_columns = crate::presentation::columns(&bound, catalog, facts);
         let result_collations = bound
             .projection
             .iter()
@@ -769,6 +772,7 @@ impl ReplicaEngine {
             .iter()
             .enumerate()
             .map(|(index, field)| QueryField {
+                wire_column: wire_columns.get(index).cloned(),
                 name: field.name.clone(),
                 data_type: field.data_type,
                 nullable: result_nullability
@@ -835,6 +839,7 @@ impl ReplicaEngine {
         stats.rows = 1;
         Ok(QueryOutput {
             fields: vec![QueryField {
+                wire_column: None,
                 name: "plan".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -1067,6 +1072,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
             .fields
             .into_iter()
             .map(|field| QueryField {
+                wire_column: None,
                 name: field.name,
                 data_type: Some(field.data_type),
                 nullable: field.nullable,

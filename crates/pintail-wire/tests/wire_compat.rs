@@ -569,7 +569,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .columns()
             .expect("long group concat columns")[0]
             .column_type(),
-        ColumnType::MYSQL_TYPE_BLOB
+        ColumnType::MYSQL_TYPE_LONG_BLOB
     );
     let _: Vec<mysql_async::Row> = long_concat_metadata
         .collect()
@@ -584,6 +584,42 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("wire query");
     assert_eq!(rows, vec![(1, "launch".to_owned()), (2, "land".to_owned())]);
+
+    let mut exact = connection
+        .exec_iter("SELECT SUM(id), COUNT(*), CAST(1 AS DECIMAL(18,4)), ROUND(CAST(9223372036854775807 AS SIGNED), 0) FROM events", ())
+        .await
+        .expect("prepared exact metadata");
+    let exact_columns = exact.columns().expect("exact columns");
+    assert_eq!(
+        exact_columns[0].column_type(),
+        ColumnType::MYSQL_TYPE_NEWDECIMAL
+    );
+    assert_eq!(exact_columns[0].decimals(), 0);
+    assert!(
+        exact_columns[1]
+            .flags()
+            .contains(ColumnFlags::NOT_NULL_FLAG)
+    );
+    assert!(
+        !exact_columns[1]
+            .flags()
+            .contains(ColumnFlags::UNSIGNED_FLAG)
+    );
+    assert_eq!(exact_columns[2].decimals(), 4);
+    assert_eq!(
+        exact_columns[3].column_type(),
+        ColumnType::MYSQL_TYPE_LONGLONG
+    );
+    let exact_rows: Vec<mysql_async::Row> = exact.collect().await.expect("prepared exact rows");
+    assert_eq!(
+        exact_rows[0].clone().unwrap(),
+        vec![
+            mysql_async::Value::Bytes(b"3".to_vec()),
+            mysql_async::Value::Int(2),
+            mysql_async::Value::Bytes(b"1.0000".to_vec()),
+            mysql_async::Value::Int(i64::MAX),
+        ]
+    );
 
     let mut json_result = connection
         .query_iter(

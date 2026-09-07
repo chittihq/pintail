@@ -211,7 +211,12 @@ fn subject(expr: &BoundExpr) -> Option<Subject<'_>> {
         return None;
     }
     let unit = match function {
-        ScalarFunction::Date | ScalarFunction::Cast(DataType::Date32) => Unit::Day,
+        ScalarFunction::Date
+        | ScalarFunction::Cast(DataType::Date32)
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Date32,
+            ..
+        } => Unit::Day,
         ScalarFunction::DatePart(DatePart::Year) => Unit::Year,
         _ => return None,
     };

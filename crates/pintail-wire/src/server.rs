@@ -1604,6 +1604,33 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
 // One arm per wire type: splitting it hides the correspondence.
 #[allow(clippy::too_many_lines)]
 fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<Vec<u8>>> {
+    if let Some(column) = &field.wire_column {
+        if matches!(column.coltype, ColumnType::MysqlTypeNewdecimal)
+            && !matches!(value, Value::Null)
+        {
+            let mut encoded = Vec::new();
+            put_length_encoded_bytes(&mut encoded, &text_column_value(value).unwrap_or_default());
+            return Ok(Some(encoded));
+        }
+        let integer = match value {
+            Value::Int64(value) => Some(*value),
+            Value::UInt64(value) => Some(i64::from_le_bytes(value.to_le_bytes())),
+            Value::Boolean(value) => Some(i64::from(*value)),
+            _ => None,
+        };
+        if let Some(integer) = integer {
+            let width = match column.coltype {
+                ColumnType::MysqlTypeTiny => Some(IntWidth::Tiny),
+                ColumnType::MysqlTypeShort => Some(IntWidth::Short),
+                ColumnType::MysqlTypeLong => Some(IntWidth::Long),
+                ColumnType::MysqlTypeLonglong => Some(IntWidth::LongLong),
+                _ => None,
+            };
+            if let Some(width) = width {
+                return Ok(Some(encode_binary_int(integer, width)));
+            }
+        }
+    }
     let length_encoded = |bytes: &[u8]| {
         let mut encoded = Vec::new();
         put_length_encoded_bytes(&mut encoded, bytes);
@@ -1795,12 +1822,43 @@ fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     }
 }
 
-fn mysql_column(
+fn negotiated_column(
+    field: &QueryField,
+    declared: &Column,
+    group_concat_max_len: usize,
+    charset: &str,
+    negotiated: u16,
+) -> Column {
+    let mut column = declared.clone();
+    column.column.clone_from(&field.name);
+    if column.character_set != 63 {
+        column.character_set = mysql_text_character_set(charset, negotiated);
+        if column.character_set == 63 {
+            column.colflags |= ColumnFlags::BINARY_FLAG;
+        }
+    }
+    if field.group_concat {
+        column.coltype = if group_concat_max_len > 512 {
+            ColumnType::MysqlTypeLongBlob
+        } else {
+            ColumnType::MysqlTypeVarString
+        };
+        column.column_length = u32::try_from(group_concat_max_len)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(if group_concat_max_len > 512 { 64 } else { 4 });
+    }
+    column
+}
+
+pub(crate) fn mysql_column(
     field: &QueryField,
     group_concat_max_len: usize,
     charset: &str,
     negotiated: u16,
 ) -> Column {
+    if let Some(column) = &field.wire_column {
+        return negotiated_column(field, column, group_concat_max_len, charset, negotiated);
+    }
     let (coltype, unsigned) = match (field.wire_hint, field.data_type) {
         // Values stay variable-width text (SEC_TO_TIME's fraction follows
         // its input), but the column TYPE matches what MySQL advertises.
@@ -2117,6 +2175,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     };
     Some(QueryOutput {
         fields: vec![QueryField {
+            wire_column: None,
             name: name.to_owned(),
             data_type: value.data_type(),
             nullable: false,
@@ -2141,6 +2200,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
     QueryOutput {
         fields: vec![
             QueryField {
+                wire_column: None,
                 name: "Level".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -2151,6 +2211,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 wire_hint: None,
             },
             QueryField {
+                wire_column: None,
                 name: "Code".to_owned(),
                 data_type: Some(DataType::UInt64),
                 nullable: false,
@@ -2161,6 +2222,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 wire_hint: None,
             },
             QueryField {
+                wire_column: None,
                 name: "Message".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -2769,6 +2831,7 @@ mod tests {
     fn json_results_advertise_mysql_json_metadata() {
         let column = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "document".to_owned(),
                 data_type: Some(DataType::Json),
                 nullable: true,
@@ -2792,6 +2855,7 @@ mod tests {
         // TIMESTAMP does. Without the flag this advertised DATETIME (12).
         let stamped = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "updated_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 6 }),
                 nullable: true,
@@ -2808,6 +2872,7 @@ mod tests {
         assert_eq!(stamped.coltype, ColumnType::MysqlTypeTimestamp);
         let plain = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "created_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 0 }),
                 nullable: false,
@@ -2828,6 +2893,7 @@ mod tests {
     fn result_columns_preserve_numeric_binary_and_nullability_flags() {
         let unsigned = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "ordinal_position".to_owned(),
                 data_type: Some(DataType::UInt64),
                 nullable: false,
@@ -2847,6 +2913,7 @@ mod tests {
 
         let nullable_text = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "column_default".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: true,
@@ -2865,6 +2932,7 @@ mod tests {
 
         let binary = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "payload".to_owned(),
                 data_type: Some(DataType::Binary),
                 nullable: true,
@@ -2888,6 +2956,7 @@ mod tests {
     fn result_columns_report_decimal_and_temporal_scale() {
         let decimal = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "amount".to_owned(),
                 data_type: Some(DataType::Decimal {
                     precision: 18,
@@ -2910,6 +2979,7 @@ mod tests {
 
         let datetime = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "created_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 6 }),
                 nullable: false,
@@ -2946,6 +3016,7 @@ mod tests {
         ] {
             let column = mysql_column(
                 &QueryField {
+                    wire_column: None,
                     name: "value".to_owned(),
                     data_type: Some(DataType::Utf8),
                     nullable: true,
@@ -2970,6 +3041,7 @@ mod tests {
         // any client that negotiated something else.
         let column = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "value".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: true,
@@ -2991,6 +3063,7 @@ mod tests {
     #[test]
     fn group_concat_metadata_follows_the_session_limit_threshold() {
         let field = QueryField {
+            wire_column: None,
             name: "labels".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: true,
@@ -3013,6 +3086,7 @@ mod tests {
     #[test]
     fn text_result_metadata_follows_the_session_charset() {
         let field = QueryField {
+            wire_column: None,
             name: "label".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: false,

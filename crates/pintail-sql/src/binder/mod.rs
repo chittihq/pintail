@@ -864,6 +864,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         last.joins.push(BoundJoin {
+            scalar_aggregate: false,
             kind: if negated {
                 BoundJoinKind::Anti
             } else {
@@ -992,6 +993,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         last.joins.push(BoundJoin {
+            scalar_aggregate: false,
             kind: if negated {
                 BoundJoinKind::Anti
             } else {
@@ -1165,6 +1167,7 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         };
         last.joins.push(BoundJoin {
+            scalar_aggregate: aggregate,
             kind: if aggregate {
                 BoundJoinKind::Left
             } else {
@@ -1389,6 +1392,7 @@ impl<'catalog> Binder<'catalog> {
                     });
                 }
                 joins.push(BoundJoin {
+                    scalar_aggregate: false,
                     kind,
                     table,
                     condition,
@@ -2479,7 +2483,19 @@ fn bind_expr_inner(
                             }
                         });
                     }
-                    return Ok(folded.expect("composite fields list at least two parts"));
+                    let folded = folded.expect("composite fields list at least two parts");
+                    let width = u8::try_from(
+                        parts.len() * 2 + 1 + usize::from(parts[0] == DatePart::Year) * 2,
+                    )
+                    .unwrap_or(9);
+                    return Ok(BoundExpr {
+                        data_type: folded.data_type,
+                        nullable: folded.nullable,
+                        kind: BoundExprKind::Scalar {
+                            function: ScalarFunction::PackedDateParts { width },
+                            args: vec![folded],
+                        },
+                    });
                 }
                 _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
             };
@@ -3755,6 +3771,7 @@ fn bind_aggregate(
     }
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let aggregate = BoundAggregate {
+        declared: true,
         function: aggregate_function,
         expr,
         distinct,
@@ -4281,11 +4298,13 @@ fn rewrite_group_references(
             .iter()
             .position(|aggregate| {
                 aggregate.function == AggregateFunction::AnyValue
+                    && !aggregate.declared
                     && !aggregate.distinct
                     && aggregate.expr.as_ref() == Some(&argument)
             })
             .unwrap_or_else(|| {
                 aggregates.push(BoundAggregate {
+                    declared: false,
                     function: AggregateFunction::AnyValue,
                     data_type: argument.data_type,
                     expr: Some(argument),
@@ -6219,8 +6238,8 @@ mod tests {
         )
         .expect("datetime helpers bind");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
-        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
-        assert_eq!(query.projection[2].expr.data_type, Some(DataType::Float64));
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::UInt64));
+        assert_eq!(query.projection[2].expr.data_type, Some(DataType::UInt64));
         assert_eq!(query.projection[3].expr.data_type, Some(DataType::Utf8));
         assert_eq!(query.projection[4].expr.data_type, Some(DataType::Utf8));
         let query = bind(
