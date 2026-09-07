@@ -1,16 +1,16 @@
 //! Isolated algorithm experiments. None changes the production executor.
 use std::collections::BTreeMap;
 
+pub mod anchor;
 pub mod correlated;
 pub mod distinct;
 pub mod high;
 pub mod join;
+pub mod live;
 pub mod low;
 pub mod membership;
 pub mod merge;
 pub mod scan;
-pub mod anchor;
-pub mod live;
 pub mod topk;
 pub mod window;
 
@@ -179,16 +179,36 @@ mod live_tests {
                 for case in 1..=10 {
                     let reference = run(case, 0, &expected);
                     if case == 2 {
-                        let logical: Vec<i128> = expected.rows.iter().flat_map(|r| [r.id as i128,r.key as i128,r.low as i128,i128::from(r.value),i128::from(r.valid)]).collect();
+                        let logical: Vec<i128> = expected
+                            .rows
+                            .iter()
+                            .flat_map(|r| {
+                                [
+                                    r.id as i128,
+                                    r.key as i128,
+                                    r.low as i128,
+                                    i128::from(r.value),
+                                    i128::from(r.valid),
+                                ]
+                            })
+                            .collect();
                         assert_eq!(reference, logical, "version oracle");
                     }
                     for variant in 1..=10 {
-                        assert_eq!(run(case,variant,&actual), reference,"live case={case} variant={variant} phase={phase}");
+                        assert_eq!(
+                            run(case, variant, &actual),
+                            reference,
+                            "live case={case} variant={variant} phase={phase}"
+                        );
                     }
                 }
                 fixture.update_model(&events);
                 let latest = fixture.expected();
-                assert_eq!(live::read(&fixture.table.snapshot(), &latest).rows,latest.rows);
+                assert_eq!(
+                    live::read(&fixture.table.snapshot(), &latest).rows,
+                    latest.rows,
+                    "latest phase={phase} scenario={scenario}"
+                );
             }
         }
     }

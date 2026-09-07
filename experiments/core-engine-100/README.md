@@ -65,3 +65,61 @@ query work into ingestion, flush or compaction is not free. Document any stage
 not reached and any unsupported shape rather than calling the matrix complete.
 
 This requirement supersedes the original static-only timing plan above.
+
+## Implemented measurement path
+
+`run.py` runs use cases sequentially, with 11 arms (reference + 10 alternatives),
+three distributions and three independent seeds. Each process creates its own real
+TableStore and an independent key/version model. A pinned query races one fixed
+writer batch or maintenance operation; the barrier and actual overlap duration
+are recorded, so a faster writer is not assumed to have overlapped a whole query.
+The eight observed states are settled, sparse memtable, sparse flushed overlap,
+dense hot memtable, dense flushed overlap, mixed overlap, stale replay, compacted.
+The writer applies inserts, deletes, key/group changes and NULL transitions,
+synchronizes the WAL, and flushes/compacts at specified boundaries. A restart is
+verified after the last phase. Maintenance is timed even when queries finish first.
+
+The prototype consumes a real projected storage scan, with the store's documented
+materialized fallback where streaming is unavailable. It materializes those
+columns into the lab's typed row fixture before running the alternative. This
+adapter cost is included, reported separately, and shared by every arm. These
+are **external operator prototypes**, not production SQL-operator replacements.
+Case 2 additionally resolves the actual version history; its input coalescing and
+cloning are charged, and its full output is checked against the committed model.
+The other nine cases consume the already resolved current snapshot. The join's
+small side is a mutable subset of the same source table, so mutations can change
+both join inputs and duplicate multiplicity.
+
+The source base was advanced to `51665c5` before timed runs to include the newly
+landed overlapping-pair compaction fix. Builds and measurements use an isolated
+checkout; `provenance.json` records actual source/binary hashes and the measurement
+commit. The experiment lockfile is independent of the release lockfile.
+
+Run the full matrix, then summarize (on the build server):
+```
+python3 experiments/core-engine-100/run.py --rows 100000 --repeats 3
+python3 experiments/core-engine-100/summarize.py
+```
+`--out` selects a new evidence directory. `--resume` refuses changed source or
+binaries. Partial runs retain raw records but never print CORE-100-DONE.
+
+`anchors` executes all ten SQL shapes through the actual parser, binder, optimizer,
+executor and TableStore at every mutation state. `oracle.py` checks the same
+answers against an isolated MySQL 8.4 container, applying real source transactions
+between queries (no table reload between mutation phases). Set DOCKER_HOST in the
+invoking environment; no deployment address belongs in this repository. It removes
+only the uniquely named container it created. This verifies SQL and committed
+state semantics; it does **not** exercise native binlog transport or certify an
+integrated optimization. No prototype is promoted on these numbers alone.
+
+```
+python3 experiments/core-engine-100/oracle.py --rows 1000
+```
+
+Remaining scope boundaries: finite concurrent batches, not a duration-based CDC
+soak; integer join/group keys and nullable integer amounts, not the full collation,
+ENUM, DECIMAL, timezone or schema-evolution matrix; one analytical reader plus one
+writer, not a multi-client fairness test; system allocator; no per-query tracked
+memory budget in the external algorithms. RSS is whole-process high-water usage.
+Dense strategies rely on bounded fixture domains and need guarded fallbacks before
+integration. The explicit post-retirement replay failure remains in FINDINGS.md.

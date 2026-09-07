@@ -15,8 +15,14 @@ pub const NAMES: &[&str] = &[
     "factorized-fact-aggregate",
 ];
 pub fn dimension(d: &Data) -> Vec<(usize, usize)> {
-    let mut out:Vec<_>=d.rows.iter().filter(|r|r.id<d.domain.min(512)&&!r.id.is_multiple_of(7)).map(|r|(r.key,r.low)).collect();
-    out.sort_unstable();out
+    let mut out: Vec<_> = d
+        .rows
+        .iter()
+        .filter(|r| r.id < d.domain.min(512) && !r.id.is_multiple_of(7))
+        .map(|r| (r.key, r.low))
+        .collect();
+    out.sort_unstable();
+    out
 }
 
 fn hash_join(rows: &[Row], index: &HashMap<usize, Vec<usize>>) -> Groups {
