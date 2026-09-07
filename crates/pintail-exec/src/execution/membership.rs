@@ -40,6 +40,11 @@ struct ExternalMembership {
     /// never wait for each other, and the first probe on one loads it while
     /// later probes on it read the decoded values.
     runs: Vec<std::sync::RwLock<Partition>>,
+    /// One promoter per partition. Without this every probe that arrives
+    /// before the first one finishes builds its own copy of the same
+    /// partition, so a scan's worth of threads holds that many copies at
+    /// once; the rest answer from the file and keep nothing.
+    promoting: Vec<std::sync::atomic::AtomicBool>,
     mode: BucketMode,
     collation: Collation,
     exact_decimal: bool,
@@ -86,50 +91,72 @@ impl ExternalMembership {
         .map(|outcome| outcome == Value::Boolean(true))
     }
 
-    /// Reads one partition's file, comparing as it goes. Used while the
-    /// partition is being promoted, and for good on a partition too large
-    /// to hold: correctness never depends on the promotion succeeding.
+    /// Reads one partition's file, answering the probe as it goes and,
+    /// when `promote` is set, keeping the values for the probes that
+    /// follow. Every kept value is charged before it is kept, so a
+    /// partition larger than the budget is never built in memory just to
+    /// be thrown away; such a partition hands back what it claimed and
+    /// keeps answering from its file. Correctness never depends on a
+    /// promotion happening.
     fn scan_file(
         &self,
         run: &spill::ClosedRun,
         needle: &Value,
-        mut collect: Option<&mut Vec<Value>>,
-    ) -> Result<bool, MembershipError> {
+        promote: bool,
+    ) -> Result<(bool, Option<Vec<Value>>), MembershipError> {
         let mut reader = run
             .open()
             .map_err(|error| MembershipError::Failed(error.to_string()))?;
         let mut found = false;
+        let mut collected: Option<Vec<Value>> = promote.then(Vec::new);
+        let mut claimed = 0_usize;
         while let Some(payload) = reader
             .next()
             .map_err(|error| MembershipError::Failed(error.to_string()))?
         {
-            self.interruption
-                .check_interruption()
-                .map_err(lookup_error)?;
+            if let Err(error) = self.interruption.check_interruption() {
+                self.release_resident(claimed);
+                return Err(lookup_error(error));
+            }
             let value = spill::Decoder::new(payload)
                 .value()
                 .map_err(MembershipError::Failed)?;
-            if !found && self.matches(needle, value.clone())? {
-                found = true;
-                // Keep reading only while a promotion still wants the rest.
-                if collect.is_none() {
-                    return Ok(true);
+            if !found {
+                match self.matches(needle, value.clone()) {
+                    Ok(true) => found = true,
+                    Ok(false) => {}
+                    Err(error) => {
+                        self.release_resident(claimed);
+                        return Err(error);
+                    }
+                }
+                // Nothing left to learn from the rest of the file unless a
+                // promotion still wants it.
+                if found && collected.is_none() {
+                    return Ok((true, None));
                 }
             }
-            if let Some(values) = collect.as_mut() {
-                values.push(value);
+            if let Some(values) = collected.as_mut() {
+                let bytes = size_of::<Value>().saturating_add(value.heap_bytes());
+                if self.claim_resident(bytes) {
+                    claimed = claimed.saturating_add(bytes);
+                    values.push(value);
+                } else {
+                    // The budget is spent: this partition stays on disk.
+                    self.release_resident(claimed);
+                    claimed = 0;
+                    collected = None;
+                    if found {
+                        return Ok((true, None));
+                    }
+                }
             }
         }
-        Ok(found)
+        Ok((found, collected))
     }
 
-    /// Whether this partition's values fit the budget left for resident
-    /// partitions. Charged once, when the partition is promoted.
-    fn claim_resident(&self, values: &[Value]) -> bool {
-        let bytes = values
-            .iter()
-            .map(|value| size_of::<Value>().saturating_add(value.heap_bytes()))
-            .fold(0_usize, usize::saturating_add);
+    /// Claims `bytes` of the budget left for resident partitions.
+    fn claim_resident(&self, bytes: usize) -> bool {
         self.resident_bytes
             .fetch_update(
                 std::sync::atomic::Ordering::Relaxed,
@@ -141,6 +168,13 @@ impl ExternalMembership {
             )
             .is_ok()
     }
+
+    fn release_resident(&self, bytes: usize) {
+        if bytes > 0 {
+            self.resident_bytes
+                .fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl MembershipLookup for ExternalMembership {
@@ -151,7 +185,8 @@ impl MembershipLookup for ExternalMembership {
         if matches!(needle, Value::Null) {
             return Ok(Value::Null);
         }
-        let slot = &self.runs[bucket(needle, self.mode, self.collation)];
+        let index = bucket(needle, self.mode, self.collation);
+        let slot = &self.runs[index];
         let found = {
             let partition = slot
                 .read()
@@ -180,17 +215,26 @@ impl MembershipLookup for ExternalMembership {
                 // one partition of it is small; a partition that still does
                 // not fit keeps answering from disk.
                 Partition::OnDisk(run) => {
-                    let mut values = Vec::new();
-                    let found = self.scan_file(run, needle, Some(&mut values))?;
-                    if self.claim_resident(&values) {
+                    // One probe per partition builds the resident copy.
+                    let promote =
+                        !self.promoting[index].swap(true, std::sync::atomic::Ordering::Relaxed);
+                    let (found, values) = self.scan_file(run, needle, promote)?;
+                    if let Some(values) = values {
+                        let bytes = values
+                            .iter()
+                            .map(|value| size_of::<Value>().saturating_add(value.heap_bytes()))
+                            .fold(0_usize, usize::saturating_add);
                         drop(partition);
                         let mut partition = slot.write().map_err(|_| {
                             MembershipError::Failed("membership lock poisoned".to_owned())
                         })?;
-                        // Another probe may have promoted it first; its
-                        // values are the same, so either copy will do.
                         if matches!(&*partition, Partition::OnDisk(_)) {
                             *partition = Partition::Resident(values);
+                        } else {
+                            // Nothing to install after all; the bytes this
+                            // copy claimed go back rather than leaking out
+                            // of the budget for the query's lifetime.
+                            self.release_resident(bytes);
                         }
                     }
                     found
@@ -372,6 +416,9 @@ pub(super) fn materialize_membership(
                     )
                 })
                 .collect(),
+            promoting: (0..PARTITIONS)
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
+                .collect(),
             mode,
             collation,
             exact_decimal,
@@ -435,6 +482,9 @@ mod tests {
                     )
                 })
                 .collect(),
+            promoting: (0..PARTITIONS)
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
+                .collect(),
             mode: BucketMode::Integer,
             collation,
             exact_decimal: false,
@@ -494,6 +544,9 @@ mod tests {
                     )
                 })
                 .collect(),
+            promoting: (0..PARTITIONS)
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
+                .collect(),
             mode: BucketMode::Integer,
             collation,
             exact_decimal: false,
@@ -524,6 +577,9 @@ mod tests {
         let mut set = ExternalMembership {
             runs: (0..PARTITIONS)
                 .map(|_| std::sync::RwLock::new(Partition::Absent))
+                .collect(),
+            promoting: (0..PARTITIONS)
+                .map(|_| std::sync::atomic::AtomicBool::new(false))
                 .collect(),
             mode: BucketMode::Common,
             collation: Collation::default(),
