@@ -140,3 +140,91 @@ fn a_merging_scan_reads_every_column() {
         merging_best / direct_best
     );
 }
+
+/// What compacting the overlap costs, against what leaving it costs every
+/// scan. Ignored: a measurement, not a gate.
+///
+/// The scan measurement above says a base plus one overlapping tail is a
+/// hundredfold slower to read than the same rows in one segment. It does
+/// not say whether merging them is the right answer, because merging
+/// rewrites the whole base to absorb a tail one percent its size. This
+/// times both sides of that trade so the policy can be argued from
+/// numbers: the one-off rewrite, and the per-scan penalty it removes.
+#[test]
+#[ignore = "a measurement over a large table, not a gate"]
+fn compacting_the_overlap_against_paying_for_it_per_scan() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("store");
+    store
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+    let stride = BASE_ROWS / CHANGED;
+    store
+        .bulk_ingest_snapshot((0..CHANGED).map(|n| row(n * stride + 1, 2)).collect())
+        .expect("tail");
+
+    let overlapping = store.snapshot();
+    let _ = timed_scan(&overlapping);
+    let mut merging = f64::MAX;
+    for _ in 0..3 {
+        let (elapsed, seen) = timed_scan(&overlapping);
+        assert_eq!(seen as u64, BASE_ROWS);
+        merging = merging.min(elapsed);
+    }
+    drop(overlapping);
+
+    // What the store's own policy decides today, before anything is forced.
+    let planned = store.compaction_status().expect("status");
+    let clock = Instant::now();
+    let outcome = store.compact().expect("compact");
+    let compaction = clock.elapsed().as_secs_f64();
+
+    // What the rewrite would cost if the policy did choose it: compaction
+    // writes the merged rows into one new segment, which is the same work
+    // as building the base was. Measured separately because the policy
+    // above declines to do it, and the trade cannot be argued without it.
+    let rewrite_dir = tempfile::tempdir().expect("directory");
+    let mut rewritten =
+        TableStore::open(rewrite_dir.path(), schema(), StoreOptions::default()).expect("store");
+    let clock = Instant::now();
+    rewritten
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("rewrite");
+    let rewrite = clock.elapsed().as_secs_f64();
+
+    let compacted = store.snapshot();
+    let _ = timed_scan(&compacted);
+    let mut after = f64::MAX;
+    for _ in 0..3 {
+        let (elapsed, seen) = timed_scan(&compacted);
+        assert_eq!(seen as u64, BASE_ROWS);
+        after = after.min(elapsed);
+    }
+
+    println!();
+    println!(
+        "{BASE_ROWS} rows, {CHANGED} changed ({:.1}%), one base and one overlapping tail",
+        f64::from(u32::try_from(CHANGED).expect("small")) * 100.0
+            / f64::from(u32::try_from(BASE_ROWS).expect("small"))
+    );
+    println!("  what the policy plans now    = {planned:?}");
+    println!("  scan while they overlap      = {:8.1} ms", merging * 1e3);
+    println!(
+        "  compact them, once           = {:8.1} ms  ({outcome:?})",
+        compaction * 1e3
+    );
+    println!("  scan afterwards              = {:8.1} ms", after * 1e3);
+    println!(
+        "  writing {BASE_ROWS} rows as one segment = {:8.1} ms",
+        rewrite * 1e3
+    );
+    println!(
+        "  a scan of one segment        = {:8.1} ms",
+        timed_scan(&rewritten.snapshot()).0 * 1e3
+    );
+    println!(
+        "  so a forced rewrite pays for itself after {:.2} scans",
+        rewrite / (merging - timed_scan(&rewritten.snapshot()).0)
+    );
+}

@@ -39,7 +39,7 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
     let source: Vec<_> = d
         .rows
         .iter()
-        .step_by(3)
+        .filter(|r|r.id.is_multiple_of(3))
         .map(|r| r.valid.then_some(r.key))
         .collect();
     let probes: Vec<_> = d.rows.iter().map(|r| r.valid.then_some(r.key)).collect();

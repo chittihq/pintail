@@ -3602,3 +3602,52 @@ weigh against even a possible (not confirmed) increase in how often this
 pre-existing defect surfaces. The defect itself is unrelated to anything
 else in this brief and is recorded as new work (section G, G14) rather
 than worked around here.
+
+## e91 — Compacting an overlap, against paying for it on every scan
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows of
+four columns with one percent changed and flushed, so the table holds one
+base segment and one small overlapping tail. That is the shape a table
+takes for as long as it takes two more flushes to arrive.
+
+e81 measured what the overlap costs a reader. This measures the other
+side: what removing it costs a writer, so the policy can be argued from
+both.
+
+| | ms |
+|---|---:|
+| scan while the two segments overlap | 1430.5 |
+| compacting them, once | 1780.5 |
+| scan afterwards | 18.9 |
+| **the rewrite repays after** | **1.1 scans** |
+
+**The policy declined to do it.** Before this entry's change,
+`compaction_status()` on exactly this store read `segment_count: 2,
+eligible_segments: 0, debt_bytes: 0`, and `compact()` returned
+`input_segments: 0` - a no-op. `compaction_plan` returned `None` before
+overlap was ever considered, because two segments is fewer than the
+default fan-in of four. A table in this state stays a hundredfold slow to
+read until two more flushes arrive, however often it is queried.
+
+The fan-in is the right instinct when merging only saves file handles:
+rewriting a base to absorb a tail a hundredth its size is poor value for
+fewer files, and `admits_window`'s size tier refuses that pairing for good
+reason. An overlap is a different prize. A key in two segments puts every
+scan on the merging path, so the rewrite buys back 1411 ms per scan and
+costs 1780 ms once.
+
+With overlap admitted below the fan-in and outside the size tier - the
+per-pass row budget still applies, so one pass stays bounded - the same
+store plans `eligible_segments: 2`, compacts in 1780.5 ms, and reads in
+18.9 ms. **A 76x improvement on the scan, from a policy change rather
+than a rewrite of the merge path.**
+
+What this does not settle: a table written far more often than it is read.
+Every flush creates a fresh overlap, so the trigger fires per flush, and
+1.1 scans of payback is only a bargain if those scans happen. The bound
+that exists is `max_compaction_input_rows` per pass; a read-rate-aware
+trigger is not built and is the thing to reach for if a write-heavy table
+is seen compacting without being queried.
+
+The merge path itself is untouched and still costs what e81 says. This
+narrows how long a table sits on it; it does not make it cheaper.

@@ -14,18 +14,11 @@ pub const NAMES: &[&str] = &[
     "build-side-demand-filter",
     "factorized-fact-aggregate",
 ];
-fn dimension(d: &Data) -> Vec<(usize, usize)> {
-    let mut out = Vec::new();
-    for k in 0..d.domain {
-        if !k.is_multiple_of(7) {
-            out.push((k, k % 16));
-            if k.is_multiple_of(13) {
-                out.push((k, (k + 1) % 16));
-            }
-        }
-    }
-    out
+pub fn dimension(d: &Data) -> Vec<(usize, usize)> {
+    let mut out:Vec<_>=d.rows.iter().filter(|r|r.id<d.domain.min(512)&&!r.id.is_multiple_of(7)).map(|r|(r.key,r.low)).collect();
+    out.sort_unstable();out
 }
+
 fn hash_join(rows: &[Row], index: &HashMap<usize, Vec<usize>>) -> Groups {
     let mut out = Groups::new();
     for row in rows {
@@ -38,7 +31,7 @@ fn hash_join(rows: &[Row], index: &HashMap<usize, Vec<usize>>) -> Groups {
     out
 }
 fn dense_join(rows: &[Row], index: &[Vec<usize>]) -> Groups {
-    let mut slots = [Agg::default(); 16];
+    let mut slots = [Agg::default(); 64];
     for row in rows {
         for &g in &index[row.key] {
             slots[g].add(row);
