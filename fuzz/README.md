@@ -3,7 +3,7 @@
 These targets use the same wire/storage code and MySQL decoder version as
 Pintail. They need no server, credentials, network connection or Docker.
 The separate lockfile is tracked. Keep its MySQL decoder version aligned with
-`Cargo.lock`; the pinned mysql_async 0.37.0 remains resolvable from that lockfile.
+`Cargo.lock`; the pinned mysql_async 0.37.1 uses the same decoder as the workspace.
 
 Local deterministic smoke checks (stable Rust):
 

@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The MySQL client dependency is updated to fix a race in its statement
+  cache. The workspace and fuzz harness use the same client version.
+
 ### Added
 
 - One table can be paused while the rest of its database keeps
