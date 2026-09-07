@@ -2835,3 +2835,58 @@ ahead of the 131 ms and 86.9 ms it started at.
 that takes a different code path from the query it stands for can report
 a fourfold gain while the real query regresses by a fifth. Both figures
 above are now in the hardening todo's closure notes.
+
+
+## e77 — What a materialized row costs, and what sorting on keys first would save
+
+`crates/pintail-types/tests/layout.rs`, release, minimum of 200 runs on the
+build host. The row is the shape a paginated report returns: nineteen
+columns, mostly integers and short text, one wider text column. The counts
+are the ones the delivery-report list actually meets, three thousand two
+hundred candidates for fifty returned.
+
+Prompted by a published account of shrinking a DNS cache's per-entry
+footprint, which ranked its wins as: drop capacity fields from immutable
+data, consolidate separate allocations, box oversized enum variants, and
+stop building the structured representation at all in favour of raw bytes
+parsed on demand. The last of those was worth the most there, and the
+question here was which of the four transfers.
+
+| fact | bytes |
+|---|---:|
+| `Value` | 32 |
+| one row's `Value` structs | 608 |
+| its text on the heap | 104 |
+| its `Vec` header | 24 |
+| **total per row** | **736** |
+| what the row carries | 168 |
+
+So a row costs 4.4 times what it holds, and three thousand two hundred of
+them are 2.3 MiB. Two of the four techniques apply to that directly and
+neither is large: boxing the text variants takes `Value` from 32 bytes to
+24, a quarter of the inline cost, and `Box<[Value]>` in place of `Vec`
+saves the 8-byte capacity field once per row.
+
+The fourth technique is the one that transfers, in the form this engine
+needs it: do not build the structured representation for rows nobody will
+read.
+
+| shape | ms |
+|---|---:|
+| build every candidate row, then sort, then keep fifty | 0.691 |
+| sort the keys beside a row identity, keep fifty, build those | 0.007 |
+
+**Verdict: late materialization, not a smaller `Value`.** Ordering keys
+before building rows is worth about ninety-five times on this shape, and
+shrinking `Value` is worth a quarter of one of its terms. The engine
+currently takes the first shape: profiled against a 500,000-row mirror,
+the delivery-report list spends 13.1 ms of a 20.5 ms query in a join that
+materializes 3,200 rows so a top-50 sort can discard 3,150 of them, and
+carrying fifteen more columns through that costs 11 ms of the 17.5 ms the
+same query takes without its join.
+
+Two changes follow, and they compose: sort on the keys and a row identity
+and fetch the remaining columns only for the survivors, and push a top-K
+through a left join whose build key is unique, which is what makes the
+join's own output unnecessary for the rows that lose. Neither is a layout
+change, and the layout changes are not worth doing first.
