@@ -6,6 +6,7 @@ mod limits;
 mod observe;
 mod replica_cache;
 mod server;
+mod shared_query;
 
 pub use admission::{
     DEFAULT_QUEUE_WAIT, QueryAdmission, QueryClass, QueryPermit, default_max_concurrent_queries,
@@ -28,3 +29,4 @@ pub use server::{
 
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
+pub use shared_query::{SharedQueryStats, shared_query_stats};
