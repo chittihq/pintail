@@ -15,7 +15,7 @@ use chacha20poly1305::{
     aead::{Aead as _, KeyInit as _},
 };
 use pintail_meta::MetaStore;
-use pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT;
+use pintail_wire::{DEFAULT_QUERY_MEMORY_LIMIT, ReplicaEngine};
 use rand::RngCore as _;
 use tokio::sync::broadcast;
 
@@ -51,6 +51,36 @@ struct ApiStateInner {
     table_progress: Mutex<HashMap<(String, String), TableProgress>>,
     oauth_exchanges: Mutex<HashMap<String, PendingOauthExchange>>,
     metrics: RuntimeMetrics,
+    /// One engine held for the process's life, built once here instead of
+    /// per request. `ReplicaEngine` carries the process-wide replica cache
+    /// as an `Arc` already, but its per-instance metadata-signature memo and
+    /// its cached signature-reader connection are NOT shared - a fresh
+    /// instance per HTTP request silently lost both on every call, paying a
+    /// `MetaStore::open` it did not need to. A handler clones this (an Arc
+    /// clone plus two path clones) and calls `with_memory_limit` on the
+    /// clone, so per-request memory-limit and cancellation behaviour are
+    /// unchanged.
+    replica_engine: ReplicaEngine,
+    /// API keys validated recently, keyed by the SHA-256 of the presented
+    /// secret. A hit skips the metadata read (hash lookup, enabled/expiry
+    /// check) that used to run on every authenticated request; cleared
+    /// whenever a key is disabled or deleted (`invalidate_api_keys`) so a
+    /// revoked key stops working on its next request rather than at the
+    /// entry's next natural eviction.
+    api_key_cache: Mutex<HashMap<[u8; 32], CachedApiKey>>,
+}
+
+#[derive(Clone)]
+pub(crate) struct CachedApiKey {
+    pub(crate) id: String,
+    pub(crate) database_id: String,
+    pub(crate) scopes: Vec<String>,
+    /// When this entry was validated against metadata. Doubles as the
+    /// cache's TTL clock (a request past `max_age` re-validates, which is
+    /// also what bounds how stale a disabled-or-expired key can read) and
+    /// as the `touch_api_key` throttle - last-used-at moves once per
+    /// refresh instead of once per request.
+    last_touched: Instant,
 }
 
 #[derive(Clone)]
@@ -119,10 +149,12 @@ impl ApiState {
         MetaStore::open(&metadata_path)?;
         let dsn_key = decode_hex_key(dsn_encryption_key)?;
         let (events, _) = broadcast::channel(256);
+        let data_dir = data_dir.into();
+        let replica_engine = ReplicaEngine::new(data_dir.clone(), metadata_path.clone());
         Ok(Self {
             inner: Some(Arc::new(ApiStateInner {
                 metadata_path,
-                data_dir: data_dir.into(),
+                data_dir,
                 jwt_secret: jwt_secret.into(),
                 dsn_key,
                 events,
@@ -130,6 +162,8 @@ impl ApiState {
                 table_progress: Mutex::new(HashMap::new()),
                 oauth_exchanges: Mutex::new(HashMap::new()),
                 metrics: RuntimeMetrics::default(),
+                replica_engine,
+                api_key_cache: Mutex::new(HashMap::new()),
             })),
             wire_bind: None,
             query_memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
@@ -193,6 +227,67 @@ impl ApiState {
             .as_ref()
             .map(|inner| inner.metadata_path.as_path())
             .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    /// The process-wide query engine. Cloning is cheap (an `Arc` clone of
+    /// the replica cache, admission gate, signature memo and signature
+    /// reader, plus two `PathBuf` clones) and shares all of it with every
+    /// other request, which is the point: a fresh `ReplicaEngine::new` per
+    /// request started that memo and reader over from empty.
+    pub(crate) fn replica_engine(&self) -> Result<ReplicaEngine, ApiError> {
+        self.inner
+            .as_ref()
+            .map(|inner| inner.replica_engine.clone())
+            .ok_or_else(|| ApiError::unavailable("control-plane API is not configured"))
+    }
+
+    /// A validated API key from the cache, keyed by the SHA-256 of the
+    /// presented secret, when it was cached less than `max_age` ago -
+    /// bounding how long a disabled-but-not-yet-invalidated entry (a crash
+    /// between the metadata write and the cache clear, say) could still
+    /// authenticate.
+    pub(crate) fn cached_api_key(
+        &self,
+        digest: &[u8; 32],
+        max_age: Duration,
+    ) -> Option<CachedApiKey> {
+        let inner = self.inner.as_ref()?;
+        let cache = inner.api_key_cache.lock().ok()?;
+        let cached = cache.get(digest)?;
+        (cached.last_touched.elapsed() < max_age).then(|| cached.clone())
+    }
+
+    pub(crate) fn cache_api_key(
+        &self,
+        digest: [u8; 32],
+        id: String,
+        database_id: String,
+        scopes: Vec<String>,
+    ) {
+        if let Some(inner) = &self.inner
+            && let Ok(mut cache) = inner.api_key_cache.lock()
+        {
+            cache.insert(
+                digest,
+                CachedApiKey {
+                    id,
+                    database_id,
+                    scopes,
+                    last_touched: Instant::now(),
+                },
+            );
+        }
+    }
+
+    /// Drops every cached entry for one key id. Called on disable/delete so
+    /// a revoked key stops authenticating on its very next request instead
+    /// of waiting out the cache's max age.
+    pub(crate) fn invalidate_api_key(&self, id: &str) {
+        if let Some(inner) = &self.inner
+            && let Ok(mut cache) = inner.api_key_cache.lock()
+        {
+            cache.retain(|_, cached| cached.id != id);
+        }
     }
 
     pub(crate) fn encrypt_dsn(&self, dsn: &str) -> Result<Vec<u8>, ApiError> {
@@ -532,6 +627,68 @@ fn decode_hex_key(encoded: &str) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::ApiState;
+    use std::time::Duration;
+
+    fn state() -> ApiState {
+        let data = tempfile::tempdir().expect("temporary API state");
+        ApiState::new(
+            data.path(),
+            data.path().join("meta.db"),
+            b"jwt-secret",
+            &"11".repeat(32),
+        )
+        .expect("API state")
+    }
+
+    #[test]
+    fn cached_api_key_is_visible_only_within_its_max_age() {
+        let state = state();
+        let digest = [7_u8; 32];
+        assert!(
+            state
+                .cached_api_key(&digest, Duration::from_secs(30))
+                .is_none()
+        );
+        state.cache_api_key(
+            digest,
+            "key_1".to_owned(),
+            "db_1".to_owned(),
+            vec!["query".to_owned()],
+        );
+        let cached = state
+            .cached_api_key(&digest, Duration::from_secs(30))
+            .expect("cached within max age");
+        assert_eq!(cached.id, "key_1");
+        assert_eq!(cached.database_id, "db_1");
+        assert_eq!(cached.scopes, vec!["query".to_owned()]);
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(
+            state
+                .cached_api_key(&digest, Duration::from_millis(1))
+                .is_none(),
+            "an entry older than max_age must miss, so a re-validated enabled/expiry check runs"
+        );
+    }
+
+    #[test]
+    fn invalidating_an_api_key_drops_every_cache_entry_for_its_id() {
+        let state = state();
+        let revoked = [1_u8; 32];
+        let other = [2_u8; 32];
+        state.cache_api_key(revoked, "key_revoked".to_owned(), "db".to_owned(), vec![]);
+        state.cache_api_key(other, "key_other".to_owned(), "db".to_owned(), vec![]);
+        state.invalidate_api_key("key_revoked");
+        assert!(
+            state
+                .cached_api_key(&revoked, Duration::from_secs(30))
+                .is_none()
+        );
+        assert!(
+            state
+                .cached_api_key(&other, Duration::from_secs(30))
+                .is_some()
+        );
+    }
 
     #[test]
     fn dsn_encryption_is_randomized_and_authenticated() {

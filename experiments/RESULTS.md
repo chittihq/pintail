@@ -2727,3 +2727,48 @@ mid-flow tool).
 
 **Verdict: keep.** No engine code changed; this only makes the evidence
 the harness already collects honest.
+
+## e75 — The HTTP path's fixed cost: one engine, one auth cache (loopback, release build, local database)
+
+`execute_query` (`crates/pintail-api/src/query.rs`) built a fresh
+`ReplicaEngine` per request and mapped every value through an intermediate
+`serde_json::Value` tree; `authenticate_api_key`
+(`crates/pintail-api/src/auth.rs`) hashed and looked the key up in
+metadata on every call. e65 measured this at 25-40 ms outside the engine
+per query on the 20M-row benchmark.
+
+Fixes: one `ReplicaEngine` held on `ApiState` and cloned per request
+(shares its metadata-signature memo and signature-reader connection,
+which a fresh instance loses); an in-process API-key cache keyed by the
+presented secret's SHA-256, TTL 30s, cleared immediately on
+disable/delete; rows serialize straight from `Value` into the response
+writer via a manual `Serialize` impl (`JsonRows`) instead of building a
+`Vec<Vec<serde_json::Value>>` first. Timings behind `PINTAIL_API_DEBUG`.
+
+Measured against a release build on loopback with a LOCAL database
+(`POST /api/databases/local` - no MySQL/CDC involved, so this isolates
+the HTTP/auth/engine path from scan or aggregate cost) running `SELECT
+1`, five calls:
+
+| call | engine ms | spawn_blocking ms | reshape ms |
+|---|---:|---:|---:|
+| 1st (cold) | 0.00 | 1.20 | 0.00 |
+| 2nd-5th | 0.00 | 0.08-0.16 | 0.00 |
+
+`engine=0.00ms` on every call: building the engine is now an `Arc` clone.
+`spawn_blocking` drops after the first call because the metadata-signature
+memo and signature-reader connection now survive between requests instead
+of being rebuilt every time. API-key auth: 0.43 ms on the first request
+(a real metadata hit), 0.00 ms on the next two (cache hit); disabling the
+key made the very next request 401 immediately (TTL invalidation is not
+what caught it - the explicit `invalidate_api_key` call on disable was).
+
+Not measured here: the JSON-tree-vs-direct-serialize difference on a real
+row set (`SELECT 1` is one row) and the full 20M-row benchmark's HTTP
+column, both of which need the containerized replica and are the owner's
+next full run to bank.
+
+**Verdict: keep.** `crates/pintail-api/src/query.rs` and `state.rs` gained
+unit tests for the new serialization shape and the cache's TTL/invalidation;
+the crate's existing HTTP integration suite (which exercises the full
+request path) passes unchanged.

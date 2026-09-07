@@ -338,12 +338,16 @@ G2 and G3 above are their own brief; this section is everything else the
   query, reading 0% CPU. Closed: one long-lived `docker stats` stream per
   container; see e74 in `experiments/RESULTS.md`. The README's generated
   benchmark table now shows the memo-off table first.
-- [ ] **H1. The HTTP path's fixed cost.** `execute_query` builds a fresh
-  `ReplicaEngine` per request, revalidates the replica cache, hashes the
-  API key against metadata, and serialises rows through an intermediate
+- [x] **H1. The HTTP path's fixed cost.** `execute_query` built a fresh
+  `ReplicaEngine` per request, hashed the API key against metadata on
+  every call, and serialised rows through an intermediate
   `serde_json::Value` tree — 25-40 ms outside the engine on every query
-  (e65). Hold one `ReplicaEngine` per process, cache the API-key lookup,
-  and serialise straight from column values into the response writer.
+  (e65). Closed: one `ReplicaEngine` held on `ApiState` and cloned per
+  request, a 30s API-key cache invalidated on disable/delete, and rows
+  serialize straight from column values into the response writer; see e75
+  in `experiments/RESULTS.md`. The wire-vs-HTTP timing this item asked
+  for is now in `benchmark/run.ts`, reported alongside HTTP rather than
+  replacing it — banking a number needs the containerized benchmark.
 - [ ] **H2. Dense join build for a contiguous build key.** Q8's fused
   join-aggregate probes a general hash table at about 20 ns a probe,
   scaling with the execution pool (e65). Extend `DenseJoinTable` to a

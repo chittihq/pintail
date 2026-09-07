@@ -707,6 +707,45 @@ async function mysqlColdQuery(sql: string): Promise<unknown[][]> {
   }
 }
 
+/// A query function reaching Pintail over its MySQL wire protocol rather
+/// than `/api/query` - the path a BI tool actually uses, and one HTTP's
+/// own fixed cost (auth, JSON) cannot show. Username is the database name
+/// and password is an API key secret, same as any other MySQL client.
+function makePintailWireQuery(
+  endpoint: { host: string; port: number },
+  databaseName: string,
+  secret: string,
+): (sql: string) => Promise<unknown[][]> {
+  let connection: mysql.Connection | undefined
+  const connect = () =>
+    mysql.createConnection({
+      host: endpoint.host,
+      port: endpoint.port,
+      user: databaseName,
+      password: secret,
+      database: databaseName,
+      supportBigNumbers: true,
+      bigNumberStrings: true,
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 10_000,
+    })
+  return async function pintailWireQuery(sql: string): Promise<unknown[][]> {
+    connection ??= await connect()
+    const run = async () => {
+      const [rows] = await connection!.query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
+      return rows as unknown as unknown[][]
+    }
+    try {
+      return await run()
+    } catch (error) {
+      log(`Pintail wire connection dropped (${error}); reconnecting and retrying`)
+      connection?.destroy()
+      connection = await connect()
+      return run()
+    }
+  }
+}
+
 async function timed<T>(operation: () => Promise<T>): Promise<{ value: T; ms: number }> {
   const started = performance.now()
   const value = await operation()
@@ -952,7 +991,15 @@ async function runQueries(
   pintailUrl: string,
   token: string,
   databaseId: string,
-  options: { memoDisabled?: boolean } = {},
+  options: {
+    memoDisabled?: boolean
+    /// Runs the same statement over Pintail's MySQL wire protocol, the way
+    /// a BI tool reaches it, timed beside the HTTP call rather than instead
+    /// of it. Absent when no wire endpoint was set up for this run (the
+    /// non-containerized "smoke" path skips it).
+    pintailWireQuery?: (sql: string) => Promise<unknown[][]>
+    pintailWireContainer?: string
+  } = {},
 ): Promise<QueryResult[]> {
   const results: QueryResult[] = []
   const warmups = WARMUP_COUNT
@@ -1084,6 +1131,7 @@ async function runQueries(
       pintailExplain = undefined
     }
     // Shuffled per query from the run seed, so no engine is always last.
+    const wireQuery = options.pintailWireQuery
     const measurements = await inShuffledOrder(engineOrder, {
       pintail: () =>
         sampled(containerizedPintail ? pintailName : undefined, () =>
@@ -1106,6 +1154,23 @@ async function runQueries(
                 runs,
               ).then((run) => ({ values: [run.value], timing: run.timing })),
         ),
+      // Additive: the same statement over the wire protocol a BI tool would
+      // actually use, timed beside (not instead of) the HTTP measurement
+      // above. Absent from `timings`/`resources` when no wire connection was
+      // set up for this run.
+      ...(wireQuery
+        ? {
+            pintailWire: () =>
+              sampled(options.pintailWireContainer, () =>
+                query.coldOnly
+                  ? measuredVariants(variants, (variant) => wireQuery(variant.sql))
+                  : measured(() => wireQuery(query.sql), warmups, runs).then((run) => ({
+                      values: [run.value],
+                      timing: run.timing,
+                    })),
+              ),
+          }
+        : {}),
       clickhouse: () =>
         sampled(clickhouseName, () =>
           query.coldOnly
@@ -1141,6 +1206,8 @@ async function runQueries(
     })
     const pintailRun = measurements.pintail.value
     resources.pintail = measurements.pintail.resources
+    const pintailWireRun = measurements.pintailWire?.value
+    if (measurements.pintailWire) resources.pintailWire = measurements.pintailWire.resources
     const clickhouseRun = measurements.clickhouse.value
     resources.clickhouse = measurements.clickhouse.resources
     const clickhouseFinalRun = measurements.clickhouseFinal.value
@@ -1164,6 +1231,7 @@ async function runQueries(
       coldOnly: query.coldOnly === true,
       timings: {
         pintail: pintailRun.timing,
+        ...(pintailWireRun ? { pintailWire: pintailWireRun.timing } : {}),
         clickhouse: clickhouseRun.timing,
         clickhouseFinal: clickhouseFinalRun.timing,
         mysql: mysqlTiming,
@@ -1174,8 +1242,17 @@ async function runQueries(
       pintailExplain,
     })
     if (!pintailMatchesMysql) log(`RESULT MISMATCH: pintail differs from MySQL on ${query.name}`)
+    if (pintailWireRun) {
+      const pintailWireMatchesMysql = pintailWireRun.values.every(
+        (value, index) => canonicalRows(value) === mysqlCanonicals[index],
+      )
+      if (!pintailWireMatchesMysql) {
+        log(`RESULT MISMATCH: pintail (wire) differs from MySQL on ${query.name}`)
+      }
+    }
     log(
-      `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms | ` +
+      `MySQL ${mysqlMs} ms | Pintail ${pintailRun.timing.medianMs} ms` +
+        `${pintailWireRun ? ` (wire ${pintailWireRun.timing.medianMs} ms)` : ''} | ` +
         `ClickHouse ${clickhouseRun.timing.medianMs} ms | ` +
         `CH RMT+FINAL ${clickhouseFinalRun.timing.medianMs} ms | ` +
         `${speedup.toFixed(1)}× vs MySQL | ${speedupVsClickhouse.toFixed(2)}× vs CH`,
@@ -1381,18 +1458,30 @@ function publishResults(
           'comparison: the table at the top measures a cache hit against',
           "ClickHouse's execution, which is a different question.",
           '',
-          '| Query | MySQL | Pintail (no memo) | CH MergeTree | CH RMT+FINAL | vs CH |',
-          '|---|---:|---:|---:|---:|---:|',
+          ...(engineResults.some((row) => row.timings.pintailWire)
+            ? [
+                "Pintail (wire) reaches the same query over Pintail's MySQL wire",
+                'protocol - the path a BI tool actually uses - timed beside the',
+                "HTTP call, not instead of it; the gap between the two is HTTP's",
+                'own fixed cost (auth, JSON, connection setup).',
+                '',
+              ]
+            : []),
+          '| Query | MySQL | Pintail (no memo) | Pintail (wire) | CH MergeTree | CH RMT+FINAL | vs CH |',
+          '|---|---:|---:|---:|---:|---:|---:|',
           ...engineResults
             .filter((row) => !row.coldOnly)
-            .map(
-              (row) =>
+            .map((row) => {
+              const wireMs = row.timings.pintailWire?.medianMs
+              return (
                 `| ${row.name} | ${row.mysqlMs.toLocaleString()} ms | ` +
                 `${row.pintailMs.toLocaleString()} ms | ` +
+                `${wireMs === undefined ? 'n/a' : `${wireMs.toLocaleString()} ms`} | ` +
                 `${row.clickhouseMs.toLocaleString()} ms | ` +
                 `${row.clickhouseFinalMs.toLocaleString()} ms | ` +
-                `${row.speedupVsClickhouse.toFixed(2)}× |`,
-            ),
+                `${row.speedupVsClickhouse.toFixed(2)}× |`
+              )
+            }),
           '',
         ]
       : []),
@@ -1623,6 +1712,7 @@ async function main() {
 
   let pintailUrl: string
   let dsn: string
+  let pintailWireEndpoint: { host: string; port: number }
   if (containerizedPintail) {
     log('building the pintail image on the docker host (same host + limits as MySQL/ClickHouse)')
     await docker('build', '--tag', pintailImage, repository)
@@ -1635,6 +1725,8 @@ async function main() {
       networkName,
       '--publish',
       '0:8080',
+      '--publish',
+      '0:3306',
       // A NAMED volume, so the replica survives the container. The engine
       // track restarts pintail with its result memo disabled, and reattaching
       // the same replica turns that into a ~30s restart instead of another
@@ -1649,6 +1741,7 @@ async function main() {
     const pintailPort = await publishedPort(pintailName, 8080)
     pintailUrl = `http://${urlHost(host)}:${pintailPort}`
     dsn = `mysql://benchmark:benchmarkpass@${mysqlName}:3306/benchmark_db`
+    pintailWireEndpoint = { host: urlHost(host), port: await publishedPort(pintailName, 3306) }
   } else {
     const binary = await buildPintail()
     const httpPort = await freePort()
@@ -1675,6 +1768,7 @@ async function main() {
       },
     )
     dsn = `mysql://benchmark:benchmarkpass@${urlHost(host)}:${mysqlPort}/benchmark_db`
+    pintailWireEndpoint = { host: '127.0.0.1', port: wirePort }
   }
   await waitForHttp(pintailUrl)
   const setup = await api<{ token: string }>(pintailUrl, '/api/auth/setup', {
@@ -1683,11 +1777,20 @@ async function main() {
   })
   const databaseId = await createReplica(pintailUrl, setup.token, dsn)
   await verifyCounts(clickhouseUrl, pintailUrl, setup.token, databaseId)
+  // A key scoped to this replica, used only to reach the wire port below -
+  // never logged or written to the results artifact.
+  const wireKey = await api<{ secret: string }>(
+    pintailUrl,
+    `/api/databases/${databaseId}/api-keys`,
+    { method: 'POST', token: setup.token, body: { name: 'benchmark-wire', scopes: ['query'] } },
+  )
+  const pintailWireQuery = makePintailWireQuery(pintailWireEndpoint, 'benchmark_db', wireKey.secret)
   const results = await runQueries(
     mysqlConnection,
     pintailUrl,
     setup.token,
     databaseId,
+    { pintailWireQuery, pintailWireContainer: containerizedPintail ? pintailName : undefined },
   )
 
   // The engine track. Everything above measures pintail with its settled
@@ -1713,6 +1816,8 @@ async function main() {
       networkName,
       '--publish',
       '0:8080',
+      '--publish',
+      '0:3306',
       '--volume',
       `${pintailVolumeName}:/var/lib/pintail`,
       ...engineLimits,
@@ -1725,12 +1830,19 @@ async function main() {
     const enginePort = await publishedPort(pintailName, 8080)
     const engineUrl = `http://${urlHost(host)}:${enginePort}`
     await waitForHttp(engineUrl)
+    // The ephemeral wire port is re-published on every restart; the key
+    // itself survives on the named volume, so only the connection is new.
+    const engineWireQuery = makePintailWireQuery(
+      { host: urlHost(host), port: await publishedPort(pintailName, 3306) },
+      'benchmark_db',
+      wireKey.secret,
+    )
     engineResults = await runQueries(
       mysqlConnection,
       engineUrl,
       setup.token,
       databaseId,
-      { memoDisabled: true },
+      { memoDisabled: true, pintailWireQuery: engineWireQuery, pintailWireContainer: pintailName },
     )
 
     // Concurrency, on the same memo-disabled server so both engines are

@@ -15,6 +15,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   generated benchmark table now shows the memo-off "engine speed" table
   first and the memo-hit table second, so the headline comparison is the
   one where both engines execute.
+- The HTTP query path no longer builds a fresh query engine and looks up
+  the API key against metadata on every request: one engine is held for
+  the process's life and cloned per call, and a validated API key is
+  cached for 30 seconds (cleared immediately on disable or delete). Rows
+  serialize straight from the engine's values into the response instead
+  of through an intermediate JSON tree first. The benchmark can now time
+  Pintail over its MySQL wire protocol beside the HTTP call, so the engine
+  is measured the way a BI tool actually reaches it.
 
 ### Added
 
