@@ -329,11 +329,19 @@ prints.
   segment row failing a predicate can be pruned while a lower-version
   memtable row for the same key passes it; the merge would have kept the
   segment's version. Found by inspection; not reproduced.
-- [ ] **G10. Two overlapping segments never compact.** `compaction_plan`
-  returns before the overlap check when the manifest holds fewer segments
-  than the fan-in (four), so an update-heavy table flushed once sits on a
-  base and an overlapping tail and merges on every scan until two more
-  flushes arrive.
+- [x] **G10. Two overlapping segments never compact.** `compaction_plan`
+  returned before the overlap check when the manifest held fewer segments
+  than the fan-in (four), so an update-heavy table flushed once sat on a
+  base and an overlapping tail and merged on every scan until two more
+  flushes arrived. Closed 2026-09-08: an overlapping pair is admitted
+  below the fan-in and outside the size tier, the per-pass row budget
+  still bounding one pass. On two million rows with one percent changed
+  the scan went from 1430 ms to 19 ms, against a one-off rewrite of
+  1780 ms that repays after 1.1 scans (e91). The size tier still refuses
+  a base-plus-tiny-tail rewrite whose only prize is fewer files. Left
+  open by this: a table written far more often than it is read now
+  compacts on every flush, and a read-rate-aware trigger is the answer
+  if that appears.
 - [ ] **G11. The `auto_resync` repair recopies the whole database.** The
   supervisor starts a forced snapshot for flagged keyless tables, so one
   flagged table resets every table's store; with the not-ready guard the
