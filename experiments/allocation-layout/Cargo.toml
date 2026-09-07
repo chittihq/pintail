@@ -1,0 +1,17 @@
+[package]
+name = "allocation-layout"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+pintail-types = { path = "../../crates/pintail-types" }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

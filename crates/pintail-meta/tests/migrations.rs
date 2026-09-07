@@ -550,3 +550,61 @@ fn a_paused_table_resumes_plain_unless_changes_were_skipped() {
         .expect("no-op on a running table");
     assert_eq!(metadata.tables("db-1").expect("tables")[0].paused, None);
 }
+
+#[test]
+fn a_change_skipped_as_a_table_resumed_quarantines_it() {
+    // The stream decides what to drop from the paused set it read when its
+    // cycle began, so a table resumed part-way through still loses the
+    // events that follow. The resume already reported success, so the only
+    // thing that can settle the table is the recopy this flags.
+    let data_dir = tempfile::tempdir().expect("temporary data directory");
+    let metadata = pintail_meta::MetaStore::open(&data_dir.path().join("pintail-meta.db"))
+        .expect("open metadata");
+    let connection =
+        rusqlite::Connection::open(data_dir.path().join("pintail-meta.db")).expect("connection");
+    connection
+        .execute(
+            "INSERT INTO databases (\
+               id, name, mysql_dsn_encrypted, mode, state, created_at, updated_at\
+             ) VALUES ('db-1', 'shop', X'00', 'auto', 'streaming', 'now', 'now')",
+            [],
+        )
+        .expect("seed database");
+    connection
+        .execute(
+            "INSERT INTO tables (db_id, name, state, pk_json, rows_synced, schema_version) \
+             VALUES ('db-1', 'orders', 'streaming', '[\"id\"]', 42, 3)",
+            [],
+        )
+        .expect("seed table");
+    drop(connection);
+
+    // Paused: the marker lands on the table and resume recopies it.
+    metadata.pause_table("db-1", "orders").expect("pause");
+    metadata
+        .mark_table_paused_skipped("db-1", "orders")
+        .expect("mark");
+    assert_eq!(
+        metadata.tables("db-1").expect("tables")[0].state,
+        "streaming"
+    );
+    assert!(metadata.resume_table("db-1", "orders").expect("resume"));
+
+    // Resumed first, then a change is dropped by a cycle that still had the
+    // table in its frozen paused set. Nothing is paused to mark, so the
+    // table would otherwise resume stale and unflagged.
+    metadata.pause_table("db-1", "orders").expect("pause again");
+    assert!(!metadata.resume_table("db-1", "orders").expect("resume"));
+    metadata
+        .mark_table_paused_skipped("db-1", "orders")
+        .expect("mark after the resume");
+    let table = &metadata.tables("db-1").expect("tables")[0];
+    assert_eq!(table.state, "needs_resync");
+    assert_eq!(table.paused, None);
+    assert!(
+        metadata
+            .tables_needing_resync("db-1")
+            .expect("resync set")
+            .contains("orders")
+    );
+}

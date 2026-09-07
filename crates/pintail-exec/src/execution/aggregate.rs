@@ -2174,7 +2174,12 @@ fn build_hash_aggregate_scan(
         }
     }
 
-    let used_at_start = memory.used();
+    // Bytes the group map itself holds. Measured as deltas around the work
+    // that touches it, not as the whole tracker's growth: the scan retains
+    // and charges its own prefetched batches to the same tracker, and
+    // refunding those on a spill would hand back memory the scan still owns
+    // and release a second time when it drops them.
+    let mut groups_reserved = 0_usize;
     let mut spill_runs = Vec::new();
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     if group_by.is_empty() {
@@ -2199,6 +2204,9 @@ fn build_hash_aggregate_scan(
 
     while let Some(batch) = input.next_batch(memory)? {
         let batch_bytes = batch.estimated_bytes();
+        // The batch and everything the scan retained for it are already
+        // charged; what grows past here is the map's own.
+        let mut before_groups = memory.used();
         reserve_hash_map_entries(
             &mut groups,
             batch.visible_row_count().min(64),
@@ -2209,7 +2217,11 @@ fn build_hash_aggregate_scan(
             memory,
         )?;
         for row in batch.selection().selected_rows() {
-            if memory.used().saturating_sub(used_at_start) > memory.limit() / 4
+            let held = groups_reserved.saturating_add(memory.used().saturating_sub(before_groups));
+            // Spill on the map's own share, and also when anything else has
+            // filled the budget, which is what leaves the scan no room to
+            // pull the next batch.
+            if (held > memory.limit() / 4 || memory.used() > memory.limit().saturating_mul(3) / 4)
                 && !groups.is_empty()
                 && aggregates
                     .iter()
@@ -2217,7 +2229,9 @@ fn build_hash_aggregate_scan(
             {
                 spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
                 groups = HashMap::new();
-                memory.release(memory.used().saturating_sub(used_at_start));
+                memory.release(held);
+                groups_reserved = 0;
+                before_groups = memory.used();
             }
 
             let group_expression_memory = group_by
@@ -2285,11 +2299,13 @@ fn build_hash_aggregate_scan(
                 memory,
             )?;
         }
+        groups_reserved =
+            groups_reserved.saturating_add(memory.used().saturating_sub(before_groups));
     }
 
     if !spill_runs.is_empty() {
         spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
-        memory.release(memory.used().saturating_sub(used_at_start));
+        memory.release(groups_reserved);
         return merge_spilled_aggregate_groups(spill_runs, HashMap::new(), memory);
     }
 
@@ -4394,9 +4410,11 @@ fn build_direct_column_aggregate(
     let mut scalar_index = HashMap::<Value, usize>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut index_reserved = 0_usize;
-    // Everything this loop reserves is the map and its indexes, so the
-    // difference from here is what a spill hands back.
-    let used_at_start = memory.used();
+    // Bytes the map and its indexes hold. Measured per batch around the
+    // work that touches them: the scan charges its own retained batches to
+    // this tracker too, and handing those back on a spill would refund
+    // memory the scan still owns and release it twice when it drops them.
+    let mut map_reserved = 0_usize;
     let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
     // Object aggregation still has no spill encoding.
     let spillable = aggregates
@@ -4420,6 +4438,8 @@ fn build_direct_column_aggregate(
             break;
         };
         let batch_bytes = batch.estimated_bytes();
+        // Whatever the scan retained for this batch is already charged.
+        let mut before_map = memory.used();
         let indexed = group_columns.len() == 1
             && batch.column(group_columns[0]).is_some_and(|column| {
                 matches!(
@@ -4438,7 +4458,7 @@ fn build_direct_column_aggregate(
             // groups could not fit on top of the map, so the reservations
             // below never meet a full budget. A group split across a run
             // and the resident map merges at the end.
-            let map_bytes = memory.used().saturating_sub(used_at_start);
+            let map_bytes = map_reserved.saturating_add(memory.used().saturating_sub(before_map));
             let under_pressure = map_bytes > memory.limit() / 4
                 || (groups.len() >= 256
                     && memory
@@ -4454,7 +4474,9 @@ fn build_direct_column_aggregate(
                 )?);
                 scalar_index = HashMap::new();
                 raw_index = HashMap::new();
-                memory.release(memory.used().saturating_sub(used_at_start));
+                memory.release(map_bytes);
+                map_reserved = 0;
+                before_map = memory.used();
                 index_reserved = 0;
             }
             let raw_hash = (!indexed)
@@ -4544,13 +4566,14 @@ fn build_direct_column_aggregate(
                 memory,
             )?;
         }
+        map_reserved = map_reserved.saturating_add(memory.used().saturating_sub(before_map));
     }
 
     drop(scalar_index);
     drop(raw_index);
     if !spill_runs.is_empty() {
         let resident = direct_groups_map(groups, key_collations);
-        memory.release(memory.used().saturating_sub(used_at_start));
+        memory.release(map_reserved);
         return merge_spilled_aggregate_groups(spill_runs, resident, memory);
     }
     memory.release(index_reserved);

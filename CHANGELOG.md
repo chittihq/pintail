@@ -8,6 +8,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Resuming a paused table could leave it silently stale. A replication
+  cycle decides what to pass over from the paused set it read when it
+  began, so a table resumed part-way through still lost the changes that
+  followed, and the write that would have flagged it for a recopy found
+  the table already running and did nothing. The checkpoint then advanced
+  past the lost transaction and the table looked healthy. Every table a
+  cycle passed changes over for is re-checked when the cycle ends, and
+  one that resumed under a dropped change is flagged for the recopy.
+- Automatic recovery from a purged source position no longer lifts a
+  table's pause. It cleared every block to rebuild, which let the stream
+  apply changes to a table an operator was holding still and then flagged
+  that table for a second recopy.
+- A spilling aggregate handed back memory its input scan still owned. It
+  refunded everything charged since it started rather than what its own
+  group map held, so the scan's retained batches were released twice and
+  the query and process budgets undercounted live memory, admitting work
+  past their ceilings.
 - A query that spilled ordered `ENUM` values by their label instead of
   their declared position, so it answered differently from the same query
   that stayed in memory. `MySQL` orders the type by declaration, which is
