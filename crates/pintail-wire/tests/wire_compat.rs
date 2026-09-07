@@ -436,18 +436,30 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore utf8mb4 names");
-    // ANSI_QUOTES changes how a statement parses, and the parser is a fixed
-    // MySqlDialect. Accepting and echoing it - which this test used to
-    // assert - meant a client could ask for identifier quoting, be told it
-    // succeeded, and silently get string literals instead.
-    let refused = connection
-        .query_drop("SET sql_mode = 'ANSI_QUOTES'")
+    connection
+        .query_drop("SET sql_mode='ANSI_QUOTES,PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES'")
         .await
-        .expect_err("a result-changing sql_mode must be refused");
-    assert!(
-        refused.to_string().contains("ANSI_QUOTES"),
-        "refusal must name the mode, got: {refused}"
-    );
+        .unwrap();
+    let quoted: Option<String> = connection
+        .query_first(r#"SELECT "name" || '!' FROM events WHERE id=2"#)
+        .await
+        .unwrap();
+    assert_eq!(quoted.as_deref(), Some("land!"));
+    let literal: Option<String> = connection.query_first(r"SELECT 'a\nb'").await.unwrap();
+    assert_eq!(literal.as_deref(), Some(r"a\nb"));
+    let prepared_mode = connection
+        .prep(r#"SELECT "name" || ? FROM events WHERE id=2"#)
+        .await
+        .unwrap();
+    connection.query_drop("SET sql_mode=''").await.unwrap();
+    let prepared_value: Option<String> = connection
+        .exec_first(&prepared_mode, (r"\tail",))
+        .await
+        .unwrap();
+    assert_eq!(prepared_value.as_deref(), Some(r"land\tail"));
+    connection.close(prepared_mode).await.unwrap();
+    let boolean: Option<u64> = connection.query_first("SELECT 0 || 1").await.unwrap();
+    assert_eq!(boolean, Some(1));
     // A mode that is genuinely inert on a read-only replica still round-trips.
     connection
         .query_drop("SET sql_mode = 'STRICT_TRANS_TABLES'")

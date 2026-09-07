@@ -3191,6 +3191,9 @@ fn bind_binary(
     }
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
+    if *operator == BinaryOperator::StringConcat {
+        return bind_scalar(ScalarFunction::Concat, vec![left, right]);
+    }
     ensure_binary_collation(operator, &left, &right)?;
     // MySQL's null-safe equality: 1 when both are NULL, 0 when exactly one
     // is, the plain comparison otherwise - and never NULL itself. Desugared

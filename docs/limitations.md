@@ -422,17 +422,10 @@ stays readable as a list of things to fix.
   keypair, or cleartext from a client that trusts its transport), validated
   against the stored verifiers. Keys from before metadata schema version 6
   lack both verifiers and must still be rotated.
-- The endpoint is read-only. `SET sql_mode` accepts only modes that are
-  genuinely inert on a read-only replica: write and DDL modes
-  (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`) are stored and
-  echoed, while modes that would change how a statement parses or
-  evaluates are refused rather than accepted and ignored. `ANSI_QUOTES`,
-  `PIPES_AS_CONCAT`, `HIGH_NOT_PRECEDENCE`, `NO_BACKSLASH_ESCAPES`,
-  `IGNORE_SPACE`, `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`,
-  `ALLOW_INVALID_DATES` and the combination modes (`ANSI`, `DB2`,
-  `MAXDB`, `MSSQL`, `ORACLE`, `POSTGRESQL`) all reject: the parser is a
-  fixed `MySQL` dialect, so honouring them is not possible and accepting
-  them would answer a different question than the client asked.
+- The endpoint is read-only. Parsing modes `HIGH_NOT_PRECEDENCE` and
+  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`
+  and `ALLOW_INVALID_DATES`, and combination modes (`ANSI`, `DB2`, `MAXDB`,
+  `MSSQL`, `ORACLE`, `POSTGRESQL`) remain refused.
 - Variable-width text, binary, and JSON expressions without a retained source
   declaration report a type-derived `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB

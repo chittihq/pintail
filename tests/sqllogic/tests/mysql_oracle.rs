@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1208;
+const EXPECTED_CASES: usize = 1216;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -81,6 +81,7 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            (13,8,949.86,'2025-05-01 12:00:00','processing','{\"tags\":[\"rounding\"],\"score\":9.5,\"items\":[5]}');";
 
 struct OracleCase {
+    sql_mode: &'static str,
     family: &'static str,
     sql: String,
     ordered: bool,
@@ -313,8 +314,11 @@ fn run_oracle() -> Result<(), String> {
     let mysql_results = execute_mysql_cases(&mysql, &cases)?;
     let mut failures = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
-        let actual = execute_pintail(&case.sql, &catalog, &provider)
-            .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
+        let actual = pintail_sql::with_parse_mode(
+            pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
+            || execute_pintail(&case.sql, &catalog, &provider),
+        )
+        .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
         if !oracle_rows_equal(&actual, expected, case.ordered) {
             failures.push(format!(
                 "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
@@ -485,8 +489,19 @@ fn execute_mysql_cases(
     for (index, case) in cases.iter().enumerate() {
         writeln!(sql, "SELECT '__PINTAIL_CASE_{index}__';")
             .expect("writing to an owned string cannot fail");
+        if !case.sql_mode.is_empty() {
+            writeln!(
+                sql,
+                "SET @pintail_previous_mode=@@sql_mode; SET sql_mode='{}';",
+                case.sql_mode
+            )
+            .unwrap();
+        }
         sql.push_str(&case.sql);
         sql.push_str(";\n");
+        if !case.sql_mode.is_empty() {
+            sql.push_str("SET sql_mode=@pintail_previous_mode;\n");
+        }
     }
     writeln!(sql, "SELECT '__PINTAIL_CASE_{}__';", cases.len())
         .expect("writing to an owned string cannot fail");
@@ -618,6 +633,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     let mut cases = Vec::with_capacity(EXPECTED_CASES);
     for value in 0..90 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "arithmetic and predicates",
             sql: format!(
                 "SELECT {value} + 7, {value} * 3, {value} % 7, \
@@ -628,6 +644,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     }
     for value in 0..90 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "strings",
             sql: format!(
                 "SELECT CONCAT(LOWER('MiXeD'), '-', {value}), \
@@ -641,6 +658,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     }
     for value in 0..90 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "conditionals and nulls",
             sql: format!(
                 "SELECT IF({value} % 2 = 0, 'even', 'odd'), \
@@ -655,6 +673,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for value in 0..90 {
         let days = value % 28;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "date and time",
             sql: format!(
                 "SELECT DATE_ADD('2024-01-01', INTERVAL {days} DAY), \
@@ -668,6 +687,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     }
     for value in 0..50 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "constant subqueries",
             sql: format!(
                 "SELECT (SELECT {value} + 1), \
@@ -695,6 +715,7 @@ fn oracle_cases() -> Vec<OracleCase> {
             )
         };
         cases.push(OracleCase {
+            sql_mode: "",
             family: "relational subqueries",
             sql,
             ordered: true,
@@ -703,6 +724,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for value in 0..25 {
         let threshold = value % 8 + 1;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "common table expressions",
             sql: format!(
                 "WITH recent (event_id, label, flag) AS (\
@@ -718,6 +740,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         let threshold = value % 10 + 1;
         let limit = value % 4 + 1;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "filter and sort",
             sql: format!(
                 "SELECT id, name, score FROM events \
@@ -729,6 +752,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for value in 0..25 {
         let threshold = value % 8 + 1;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "hash aggregate",
             sql: format!(
                 "SELECT active, COUNT(*), SUM(score), AVG(score), \
@@ -743,6 +767,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         let threshold = value % 10 + 1;
         let limit = value % 5 + 1;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "hash join",
             sql: format!(
                 "SELECT e.id, e.name, u.name FROM events AS e \
@@ -755,6 +780,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for value in 0..22 {
         let limit = value % 3 + 1;
         cases.push(OracleCase {
+            sql_mode: "",
             family: "union all",
             sql: format!(
                 "SELECT {value} AS value UNION ALL SELECT {} UNION ALL SELECT {} \
@@ -774,6 +800,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for label in ENUM_LABELS {
         for op in [">", ">=", "<", "<=", "=", "<>"] {
             cases.push(OracleCase {
+                sql_mode: "",
                 family: "enum semantics",
                 sql: format!(
                     "SELECT COUNT(*), MIN(status), MAX(status) FROM orders \
@@ -785,11 +812,13 @@ fn oracle_cases() -> Vec<OracleCase> {
     }
     for limit in 1..=12 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "enum semantics",
             sql: format!("SELECT id, status FROM orders ORDER BY status, id LIMIT {limit}"),
             ordered: true,
         });
         cases.push(OracleCase {
+            sql_mode: "",
             family: "enum semantics",
             sql: format!("SELECT id, status FROM orders ORDER BY status DESC, id LIMIT {limit}"),
             ordered: true,
@@ -798,6 +827,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     for low in ENUM_LABELS {
         for high in ENUM_LABELS {
             cases.push(OracleCase {
+                sql_mode: "",
                 family: "enum semantics",
                 sql: format!(
                     "SELECT COUNT(*) FROM orders WHERE status BETWEEN '{low}' AND '{high}'"
@@ -815,6 +845,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         "SELECT COUNT(*) FROM orders WHERE status NOT IN ('shipped')",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "enum semantics",
             sql: sql.to_owned(),
             ordered: true,
@@ -827,6 +858,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     // which differs between engines by design (documented gap #10).
     for floor in 1..=12 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "mixed collation grouping",
             sql: format!(
                 "SELECT COUNT(*) FROM (SELECT tag, status FROM events e \
@@ -845,6 +877,7 @@ fn oracle_cases() -> Vec<OracleCase> {
          JOIN orders o ON o.user_id = e.id",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "mixed collation grouping",
             sql: sql.to_owned(),
             ordered: true,
@@ -868,6 +901,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         "SELECT id, UCASE(SUBSTR(tag, 1, 3)), CHARACTER_LENGTH(tag) FROM events ORDER BY id",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "alias functions",
             sql: sql.to_owned(),
             ordered: true,
@@ -889,6 +923,7 @@ fn oracle_cases() -> Vec<OracleCase> {
          FROM events ORDER BY id",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "window functions",
             sql: sql.to_owned(),
             ordered: true,
@@ -926,6 +961,7 @@ fn oracle_cases() -> Vec<OracleCase> {
          GROUP BY u.name ORDER BY u.name",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "typed diversify",
             sql: sql.to_owned(),
             ordered: true,
@@ -937,6 +973,7 @@ fn oracle_cases() -> Vec<OracleCase> {
     // semantics across types, NOT IN, misses, and single-column tuples.
     for floor in 0..6 {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "row constructor IN",
             sql: format!(
                 "SELECT COUNT(*) FROM orders WHERE (user_id, status) IN \
@@ -958,6 +995,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         "SELECT COUNT(*) FROM events WHERE (id, note) IN ((1, 'Alpha'), (3, 'missing'))",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "row constructor IN",
             sql: sql.to_owned(),
             ordered: true,
@@ -1019,6 +1057,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         "SELECT o.id FROM orders o WHERE DATE(o.placed_at) = DATE('2024-03-01 18:30:00') ORDER BY o.id",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "temporal predicate rewrites",
             sql: sql.to_owned(),
             ordered: true,
@@ -1055,6 +1094,7 @@ fn oracle_cases() -> Vec<OracleCase> {
          JOIN events e ON e.id = o.user_id WHERE e.id = 1 GROUP BY u.name, o.status ORDER BY o.status",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "join constant propagation",
             sql: sql.to_owned(),
             ordered: true,
@@ -1131,6 +1171,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         "SELECT u.id, o.id FROM users u JOIN orders o ON o.user_id + 0 = u.id WHERE u.id = 2 ORDER BY o.id",
     ] {
         cases.push(OracleCase {
+            sql_mode: "",
             family: "join constant propagation boundaries",
             sql: sql.to_owned(),
             ordered: true,
@@ -1155,11 +1196,47 @@ fn oracle_cases() -> Vec<OracleCase> {
             String::new(),
         ] {
             cases.push(OracleCase {
+        sql_mode: "",
                 family: "compound interval literals",
                 sql: format!("SELECT DATE_ADD('2024-02-29', INTERVAL '{literal}' {unit}), DATE_SUB('2024-02-29 12:00:00', INTERVAL '{literal}' {unit})"),
                 ordered: true,
             });
         }
+    }
+    for (sql_mode, sql) in [
+        (
+            "ANSI_QUOTES",
+            r#"SELECT "name" FROM events ORDER BY id LIMIT 2"#,
+        ),
+        (
+            "PIPES_AS_CONCAT",
+            "SELECT 'a' || 'b', NULL || 'x', 1 + 2 || 3",
+        ),
+        ("PIPES_AS_CONCAT", "SELECT 2 * 3 || 4, 'x' || 'y' || 'z'"),
+        ("NO_BACKSLASH_ESCAPES", r"SELECT 'a\nb', 'it''s', '\'"),
+        (
+            "ANSI_QUOTES,PIPES_AS_CONCAT",
+            r#"SELECT "name" || '!' FROM events WHERE id=2"#,
+        ),
+        (
+            "ANSI_QUOTES,NO_BACKSLASH_ESCAPES",
+            r#"SELECT "name", '\' FROM events WHERE id=2"#,
+        ),
+        (
+            "PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES",
+            r"SELECT 'a\' || 'b'",
+        ),
+        (
+            "ANSI_QUOTES,PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES",
+            r#"SELECT "name" || '\' FROM events WHERE id=2"#,
+        ),
+    ] {
+        cases.push(OracleCase {
+            family: "session lexical modes",
+            sql_mode,
+            sql: sql.to_owned(),
+            ordered: true,
+        });
     }
     cases.extend(hand_written_cases());
     cases
@@ -1168,11 +1245,13 @@ fn oracle_cases() -> Vec<OracleCase> {
 #[allow(clippy::too_many_lines)]
 fn hand_written_cases() -> Vec<OracleCase> {
     let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
         family,
         sql: sql.to_owned(),
         ordered: true,
     };
     let unordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
         family,
         sql: sql.to_owned(),
         ordered: false,
@@ -3109,11 +3188,13 @@ fn hand_written_cases() -> Vec<OracleCase> {
 #[allow(clippy::too_many_lines)]
 fn diversify_cases() -> Vec<OracleCase> {
     let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
         family,
         sql: sql.to_owned(),
         ordered: true,
     };
     let unordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
         family,
         sql: sql.to_owned(),
         ordered: false,
@@ -3846,6 +3927,7 @@ fn run_fuzz() -> Result<(), String> {
     let oracle_cases = generated
         .iter()
         .map(|case| OracleCase {
+            sql_mode: "",
             family: case.family,
             sql: case.sql.clone(),
             ordered: true,

@@ -5,7 +5,7 @@
 /// so an error in a later statement does not prevent earlier statements from
 /// running. The caller supplies the current session's escape mode each time.
 #[must_use]
-pub fn first_statement(sql: &[u8], no_backslash_escapes: bool) -> Option<(&[u8], &[u8])> {
+pub fn first_statement(sql: &[u8], mode: crate::ParseMode) -> Option<(&[u8], &[u8])> {
     let mut at = 0;
     let mut start = 0;
     let mut significant = false;
@@ -45,7 +45,11 @@ pub fn first_statement(sql: &[u8], no_backslash_escapes: bool) -> Option<(&[u8],
                 significant = true;
                 at += 1;
                 while at < sql.len() {
-                    if sql[at] == b'\\' && !no_backslash_escapes && quote != b'`' {
+                    if sql[at] == b'\\'
+                        && !mode.no_backslash_escapes
+                        && quote != b'`'
+                        && !(quote == b'"' && mode.ansi_quotes)
+                    {
                         at = (at + 2).min(sql.len());
                     } else if sql[at] == quote {
                         at += 1;
@@ -75,24 +79,46 @@ mod tests {
     #[test]
     fn semicolons_in_quotes_and_comments_do_not_split_statements() {
         let sql = b"SELECT ';', \";\", `a;b`, 'it''s;ok' /* ; */; -- ;\n SELECT 2; # tail";
-        let (first, rest) = first_statement(sql, false).unwrap();
+        let (first, rest) = first_statement(sql, crate::ParseMode::default()).unwrap();
         assert!(first.ends_with(b"/* ; */"));
-        let (second, rest) = first_statement(rest, false).unwrap();
+        let (second, rest) = first_statement(rest, crate::ParseMode::default()).unwrap();
         assert!(second.ends_with(b"SELECT 2"));
-        assert!(first_statement(rest, false).is_none());
-        assert!(first_statement(b"; /* empty */ ;", false).is_none());
+        assert!(first_statement(rest, crate::ParseMode::default()).is_none());
+        assert!(first_statement(b"; /* empty */ ;", crate::ParseMode::default()).is_none());
     }
 
     #[test]
     fn later_malformed_statements_are_left_for_the_parser() {
-        let (first, rest) = first_statement(b"SET @x=1; SELECT 'unterminated", false).unwrap();
+        let (first, rest) = first_statement(
+            b"SET @x=1; SELECT 'unterminated",
+            crate::ParseMode::default(),
+        )
+        .unwrap();
         assert_eq!(first, b"SET @x=1");
         assert_eq!(
-            first_statement(rest, false).unwrap().0,
+            first_statement(rest, crate::ParseMode::default())
+                .unwrap()
+                .0,
             b" SELECT 'unterminated"
         );
         let sql = b"SELECT 'x\\'; SELECT 2;";
-        assert!(first_statement(sql, false).unwrap().1.is_empty());
-        assert_eq!(first_statement(sql, true).unwrap().1, b" SELECT 2;");
+        assert!(
+            first_statement(sql, crate::ParseMode::default())
+                .unwrap()
+                .1
+                .is_empty()
+        );
+        assert_eq!(
+            first_statement(
+                sql,
+                crate::ParseMode {
+                    no_backslash_escapes: true,
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .1,
+            b" SELECT 2;"
+        );
     }
 }

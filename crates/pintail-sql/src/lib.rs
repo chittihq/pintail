@@ -5,6 +5,8 @@ mod bound;
 mod hints;
 mod interval;
 mod metadata;
+mod mode;
+pub use mode::{ParseMode, session_parse_mode, with_parse_mode};
 mod request;
 pub use request::first_statement;
 
@@ -86,10 +88,17 @@ impl From<ParserError> for ParseError {
 ///
 /// Returns [`ParseError::InvalidSql`] when tokenization or parsing fails.
 pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let dialect = PintailDialect(MySqlDialect {});
+    let dialect = PintailDialect(MySqlDialect {}, session_parse_mode());
     let mut tokens = sqlparser::tokenizer::Tokenizer::new(&dialect, sql)
         .tokenize_with_location()
         .map_err(ParserError::from)?;
+    if !dialect.1.pipes_as_concat {
+        for token in &mut tokens {
+            if token.token == sqlparser::tokenizer::Token::StringConcat {
+                token.token = sqlparser::tokenizer::Token::make_keyword("OR");
+            }
+        }
+    }
     interval::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)
@@ -337,7 +346,7 @@ mod tests {
 /// into `allow_extract_custom`, which routes unknown fields through
 /// `DateTimeField::Custom` instead.
 #[derive(Debug)]
-struct PintailDialect(MySqlDialect);
+struct PintailDialect(MySqlDialect, ParseMode);
 
 impl Dialect for PintailDialect {
     fn dialect(&self) -> std::any::TypeId {
@@ -350,13 +359,13 @@ impl Dialect for PintailDialect {
         self.0.is_identifier_part(ch)
     }
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
-        self.0.is_delimited_identifier_start(ch)
+        (self.1.ansi_quotes && ch == '"') || self.0.is_delimited_identifier_start(ch)
     }
     fn identifier_quote_style(&self, identifier: &str) -> Option<char> {
         self.0.identifier_quote_style(identifier)
     }
     fn supports_string_literal_backslash_escape(&self) -> bool {
-        self.0.supports_string_literal_backslash_escape()
+        !self.1.no_backslash_escapes
     }
     fn supports_string_literal_concatenation(&self) -> bool {
         self.0.supports_string_literal_concatenation()
@@ -372,6 +381,11 @@ impl Dialect for PintailDialect {
     }
     fn supports_multiline_comment_hints(&self) -> bool {
         self.0.supports_multiline_comment_hints()
+    }
+    fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
+        (self.1.pipes_as_concat
+            && parser.peek_token().token == sqlparser::tokenizer::Token::StringConcat)
+            .then_some(Ok(45))
     }
     fn parse_infix(
         &self,

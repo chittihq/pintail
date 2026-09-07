@@ -595,20 +595,10 @@ where
     }
 }
 
-/// `sql_mode` flags that change how a statement parses or evaluates, and
-/// that Pintail does not implement.
-///
-/// The parser is a fixed `MySqlDialect`, so `PIPES_AS_CONCAT` cannot make
-/// `||` concatenate and `ANSI_QUOTES` cannot make `"x"` an identifier.
-/// Storing such a mode and carrying on would answer a different question
-/// than the client asked - `a || b` returning a boolean where the client
-/// expected a string - with no error to notice. These are refused instead.
+/// Modes whose grammar or evaluation semantics remain unsupported.
 const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     // Parsing.
-    "ANSI_QUOTES",
-    "PIPES_AS_CONCAT",
     "HIGH_NOT_PRECEDENCE",
-    "NO_BACKSLASH_ESCAPES",
     "IGNORE_SPACE",
     // Evaluation.
     "REAL_AS_FLOAT",
@@ -714,6 +704,7 @@ struct Authenticated {
 
 #[derive(Clone, Debug)]
 struct Prepared {
+    parse_mode: pintail_sql::ParseMode,
     sql: String,
     parameters: usize,
     /// Types from the last EXECUTE that rebound them, reused when a later
@@ -931,6 +922,14 @@ impl Backend {
     }
 
     async fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
+        self.execute_mode(sql, None).await
+    }
+
+    async fn execute_mode(
+        &self,
+        sql: &str,
+        mode: Option<pintail_sql::ParseMode>,
+    ) -> Result<QueryOutput, QueryError> {
         let started = std::time::Instant::now();
         let authenticated = self
             .authenticated()
@@ -963,25 +962,35 @@ impl Backend {
             full: pintail_log::enabled(pintail_log::DEBUG).then(|| sql.to_owned()),
         });
         let sql = sql.to_owned();
+        let parse_mode =
+            mode.unwrap_or_else(|| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode));
         let execution = tokio::task::spawn_blocking(move || {
-            pintail_exec::with_execution_cancellation(cancellation, || {
-                // The session zone shifts statement-pinned time functions;
-                // optimization runs on this thread, so install-and-restore
-                // brackets exactly one statement.
-                let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
-                pintail_sql::set_session_default_collation(Some(session.collation_connection));
-                pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
-                pintail_exec::set_session_cte_max_recursion_depth(Some(
-                    session.cte_max_recursion_depth,
-                ));
-                let result =
-                    engine.execute_with_deadline(&database_id, &sql, DEFAULT_MAX_ROWS, deadline);
-                let warnings = pintail_exec::take_session_group_concat_warnings();
-                pintail_exec::set_session_group_concat_max_len(None);
-                pintail_exec::set_session_cte_max_recursion_depth(None);
-                pintail_sql::set_session_default_collation(None);
-                let _ = pintail_exec::set_session_time_zone(None);
-                (result, warnings)
+            pintail_sql::with_parse_mode(parse_mode, || {
+                pintail_exec::with_execution_cancellation(cancellation, || {
+                    // The session zone shifts statement-pinned time functions;
+                    // optimization runs on this thread, so install-and-restore
+                    // brackets exactly one statement.
+                    let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                    pintail_sql::set_session_default_collation(Some(session.collation_connection));
+                    pintail_exec::set_session_group_concat_max_len(Some(
+                        session.group_concat_max_len,
+                    ));
+                    pintail_exec::set_session_cte_max_recursion_depth(Some(
+                        session.cte_max_recursion_depth,
+                    ));
+                    let result = engine.execute_with_deadline(
+                        &database_id,
+                        &sql,
+                        DEFAULT_MAX_ROWS,
+                        deadline,
+                    );
+                    let warnings = pintail_exec::take_session_group_concat_warnings();
+                    pintail_exec::set_session_group_concat_max_len(None);
+                    pintail_exec::set_session_cte_max_recursion_depth(None);
+                    pintail_sql::set_session_default_collation(None);
+                    let _ = pintail_exec::set_session_time_zone(None);
+                    (result, warnings)
+                })
             })
         })
         .await
@@ -1252,7 +1261,13 @@ impl Handler for Backend {
     }
 
     fn first_statement<'a>(&self, sql: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
-        pintail_sql::first_statement(sql, false)
+        let mode = self
+            .session
+            .lock()
+            .ok()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .unwrap_or_default();
+        pintail_sql::first_statement(sql, mode)
     }
 
     async fn query(&mut self, sql: &[u8]) -> Response {
@@ -1298,9 +1313,18 @@ impl Handler for Backend {
             record_prepared_refused();
             return Err((ErrorKind::ErMaxPreparedStmtCountReached, refusal));
         }
-        let parameters = placeholder_count(sql);
-        let preview = substitute_parameters(sql, &placeholder_preview_literals(sql))
-            .map_err(|error| (ErrorKind::ErParseError, error))?;
+        let parse_mode = self
+            .session
+            .lock()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?;
+        let (parameters, preview) = pintail_sql::with_parse_mode(parse_mode, || {
+            (
+                placeholder_count(sql),
+                substitute_parameters(sql, &placeholder_preview_literals(sql)),
+            )
+        });
+        let preview = preview.map_err(|error| (ErrorKind::ErParseError, error))?;
         let output = Backend::execute(self, &preview)
             .await
             .map_err(|error| (error_kind(&error), error.to_string()))?;
@@ -1310,6 +1334,7 @@ impl Handler for Backend {
         self.prepared.insert(
             statement_id,
             Prepared {
+                parse_mode,
                 sql: sql.to_owned(),
                 parameters,
                 parameter_types: None,
@@ -1374,13 +1399,17 @@ impl Handler for Backend {
         }
         let literals = match values
             .iter()
-            .map(parameter_literal)
+            .map(|value| {
+                pintail_sql::with_parse_mode(statement.parse_mode, || parameter_literal(value))
+            })
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(literals) => literals,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
-        let query = match substitute_parameters(&statement.sql, &literals) {
+        let query = match pintail_sql::with_parse_mode(statement.parse_mode, || {
+            substitute_parameters(&statement.sql, &literals)
+        }) {
             Ok(query) => query,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
@@ -1391,7 +1420,7 @@ impl Handler for Backend {
             );
         };
         query_output_to_response(
-            Backend::execute(self, &query).await,
+            self.execute_mode(&query, Some(statement.parse_mode)).await,
             group_concat_max_len,
             &charset,
             negotiated,
@@ -2391,7 +2420,11 @@ fn sql_code_only(sql: &str) -> Vec<u8> {
             delimiter @ (b'\'' | b'"' | b'`') => {
                 index += 1;
                 while index < bytes.len() {
-                    if bytes[index] == b'\\' {
+                    if bytes[index] == b'\\'
+                        && delimiter != b'`'
+                        && !pintail_sql::session_parse_mode().no_backslash_escapes
+                        && !(delimiter == b'"' && pintail_sql::session_parse_mode().ansi_quotes)
+                    {
                         index += 2;
                         continue;
                     }
@@ -2476,7 +2509,11 @@ fn parameter_literal(value: &BinaryValue) -> Result<String, String> {
             |value| {
                 Ok(format!(
                     "'{}'",
-                    value.replace('\\', "\\\\").replace('\'', "''")
+                    if pintail_sql::session_parse_mode().no_backslash_escapes {
+                        value.replace('\'', "''")
+                    } else {
+                        value.replace('\\', "\\\\").replace('\'', "''")
+                    }
                 ))
             },
         ),
@@ -3163,25 +3200,19 @@ mod tests {
 
     #[test]
     fn sql_mode_refuses_modes_that_would_change_results() {
-        // PIPES_AS_CONCAT is the sharpest case: the parser is a fixed
-        // MySqlDialect, so `a || b` stays OR. Accepting the mode would
-        // answer a different question than the client asked, silently.
-        let refused = super::reject_unsupported_sql_modes("PIPES_AS_CONCAT")
-            .expect_err("must refuse a mode it cannot honour");
-        assert!(refused.contains("PIPES_AS_CONCAT"), "got: {refused}");
-
-        for mode in ["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES", "ALLOW_INVALID_DATES"] {
-            assert!(
-                super::reject_unsupported_sql_modes(mode).is_err(),
-                "{mode} changes results and must be refused"
-            );
+        for mode in [
+            "HIGH_NOT_PRECEDENCE",
+            "REAL_AS_FLOAT",
+            "ALLOW_INVALID_DATES",
+        ] {
+            assert!(super::reject_unsupported_sql_modes(mode).is_err());
         }
         // Compound modes turn the above on by another name.
         assert!(super::reject_unsupported_sql_modes("ANSI").is_err());
         // Refusal must survive being buried in a list, which is how clients
         // actually send sql_mode.
         assert!(
-            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,PIPES_AS_CONCAT,NO_ZERO_DATE")
+            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,REAL_AS_FLOAT,NO_ZERO_DATE")
                 .is_err()
         );
     }
@@ -3193,6 +3224,7 @@ mod tests {
         for mode in [
             "",
             "STRICT_TRANS_TABLES",
+            "ANSI_QUOTES,PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES",
             "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         ] {

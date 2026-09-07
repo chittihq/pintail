@@ -23,6 +23,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+Session parsing honors `ANSI_QUOTES`, `PIPES_AS_CONCAT` and
+`NO_BACKSLASH_ESCAPES`, including the mode captured by prepared statements.
+
 - Clients can negotiate multi-statement text requests. Statements execute
   in order, with a result for each and the protocol's more-results flag
   until the last. A failure stops the batch at that statement; quoted and
