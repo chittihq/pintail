@@ -11,6 +11,14 @@ pub(crate) fn decode_event(event: &Event) -> Result<Option<EventData<'_>>, CdcEr
     })
 }
 
+pub(crate) fn stream_error(error: mysql_async::Error) -> Result<mysql_async::Error, CdcError> {
+    if matches!(&error, mysql_async::Error::Io(mysql_async::IoError::Io(error)) if error.kind() == std::io::ErrorKind::InvalidData)
+    {
+        return Err(CdcError::Decode(error.to_string()));
+    }
+    Ok(error)
+}
+
 #[cfg(test)]
 mod tests {
     use mysql_async::binlog::{
@@ -18,7 +26,7 @@ mod tests {
         events::{BinlogEventFooter, Event, FormatDescriptionEvent, TransactionPayloadEvent},
     };
 
-    use super::decode_event;
+    use super::{decode_event, stream_error};
     use crate::CdcError;
 
     #[test]
@@ -33,6 +41,13 @@ mod tests {
             .read_event::<TransactionPayloadEvent<'_>>()
             .expect_err("stream payload decode must not panic");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let CdcError::Decode(message) =
+            stream_error(error.into()).expect_err("stream decode must fail")
+        else {
+            panic!("expected a stream decode error");
+        };
+        assert!(message.contains("1234"));
+        assert!(message.contains("field ID exceeds 255"));
         let CdcError::Decode(message) = decode_event(&event).expect_err("CDC decode must fail")
         else {
             panic!("expected a decode error");

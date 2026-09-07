@@ -243,7 +243,12 @@ impl Event {
         let event_data = &mut ParseBuf(&self.data);
         let ctx = BinlogCtx::new(event_size, &self.fde, self.header.event_type_raw());
 
-        let event = event_data.parse(ctx)?;
+        let event = event_data.parse(ctx).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!("binlog event at position {}: {error}", self.header.log_pos()),
+            )
+        })?;
 
         // it is an error if the `event_data` isn't fully consumed
         if !event_data.is_empty() {

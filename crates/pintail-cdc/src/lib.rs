@@ -474,7 +474,7 @@ async fn run_cdc_inner(
                     event
                 }
                 Err(error) => {
-                    stream_error = Some(error);
+                    stream_error = Some(self::event::stream_error(error)?);
                     break;
                 }
             };
