@@ -3,6 +3,7 @@
 mod binder;
 mod bound;
 mod hints;
+mod interval;
 mod metadata;
 
 use std::fmt;
@@ -83,8 +84,15 @@ impl From<ParserError> for ParseError {
 ///
 /// Returns [`ParseError::InvalidSql`] when tokenization or parsing fails.
 pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let mut statements =
-        Parser::parse_sql(&PintailDialect(MySqlDialect {}), sql).map_err(ParseError::from)?;
+    let dialect = PintailDialect(MySqlDialect {});
+    let mut tokens = sqlparser::tokenizer::Tokenizer::new(&dialect, sql)
+        .tokenize_with_location()
+        .map_err(ParserError::from)?;
+    interval::rewrite(&mut tokens);
+    let mut statements = Parser::new(&dialect)
+        .with_tokens_with_locations(tokens)
+        .parse_statements()
+        .map_err(ParseError::from)?;
     // sqlparser's MySQL dialect parses the right side of DIV with a full
     // `parse_expr`, swallowing every lower-precedence continuation
     // (`a DIV b AND c` becomes `a DIV (b AND c)`). Rebalance those nodes to

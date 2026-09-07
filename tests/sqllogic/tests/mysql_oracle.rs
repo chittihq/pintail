@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1159;
+const EXPECTED_CASES: usize = 1208;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1135,6 +1135,31 @@ fn oracle_cases() -> Vec<OracleCase> {
             sql: sql.to_owned(),
             ordered: true,
         });
+    }
+    for (unit, full) in [
+        ("YEAR_MONTH", "1-2"),
+        ("DAY_HOUR", "1 2"),
+        ("DAY_MINUTE", "1 2:3"),
+        ("DAY_SECOND", "1 2:3:4"),
+        ("HOUR_MINUTE", "2:3"),
+        ("HOUR_SECOND", "2:3:4"),
+        ("MINUTE_SECOND", "3:4"),
+    ] {
+        for literal in [
+            full.to_owned(),
+            format!("-{full}"),
+            format!("+{full}"),
+            "2".to_owned(),
+            "1.2".to_owned(),
+            format!("{full}.5"),
+            String::new(),
+        ] {
+            cases.push(OracleCase {
+                family: "compound interval literals",
+                sql: format!("SELECT DATE_ADD('2024-02-29', INTERVAL '{literal}' {unit}), DATE_SUB('2024-02-29 12:00:00', INTERVAL '{literal}' {unit})"),
+                ordered: true,
+            });
+        }
     }
     cases.extend(hand_written_cases());
     cases
@@ -3448,11 +3473,6 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject update statement",
             "UPDATE orders SET total = 0 WHERE id = 1",
             "unsupported|update|statement|parse|bind",
-        ),
-        (
-            "reject compound year_month interval",
-            "SELECT DATE_ADD(placed_at, INTERVAL '1-2' YEAR_MONTH) FROM orders",
-            "unsupported|interval|year_month|parse|bind",
         ),
         (
             "reject aliased parenthesized join group",

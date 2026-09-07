@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Compound interval literals are accepted by date arithmetic, including
+  year-month and day-through-second qualifiers. Signs and omitted leading
+  fields follow the source's parsing rules; malformed extra fields yield
+  NULL. Time-grain queries can use these qualifiers directly.
+
 - One table can be paused while the rest of its database keeps
   replicating: `POST /api/databases/{id}/tables/{name}/pause` and
   `/resume`, with a Pause table / Resume table action and a paused badge
