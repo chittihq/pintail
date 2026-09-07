@@ -987,12 +987,15 @@ fn collect_rows(
 }
 
 /// Whether a table's store holds everything its source had when the copy
-/// ran. A snapshot in progress, or a first copy that failed part-way, leaves
-/// a store the engine must not answer from. A table flagged for a resync it
-/// has not started, a table under replication, and a local table all keep
-/// serving: their stores are complete, if possibly behind.
+/// ran. A snapshot in progress, a first copy that failed part-way, and a
+/// copy a restart interrupted (flagged for resync with the copy still
+/// owed) leave a store the engine must not answer from. A table flagged
+/// for a resync it has not started, a table under replication, and a local
+/// table all keep serving: their stores are complete, if possibly behind.
 fn table_copy_is_complete(record: &pintail_meta::TableRecord) -> bool {
-    record.copy_complete || !matches!(record.state.as_str(), "snapshotting" | "error" | "pending")
+    record.copy_complete
+        || (!record.copy_pending
+            && !matches!(record.state.as_str(), "snapshotting" | "error" | "pending"))
 }
 
 fn query_execution_error(error: ExecError) -> QueryError {
@@ -1543,6 +1546,28 @@ mod admission_tests {
         meta.finish_table_resnapshot("db", "a", "ready").unwrap();
         let served = engine.execute("db", "SELECT COUNT(*) FROM a", 10).unwrap();
         assert_eq!(served.rows, vec![vec![Value::UInt64(2)]]);
+
+        // Flagged for a resync it has not started (a quarantine): the store
+        // is whole and keeps serving.
+        meta.mark_table_needs_resync("db", "a", "ambiguous keyless rows")
+            .unwrap();
+        let served = engine.execute("db", "SELECT COUNT(*) FROM a", 10).unwrap();
+        assert_eq!(served.rows, vec![vec![Value::UInt64(2)]]);
+
+        // A copy interrupted part-way and flagged for retry: the store is
+        // partial and is refused until the retry completes.
+        meta.begin_table_resnapshot("db", "a").unwrap();
+        meta.fail_table_copy("db", "a", "process stopped mid-copy", true)
+            .unwrap();
+        assert!(
+            matches!(
+                engine.execute("db", "SELECT COUNT(*) FROM a", 10),
+                Err(QueryError::NotReady(_))
+            ),
+            "an interrupted copy stays refused"
+        );
+        meta.finish_table_resnapshot("db", "a", "ready").unwrap();
+        assert!(engine.execute("db", "SELECT COUNT(*) FROM a", 10).is_ok());
     }
 
     #[test]

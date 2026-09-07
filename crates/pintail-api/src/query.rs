@@ -604,6 +604,7 @@ mod tests {
             orphaned_at: None,
             soft_delete_column: None,
             copy_complete: true,
+            copy_pending: false,
         }
     }
 

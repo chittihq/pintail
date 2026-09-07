@@ -170,6 +170,11 @@ pub struct TableRecord {
     /// Whether the table's copy reached its end (set on completion or a
     /// finished resync, cleared when a copy or resync begins).
     pub copy_complete: bool,
+    /// Whether a copy is owed: set when a copy or resync begins or an
+    /// interrupted one is flagged for retry, cleared when it completes. A
+    /// table flagged for a resync it has not started keeps its store whole
+    /// and this false; an interrupted copy has this true.
+    pub copy_pending: bool,
 }
 
 /// Durable database-scoped API key metadata.
@@ -1361,7 +1366,7 @@ impl MetaStore {
             .prepare(
                 "SELECT db_id, name, state, pk_json, cursor_column, sort_key_json, \
                         rows_synced, last_error, last_reconcile_at, schema_version, \
-                        orphaned_at, soft_delete_column, copy_complete \
+                        orphaned_at, soft_delete_column, copy_complete, copy_pending \
                  FROM tables WHERE db_id = ?1 ORDER BY name COLLATE NOCASE",
             )
             .context("failed to prepare table query")?;
@@ -1910,6 +1915,7 @@ fn decode_table(row: &rusqlite::Row<'_>) -> rusqlite::Result<TableRecord> {
         orphaned_at: row.get(10)?,
         soft_delete_column: row.get(11)?,
         copy_complete: row.get::<_, i64>(12)? != 0,
+        copy_pending: row.get::<_, i64>(13)? != 0,
     })
 }
 

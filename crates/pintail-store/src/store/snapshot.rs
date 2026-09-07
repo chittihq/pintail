@@ -690,6 +690,7 @@ impl TableSnapshot {
             merge: None,
             overlay_key: None,
             overlay: None,
+            pending: std::collections::VecDeque::new(),
         }))
     }
 

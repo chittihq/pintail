@@ -171,6 +171,12 @@ impl<W: AsyncWrite + Unpin> PacketWriter<W> {
             self.inner.write_all(&self.buffer).await?;
             self.buffer.clear();
         }
+        // A connection keeps its writer for its whole life; the buffer's
+        // capacity is bounded so an idle pool does not hold what its largest
+        // response once needed.
+        if self.buffer.capacity() > 2 * WRITE_BUFFER_HIGH_WATER {
+            self.buffer.shrink_to(WRITE_BUFFER_HIGH_WATER);
+        }
         Ok(())
     }
 
@@ -190,12 +196,20 @@ impl<W: AsyncWrite + Unpin> PacketWriter<W> {
             let length = u32::try_from(take).unwrap_or(0).to_le_bytes();
             self.buffer
                 .extend_from_slice(&[length[0], length[1], length[2], self.sequence]);
-            self.buffer.extend_from_slice(chunk);
+            if chunk.len() >= WRITE_BUFFER_HIGH_WATER {
+                // A body at or past the high-water mark goes to the stream
+                // straight from the caller's slice, after the bytes ahead of
+                // it, so the buffer never grows to hold a large packet.
+                self.write_buffered().await?;
+                self.inner.write_all(chunk).await?;
+            } else {
+                self.buffer.extend_from_slice(chunk);
+                if self.buffer.len() >= WRITE_BUFFER_HIGH_WATER {
+                    self.write_buffered().await?;
+                }
+            }
             self.sequence = self.sequence.wrapping_add(1);
             offset += take;
-            if self.buffer.len() >= WRITE_BUFFER_HIGH_WATER {
-                self.write_buffered().await?;
-            }
             if take < MAX_PAYLOAD {
                 return Ok(());
             }
@@ -355,6 +369,28 @@ mod tests {
         // Header + full body, then a bare header with zero length.
         assert_eq!(encoded.len(), 4 + MAX_PAYLOAD + 4);
         assert_eq!(&encoded[encoded.len() - 4..], &[0, 0, 0, 1]);
+    }
+
+    #[tokio::test]
+    async fn a_large_body_bypasses_the_buffer_and_leaves_it_bounded() {
+        let mut encoded = Vec::new();
+        let mut writer = PacketWriter::new(&mut encoded);
+        writer
+            .write_payload(&vec![3_u8; 4 * super::WRITE_BUFFER_HIGH_WATER])
+            .await
+            .expect("write");
+        writer.write_payload(b"small").await.expect("write");
+        writer.flush().await.expect("flush");
+        assert!(
+            writer.buffer.capacity() <= 2 * super::WRITE_BUFFER_HIGH_WATER,
+            "capacity {} outgrew the bound",
+            writer.buffer.capacity()
+        );
+        let mut reader = PacketReader::new(encoded.as_slice());
+        let large = reader.next_payload().await.expect("read").expect("payload");
+        assert_eq!(large.len(), 4 * super::WRITE_BUFFER_HIGH_WATER);
+        let small = reader.next_payload().await.expect("read").expect("payload");
+        assert_eq!(small, b"small");
     }
 
     #[tokio::test]

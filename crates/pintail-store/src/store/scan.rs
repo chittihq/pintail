@@ -193,6 +193,9 @@ pub(super) enum ScanPart {
     },
 }
 
+/// Bookkeeping a hash set spends per entry beyond the entry itself.
+const HASH_SET_ENTRY_OVERHEAD: usize = 16;
+
 /// The overlay part in progress: the segment's block boundaries, so a slice
 /// knows the key span it covers and which memtable rows belong to it.
 pub(super) struct OverlayState {
@@ -371,6 +374,9 @@ pub struct ProjectedScanStream {
     /// the memtable supersedes from a packed column instead of merging.
     pub(super) overlay_key: Option<u32>,
     pub(super) overlay: Option<OverlayState>,
+    /// Chunks an overlay slice produced beyond the one the single-chunk
+    /// API could hand out, waiting their turn.
+    pub(super) pending: VecDeque<ProjectedColumnChunk>,
 }
 
 pub(super) struct MergedProjectedStream {
@@ -1074,6 +1080,9 @@ impl ProjectedScanStream {
         memory_limit: usize,
     ) -> Result<Option<ProjectedColumnChunk>, StoreError> {
         loop {
+            if let Some(chunk) = self.pending.pop_front() {
+                return Ok(Some(chunk));
+            }
             if self.merge.is_some() {
                 if let Some(chunk) = self.next_merged_column_chunk(memory_limit)? {
                     return Ok(Some(chunk));
@@ -1088,6 +1097,23 @@ impl ProjectedScanStream {
                 return self
                     .decode_direct_range_within(segment, start_row, end_row, memory_limit)
                     .map(Some);
+            } else if self.overlay.is_some() {
+                // An overlay segment is decoded slice by slice with the
+                // mask, whichever API pulls; the slice's chunks queue up.
+                self.fill_direct_slices(1)?;
+                let Some(slice) = self.slices.pop_front() else {
+                    if !self.advance_part()? {
+                        return Ok(None);
+                    }
+                    continue;
+                };
+                let mut chunks = self.decode_overlay_slice_bounded(slice, memory_limit, None)?;
+                if chunks.is_empty() {
+                    continue;
+                }
+                let first = chunks.remove(0);
+                self.pending.extend(chunks);
+                return Ok(Some(first));
             } else if let Some(segment) = self.segments.get(self.next_segment).cloned() {
                 self.next_segment += 1;
                 return match self.decode_column_chunk(segment.clone(), memory_limit) {
@@ -1323,6 +1349,9 @@ impl ProjectedScanStream {
         memory_limit: usize,
         prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
     ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        if !self.pending.is_empty() {
+            return Ok(self.pending.drain(..).collect());
+        }
         if self.merge.is_some() || self.memtable_cursor.is_some() || self.direct_range.is_some() {
             return Ok(self.next_column_chunk(memory_limit)?.into_iter().collect());
         }
@@ -1345,24 +1374,10 @@ impl ProjectedScanStream {
                     end_row,
                 } => (segment.clone(), *start_row, *end_row),
             };
+            if self.overlay.is_some() {
+                return self.decode_overlay_slice_bounded(slice, memory_limit, prewhere);
+            }
             return match self.decode_slice(&slice, memory_limit, prewhere) {
-                Err(StoreError::MemoryLimitExceeded { .. }) if self.overlay.is_some() => {
-                    // The overlay must mask every slice it decodes, so a
-                    // slice that does not fit is halved at a block boundary
-                    // rather than decoded unmasked in pieces.
-                    match self.split_overlay_slice(&slice) {
-                        Some((head, tail)) => {
-                            self.slices.push_front(tail);
-                            self.slices.push_front(head);
-                            self.next_column_chunks_inner(1, memory_limit, prewhere)
-                        }
-                        None => Err(StoreError::MemoryLimitExceeded {
-                            used: 0,
-                            requested: 0,
-                            limit: memory_limit,
-                        }),
-                    }
-                }
                 Err(StoreError::MemoryLimitExceeded { .. }) if end_row - start_row > 1 => self
                     .decode_direct_range_within(segment, start_row, end_row, memory_limit)
                     .map(|chunk| vec![chunk]),
@@ -1384,6 +1399,38 @@ impl ProjectedScanStream {
             return self.next_column_chunks_inner(chunk_count.div_ceil(2), memory_limit, prewhere);
         }
         decoded.map(|chunks| chunks.into_iter().flatten().collect())
+    }
+
+    /// Decodes one overlay slice within `memory_limit`, halving it at block
+    /// boundaries while it does not fit. The overlay must mask every slice
+    /// it decodes, so a slice is never decoded unmasked in pieces; a single
+    /// block that does not fit is a memory error.
+    fn decode_overlay_slice_bounded(
+        &self,
+        slice: DirectSlice,
+        memory_limit: usize,
+        prewhere: Option<(&[u32], PrewhereSelect<'_>)>,
+    ) -> Result<Vec<ProjectedColumnChunk>, StoreError> {
+        let mut work = VecDeque::from([slice]);
+        let mut chunks = Vec::new();
+        while let Some(slice) = work.pop_front() {
+            match self.decode_slice(&slice, memory_limit, prewhere) {
+                Ok(decoded) => chunks.extend(decoded),
+                Err(StoreError::MemoryLimitExceeded { .. }) => {
+                    let (head, tail) = self.split_overlay_slice(&slice).ok_or(
+                        StoreError::MemoryLimitExceeded {
+                            used: 0,
+                            requested: 0,
+                            limit: memory_limit,
+                        },
+                    )?;
+                    work.push_front(tail);
+                    work.push_front(head);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(chunks)
     }
 
     /// Halves an overlay slice at the block boundary nearest its middle;
@@ -1574,6 +1621,33 @@ impl ProjectedScanStream {
                 .decode_slice_plain(slice, memory_limit, prewhere)
                 .map(|chunk| vec![chunk]);
         }
+        // The overlay's own working set comes out of the slice's allowance
+        // before the decode: the key set, the live-row list, and the
+        // positions and ranges the mask can produce at worst (one per row).
+        let slice_rows = match slice {
+            DirectSlice::Whole(segment) => segment.row_count,
+            DirectSlice::Range {
+                start_row, end_row, ..
+            } => end_row - start_row,
+        };
+        let slice_rows = usize::try_from(slice_rows).unwrap_or(usize::MAX);
+        let overhead = keys
+            .len()
+            .saturating_mul(size_of::<i128>().saturating_add(HASH_SET_ENTRY_OVERHEAD))
+            .saturating_add(live.len().saturating_mul(size_of::<&StoredRow>()))
+            .saturating_add(
+                slice_rows.saturating_mul(size_of::<usize>() + size_of::<std::ops::Range<usize>>()),
+            );
+        let Some(decode_limit) = memory_limit
+            .checked_sub(overhead)
+            .filter(|limit| *limit > 0)
+        else {
+            return Err(StoreError::MemoryLimitExceeded {
+                used: 0,
+                requested: overhead,
+                limit: memory_limit,
+            });
+        };
         let mut ids = prewhere.map_or_else(Vec::new, |(ids, _)| ids.to_vec());
         let key_index = ids.iter().position(|id| *id == key_id).unwrap_or_else(|| {
             ids.push(key_id);
@@ -1594,9 +1668,11 @@ impl ProjectedScanStream {
                 &excluded,
             )))
         };
-        let segment_chunk = self.decode_slice_plain(slice, memory_limit, Some((&ids, &select)))?;
+        let segment_chunk = self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)))?;
+        // The memtable rows share the allowance with the chunk they follow.
+        let remaining = decode_limit.saturating_sub(segment_chunk.retained_bytes);
         let mut chunks = vec![segment_chunk];
-        if let Some(chunk) = self.memtable_rows_chunk(&live, memory_limit)? {
+        if let Some(chunk) = self.memtable_rows_chunk(&live, remaining)? {
             chunks.push(chunk);
         }
         Ok(chunks)

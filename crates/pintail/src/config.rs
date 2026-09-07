@@ -435,10 +435,11 @@ impl AppConfig {
             .or(file.query.queue_wait_seconds);
         let query_queue_wait = match query_queue_wait_seconds {
             None => DEFAULT_QUEUE_WAIT,
-            Some(seconds) if seconds.is_finite() && seconds >= 0.0 => {
-                Duration::from_secs_f64(seconds)
-            }
-            Some(_) => bail!("query queue wait must be a non-negative number of seconds"),
+            Some(seconds) => Duration::try_from_secs_f64(seconds).map_err(|_| {
+                anyhow::anyhow!(
+                    "query queue wait must be a non-negative number of seconds a duration can hold"
+                )
+            })?,
         };
         let environment_total_query_memory = environment
             .get(&OsString::from("PINTAIL_TOTAL_QUERY_MEMORY_LIMIT_BYTES"))
@@ -867,6 +868,12 @@ mod tests {
             [("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "-1".into())],
         )
         .expect_err("negative wait");
+        assert!(error.to_string().contains("non-negative"));
+        let error = AppConfig::load_from(
+            &cli(),
+            [("PINTAIL_QUERY_QUEUE_WAIT_SECONDS".into(), "1e30".into())],
+        )
+        .expect_err("a wait no duration can hold");
         assert!(error.to_string().contains("non-negative"));
     }
 

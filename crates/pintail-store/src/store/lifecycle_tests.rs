@@ -379,3 +379,101 @@ fn a_memtable_overlap_is_masked_from_a_direct_decode() {
     let rows = drain(stale);
     assert_eq!(rows, expected, "the stale row changes nothing");
 }
+
+/// An overlay segment reached after a memtable-only gap, and one reached
+/// after a merge, is still masked, whichever API pulls the chunks.
+#[test]
+fn an_overlay_reached_after_another_part_is_still_masked() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "amount", DataType::Int64, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 1_000,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    let row = |id: u64, amount: i64, version: u64, deleted: bool| {
+        StoredRow::new(
+            key(id),
+            vec![
+                pintail_types::Value::UInt64(id),
+                pintail_types::Value::Int64(amount),
+            ],
+            version,
+            deleted,
+        )
+    };
+    // One segment of 70,000 rows (enough for the streaming scan), keys
+    // 10000..=79999 with one row per key.
+    table
+        .ingest((10_000..80_000).map(|id| row(id, 1, 1, false)).collect())
+        .unwrap();
+    table.flush().unwrap();
+    // Memtable: inserts below the segment (a memtable-only gap comes first),
+    // then updates and deletes inside it.
+    table
+        .ingest(vec![
+            row(5, 7, 2, false),
+            row(6, 7, 2, false),
+            row(10_500, -1, 2, false),
+            row(15_000, 0, 2, true),
+        ])
+        .unwrap();
+    let snapshot = table.snapshot();
+    // Two inserts of 7, one row deleted, one row changed from 1 to -1.
+    let expected_total: i64 = 7 + 7 + (70_000 - 1) - 2;
+    let expected_rows = 2 + 70_000 - 1;
+
+    let sum_via = |single: bool| {
+        let mut stream = snapshot
+            .scan_projected_range_stream(&key(0), &key(1_000_000), &[1, 2])
+            .unwrap()
+            .expect("stream");
+        stream.enable_memtable_overlay(1);
+        let (mut rows, mut total) = (0_usize, 0_i64);
+        loop {
+            let chunks = if single {
+                stream
+                    .next_column_chunk(usize::MAX)
+                    .unwrap()
+                    .into_iter()
+                    .collect()
+            } else {
+                stream.next_column_chunks(4, usize::MAX).unwrap()
+            };
+            if chunks.is_empty() {
+                break;
+            }
+            for chunk in chunks {
+                let columns = chunk.into_decoded_columns();
+                let amounts = columns.into_iter().nth(1).unwrap().into_values();
+                for value in amounts {
+                    let pintail_types::Value::Int64(amount) = value else {
+                        panic!("unexpected {value:?}")
+                    };
+                    rows += 1;
+                    total += amount;
+                }
+            }
+        }
+        (rows, total)
+    };
+    assert_eq!(
+        sum_via(true),
+        (expected_rows, expected_total),
+        "single-chunk API"
+    );
+    assert_eq!(
+        sum_via(false),
+        (expected_rows, expected_total),
+        "multi-chunk API"
+    );
+}

@@ -983,6 +983,13 @@ impl BatchStream for SnapshotStream {
                     }
                 }
                 self.retained_bytes = self.retained_bytes.saturating_sub(released);
+                if self.ready.is_empty() {
+                    // Every chunk of the round was empty (a slice whose rows
+                    // the memtable all superseded, a predicate nothing met):
+                    // the stream has more parts, so fetch the next round
+                    // rather than read the silence as the end.
+                    continue;
+                }
                 break;
             }
             let chunk = self

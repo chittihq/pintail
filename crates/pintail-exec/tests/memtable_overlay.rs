@@ -217,3 +217,61 @@ fn memtable_rows_answer_the_same_with_and_without_the_direct_overlay() {
     // No key column named: the merge answers.
     check(&Fixture::new(false));
 }
+
+/// The first overlay segment is entirely deleted in the memtable; the rows
+/// of the segment after it must still come out.
+#[test]
+fn an_all_deleted_first_segment_does_not_end_the_scan() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut table = TableStore::open(
+        directory.path(),
+        schema(),
+        StoreOptions {
+            background_compaction: false,
+            ..StoreOptions::default()
+        },
+    )
+    .expect("table");
+    table
+        .ingest((1..=500).map(|id| row(id, 1, 1, 1, false)).collect())
+        .expect("first segment");
+    table.flush().expect("flush");
+    table
+        .ingest(
+            (10_001..=10_800)
+                .map(|id| row(id, 2, 2, 1, false))
+                .collect(),
+        )
+        .expect("second segment");
+    table.flush().expect("flush");
+    table
+        .ingest((1..=500).map(|id| row(id, 0, 0, 2, true)).collect())
+        .expect("delete every row of the first segment");
+    let entry = TableEntry::new(
+        TableId::new(1),
+        "t",
+        schema(),
+        TableStatistics::with_row_count(1_300),
+    )
+    .expect("entry")
+    .with_key_columns([1])
+    .expect("key");
+    let catalog = CatalogSnapshot::new([
+        DatabaseEntry::new(DatabaseId::new(1), "app", [entry]).expect("database")
+    ])
+    .expect("catalog");
+    let fixture = Fixture {
+        _directory: directory,
+        table,
+        catalog,
+        model: (10_001..=10_800).map(|id| (id, (2, 2))).collect(),
+    };
+    assert_eq!(
+        fixture.run("SELECT COUNT(*), SUM(amount) FROM t"),
+        vec![vec![Value::UInt64(800), Value::Int64(1_600)]]
+    );
+    assert_eq!(
+        fixture.run("SELECT id FROM t WHERE grp = 2 ORDER BY id LIMIT 2"),
+        vec![vec![Value::UInt64(10_001)], vec![Value::UInt64(10_002)]]
+    );
+}
