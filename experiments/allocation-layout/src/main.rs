@@ -172,11 +172,15 @@ struct Arena {
 
 impl Arena {
     fn build(source: &[Vec<Value>]) -> Self {
-        let payload: usize = source.iter().flatten().map(|v| match v {
-            Value::Utf8(x) | Value::Enum { label: x, .. } => x.len(),
-            Value::Binary(x) => x.len(),
-            _ => 0,
-        }).sum();
+        let payload: usize = source
+            .iter()
+            .flatten()
+            .map(|v| match v {
+                Value::Utf8(x) | Value::Enum { label: x, .. } => x.len(),
+                Value::Binary(x) => x.len(),
+                _ => 0,
+            })
+            .sum();
         let mut bytes = Vec::with_capacity(payload);
         let mut cells = Vec::with_capacity(source.iter().map(Vec::len).sum());
         for v in source.iter().flatten() {
@@ -193,12 +197,24 @@ impl Arena {
                 Value::Int64(x) => ArenaCell::Int64(*x),
                 Value::UInt64(x) => ArenaCell::UInt64(*x),
                 Value::Float64(x) => ArenaCell::Float64(*x),
-                Value::Utf8(x) => { let (s,l) = append(x.as_bytes()); ArenaCell::Utf8(s,l) },
-                Value::Binary(x) => { let (s,l) = append(x); ArenaCell::Binary(s,l) },
-                Value::Enum { index, label } => { let (s,l) = append(label.as_bytes()); ArenaCell::Enum(*index,s,l) },
+                Value::Utf8(x) => {
+                    let (s, l) = append(x.as_bytes());
+                    ArenaCell::Utf8(s, l)
+                }
+                Value::Binary(x) => {
+                    let (s, l) = append(x);
+                    ArenaCell::Binary(s, l)
+                }
+                Value::Enum { index, label } => {
+                    let (s, l) = append(label.as_bytes());
+                    ArenaCell::Enum(*index, s, l)
+                }
             });
         }
-        Self { cells: cells.into_boxed_slice(), bytes: bytes.into_boxed_slice() }
+        Self {
+            cells: cells.into_boxed_slice(),
+            bytes: bytes.into_boxed_slice(),
+        }
     }
     fn slice(&self, start: u32, len: u32) -> &[u8] {
         &self.bytes[start as usize..start as usize + len as usize]
@@ -210,9 +226,14 @@ impl Arena {
             ArenaCell::Int64(x) => Value::Int64(*x),
             ArenaCell::UInt64(x) => Value::UInt64(*x),
             ArenaCell::Float64(x) => Value::Float64(*x),
-            ArenaCell::Utf8(s,l) => Value::Utf8(String::from_utf8(self.slice(*s,*l).to_vec()).unwrap()),
-            ArenaCell::Binary(s,l) => Value::Binary(self.slice(*s,*l).to_vec()),
-            ArenaCell::Enum(i,s,l) => Value::Enum { index: *i, label: String::from_utf8(self.slice(*s,*l).to_vec()).unwrap() },
+            ArenaCell::Utf8(s, l) => {
+                Value::Utf8(String::from_utf8(self.slice(*s, *l).to_vec()).unwrap())
+            }
+            ArenaCell::Binary(s, l) => Value::Binary(self.slice(*s, *l).to_vec()),
+            ArenaCell::Enum(i, s, l) => Value::Enum {
+                index: *i,
+                label: String::from_utf8(self.slice(*s, *l).to_vec()).unwrap(),
+            },
         }
     }
     fn token(&self, cell: &ArenaCell) -> u64 {
@@ -222,8 +243,8 @@ impl Arena {
             ArenaCell::Int64(x) => *x as u64,
             ArenaCell::UInt64(x) => *x,
             ArenaCell::Float64(x) => x.to_bits(),
-            ArenaCell::Utf8(s,l) | ArenaCell::Binary(s,l) => text_token(self.slice(*s,*l)),
-            ArenaCell::Enum(i,s,l) => i.wrapping_add(text_token(self.slice(*s,*l))),
+            ArenaCell::Utf8(s, l) | ArenaCell::Binary(s, l) => text_token(self.slice(*s, *l)),
+            ArenaCell::Enum(i, s, l) => i.wrapping_add(text_token(self.slice(*s, *l))),
         }
     }
 }
@@ -239,7 +260,8 @@ enum Rows {
 impl Rows {
     fn build(arm: &str, source: &[Vec<Value>]) -> Self {
         match arm {
-            "arena" => Self::Arena(Arena::build(source)),            "nested" => Self::Nested(source.to_vec()),
+            "arena" => Self::Arena(Arena::build(source)),
+            "nested" => Self::Nested(source.to_vec()),
             "boxed" => Self::Boxed(
                 source
                     .iter()
@@ -256,7 +278,10 @@ impl Rows {
             cells.fold((0, 0), |(b, a), c| (b + c.payload(), a + c.allocated()))
         }
         match self {
-            Self::Arena(a) => (size_of_val(a.cells.as_ref()) + a.bytes.len(), 1 + usize::from(!a.bytes.is_empty())),
+            Self::Arena(a) => (
+                size_of_val(a.cells.as_ref()) + a.bytes.len(),
+                1 + usize::from(!a.bytes.is_empty()),
+            ),
             Self::Nested(rows) => {
                 let (b, a) = payload(rows.iter().flatten());
                 (
@@ -292,7 +317,11 @@ impl Rows {
     fn verify(&self, source: &[Vec<Value>], width: usize) {
         for (i, row) in source.iter().enumerate() {
             match self {
-                Self::Arena(a) => { for (cell, value) in a.cells[i * width..(i + 1) * width].iter().zip(row) { assert_eq!(&a.thaw(cell), value); } },
+                Self::Arena(a) => {
+                    for (cell, value) in a.cells[i * width..(i + 1) * width].iter().zip(row) {
+                        assert_eq!(&a.thaw(cell), value);
+                    }
+                }
                 Self::Nested(rows) => assert_eq!(&rows[i], row),
                 Self::Boxed(rows) => assert_eq!(rows[i].as_ref(), row.as_slice()),
                 Self::Flat(cells) => assert_eq!(&cells[i * width..(i + 1) * width], row.as_slice()),
@@ -305,13 +334,22 @@ impl Rows {
         }
     }
     fn materialize(&self, indices: &[usize], width: usize) -> Vec<Vec<Value>> {
-        indices.iter().map(|i| match self {
-            Self::Nested(rows) => rows[*i].clone(),
-            Self::Boxed(rows) => rows[*i].to_vec(),
-            Self::Flat(cells) => cells[i * width..(i + 1) * width].to_vec(),
-            Self::Compact(cells) => cells[i * width..(i + 1) * width].iter().map(FrozenValue::thaw).collect(),
-            Self::Arena(a) => a.cells[i * width..(i + 1) * width].iter().map(|c| a.thaw(c)).collect(),
-        }).collect()
+        indices
+            .iter()
+            .map(|i| match self {
+                Self::Nested(rows) => rows[*i].clone(),
+                Self::Boxed(rows) => rows[*i].to_vec(),
+                Self::Flat(cells) => cells[i * width..(i + 1) * width].to_vec(),
+                Self::Compact(cells) => cells[i * width..(i + 1) * width]
+                    .iter()
+                    .map(FrozenValue::thaw)
+                    .collect(),
+                Self::Arena(a) => a.cells[i * width..(i + 1) * width]
+                    .iter()
+                    .map(|c| a.thaw(c))
+                    .collect(),
+            })
+            .collect()
     }
     fn probe(&self, indices: &[usize], width: usize) -> u64 {
         fn row_token<T: Cell>(row: &[T]) -> u64 {
@@ -321,8 +359,12 @@ impl Rows {
         }
         match self {
             Self::Arena(a) => indices.iter().fold(0u64, |sum, i| {
-                let token = black_box(&a.cells[i * width..(i + 1) * width]).iter().enumerate()
-                    .fold(0u64, |s, (c,v)| s.wrapping_add(a.token(v).rotate_left(c as u32)));
+                let token = black_box(&a.cells[i * width..(i + 1) * width])
+                    .iter()
+                    .enumerate()
+                    .fold(0u64, |s, (c, v)| {
+                        s.wrapping_add(a.token(v).rotate_left(c as u32))
+                    });
                 sum.wrapping_add(token)
             }),
             Self::Nested(rows) => indices
@@ -405,7 +447,10 @@ fn main() {
         let start = Instant::now();
         let output = black_box(rows.materialize(black_box(projection_indices), width));
         materialize_ns.push(start.elapsed().as_nanos());
-        assert_eq!(Rows::Nested(output).probe(&(0..projection_indices.len()).collect::<Vec<_>>(), width), rows.probe(projection_indices, width));
+        assert_eq!(
+            Rows::Nested(output).probe(&(0..projection_indices.len()).collect::<Vec<_>>(), width),
+            rows.probe(projection_indices, width)
+        );
     }
     let start = Instant::now();
     drop(rows);
