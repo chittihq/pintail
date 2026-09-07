@@ -1,0 +1,2607 @@
+{
+  "processes": 990,
+  "validated_snapshots": 7920,
+  "alternatives": 100,
+  "results": [
+    {
+      "case": 1,
+      "variant": 1,
+      "name": "selective-predicate-first",
+      "processes": 9,
+      "changing_query_speedup": 1.0157050166233828,
+      "changing_cycle_speedup": 1.0028044928437228,
+      "operator_only_speedup": 1.2323402207860206,
+      "min_process_speedup": 0.9332337087349927,
+      "max_process_speedup": 1.1006078603196516,
+      "scenario_medians": {
+        "0": 0.941984059185558,
+        "1": 1.042525671290555,
+        "2": 1.0157050166233828
+      },
+      "phase_medians": {
+        "settled": 1.0106139231720135,
+        "sparse-memtable": 1.0102532497604695,
+        "sparse-flushed-overlap": 1.0180768632862658,
+        "dense-hot-memtable": 1.0421312875399282,
+        "dense-flushed-overlap": 1.005290573699803,
+        "mixed-overlap": 1.0057205662288187,
+        "stale-replay": 1.0150850454460718,
+        "compacted": 1.0051956697295763
+      }
+    },
+    {
+      "case": 1,
+      "variant": 2,
+      "name": "selection-vector",
+      "processes": 9,
+      "changing_query_speedup": 0.9877166975335185,
+      "changing_cycle_speedup": 1.018298175281052,
+      "operator_only_speedup": 1.1104280958836117,
+      "min_process_speedup": 0.9348950281761191,
+      "max_process_speedup": 1.0416657360052781,
+      "scenario_medians": {
+        "0": 0.9617480186034768,
+        "1": 1.003512265019854,
+        "2": 0.9730647865607388
+      },
+      "phase_medians": {
+        "settled": 1.0049831954943744,
+        "sparse-memtable": 1.0087391929291316,
+        "sparse-flushed-overlap": 1.0161032096559388,
+        "dense-hot-memtable": 0.9888189289138658,
+        "dense-flushed-overlap": 0.9994326181285514,
+        "mixed-overlap": 0.9982341082135775,
+        "stale-replay": 1.0035533376199932,
+        "compacted": 1.005113119028071
+      }
+    },
+    {
+      "case": 1,
+      "variant": 3,
+      "name": "full-bitmap",
+      "processes": 9,
+      "changing_query_speedup": 0.991430923740477,
+      "changing_cycle_speedup": 0.9968548090329076,
+      "operator_only_speedup": 0.7200382541277555,
+      "min_process_speedup": 0.9323359895367155,
+      "max_process_speedup": 1.0930619901966583,
+      "scenario_medians": {
+        "0": 1.0057416379817066,
+        "1": 1.02293964458362,
+        "2": 0.9522413298695177
+      },
+      "phase_medians": {
+        "settled": 0.968791263695086,
+        "sparse-memtable": 0.9957436772758455,
+        "sparse-flushed-overlap": 0.9864696694580936,
+        "dense-hot-memtable": 0.9942257670094671,
+        "dense-flushed-overlap": 1.0003413467343267,
+        "mixed-overlap": 1.0050327802211763,
+        "stale-replay": 0.9931980818831011,
+        "compacted": 0.9745323339623778
+      }
+    },
+    {
+      "case": 1,
+      "variant": 4,
+      "name": "block-bitmap-set-bits",
+      "processes": 9,
+      "changing_query_speedup": 0.9902126833888585,
+      "changing_cycle_speedup": 1.004415039714214,
+      "operator_only_speedup": 0.9523926111251381,
+      "min_process_speedup": 0.9155750063599951,
+      "max_process_speedup": 1.0783910687403486,
+      "scenario_medians": {
+        "0": 0.9595805183948863,
+        "1": 0.9845325080481925,
+        "2": 0.9902436492736395
+      },
+      "phase_medians": {
+        "settled": 1.001199501501414,
+        "sparse-memtable": 0.9889380365482017,
+        "sparse-flushed-overlap": 0.9896313162041618,
+        "dense-hot-memtable": 0.9769097507861632,
+        "dense-flushed-overlap": 0.9961767711153241,
+        "mixed-overlap": 0.9977427710594384,
+        "stale-replay": 0.9890180949699193,
+        "compacted": 1.0017695297963751
+      }
+    },
+    {
+      "case": 1,
+      "variant": 5,
+      "name": "parallel-block-filter",
+      "processes": 9,
+      "changing_query_speedup": 1.0058935377391793,
+      "changing_cycle_speedup": 0.9968719682991384,
+      "operator_only_speedup": 1.2613713807537494,
+      "min_process_speedup": 0.9577067597842734,
+      "max_process_speedup": 1.1185484788601558,
+      "scenario_medians": {
+        "0": 1.0058935377391793,
+        "1": 0.9809732118556359,
+        "2": 1.0232736493126857
+      },
+      "phase_medians": {
+        "settled": 0.9883569754214575,
+        "sparse-memtable": 0.9951904975724251,
+        "sparse-flushed-overlap": 1.0321764134633118,
+        "dense-hot-memtable": 1.0029340155478934,
+        "dense-flushed-overlap": 1.0015352395271848,
+        "mixed-overlap": 1.0136331913930803,
+        "stale-replay": 1.0275627006364165,
+        "compacted": 1.0113733260108944
+      }
+    },
+    {
+      "case": 1,
+      "variant": 6,
+      "name": "build-zone-maps",
+      "processes": 9,
+      "changing_query_speedup": 1.0130765845140266,
+      "changing_cycle_speedup": 1.0108692016494925,
+      "operator_only_speedup": 0.7796489992852799,
+      "min_process_speedup": 0.9794207313359304,
+      "max_process_speedup": 1.0982055896596636,
+      "scenario_medians": {
+        "0": 1.0126853051490328,
+        "1": 1.0130765845140266,
+        "2": 1.0159649324813456
+      },
+      "phase_medians": {
+        "settled": 0.971350825141148,
+        "sparse-memtable": 1.0102287455892653,
+        "sparse-flushed-overlap": 1.03048132697371,
+        "dense-hot-memtable": 1.0032942793609354,
+        "dense-flushed-overlap": 1.0094476357201039,
+        "mixed-overlap": 1.024427508559428,
+        "stale-replay": 0.9997195897117019,
+        "compacted": 0.9773933783076958
+      }
+    },
+    {
+      "case": 1,
+      "variant": 7,
+      "name": "build-sorted-value-index",
+      "processes": 9,
+      "changing_query_speedup": 0.9658509791277581,
+      "changing_cycle_speedup": 0.9674108642589915,
+      "operator_only_speedup": 0.10771927625907479,
+      "min_process_speedup": 0.8703341504917577,
+      "max_process_speedup": 1.0598106704465284,
+      "scenario_medians": {
+        "0": 0.9694407708959538,
+        "1": 0.9469858256405356,
+        "2": 0.8912394259374388
+      },
+      "phase_medians": {
+        "settled": 0.6120218727587111,
+        "sparse-memtable": 0.9672708039888278,
+        "sparse-flushed-overlap": 0.9580671329306532,
+        "dense-hot-memtable": 0.9596995650438335,
+        "dense-flushed-overlap": 0.9663431924781917,
+        "mixed-overlap": 0.9683086964918936,
+        "stale-replay": 0.9653055480344134,
+        "compacted": 0.6430414971101213
+      }
+    },
+    {
+      "case": 1,
+      "variant": 8,
+      "name": "build-low-key-buckets",
+      "processes": 9,
+      "changing_query_speedup": 0.9894172692914615,
+      "changing_cycle_speedup": 0.9718421335610831,
+      "operator_only_speedup": 0.4821219890293344,
+      "min_process_speedup": 0.9308277926159438,
+      "max_process_speedup": 1.1196900305987763,
+      "scenario_medians": {
+        "0": 0.9894172692914615,
+        "1": 1.0089205556218241,
+        "2": 0.9853248127270385
+      },
+      "phase_medians": {
+        "settled": 0.9465176358212442,
+        "sparse-memtable": 0.9861564047427768,
+        "sparse-flushed-overlap": 0.99117940395933,
+        "dense-hot-memtable": 0.9863298222553817,
+        "dense-flushed-overlap": 0.9957904867857069,
+        "mixed-overlap": 0.9985378397342064,
+        "stale-replay": 0.9940919449802841,
+        "compacted": 0.9423214508590452
+      }
+    },
+    {
+      "case": 1,
+      "variant": 9,
+      "name": "columnar-filter-projection",
+      "processes": 9,
+      "changing_query_speedup": 0.9913543983538144,
+      "changing_cycle_speedup": 1.0178064480208067,
+      "operator_only_speedup": 0.5910314470755409,
+      "min_process_speedup": 0.9669603540768951,
+      "max_process_speedup": 1.061793457397472,
+      "scenario_medians": {
+        "0": 0.9849315363771385,
+        "1": 1.0003546507824417,
+        "2": 0.9819605703180687
+      },
+      "phase_medians": {
+        "settled": 0.9522339269120392,
+        "sparse-memtable": 0.9889904485493957,
+        "sparse-flushed-overlap": 0.9916186073538782,
+        "dense-hot-memtable": 0.9862453822195083,
+        "dense-flushed-overlap": 1.001607588143428,
+        "mixed-overlap": 0.9922293407791504,
+        "stale-replay": 0.993346991364695,
+        "compacted": 0.9632097541538357
+      }
+    },
+    {
+      "case": 1,
+      "variant": 10,
+      "name": "two-phase-block-survivors",
+      "processes": 9,
+      "changing_query_speedup": 1.0028303455232301,
+      "changing_cycle_speedup": 1.0010419656469352,
+      "operator_only_speedup": 0.9678067705207578,
+      "min_process_speedup": 0.9394861942334339,
+      "max_process_speedup": 1.1100422732435158,
+      "scenario_medians": {
+        "0": 1.0068059925289714,
+        "1": 1.0028303455232301,
+        "2": 0.9899506109126692
+      },
+      "phase_medians": {
+        "settled": 0.9923906482465463,
+        "sparse-memtable": 1.0006671091373747,
+        "sparse-flushed-overlap": 1.0171063960651747,
+        "dense-hot-memtable": 0.9993252038432623,
+        "dense-flushed-overlap": 1.0115994906292605,
+        "mixed-overlap": 1.0034835351920492,
+        "stale-replay": 1.0219875395432172,
+        "compacted": 0.9967889193366148
+      }
+    },
+    {
+      "case": 2,
+      "variant": 1,
+      "name": "hash-latest",
+      "processes": 9,
+      "changing_query_speedup": 0.9664670465136741,
+      "changing_cycle_speedup": 0.9819232491654128,
+      "operator_only_speedup": 0.8426502811031882,
+      "min_process_speedup": 0.8988383445923002,
+      "max_process_speedup": 1.072800832051323,
+      "scenario_medians": {
+        "0": 0.9589226314725069,
+        "1": 1.0331905894439808,
+        "2": 0.9334288040472267
+      },
+      "phase_medians": {
+        "settled": 0.9002180044547364,
+        "sparse-memtable": 0.9834921795286721,
+        "sparse-flushed-overlap": 0.9734336441875016,
+        "dense-hot-memtable": 0.9761094287227017,
+        "dense-flushed-overlap": 0.9750735066371328,
+        "mixed-overlap": 0.9751791553246095,
+        "stale-replay": 1.0079910093027604,
+        "compacted": 0.8752358413670716
+      }
+    },
+    {
+      "case": 2,
+      "variant": 2,
+      "name": "sort-version-reduce",
+      "processes": 9,
+      "changing_query_speedup": 1.030849290498505,
+      "changing_cycle_speedup": 1.0204426234161759,
+      "operator_only_speedup": 1.225060259804258,
+      "min_process_speedup": 0.9811503485933244,
+      "max_process_speedup": 1.1285072517827226,
+      "scenario_medians": {
+        "0": 1.049217666886314,
+        "1": 1.0696660409723018,
+        "2": 1.0247389322616511
+      },
+      "phase_medians": {
+        "settled": 1.5535283837172433,
+        "sparse-memtable": 1.0619283486500588,
+        "sparse-flushed-overlap": 1.036328732181636,
+        "dense-hot-memtable": 1.0279543756335132,
+        "dense-flushed-overlap": 1.0145860996710017,
+        "mixed-overlap": 1.040751925954141,
+        "stale-replay": 1.031016933022351,
+        "compacted": 1.1771962706818797
+      }
+    },
+    {
+      "case": 2,
+      "variant": 3,
+      "name": "sorted-two-way",
+      "processes": 9,
+      "changing_query_speedup": 1.0910192337824367,
+      "changing_cycle_speedup": 1.0144853407836913,
+      "operator_only_speedup": 1.6820812944475718,
+      "min_process_speedup": 0.9699827568316832,
+      "max_process_speedup": 1.1793580024948487,
+      "scenario_medians": {
+        "0": 1.0572268345165485,
+        "1": 1.1486425690730935,
+        "2": 1.0831336077570546
+      },
+      "phase_medians": {
+        "settled": 1.3742278734328517,
+        "sparse-memtable": 1.0954703363910525,
+        "sparse-flushed-overlap": 1.071811516102625,
+        "dense-hot-memtable": 1.1228346476181987,
+        "dense-flushed-overlap": 1.080006481955355,
+        "mixed-overlap": 1.0916779033645385,
+        "stale-replay": 1.093609890796596,
+        "compacted": 1.3988808259985837
+      }
+    },
+    {
+      "case": 2,
+      "variant": 4,
+      "name": "dense-version-slots",
+      "processes": 9,
+      "changing_query_speedup": 1.0735450193819878,
+      "changing_cycle_speedup": 1.0275358336047877,
+      "operator_only_speedup": 1.4298181784456323,
+      "min_process_speedup": 0.953474848493687,
+      "max_process_speedup": 1.149270047289905,
+      "scenario_medians": {
+        "0": 1.0581424763980236,
+        "1": 1.0939592920691237,
+        "2": 1.0735450193819878
+      },
+      "phase_medians": {
+        "settled": 1.2761145705198886,
+        "sparse-memtable": 1.0612834998934433,
+        "sparse-flushed-overlap": 1.0761877417053811,
+        "dense-hot-memtable": 1.098028745451345,
+        "dense-flushed-overlap": 1.0648712924296642,
+        "mixed-overlap": 1.048175754569121,
+        "stale-replay": 1.0735084032754036,
+        "compacted": 1.2610886537964172
+      }
+    },
+    {
+      "case": 2,
+      "variant": 5,
+      "name": "binary-patch-base",
+      "processes": 9,
+      "changing_query_speedup": 1.0755317105676834,
+      "changing_cycle_speedup": 1.0346861098884599,
+      "operator_only_speedup": 1.8684026708929276,
+      "min_process_speedup": 1.0006864797157082,
+      "max_process_speedup": 1.191155219900767,
+      "scenario_medians": {
+        "0": 1.058367333775142,
+        "1": 1.1812930868886617,
+        "2": 1.0648495634722055
+      },
+      "phase_medians": {
+        "settled": 1.5797773514020723,
+        "sparse-memtable": 1.1137143824307054,
+        "sparse-flushed-overlap": 1.0921705213887045,
+        "dense-hot-memtable": 1.100936231261607,
+        "dense-flushed-overlap": 1.061852835767597,
+        "mixed-overlap": 1.0842267396960492,
+        "stale-replay": 1.0947246811743152,
+        "compacted": 1.4946479119657705
+      }
+    },
+    {
+      "case": 2,
+      "variant": 6,
+      "name": "sparse-overlay-map",
+      "processes": 9,
+      "changing_query_speedup": 1.0511930193903793,
+      "changing_cycle_speedup": 1.0075467765714234,
+      "operator_only_speedup": 1.2704704491117524,
+      "min_process_speedup": 0.9450121525701098,
+      "max_process_speedup": 1.09589960625805,
+      "scenario_medians": {
+        "0": 1.0622682001989967,
+        "1": 1.0511930193903793,
+        "2": 1.0437948238674888
+      },
+      "phase_medians": {
+        "settled": 1.4635783204175072,
+        "sparse-memtable": 1.0444627986762711,
+        "sparse-flushed-overlap": 1.0432511978355048,
+        "dense-hot-memtable": 1.0730788758089205,
+        "dense-flushed-overlap": 1.0273178406723351,
+        "mixed-overlap": 1.0555666629822693,
+        "stale-replay": 1.045301761463456,
+        "compacted": 1.2289744704246872
+      }
+    },
+    {
+      "case": 2,
+      "variant": 7,
+      "name": "block-overlap-search",
+      "processes": 9,
+      "changing_query_speedup": 1.0551859382003006,
+      "changing_cycle_speedup": 1.0049512731948975,
+      "operator_only_speedup": 1.5068173345604823,
+      "min_process_speedup": 0.9684422312071567,
+      "max_process_speedup": 1.1552543796122114,
+      "scenario_medians": {
+        "0": 1.0454319041907365,
+        "1": 1.0736888816771941,
+        "2": 1.0110502978552127
+      },
+      "phase_medians": {
+        "settled": 1.398684515435017,
+        "sparse-memtable": 1.0754613303496463,
+        "sparse-flushed-overlap": 1.0563062990482268,
+        "dense-hot-memtable": 1.0785426627570018,
+        "dense-flushed-overlap": 1.0898109015302788,
+        "mixed-overlap": 1.0803690536481778,
+        "stale-replay": 1.0236319494111605,
+        "compacted": 1.2366302005963936
+      }
+    },
+    {
+      "case": 2,
+      "variant": 8,
+      "name": "parallel-key-ranges",
+      "processes": 9,
+      "changing_query_speedup": 1.0405637691190337,
+      "changing_cycle_speedup": 1.0032058595264426,
+      "operator_only_speedup": 1.3228983101831722,
+      "min_process_speedup": 0.9749418040956916,
+      "max_process_speedup": 1.0996746611057084,
+      "scenario_medians": {
+        "0": 1.0517979575180263,
+        "1": 1.0849194650013487,
+        "2": 0.9996685624296697
+      },
+      "phase_medians": {
+        "settled": 1.2557878840093617,
+        "sparse-memtable": 1.0559075810975564,
+        "sparse-flushed-overlap": 1.043002912923276,
+        "dense-hot-memtable": 1.0552851874438023,
+        "dense-flushed-overlap": 1.0316132752100455,
+        "mixed-overlap": 1.0313899140267262,
+        "stale-replay": 1.0071660104940028,
+        "compacted": 1.1999040034102286
+      }
+    },
+    {
+      "case": 2,
+      "variant": 9,
+      "name": "visibility-bitmap",
+      "processes": 9,
+      "changing_query_speedup": 1.0417898581257894,
+      "changing_cycle_speedup": 0.9777283032120501,
+      "operator_only_speedup": 1.3213667287010797,
+      "min_process_speedup": 0.937839581744168,
+      "max_process_speedup": 1.1353711239076627,
+      "scenario_medians": {
+        "0": 1.0308368941040116,
+        "1": 1.1151467878365797,
+        "2": 0.9513507438570524
+      },
+      "phase_medians": {
+        "settled": 1.550201652083764,
+        "sparse-memtable": 1.053723651354773,
+        "sparse-flushed-overlap": 1.0231332167830922,
+        "dense-hot-memtable": 1.026210668797578,
+        "dense-flushed-overlap": 1.0307542672898269,
+        "mixed-overlap": 1.0415455912644627,
+        "stale-replay": 1.030037410709849,
+        "compacted": 1.1794181877507768
+      }
+    },
+    {
+      "case": 2,
+      "variant": 10,
+      "name": "copy-winning-runs",
+      "processes": 9,
+      "changing_query_speedup": 1.075429951655578,
+      "changing_cycle_speedup": 1.000106118407286,
+      "operator_only_speedup": 1.471012002937505,
+      "min_process_speedup": 0.9955820875946312,
+      "max_process_speedup": 1.1633599646156245,
+      "scenario_medians": {
+        "0": 1.0202655469229587,
+        "1": 1.1524988487389394,
+        "2": 1.0464132654353648
+      },
+      "phase_medians": {
+        "settled": 1.3909762285017777,
+        "sparse-memtable": 1.1057160791004854,
+        "sparse-flushed-overlap": 1.0910054050946238,
+        "dense-hot-memtable": 1.0962509730859304,
+        "dense-flushed-overlap": 1.0251342934703898,
+        "mixed-overlap": 1.065086881650693,
+        "stale-replay": 1.072505752664103,
+        "compacted": 1.2469153573592129
+      }
+    },
+    {
+      "case": 3,
+      "variant": 1,
+      "name": "hash-group",
+      "processes": 9,
+      "changing_query_speedup": 0.9820785064415527,
+      "changing_cycle_speedup": 0.9921978734661043,
+      "operator_only_speedup": 0.7030169074642894,
+      "min_process_speedup": 0.9452549868148776,
+      "max_process_speedup": 1.1134148535390127,
+      "scenario_medians": {
+        "0": 0.9820785064415527,
+        "1": 1.085355234375587,
+        "2": 0.9695418872893337
+      },
+      "phase_medians": {
+        "settled": 0.9088807606143854,
+        "sparse-memtable": 0.971970856815006,
+        "sparse-flushed-overlap": 0.9889618300648169,
+        "dense-hot-memtable": 0.9800143363354835,
+        "dense-flushed-overlap": 0.9868912206775095,
+        "mixed-overlap": 0.9966405330798328,
+        "stale-replay": 0.9686415789621344,
+        "compacted": 0.9337081253040752
+      }
+    },
+    {
+      "case": 3,
+      "variant": 2,
+      "name": "dense-group",
+      "processes": 9,
+      "changing_query_speedup": 1.0434126194441646,
+      "changing_cycle_speedup": 1.016020702540582,
+      "operator_only_speedup": 3.8845009147543474,
+      "min_process_speedup": 0.9975184154566102,
+      "max_process_speedup": 1.0909596225761296,
+      "scenario_medians": {
+        "0": 1.0434126194441646,
+        "1": 1.0610587029649492,
+        "2": 1.0256739145061258
+      },
+      "phase_medians": {
+        "settled": 1.165317243958842,
+        "sparse-memtable": 1.05715283988343,
+        "sparse-flushed-overlap": 1.0371875800916477,
+        "dense-hot-memtable": 1.0363460697219142,
+        "dense-flushed-overlap": 1.0298481832023976,
+        "mixed-overlap": 0.9975462717492938,
+        "stale-replay": 1.0301931982706414,
+        "compacted": 1.1574675259644795
+      }
+    },
+    {
+      "case": 3,
+      "variant": 3,
+      "name": "four-independent-dense-lanes",
+      "processes": 9,
+      "changing_query_speedup": 1.0458312617505379,
+      "changing_cycle_speedup": 1.0151776857079868,
+      "operator_only_speedup": 3.235217328741101,
+      "min_process_speedup": 0.9701369029583877,
+      "max_process_speedup": 1.117050555364506,
+      "scenario_medians": {
+        "0": 1.0660087576058377,
+        "1": 1.0779547905584683,
+        "2": 0.9712190663252612
+      },
+      "phase_medians": {
+        "settled": 1.1416905350105993,
+        "sparse-memtable": 1.0437390348466529,
+        "sparse-flushed-overlap": 1.0074715430181609,
+        "dense-hot-memtable": 1.0590432628055968,
+        "dense-flushed-overlap": 1.0569544955994856,
+        "mixed-overlap": 1.061147765292947,
+        "stale-replay": 1.0426922954711293,
+        "compacted": 1.1276470480683087
+      }
+    },
+    {
+      "case": 3,
+      "variant": 4,
+      "name": "sort-run-reduce",
+      "processes": 9,
+      "changing_query_speedup": 1.0059094877406154,
+      "changing_cycle_speedup": 0.9960814582935498,
+      "operator_only_speedup": 0.7078775528322497,
+      "min_process_speedup": 0.9631697227436553,
+      "max_process_speedup": 1.0304517394219121,
+      "scenario_medians": {
+        "0": 1.0032779164855894,
+        "1": 1.0059094877406154,
+        "2": 1.0144618774884568
+      },
+      "phase_medians": {
+        "settled": 0.7347269699360154,
+        "sparse-memtable": 0.9882519000242944,
+        "sparse-flushed-overlap": 1.0026906111267953,
+        "dense-hot-memtable": 1.0174130363173184,
+        "dense-flushed-overlap": 1.0038847130063606,
+        "mixed-overlap": 1.0277198557482405,
+        "stale-replay": 1.0052117837848413,
+        "compacted": 0.9751838058409378
+      }
+    },
+    {
+      "case": 3,
+      "variant": 5,
+      "name": "key-partition-hash",
+      "processes": 9,
+      "changing_query_speedup": 0.9976892335623108,
+      "changing_cycle_speedup": 1.0096336074008543,
+      "operator_only_speedup": 0.43028582395292353,
+      "min_process_speedup": 0.8998303385198247,
+      "max_process_speedup": 1.0218566522341779,
+      "scenario_medians": {
+        "0": 0.9602394296102165,
+        "1": 0.9978581901506504,
+        "2": 0.9813836024894615
+      },
+      "phase_medians": {
+        "settled": 0.761025363536262,
+        "sparse-memtable": 0.9679677252046932,
+        "sparse-flushed-overlap": 0.9476278775113298,
+        "dense-hot-memtable": 0.9936512966559754,
+        "dense-flushed-overlap": 0.9860877210882084,
+        "mixed-overlap": 0.9857126800344087,
+        "stale-replay": 0.9763893581150984,
+        "compacted": 0.8587777349526693
+      }
+    },
+    {
+      "case": 3,
+      "variant": 6,
+      "name": "parallel-local-hash",
+      "processes": 9,
+      "changing_query_speedup": 1.0513479733107243,
+      "changing_cycle_speedup": 1.0197062075528291,
+      "operator_only_speedup": 1.2256773458657977,
+      "min_process_speedup": 0.9470884412698273,
+      "max_process_speedup": 1.0763163923264623,
+      "scenario_medians": {
+        "0": 1.039740148048044,
+        "1": 1.0712029600768715,
+        "2": 1.018368505591191
+      },
+      "phase_medians": {
+        "settled": 1.0711752806964383,
+        "sparse-memtable": 1.0663450804104782,
+        "sparse-flushed-overlap": 1.0535012992958817,
+        "dense-hot-memtable": 1.052559280423872,
+        "dense-flushed-overlap": 1.05465737247781,
+        "mixed-overlap": 1.0570867533954034,
+        "stale-replay": 1.049752268784629,
+        "compacted": 1.0399640209618142
+      }
+    },
+    {
+      "case": 3,
+      "variant": 7,
+      "name": "parallel-local-dense",
+      "processes": 9,
+      "changing_query_speedup": 1.0445016013123463,
+      "changing_cycle_speedup": 1.0099360660026158,
+      "operator_only_speedup": 3.578092525689588,
+      "min_process_speedup": 1.010869532038594,
+      "max_process_speedup": 1.0992998583282358,
+      "scenario_medians": {
+        "0": 1.0445016013123463,
+        "1": 1.0631576639002303,
+        "2": 1.029245896855807
+      },
+      "phase_medians": {
+        "settled": 1.166843822078575,
+        "sparse-memtable": 1.0657784657751803,
+        "sparse-flushed-overlap": 1.0645993069969442,
+        "dense-hot-memtable": 1.0364748662649954,
+        "dense-flushed-overlap": 1.0438133710214845,
+        "mixed-overlap": 1.0641412566617496,
+        "stale-replay": 1.052852962041829,
+        "compacted": 1.1552239306289682
+      }
+    },
+    {
+      "case": 3,
+      "variant": 8,
+      "name": "adaptive-small-map",
+      "processes": 9,
+      "changing_query_speedup": 1.033959531569417,
+      "changing_cycle_speedup": 1.0136070251116254,
+      "operator_only_speedup": 0.7129990864929634,
+      "min_process_speedup": 0.9592427661472323,
+      "max_process_speedup": 1.0725585688876296,
+      "scenario_medians": {
+        "0": 1.0342269125545578,
+        "1": 1.0336664453074405,
+        "2": 1.033959531569417
+      },
+      "phase_medians": {
+        "settled": 0.9173206533554952,
+        "sparse-memtable": 1.0382633569370026,
+        "sparse-flushed-overlap": 1.0373931024728167,
+        "dense-hot-memtable": 1.0402541863406782,
+        "dense-flushed-overlap": 1.0355558216833594,
+        "mixed-overlap": 1.0366460088049552,
+        "stale-replay": 1.0330767783961345,
+        "compacted": 0.9412926161688375
+      }
+    },
+    {
+      "case": 3,
+      "variant": 9,
+      "name": "group-membership-bitmaps",
+      "processes": 9,
+      "changing_query_speedup": 1.0336337153753172,
+      "changing_cycle_speedup": 1.0163237598600972,
+      "operator_only_speedup": 1.7178262666772204,
+      "min_process_speedup": 0.9307178806240824,
+      "max_process_speedup": 1.0781584211203932,
+      "scenario_medians": {
+        "0": 1.006588337015114,
+        "1": 1.073946453618012,
+        "2": 0.9970790836606424
+      },
+      "phase_medians": {
+        "settled": 1.0861695206041122,
+        "sparse-memtable": 1.037401942364157,
+        "sparse-flushed-overlap": 1.0065812958999634,
+        "dense-hot-memtable": 1.0412964760342904,
+        "dense-flushed-overlap": 1.0433194676598252,
+        "mixed-overlap": 1.0255070301817817,
+        "stale-replay": 1.0387554284895937,
+        "compacted": 1.0686253277622857
+      }
+    },
+    {
+      "case": 3,
+      "variant": 10,
+      "name": "counting-scatter-groups",
+      "processes": 9,
+      "changing_query_speedup": 0.9991693678311377,
+      "changing_cycle_speedup": 1.021044653670135,
+      "operator_only_speedup": 1.5125107455576263,
+      "min_process_speedup": 0.9250117126381985,
+      "max_process_speedup": 1.068921208340014,
+      "scenario_medians": {
+        "0": 1.0153280620546241,
+        "1": 1.0008749112070452,
+        "2": 0.9400393433982905
+      },
+      "phase_medians": {
+        "settled": 1.069586164467161,
+        "sparse-memtable": 1.0022216893666993,
+        "sparse-flushed-overlap": 0.9899099445433803,
+        "dense-hot-memtable": 1.0027649346415506,
+        "dense-flushed-overlap": 0.9945369468788475,
+        "mixed-overlap": 1.0044545966340035,
+        "stale-replay": 0.9999608975650591,
+        "compacted": 1.072651543888413
+      }
+    },
+    {
+      "case": 4,
+      "variant": 1,
+      "name": "hash-heap",
+      "processes": 9,
+      "changing_query_speedup": 1.0470144943969402,
+      "changing_cycle_speedup": 1.0288824440193178,
+      "operator_only_speedup": 1.5916534618677265,
+      "min_process_speedup": 0.9908751036095299,
+      "max_process_speedup": 1.1487468827271388,
+      "scenario_medians": {
+        "0": 1.050436027597341,
+        "1": 0.9985108463961142,
+        "2": 1.067207481243376
+      },
+      "phase_medians": {
+        "settled": 1.2672043151209065,
+        "sparse-memtable": 1.0554196462175385,
+        "sparse-flushed-overlap": 1.0489510940630515,
+        "dense-hot-memtable": 1.0471601256848004,
+        "dense-flushed-overlap": 1.0474440003209973,
+        "mixed-overlap": 1.0469824892071604,
+        "stale-replay": 1.0393005658112293,
+        "compacted": 1.2204377044438017
+      }
+    },
+    {
+      "case": 4,
+      "variant": 2,
+      "name": "dense-heap",
+      "processes": 9,
+      "changing_query_speedup": 1.0986620792663389,
+      "changing_cycle_speedup": 1.0013170945646896,
+      "operator_only_speedup": 4.212812486869772,
+      "min_process_speedup": 0.9926126996558629,
+      "max_process_speedup": 1.2014378675918345,
+      "scenario_medians": {
+        "0": 1.116008506546501,
+        "1": 1.0164350766721628,
+        "2": 1.059541042910459
+      },
+      "phase_medians": {
+        "settled": 1.717105880642664,
+        "sparse-memtable": 1.118538261298902,
+        "sparse-flushed-overlap": 1.105999082459481,
+        "dense-hot-memtable": 1.0576342230607068,
+        "dense-flushed-overlap": 1.1120827368533182,
+        "mixed-overlap": 1.0983149200449391,
+        "stale-replay": 1.1009683304249402,
+        "compacted": 1.6412572172823487
+      }
+    },
+    {
+      "case": 4,
+      "variant": 3,
+      "name": "sort-reduce-heap",
+      "processes": 9,
+      "changing_query_speedup": 0.988637377187649,
+      "changing_cycle_speedup": 0.9991549564665557,
+      "operator_only_speedup": 0.9633400565820697,
+      "min_process_speedup": 0.9160167891755694,
+      "max_process_speedup": 1.1203134953338878,
+      "scenario_medians": {
+        "0": 1.0329999122357607,
+        "1": 0.988637377187649,
+        "2": 0.9306938084208435
+      },
+      "phase_medians": {
+        "settled": 1.1885904523935715,
+        "sparse-memtable": 0.9674029753590534,
+        "sparse-flushed-overlap": 0.9934533422395287,
+        "dense-hot-memtable": 0.9950874188418178,
+        "dense-flushed-overlap": 0.9990212704256218,
+        "mixed-overlap": 0.993574025128021,
+        "stale-replay": 0.9827003034191191,
+        "compacted": 1.0281078571579492
+      }
+    },
+    {
+      "case": 4,
+      "variant": 4,
+      "name": "parallel-local-hash-heap",
+      "processes": 9,
+      "changing_query_speedup": 0.9895676009813977,
+      "changing_cycle_speedup": 1.014038494140093,
+      "operator_only_speedup": 1.1692858908097807,
+      "min_process_speedup": 0.9365206306213187,
+      "max_process_speedup": 1.1091823774999492,
+      "scenario_medians": {
+        "0": 0.9594145638614855,
+        "1": 1.011141457989794,
+        "2": 0.9838939006952948
+      },
+      "phase_medians": {
+        "settled": 1.0799471810760202,
+        "sparse-memtable": 1.0073629964562354,
+        "sparse-flushed-overlap": 1.015478169996467,
+        "dense-hot-memtable": 0.992580387849441,
+        "dense-flushed-overlap": 1.0121942123642234,
+        "mixed-overlap": 0.963337796645882,
+        "stale-replay": 1.0131423617118531,
+        "compacted": 1.0841576453973663
+      }
+    },
+    {
+      "case": 4,
+      "variant": 5,
+      "name": "key-owned-local-topk",
+      "processes": 9,
+      "changing_query_speedup": 1.059181945986962,
+      "changing_cycle_speedup": 1.0319622095211776,
+      "operator_only_speedup": 2.3109167222396425,
+      "min_process_speedup": 0.9939893253564005,
+      "max_process_speedup": 1.161768312835969,
+      "scenario_medians": {
+        "0": 1.1094886479557526,
+        "1": 1.011355069898066,
+        "2": 1.0137763897960999
+      },
+      "phase_medians": {
+        "settled": 1.4678600361671226,
+        "sparse-memtable": 1.0288680650374682,
+        "sparse-flushed-overlap": 1.0223803406354968,
+        "dense-hot-memtable": 1.0865909406241019,
+        "dense-flushed-overlap": 1.0810267797452389,
+        "mixed-overlap": 1.0505711646255247,
+        "stale-replay": 1.0950107240063296,
+        "compacted": 1.3887956051467785
+      }
+    },
+    {
+      "case": 4,
+      "variant": 6,
+      "name": "radix-shuffle-dense-partials",
+      "processes": 9,
+      "changing_query_speedup": 1.0564504577967755,
+      "changing_cycle_speedup": 1.003315797555479,
+      "operator_only_speedup": 1.5887739593196162,
+      "min_process_speedup": 0.983633816358319,
+      "max_process_speedup": 1.1725329565893687,
+      "scenario_medians": {
+        "0": 1.0760963562773864,
+        "1": 0.9933299317270203,
+        "2": 1.0261852336437303
+      },
+      "phase_medians": {
+        "settled": 1.2518156349494003,
+        "sparse-memtable": 1.0629467280811054,
+        "sparse-flushed-overlap": 1.026083107920983,
+        "dense-hot-memtable": 1.0715094297800596,
+        "dense-flushed-overlap": 1.0557946510689253,
+        "mixed-overlap": 1.0557106505167209,
+        "stale-replay": 1.0448864971795224,
+        "compacted": 1.2597542564114244
+      }
+    },
+    {
+      "case": 4,
+      "variant": 7,
+      "name": "adaptive-domain-group",
+      "processes": 9,
+      "changing_query_speedup": 1.0495156195510507,
+      "changing_cycle_speedup": 1.0158300237036517,
+      "operator_only_speedup": 3.3345090750572886,
+      "min_process_speedup": 0.9601699046759072,
+      "max_process_speedup": 1.18977663894818,
+      "scenario_medians": {
+        "0": 1.027016001825319,
+        "1": 1.0037086770006787,
+        "2": 1.0550895990631026
+      },
+      "phase_medians": {
+        "settled": 1.656270170547313,
+        "sparse-memtable": 1.0396777859378121,
+        "sparse-flushed-overlap": 1.0527323374126898,
+        "dense-hot-memtable": 1.0564667015097042,
+        "dense-flushed-overlap": 1.0520934221288927,
+        "mixed-overlap": 1.0275899071369223,
+        "stale-replay": 1.033766433415888,
+        "compacted": 1.5708645557089078
+      }
+    },
+    {
+      "case": 4,
+      "variant": 8,
+      "name": "tree-quickselect",
+      "processes": 9,
+      "changing_query_speedup": 1.0068444683454365,
+      "changing_cycle_speedup": 1.0235328597216369,
+      "operator_only_speedup": 1.0703099407565269,
+      "min_process_speedup": 0.9461323522997719,
+      "max_process_speedup": 1.110488759655767,
+      "scenario_medians": {
+        "0": 1.0068444683454365,
+        "1": 1.0254904362881,
+        "2": 0.99133139786083
+      },
+      "phase_medians": {
+        "settled": 1.0391486458819015,
+        "sparse-memtable": 1.0181594964915122,
+        "sparse-flushed-overlap": 1.0155305602929943,
+        "dense-hot-memtable": 0.9948983831527054,
+        "dense-flushed-overlap": 1.0013704109647419,
+        "mixed-overlap": 1.0064703190166724,
+        "stale-replay": 1.0066352439021125,
+        "compacted": 1.0388407036793013
+      }
+    },
+    {
+      "case": 4,
+      "variant": 9,
+      "name": "sorted-run-merge-heap",
+      "processes": 9,
+      "changing_query_speedup": 0.9818588811148088,
+      "changing_cycle_speedup": 1.018650285048566,
+      "operator_only_speedup": 0.6916917180151301,
+      "min_process_speedup": 0.8652130625534166,
+      "max_process_speedup": 1.0518383485868574,
+      "scenario_medians": {
+        "0": 0.896868614082855,
+        "1": 1.0064626284835658,
+        "2": 1.0022311187814161
+      },
+      "phase_medians": {
+        "settled": 0.872584848498685,
+        "sparse-memtable": 0.9881638950668761,
+        "sparse-flushed-overlap": 0.9870833570196419,
+        "dense-hot-memtable": 0.9867516538950589,
+        "dense-flushed-overlap": 0.9943358037288381,
+        "mixed-overlap": 0.9311811590987534,
+        "stale-replay": 0.9920031932026059,
+        "compacted": 0.9073877285702173
+      }
+    },
+    {
+      "case": 4,
+      "variant": 10,
+      "name": "hash-quickselect",
+      "processes": 9,
+      "changing_query_speedup": 1.0056916628658437,
+      "changing_cycle_speedup": 1.006165837946549,
+      "operator_only_speedup": 1.780824921951924,
+      "min_process_speedup": 0.909590331277985,
+      "max_process_speedup": 1.084032227968851,
+      "scenario_medians": {
+        "0": 1.0818621759213527,
+        "1": 0.9585941096755076,
+        "2": 1.0056916628658437
+      },
+      "phase_medians": {
+        "settled": 1.350873774226089,
+        "sparse-memtable": 1.0337007103689924,
+        "sparse-flushed-overlap": 1.0343449879323312,
+        "dense-hot-memtable": 1.0191138139204186,
+        "dense-flushed-overlap": 1.0013803189397037,
+        "mixed-overlap": 1.0015826533273855,
+        "stale-replay": 0.9982706282046727,
+        "compacted": 1.2791298531086948
+      }
+    },
+    {
+      "case": 5,
+      "variant": 1,
+      "name": "hash-bucket-join",
+      "processes": 9,
+      "changing_query_speedup": 1.01119828230844,
+      "changing_cycle_speedup": 0.999460177533348,
+      "operator_only_speedup": 1.343479499320892,
+      "min_process_speedup": 0.9266486593615296,
+      "max_process_speedup": 1.0632340773547113,
+      "scenario_medians": {
+        "0": 1.0314001744156311,
+        "1": 0.9729591255232053,
+        "2": 0.9815277180275619
+      },
+      "phase_medians": {
+        "settled": 1.0669681089837761,
+        "sparse-memtable": 0.9964748937107345,
+        "sparse-flushed-overlap": 1.011903560920988,
+        "dense-hot-memtable": 0.9989652929540329,
+        "dense-flushed-overlap": 1.0086170891850843,
+        "mixed-overlap": 0.9860049040801061,
+        "stale-replay": 1.01085136132178,
+        "compacted": 1.1038088130094297
+      }
+    },
+    {
+      "case": 5,
+      "variant": 2,
+      "name": "dense-bucket-join",
+      "processes": 9,
+      "changing_query_speedup": 1.0343839530707226,
+      "changing_cycle_speedup": 1.0181386460920592,
+      "operator_only_speedup": 6.264955922657706,
+      "min_process_speedup": 0.9683877763619172,
+      "max_process_speedup": 1.3537262594162192,
+      "scenario_medians": {
+        "0": 1.0202671331981437,
+        "1": 1.2761118026552305,
+        "2": 1.0147389214105997
+      },
+      "phase_medians": {
+        "settled": 1.5957703224425739,
+        "sparse-memtable": 1.0400472318645857,
+        "sparse-flushed-overlap": 1.0365211758948454,
+        "dense-hot-memtable": 1.035614595528035,
+        "dense-flushed-overlap": 1.0446305642919598,
+        "mixed-overlap": 1.0414994487738503,
+        "stale-replay": 1.0328958723416262,
+        "compacted": 1.8335387956247517
+      }
+    },
+    {
+      "case": 5,
+      "variant": 3,
+      "name": "sorted-merge-join",
+      "processes": 9,
+      "changing_query_speedup": 0.9670526156920684,
+      "changing_cycle_speedup": 1.012750036149884,
+      "operator_only_speedup": 1.0327790016291736,
+      "min_process_speedup": 0.8672631455316442,
+      "max_process_speedup": 1.248916865808179,
+      "scenario_medians": {
+        "0": 0.9670526156920684,
+        "1": 1.2136776883515337,
+        "2": 0.8923425119063167
+      },
+      "phase_medians": {
+        "settled": 0.9506406926812071,
+        "sparse-memtable": 0.9479288641667918,
+        "sparse-flushed-overlap": 0.9761530309586216,
+        "dense-hot-memtable": 0.9831096944153458,
+        "dense-flushed-overlap": 0.9711364754827628,
+        "mixed-overlap": 0.9698309566092483,
+        "stale-replay": 0.9621968017720278,
+        "compacted": 1.0489747006759202
+      }
+    },
+    {
+      "case": 5,
+      "variant": 4,
+      "name": "sorted-binary-join",
+      "processes": 9,
+      "changing_query_speedup": 0.9946290984792905,
+      "changing_cycle_speedup": 0.9930205466991497,
+      "operator_only_speedup": 1.48815743250513,
+      "min_process_speedup": 0.9543158796087013,
+      "max_process_speedup": 1.0350819613838391,
+      "scenario_medians": {
+        "0": 1.0314508880739723,
+        "1": 0.9932800440147221,
+        "2": 0.9946290984792905
+      },
+      "phase_medians": {
+        "settled": 1.0962150464632747,
+        "sparse-memtable": 0.9924437061982854,
+        "sparse-flushed-overlap": 1.0016720668638583,
+        "dense-hot-memtable": 0.9836488336566922,
+        "dense-flushed-overlap": 0.9937550010987916,
+        "mixed-overlap": 0.9967211949511282,
+        "stale-replay": 1.008505996403482,
+        "compacted": 1.1253752888203807
+      }
+    },
+    {
+      "case": 5,
+      "variant": 5,
+      "name": "radix-partition-join",
+      "processes": 9,
+      "changing_query_speedup": 1.0514340913763074,
+      "changing_cycle_speedup": 1.0454179766953864,
+      "operator_only_speedup": 1.6924567584160395,
+      "min_process_speedup": 0.9761923873582874,
+      "max_process_speedup": 1.2682256879261586,
+      "scenario_medians": {
+        "0": 1.0514340913763074,
+        "1": 1.2416481880782022,
+        "2": 0.9894266951359872
+      },
+      "phase_medians": {
+        "settled": 1.4467554166716043,
+        "sparse-memtable": 1.0074852758623383,
+        "sparse-flushed-overlap": 1.0350054951094907,
+        "dense-hot-memtable": 1.072821874249383,
+        "dense-flushed-overlap": 1.0531309030493703,
+        "mixed-overlap": 1.0558268979675056,
+        "stale-replay": 1.046786272172848,
+        "compacted": 1.4159824980506195
+      }
+    },
+    {
+      "case": 5,
+      "variant": 6,
+      "name": "parallel-hash-probe",
+      "processes": 9,
+      "changing_query_speedup": 1.051900611356304,
+      "changing_cycle_speedup": 1.0459834853063688,
+      "operator_only_speedup": 3.3011385766844046,
+      "min_process_speedup": 0.9871758993096967,
+      "max_process_speedup": 1.6117380949992564,
+      "scenario_medians": {
+        "0": 1.051900611356304,
+        "1": 1.581732684914587,
+        "2": 0.9985285403280941
+      },
+      "phase_medians": {
+        "settled": 1.6426767298993374,
+        "sparse-memtable": 1.0502316403037866,
+        "sparse-flushed-overlap": 1.0497157545960725,
+        "dense-hot-memtable": 1.0674428757756043,
+        "dense-flushed-overlap": 1.0457041019313387,
+        "mixed-overlap": 1.0460404696413537,
+        "stale-replay": 1.0451883866605176,
+        "compacted": 1.564537614337098
+      }
+    },
+    {
+      "case": 5,
+      "variant": 7,
+      "name": "parallel-dense-probe",
+      "processes": 9,
+      "changing_query_speedup": 1.0731643083542597,
+      "changing_cycle_speedup": 1.0536800334773015,
+      "operator_only_speedup": 5.817476188629735,
+      "min_process_speedup": 0.9895709235045226,
+      "max_process_speedup": 1.7850610096598687,
+      "scenario_medians": {
+        "0": 1.0731643083542597,
+        "1": 1.7041738711518277,
+        "2": 1.0209898671408233
+      },
+      "phase_medians": {
+        "settled": 1.9591713398784987,
+        "sparse-memtable": 1.0752781096672486,
+        "sparse-flushed-overlap": 1.0885241544901998,
+        "dense-hot-memtable": 1.0702241412594824,
+        "dense-flushed-overlap": 1.0618079838046612,
+        "mixed-overlap": 1.0641548877430034,
+        "stale-replay": 1.0586940014658839,
+        "compacted": 1.8631174895250915
+      }
+    },
+    {
+      "case": 5,
+      "variant": 8,
+      "name": "bloom-prefilter-hash",
+      "processes": 9,
+      "changing_query_speedup": 1.0047002260088855,
+      "changing_cycle_speedup": 1.0102734277264351,
+      "operator_only_speedup": 5.412790774250238,
+      "min_process_speedup": 0.954291585129203,
+      "max_process_speedup": 1.0473605479192216,
+      "scenario_medians": {
+        "0": 1.0345635325219456,
+        "1": 1.0064401063354553,
+        "2": 0.9723758274926539
+      },
+      "phase_medians": {
+        "settled": 1.3314848611866845,
+        "sparse-memtable": 1.0102385099106033,
+        "sparse-flushed-overlap": 0.9845653228443115,
+        "dense-hot-memtable": 1.0177377579954912,
+        "dense-flushed-overlap": 1.0129823297674416,
+        "mixed-overlap": 0.9849571900083204,
+        "stale-replay": 1.015931564014106,
+        "compacted": 1.31168169918302
+      }
+    },
+    {
+      "case": 5,
+      "variant": 9,
+      "name": "build-side-demand-filter",
+      "processes": 9,
+      "changing_query_speedup": 0.9849285972204719,
+      "changing_cycle_speedup": 0.994638450385837,
+      "operator_only_speedup": 0.9779435959911253,
+      "min_process_speedup": 0.9179027077307292,
+      "max_process_speedup": 1.056935136156802,
+      "scenario_medians": {
+        "0": 1.0142632541384426,
+        "1": 1.0042015652673564,
+        "2": 0.9489047480453682
+      },
+      "phase_medians": {
+        "settled": 0.9848170154467218,
+        "sparse-memtable": 1.0015878164354761,
+        "sparse-flushed-overlap": 0.9874551693325457,
+        "dense-hot-memtable": 0.97304012041161,
+        "dense-flushed-overlap": 0.9868345429491265,
+        "mixed-overlap": 0.9797914703325069,
+        "stale-replay": 0.9873976539995893,
+        "compacted": 0.9619935386674145
+      }
+    },
+    {
+      "case": 5,
+      "variant": 10,
+      "name": "factorized-fact-aggregate",
+      "processes": 9,
+      "changing_query_speedup": 1.0089726370002612,
+      "changing_cycle_speedup": 1.023780781262723,
+      "operator_only_speedup": 1.4549613069289073,
+      "min_process_speedup": 0.9283457460767428,
+      "max_process_speedup": 2.011283839658444,
+      "scenario_medians": {
+        "0": 1.0089726370002612,
+        "1": 1.9967337133561138,
+        "2": 0.9470835831881051
+      },
+      "phase_medians": {
+        "settled": 1.2166175241988646,
+        "sparse-memtable": 0.9696080880417822,
+        "sparse-flushed-overlap": 1.050736902878731,
+        "dense-hot-memtable": 1.0114101252702772,
+        "dense-flushed-overlap": 1.0139368804470628,
+        "mixed-overlap": 1.0099438615197514,
+        "stale-replay": 1.0137020211352026,
+        "compacted": 1.1636428116321844
+      }
+    },
+    {
+      "case": 6,
+      "variant": 1,
+      "name": "hash-pairs",
+      "processes": 9,
+      "changing_query_speedup": 1.0411856235430075,
+      "changing_cycle_speedup": 1.0166133522170473,
+      "operator_only_speedup": 1.5574104897747727,
+      "min_process_speedup": 0.9615181593227018,
+      "max_process_speedup": 1.1518016100472694,
+      "scenario_medians": {
+        "0": 1.0411856235430075,
+        "1": 1.032549630779421,
+        "2": 1.0564366758318173
+      },
+      "phase_medians": {
+        "settled": 1.1844524911653511,
+        "sparse-memtable": 1.0324441375099516,
+        "sparse-flushed-overlap": 1.0456729447329438,
+        "dense-hot-memtable": 1.0336435409952285,
+        "dense-flushed-overlap": 1.039972029519789,
+        "mixed-overlap": 1.0429897656312344,
+        "stale-replay": 1.0372370269386304,
+        "compacted": 1.2438689641396743
+      }
+    },
+    {
+      "case": 6,
+      "variant": 2,
+      "name": "per-group-hashsets",
+      "processes": 9,
+      "changing_query_speedup": 1.0116629657580143,
+      "changing_cycle_speedup": 1.0176203638161267,
+      "operator_only_speedup": 1.2419625504041427,
+      "min_process_speedup": 0.9643346224385733,
+      "max_process_speedup": 1.0674717945428047,
+      "scenario_medians": {
+        "0": 0.9899377358713471,
+        "1": 1.0116629657580143,
+        "2": 1.0126096907112079
+      },
+      "phase_medians": {
+        "settled": 1.1902732915649061,
+        "sparse-memtable": 1.0200971695225023,
+        "sparse-flushed-overlap": 1.005354098094485,
+        "dense-hot-memtable": 0.9970287402812884,
+        "dense-flushed-overlap": 0.9948868744265557,
+        "mixed-overlap": 1.0173394310061308,
+        "stale-replay": 1.0312401074881703,
+        "compacted": 1.126178091131652
+      }
+    },
+    {
+      "case": 6,
+      "variant": 3,
+      "name": "sort-deduplicate",
+      "processes": 9,
+      "changing_query_speedup": 1.0408231179546867,
+      "changing_cycle_speedup": 1.0292119663750274,
+      "operator_only_speedup": 1.3749876272767838,
+      "min_process_speedup": 0.9220210384370005,
+      "max_process_speedup": 1.0673806866659115,
+      "scenario_medians": {
+        "0": 1.028028954354654,
+        "1": 1.0350600595345572,
+        "2": 1.058427872840696
+      },
+      "phase_medians": {
+        "settled": 1.2020502712697865,
+        "sparse-memtable": 1.0590334945502502,
+        "sparse-flushed-overlap": 1.039294641365958,
+        "dense-hot-memtable": 1.0314500403348468,
+        "dense-flushed-overlap": 1.0567852204763937,
+        "mixed-overlap": 1.020764720361334,
+        "stale-replay": 1.0516077756397773,
+        "compacted": 1.1797989176432324
+      }
+    },
+    {
+      "case": 6,
+      "variant": 4,
+      "name": "dense-group-bitmaps",
+      "processes": 9,
+      "changing_query_speedup": 1.0418595531866977,
+      "changing_cycle_speedup": 0.9883513061143923,
+      "operator_only_speedup": 3.88230503660023,
+      "min_process_speedup": 1.006257016855593,
+      "max_process_speedup": 1.1985382277626058,
+      "scenario_medians": {
+        "0": 1.0900586896041522,
+        "1": 1.027282616507774,
+        "2": 1.0627477419277473
+      },
+      "phase_medians": {
+        "settled": 1.8297541975648144,
+        "sparse-memtable": 1.0864763571685074,
+        "sparse-flushed-overlap": 1.0349211017339495,
+        "dense-hot-memtable": 1.0338209867383572,
+        "dense-flushed-overlap": 1.0561636852606897,
+        "mixed-overlap": 1.0336364817112909,
+        "stale-replay": 1.0410342049558021,
+        "compacted": 1.7612718706399568
+      }
+    },
+    {
+      "case": 6,
+      "variant": 5,
+      "name": "parallel-local-bitmaps",
+      "processes": 9,
+      "changing_query_speedup": 1.0850368277200788,
+      "changing_cycle_speedup": 1.0445640828740521,
+      "operator_only_speedup": 3.3215589242512906,
+      "min_process_speedup": 1.0133221169807294,
+      "max_process_speedup": 1.184582283145745,
+      "scenario_medians": {
+        "0": 1.0928401107270094,
+        "1": 1.080414607431891,
+        "2": 1.0975426227115705
+      },
+      "phase_medians": {
+        "settled": 1.7501208142254663,
+        "sparse-memtable": 1.083872934688749,
+        "sparse-flushed-overlap": 1.0670351463719843,
+        "dense-hot-memtable": 1.0811934263588079,
+        "dense-flushed-overlap": 1.0657071241372336,
+        "mixed-overlap": 1.0847775768296744,
+        "stale-replay": 1.0602548391586641,
+        "compacted": 1.6971199400312809
+      }
+    },
+    {
+      "case": 6,
+      "variant": 6,
+      "name": "radix-sort-pairs",
+      "processes": 9,
+      "changing_query_speedup": 1.0163110572143381,
+      "changing_cycle_speedup": 1.0287784719231672,
+      "operator_only_speedup": 1.285423965722051,
+      "min_process_speedup": 0.9390209603480101,
+      "max_process_speedup": 1.081638843468458,
+      "scenario_medians": {
+        "0": 0.9867010955993699,
+        "1": 1.0163110572143381,
+        "2": 1.072150605154125
+      },
+      "phase_medians": {
+        "settled": 1.1819813342390015,
+        "sparse-memtable": 1.0204820934549137,
+        "sparse-flushed-overlap": 1.0489624223958094,
+        "dense-hot-memtable": 1.0153409802875948,
+        "dense-flushed-overlap": 1.019341767507132,
+        "mixed-overlap": 1.0177567040878939,
+        "stale-replay": 1.0178161471223128,
+        "compacted": 1.154129218738588
+      }
+    },
+    {
+      "case": 6,
+      "variant": 7,
+      "name": "sorted-run-union",
+      "processes": 9,
+      "changing_query_speedup": 0.965068122357673,
+      "changing_cycle_speedup": 0.9637181177390296,
+      "operator_only_speedup": 0.7584452583997223,
+      "min_process_speedup": 0.9147469514912304,
+      "max_process_speedup": 1.0906807724597263,
+      "scenario_medians": {
+        "0": 0.9441585560501518,
+        "1": 0.9156714091484742,
+        "2": 1.0057586028460723
+      },
+      "phase_medians": {
+        "settled": 0.8543712189875621,
+        "sparse-memtable": 0.9756208564921162,
+        "sparse-flushed-overlap": 0.9592441790787092,
+        "dense-hot-memtable": 0.9584473419442383,
+        "dense-flushed-overlap": 0.9735563506093258,
+        "mixed-overlap": 0.9758531069147122,
+        "stale-replay": 0.95414811274298,
+        "compacted": 0.8447916632309197
+      }
+    },
+    {
+      "case": 6,
+      "variant": 8,
+      "name": "per-group-sort",
+      "processes": 9,
+      "changing_query_speedup": 1.0127434345623103,
+      "changing_cycle_speedup": 0.9908907077516653,
+      "operator_only_speedup": 2.0232725834314613,
+      "min_process_speedup": 0.931126573535556,
+      "max_process_speedup": 1.1566184181181693,
+      "scenario_medians": {
+        "0": 0.9869767270103046,
+        "1": 0.9801481071654254,
+        "2": 1.036031931409601
+      },
+      "phase_medians": {
+        "settled": 1.457254976445276,
+        "sparse-memtable": 1.0308698580923887,
+        "sparse-flushed-overlap": 1.0005078348031036,
+        "dense-hot-memtable": 0.9993675177177399,
+        "dense-flushed-overlap": 1.0018648314530016,
+        "mixed-overlap": 1.0179422238660376,
+        "stale-replay": 0.9827452782428984,
+        "compacted": 1.4166411508976755
+      }
+    },
+    {
+      "case": 6,
+      "variant": 9,
+      "name": "adaptive-inline-sets",
+      "processes": 9,
+      "changing_query_speedup": 1.0447216178556098,
+      "changing_cycle_speedup": 1.0319823095352267,
+      "operator_only_speedup": 1.2553554414251082,
+      "min_process_speedup": 0.9633818403810935,
+      "max_process_speedup": 1.1050935148083418,
+      "scenario_medians": {
+        "0": 1.0264870720324673,
+        "1": 1.0447216178556098,
+        "2": 1.0778547249361192
+      },
+      "phase_medians": {
+        "settled": 1.2043945492832349,
+        "sparse-memtable": 1.0437171039803557,
+        "sparse-flushed-overlap": 1.0433736895664183,
+        "dense-hot-memtable": 1.049553164387781,
+        "dense-flushed-overlap": 1.0403802168198883,
+        "mixed-overlap": 1.0382413837185422,
+        "stale-replay": 1.0417449345704883,
+        "compacted": 1.1341619303622674
+      }
+    },
+    {
+      "case": 6,
+      "variant": 10,
+      "name": "sparse-word-bitmaps",
+      "processes": 9,
+      "changing_query_speedup": 1.0504690737996325,
+      "changing_cycle_speedup": 1.0056680685087593,
+      "operator_only_speedup": 1.9097128248680846,
+      "min_process_speedup": 0.9878381142139677,
+      "max_process_speedup": 1.1559120758196084,
+      "scenario_medians": {
+        "0": 1.050852255405271,
+        "1": 0.995678151409443,
+        "2": 1.050820789550332
+      },
+      "phase_medians": {
+        "settled": 1.3875494327773252,
+        "sparse-memtable": 1.059197199674914,
+        "sparse-flushed-overlap": 1.0425495489696415,
+        "dense-hot-memtable": 1.0440345347912945,
+        "dense-flushed-overlap": 1.0412954546497306,
+        "mixed-overlap": 1.0164646232227126,
+        "stale-replay": 1.051474884239908,
+        "compacted": 1.37482490717338
+      }
+    },
+    {
+      "case": 7,
+      "variant": 1,
+      "name": "bounded-heap",
+      "processes": 9,
+      "changing_query_speedup": 1.0583866013881016,
+      "changing_cycle_speedup": 1.0174488305565,
+      "operator_only_speedup": 1.3966430777358416,
+      "min_process_speedup": 0.9388057913783084,
+      "max_process_speedup": 1.1597424579032125,
+      "scenario_medians": {
+        "0": 1.096332744417455,
+        "1": 0.9781018942855751,
+        "2": 1.1418794728095216
+      },
+      "phase_medians": {
+        "settled": 1.1961303998645083,
+        "sparse-memtable": 1.0465439716684237,
+        "sparse-flushed-overlap": 1.074719410581097,
+        "dense-hot-memtable": 1.0753228861195665,
+        "dense-flushed-overlap": 1.046689826201377,
+        "mixed-overlap": 1.057127602254567,
+        "stale-replay": 1.0615721516372276,
+        "compacted": 1.192423620671397
+      }
+    },
+    {
+      "case": 7,
+      "variant": 2,
+      "name": "quickselect-prefix",
+      "processes": 9,
+      "changing_query_speedup": 1.079836795471918,
+      "changing_cycle_speedup": 1.0130019783158537,
+      "operator_only_speedup": 7.491505611387506,
+      "min_process_speedup": 0.9788047403998602,
+      "max_process_speedup": 1.2009262675579087,
+      "scenario_medians": {
+        "0": 1.1291280241678343,
+        "1": 1.0787005431624606,
+        "2": 1.1983304912473611
+      },
+      "phase_medians": {
+        "settled": 1.9018362678803056,
+        "sparse-memtable": 1.0974048221817057,
+        "sparse-flushed-overlap": 1.0942739749307009,
+        "dense-hot-memtable": 1.1097315606523448,
+        "dense-flushed-overlap": 1.0966421158014399,
+        "mixed-overlap": 1.1228411094697777,
+        "stale-replay": 1.091996306048685,
+        "compacted": 1.9333631799961033
+      }
+    },
+    {
+      "case": 7,
+      "variant": 3,
+      "name": "sorted-small-vector",
+      "processes": 9,
+      "changing_query_speedup": 1.0499519879459391,
+      "changing_cycle_speedup": 1.0234466679998646,
+      "operator_only_speedup": 2.152635897942135,
+      "min_process_speedup": 0.9874897483309589,
+      "max_process_speedup": 1.1782034926653446,
+      "scenario_medians": {
+        "0": 1.069846303107837,
+        "1": 1.0116232779363354,
+        "2": 1.1090441397638608
+      },
+      "phase_medians": {
+        "settled": 1.439497780269485,
+        "sparse-memtable": 1.0655546153164943,
+        "sparse-flushed-overlap": 1.051177287139579,
+        "dense-hot-memtable": 1.0691793767218707,
+        "dense-flushed-overlap": 1.0593175376098245,
+        "mixed-overlap": 1.064237500852629,
+        "stale-replay": 1.0520825466993988,
+        "compacted": 1.4313733175528534
+      }
+    },
+    {
+      "case": 7,
+      "variant": 4,
+      "name": "chunk-local-heaps",
+      "processes": 9,
+      "changing_query_speedup": 1.057738058048987,
+      "changing_cycle_speedup": 1.0077925179010319,
+      "operator_only_speedup": 1.5254770282353247,
+      "min_process_speedup": 1.022100275354113,
+      "max_process_speedup": 1.1587130527751317,
+      "scenario_medians": {
+        "0": 1.0764384102720779,
+        "1": 1.0352324375701083,
+        "2": 1.0675514847130443
+      },
+      "phase_medians": {
+        "settled": 1.2254241191749025,
+        "sparse-memtable": 1.0528981659854495,
+        "sparse-flushed-overlap": 1.0551909259740322,
+        "dense-hot-memtable": 1.0618684438878117,
+        "dense-flushed-overlap": 1.0532239521845368,
+        "mixed-overlap": 1.0513658187072406,
+        "stale-replay": 1.074686260779168,
+        "compacted": 1.23200839752861
+      }
+    },
+    {
+      "case": 7,
+      "variant": 5,
+      "name": "parallel-local-selection",
+      "processes": 9,
+      "changing_query_speedup": 1.078286349520997,
+      "changing_cycle_speedup": 1.0346916631018872,
+      "operator_only_speedup": 5.777069995831871,
+      "min_process_speedup": 0.9537522627759011,
+      "max_process_speedup": 1.2083524733043216,
+      "scenario_medians": {
+        "0": 1.0896692988749512,
+        "1": 1.0281772226622181,
+        "2": 1.1917211653231645
+      },
+      "phase_medians": {
+        "settled": 1.7736285361417115,
+        "sparse-memtable": 1.0810295844093147,
+        "sparse-flushed-overlap": 1.0840774191719516,
+        "dense-hot-memtable": 1.0736598060513218,
+        "dense-flushed-overlap": 1.0754975359995957,
+        "mixed-overlap": 1.0846624279638222,
+        "stale-replay": 1.1086844632786543,
+        "compacted": 1.888194290465632
+      }
+    },
+    {
+      "case": 7,
+      "variant": 6,
+      "name": "value-bucket-selection",
+      "processes": 9,
+      "changing_query_speedup": 1.0464541729468904,
+      "changing_cycle_speedup": 1.0196486447986433,
+      "operator_only_speedup": 4.325389747807524,
+      "min_process_speedup": 0.9784500947862893,
+      "max_process_speedup": 1.1558496636583195,
+      "scenario_medians": {
+        "0": 1.0834263494636864,
+        "1": 0.9824705239998641,
+        "2": 1.1263826798721517
+      },
+      "phase_medians": {
+        "settled": 1.7275132324781095,
+        "sparse-memtable": 1.0589946156948955,
+        "sparse-flushed-overlap": 1.0367411076694442,
+        "dense-hot-memtable": 1.060205858082048,
+        "dense-flushed-overlap": 1.0775407329611122,
+        "mixed-overlap": 1.0480275391510379,
+        "stale-replay": 1.064223317134487,
+        "compacted": 1.718419853961947
+      }
+    },
+    {
+      "case": 7,
+      "variant": 7,
+      "name": "radix-score-order",
+      "processes": 9,
+      "changing_query_speedup": 1.0551591400324123,
+      "changing_cycle_speedup": 1.0221080792372248,
+      "operator_only_speedup": 1.630653942262652,
+      "min_process_speedup": 0.978276920077726,
+      "max_process_speedup": 1.098732648813909,
+      "scenario_medians": {
+        "0": 1.0551591400324123,
+        "1": 1.0457040022014747,
+        "2": 1.08851891496538
+      },
+      "phase_medians": {
+        "settled": 1.2339488575974331,
+        "sparse-memtable": 1.04029220187746,
+        "sparse-flushed-overlap": 1.0542341318148034,
+        "dense-hot-memtable": 1.0634669751131176,
+        "dense-flushed-overlap": 1.055288212874864,
+        "mixed-overlap": 1.0503065813269479,
+        "stale-replay": 1.0524309624473016,
+        "compacted": 1.2931737410517063
+      }
+    },
+    {
+      "case": 7,
+      "variant": 8,
+      "name": "tournament-tree",
+      "processes": 9,
+      "changing_query_speedup": 1.0521817562601772,
+      "changing_cycle_speedup": 1.017614238842998,
+      "operator_only_speedup": 2.146402495852333,
+      "min_process_speedup": 0.9881397746498121,
+      "max_process_speedup": 1.1684254944155341,
+      "scenario_medians": {
+        "0": 1.0587011503754662,
+        "1": 1.0041871449615665,
+        "2": 1.0939253711447754
+      },
+      "phase_medians": {
+        "settled": 1.2429432451830553,
+        "sparse-memtable": 1.04458062566914,
+        "sparse-flushed-overlap": 1.040719336490518,
+        "dense-hot-memtable": 1.0573562252450166,
+        "dense-flushed-overlap": 1.0667991932647514,
+        "mixed-overlap": 1.068467580672366,
+        "stale-replay": 1.0291323454676664,
+        "compacted": 1.4988290063219358
+      }
+    },
+    {
+      "case": 7,
+      "variant": 9,
+      "name": "block-bound-pruning",
+      "processes": 9,
+      "changing_query_speedup": 1.0706560066591322,
+      "changing_cycle_speedup": 1.021726550665844,
+      "operator_only_speedup": 2.3558481755974547,
+      "min_process_speedup": 0.9520871477248313,
+      "max_process_speedup": 1.1542464629581635,
+      "scenario_medians": {
+        "0": 1.0706560066591322,
+        "1": 0.9810516058444402,
+        "2": 1.097320458518783
+      },
+      "phase_medians": {
+        "settled": 1.5166455181161198,
+        "sparse-memtable": 1.0762041319804367,
+        "sparse-flushed-overlap": 1.0537131659669998,
+        "dense-hot-memtable": 1.063688138516874,
+        "dense-flushed-overlap": 1.066160620019096,
+        "mixed-overlap": 1.0632482469360678,
+        "stale-replay": 1.0791643572148157,
+        "compacted": 1.4868750578168202
+      }
+    },
+    {
+      "case": 7,
+      "variant": 10,
+      "name": "buffered-selection",
+      "processes": 9,
+      "changing_query_speedup": 1.0786871443215307,
+      "changing_cycle_speedup": 1.0340758531274812,
+      "operator_only_speedup": 3.6625243984369096,
+      "min_process_speedup": 1.0026735537705982,
+      "max_process_speedup": 1.1813747617116828,
+      "scenario_medians": {
+        "0": 1.091075521759809,
+        "1": 1.0480097622384061,
+        "2": 1.1658901031864837
+      },
+      "phase_medians": {
+        "settled": 1.6687023420914224,
+        "sparse-memtable": 1.0776426482727754,
+        "sparse-flushed-overlap": 1.0619291682789305,
+        "dense-hot-memtable": 1.0775222172758898,
+        "dense-flushed-overlap": 1.0677093886456563,
+        "mixed-overlap": 1.074857763229614,
+        "stale-replay": 1.0975763048260827,
+        "compacted": 1.6695312171968488
+      }
+    },
+    {
+      "case": 8,
+      "variant": 1,
+      "name": "prefix-sum-monotone-min",
+      "processes": 9,
+      "changing_query_speedup": 1.0460306503434187,
+      "changing_cycle_speedup": 1.0526668213756794,
+      "operator_only_speedup": 1.1345585884407123,
+      "min_process_speedup": 0.9235393901192858,
+      "max_process_speedup": 1.2358209096529351,
+      "scenario_medians": {
+        "0": 1.0373340907650186,
+        "1": 1.2071792273449942,
+        "2": 1.0173359074288884
+      },
+      "phase_medians": {
+        "settled": 1.0340132542893785,
+        "sparse-memtable": 1.0457819909175374,
+        "sparse-flushed-overlap": 1.0535741972078982,
+        "dense-hot-memtable": 1.0692309361911776,
+        "dense-flushed-overlap": 1.0829343707773889,
+        "mixed-overlap": 1.0842491466529371,
+        "stale-replay": 1.0650824027377521,
+        "compacted": 1.1118715276948914
+      }
+    },
+    {
+      "case": 8,
+      "variant": 2,
+      "name": "running-sum-monotone-min",
+      "processes": 9,
+      "changing_query_speedup": 1.083467478431958,
+      "changing_cycle_speedup": 1.0552386871205226,
+      "operator_only_speedup": 1.8510519147069329,
+      "min_process_speedup": 0.9941468193797973,
+      "max_process_speedup": 1.1937769879960352,
+      "scenario_medians": {
+        "0": 1.0466325180175544,
+        "1": 1.1512424744248015,
+        "2": 1.083467478431958
+      },
+      "phase_medians": {
+        "settled": 1.2009069080956385,
+        "sparse-memtable": 1.0596449410247732,
+        "sparse-flushed-overlap": 1.0769954601270766,
+        "dense-hot-memtable": 1.0983010999028449,
+        "dense-flushed-overlap": 1.0786782171339744,
+        "mixed-overlap": 1.0834480054190525,
+        "stale-replay": 1.0681140402867144,
+        "compacted": 1.4069232039264066
+      }
+    },
+    {
+      "case": 8,
+      "variant": 3,
+      "name": "segment-tree-range",
+      "processes": 9,
+      "changing_query_speedup": 1.0959146748895785,
+      "changing_cycle_speedup": 1.05477580964328,
+      "operator_only_speedup": 1.3728638693484094,
+      "min_process_speedup": 0.9862064705891974,
+      "max_process_speedup": 1.233679641044622,
+      "scenario_medians": {
+        "0": 1.0541213452758305,
+        "1": 1.1967420194950207,
+        "2": 1.0959146748895785
+      },
+      "phase_medians": {
+        "settled": 0.9288134069795559,
+        "sparse-memtable": 1.0515336770504164,
+        "sparse-flushed-overlap": 1.1173366405095915,
+        "dense-hot-memtable": 1.0887654253142094,
+        "dense-flushed-overlap": 1.1083292627259544,
+        "mixed-overlap": 1.110567882966093,
+        "stale-replay": 1.0627155996631794,
+        "compacted": 1.0556743900108447
+      }
+    },
+    {
+      "case": 8,
+      "variant": 4,
+      "name": "sparse-table-min-prefix",
+      "processes": 9,
+      "changing_query_speedup": 1.1023798071854742,
+      "changing_cycle_speedup": 1.052622166297854,
+      "operator_only_speedup": 1.3527431463692818,
+      "min_process_speedup": 0.948769123562664,
+      "max_process_speedup": 1.265088699740504,
+      "scenario_medians": {
+        "0": 0.9887505445213316,
+        "1": 1.195134756306437,
+        "2": 1.1023798071854742
+      },
+      "phase_medians": {
+        "settled": 1.230001360323152,
+        "sparse-memtable": 1.0747429130337525,
+        "sparse-flushed-overlap": 1.130472195879099,
+        "dense-hot-memtable": 1.101305595163247,
+        "dense-flushed-overlap": 1.103878341288167,
+        "mixed-overlap": 1.1237411284445777,
+        "stale-replay": 1.0498453538941166,
+        "compacted": 1.3222977862493235
+      }
+    },
+    {
+      "case": 8,
+      "variant": 5,
+      "name": "two-stack-aggregate-queue",
+      "processes": 9,
+      "changing_query_speedup": 1.0806573940175639,
+      "changing_cycle_speedup": 1.0433224124760365,
+      "operator_only_speedup": 2.24885633841873,
+      "min_process_speedup": 0.9745369928000418,
+      "max_process_speedup": 1.3244979445381926,
+      "scenario_medians": {
+        "0": 1.05709425090546,
+        "1": 1.2554257033572214,
+        "2": 1.0179140364461146
+      },
+      "phase_medians": {
+        "settled": 1.275072124282919,
+        "sparse-memtable": 1.0895738178837049,
+        "sparse-flushed-overlap": 1.1268715310198383,
+        "dense-hot-memtable": 1.0990289163405795,
+        "dense-flushed-overlap": 1.0991966799711441,
+        "mixed-overlap": 1.094430556695534,
+        "stale-replay": 1.0987164067496817,
+        "compacted": 1.6247291399655441
+      }
+    },
+    {
+      "case": 8,
+      "variant": 6,
+      "name": "block-min-prefix",
+      "processes": 9,
+      "changing_query_speedup": 1.033400203692595,
+      "changing_cycle_speedup": 1.054134401906208,
+      "operator_only_speedup": 1.1738957794101204,
+      "min_process_speedup": 0.954215500809497,
+      "max_process_speedup": 1.2543617236195457,
+      "scenario_medians": {
+        "0": 1.0088355191943255,
+        "1": 1.2097907492083166,
+        "2": 1.033400203692595
+      },
+      "phase_medians": {
+        "settled": 1.0072706125219242,
+        "sparse-memtable": 1.0220823813447777,
+        "sparse-flushed-overlap": 1.0259459840614193,
+        "dense-hot-memtable": 1.0501304144508388,
+        "dense-flushed-overlap": 1.0614085483123388,
+        "mixed-overlap": 1.0471700545244043,
+        "stale-replay": 1.0347525548356113,
+        "compacted": 1.1115502677935374
+      }
+    },
+    {
+      "case": 8,
+      "variant": 7,
+      "name": "parallel-halo-windows",
+      "processes": 9,
+      "changing_query_speedup": 1.1129859005278242,
+      "changing_cycle_speedup": 1.0708297858743279,
+      "operator_only_speedup": 2.1480552987949517,
+      "min_process_speedup": 1.024566758564442,
+      "max_process_speedup": 1.2925422592935947,
+      "scenario_medians": {
+        "0": 1.038236981284326,
+        "1": 1.176141713412353,
+        "2": 1.1129859005278242
+      },
+      "phase_medians": {
+        "settled": 1.256370165192493,
+        "sparse-memtable": 1.0911778910512977,
+        "sparse-flushed-overlap": 1.0983692051319767,
+        "dense-hot-memtable": 1.127279279102238,
+        "dense-flushed-overlap": 1.1049427129384493,
+        "mixed-overlap": 1.1064406352174254,
+        "stale-replay": 1.1051553188127583,
+        "compacted": 1.639679567926761
+      }
+    },
+    {
+      "case": 8,
+      "variant": 8,
+      "name": "square-root-range-blocks",
+      "processes": 9,
+      "changing_query_speedup": 1.0126210835849587,
+      "changing_cycle_speedup": 1.0629932107914761,
+      "operator_only_speedup": 1.349502948734502,
+      "min_process_speedup": 0.957047119115344,
+      "max_process_speedup": 1.211167879742747,
+      "scenario_medians": {
+        "0": 1.0035891271462938,
+        "1": 1.2059170697350532,
+        "2": 1.0077811477058733
+      },
+      "phase_medians": {
+        "settled": 1.146086721542465,
+        "sparse-memtable": 1.030121232538257,
+        "sparse-flushed-overlap": 1.0065424186083132,
+        "dense-hot-memtable": 1.0419147691151252,
+        "dense-flushed-overlap": 1.0397383714865234,
+        "mixed-overlap": 1.0244048668237504,
+        "stale-replay": 1.041761441835828,
+        "compacted": 1.3609489701857163
+      }
+    },
+    {
+      "case": 8,
+      "variant": 9,
+      "name": "ordered-multiset-window",
+      "processes": 9,
+      "changing_query_speedup": 0.9415028182711022,
+      "changing_cycle_speedup": 0.9817577636579817,
+      "operator_only_speedup": 0.5279276790244729,
+      "min_process_speedup": 0.8380997543679967,
+      "max_process_speedup": 1.1111322601410747,
+      "scenario_medians": {
+        "0": 0.9415028182711022,
+        "1": 1.0367401439974724,
+        "2": 0.906181196812937
+      },
+      "phase_medians": {
+        "settled": 0.6485554846278047,
+        "sparse-memtable": 0.9323585614949026,
+        "sparse-flushed-overlap": 0.9298175762700261,
+        "dense-hot-memtable": 0.9595864584011886,
+        "dense-flushed-overlap": 0.9579152886738012,
+        "mixed-overlap": 0.9542278412312506,
+        "stale-replay": 0.9334698027737626,
+        "compacted": 0.6556921816235932
+      }
+    },
+    {
+      "case": 8,
+      "variant": 10,
+      "name": "lazy-min-heap",
+      "processes": 9,
+      "changing_query_speedup": 1.0186400958105997,
+      "changing_cycle_speedup": 1.0324739049443512,
+      "operator_only_speedup": 0.636913883072051,
+      "min_process_speedup": 0.8977580872541011,
+      "max_process_speedup": 1.220637770193534,
+      "scenario_medians": {
+        "0": 0.9153178430692861,
+        "1": 1.1929381104839873,
+        "2": 1.0186400958105997
+      },
+      "phase_medians": {
+        "settled": 1.0367823884054432,
+        "sparse-memtable": 1.0085371004683044,
+        "sparse-flushed-overlap": 1.029832044023481,
+        "dense-hot-memtable": 1.0308574836866404,
+        "dense-flushed-overlap": 1.0088503834206408,
+        "mixed-overlap": 1.0173914883312207,
+        "stale-replay": 0.9965855879525999,
+        "compacted": 0.7276057622133575
+      }
+    },
+    {
+      "case": 9,
+      "variant": 1,
+      "name": "hash-membership",
+      "processes": 9,
+      "changing_query_speedup": 1.0295771492413073,
+      "changing_cycle_speedup": 1.0199411672936096,
+      "operator_only_speedup": 1.8399253875149344,
+      "min_process_speedup": 0.9535843685245851,
+      "max_process_speedup": 1.1251604742417192,
+      "scenario_medians": {
+        "0": 1.072940524505309,
+        "1": 1.0295771492413073,
+        "2": 1.0154491936516268
+      },
+      "phase_medians": {
+        "settled": 1.1859245625314545,
+        "sparse-memtable": 1.0607004218655045,
+        "sparse-flushed-overlap": 1.0730324397560496,
+        "dense-hot-memtable": 1.0126338380569688,
+        "dense-flushed-overlap": 1.0069050876333574,
+        "mixed-overlap": 1.0141957843677645,
+        "stale-replay": 0.9965124887503054,
+        "compacted": 1.3038554802170743
+      }
+    },
+    {
+      "case": 9,
+      "variant": 2,
+      "name": "sorted-binary-membership",
+      "processes": 9,
+      "changing_query_speedup": 1.0262585278471983,
+      "changing_cycle_speedup": 1.0065984690640304,
+      "operator_only_speedup": 1.5235356723898024,
+      "min_process_speedup": 0.9214332457550312,
+      "max_process_speedup": 1.1332384385079306,
+      "scenario_medians": {
+        "0": 1.0291584571311028,
+        "1": 1.0178645098670986,
+        "2": 0.9937721022993743
+      },
+      "phase_medians": {
+        "settled": 1.1700630300594455,
+        "sparse-memtable": 1.0339047821623606,
+        "sparse-flushed-overlap": 1.044855435642204,
+        "dense-hot-memtable": 1.036473082518316,
+        "dense-flushed-overlap": 1.012144376702928,
+        "mixed-overlap": 1.0067187010709902,
+        "stale-replay": 1.0136258261503208,
+        "compacted": 1.2502491141694727
+      }
+    },
+    {
+      "case": 9,
+      "variant": 3,
+      "name": "dense-membership-bitmap",
+      "processes": 9,
+      "changing_query_speedup": 1.0545920348236095,
+      "changing_cycle_speedup": 1.0182933917942858,
+      "operator_only_speedup": 3.3878767784829145,
+      "min_process_speedup": 1.028855086232876,
+      "max_process_speedup": 1.148577413295406,
+      "scenario_medians": {
+        "0": 1.0738914563467516,
+        "1": 1.0545920348236095,
+        "2": 1.0419886740001625
+      },
+      "phase_medians": {
+        "settled": 1.4982851946590228,
+        "sparse-memtable": 1.0635524324018026,
+        "sparse-flushed-overlap": 1.0611201060216449,
+        "dense-hot-memtable": 1.069691570723901,
+        "dense-flushed-overlap": 1.0720169981401884,
+        "mixed-overlap": 1.0548936227664778,
+        "stale-replay": 1.0471861518887005,
+        "compacted": 1.6981357046546097
+      }
+    },
+    {
+      "case": 9,
+      "variant": 4,
+      "name": "bloom-negative-filter",
+      "processes": 9,
+      "changing_query_speedup": 1.0194982166884017,
+      "changing_cycle_speedup": 1.0218756129843056,
+      "operator_only_speedup": 1.6969873179821218,
+      "min_process_speedup": 0.9499601474512565,
+      "max_process_speedup": 1.081299647230713,
+      "scenario_medians": {
+        "0": 1.0123678948442472,
+        "1": 1.0425528716985795,
+        "2": 1.0194982166884017
+      },
+      "phase_medians": {
+        "settled": 1.1617299115405064,
+        "sparse-memtable": 0.9743602461853209,
+        "sparse-flushed-overlap": 1.0506165596858368,
+        "dense-hot-memtable": 1.0463159824466457,
+        "dense-flushed-overlap": 1.0402471694703601,
+        "mixed-overlap": 0.979093215465406,
+        "stale-replay": 1.0267485334343203,
+        "compacted": 1.3088119357750498
+      }
+    },
+    {
+      "case": 9,
+      "variant": 5,
+      "name": "hash-partition-membership",
+      "processes": 9,
+      "changing_query_speedup": 1.0296153626084037,
+      "changing_cycle_speedup": 0.9883770764937045,
+      "operator_only_speedup": 1.5078769599113753,
+      "min_process_speedup": 0.9671481088980308,
+      "max_process_speedup": 1.1352959450975837,
+      "scenario_medians": {
+        "0": 1.0296153626084037,
+        "1": 1.038955804589215,
+        "2": 0.9763027997682228
+      },
+      "phase_medians": {
+        "settled": 1.1333158018124487,
+        "sparse-memtable": 1.0344376065499785,
+        "sparse-flushed-overlap": 1.049093483024652,
+        "dense-hot-memtable": 1.0321889090631076,
+        "dense-flushed-overlap": 1.026826395360409,
+        "mixed-overlap": 0.9919768635133873,
+        "stale-replay": 1.0137988225236247,
+        "compacted": 1.2381116898523201
+      }
+    },
+    {
+      "case": 9,
+      "variant": 6,
+      "name": "sorted-probe-merge",
+      "processes": 9,
+      "changing_query_speedup": 1.032906704149944,
+      "changing_cycle_speedup": 1.0251028599104584,
+      "operator_only_speedup": 1.1714304704159209,
+      "min_process_speedup": 0.9598669921438492,
+      "max_process_speedup": 1.0649508485094248,
+      "scenario_medians": {
+        "0": 1.032906704149944,
+        "1": 1.0340184779824928,
+        "2": 0.9970011957651937
+      },
+      "phase_medians": {
+        "settled": 1.3679956985115374,
+        "sparse-memtable": 0.9829696303655304,
+        "sparse-flushed-overlap": 1.0406417709173212,
+        "dense-hot-memtable": 1.0041572729333559,
+        "dense-flushed-overlap": 1.0092623139298411,
+        "mixed-overlap": 0.9984660663355627,
+        "stale-replay": 0.9963897958723931,
+        "compacted": 1.1244904318819229
+      }
+    },
+    {
+      "case": 9,
+      "variant": 7,
+      "name": "parallel-hash-membership",
+      "processes": 9,
+      "changing_query_speedup": 1.0357794533215257,
+      "changing_cycle_speedup": 1.026422272229459,
+      "operator_only_speedup": 2.402385285067782,
+      "min_process_speedup": 0.9965481305207152,
+      "max_process_speedup": 1.1564101285943338,
+      "scenario_medians": {
+        "0": 1.0685315319158872,
+        "1": 1.0357794533215257,
+        "2": 1.0141414189471751
+      },
+      "phase_medians": {
+        "settled": 1.3067678886092917,
+        "sparse-memtable": 1.0727861664658978,
+        "sparse-flushed-overlap": 1.0615545109733562,
+        "dense-hot-memtable": 1.0471173325074332,
+        "dense-flushed-overlap": 1.0360827373148636,
+        "mixed-overlap": 1.0067624420884624,
+        "stale-replay": 1.0357296562547262,
+        "compacted": 1.4565124058318382
+      }
+    },
+    {
+      "case": 9,
+      "variant": 8,
+      "name": "eytzinger-search",
+      "processes": 9,
+      "changing_query_speedup": 1.0073364930044078,
+      "changing_cycle_speedup": 1.003725093149621,
+      "operator_only_speedup": 1.3389729045442311,
+      "min_process_speedup": 0.942310709437018,
+      "max_process_speedup": 1.1109977775833846,
+      "scenario_medians": {
+        "0": 1.0073364930044078,
+        "1": 1.016900103093552,
+        "2": 0.9964012941009596
+      },
+      "phase_medians": {
+        "settled": 1.1902305955151626,
+        "sparse-memtable": 1.003084497657293,
+        "sparse-flushed-overlap": 1.0085125857928667,
+        "dense-hot-memtable": 1.0201646592814448,
+        "dense-flushed-overlap": 1.0024555085615343,
+        "mixed-overlap": 1.0005124692290448,
+        "stale-replay": 1.0064494815931682,
+        "compacted": 1.2058676269798907
+      }
+    },
+    {
+      "case": 9,
+      "variant": 9,
+      "name": "radix-membership",
+      "processes": 9,
+      "changing_query_speedup": 1.0176314483255757,
+      "changing_cycle_speedup": 1.0262373854379323,
+      "operator_only_speedup": 1.1209180961709437,
+      "min_process_speedup": 0.9404832700144983,
+      "max_process_speedup": 1.0563544187123526,
+      "scenario_medians": {
+        "0": 1.0362224199178043,
+        "1": 1.011508007131196,
+        "2": 0.956249820961166
+      },
+      "phase_medians": {
+        "settled": 0.9694693298131828,
+        "sparse-memtable": 1.0265639807669764,
+        "sparse-flushed-overlap": 1.025470819635073,
+        "dense-hot-memtable": 1.0337128505696282,
+        "dense-flushed-overlap": 1.0026882814249662,
+        "mixed-overlap": 0.9829631646479108,
+        "stale-replay": 0.9814656877301127,
+        "compacted": 1.1235990026925693
+      }
+    },
+    {
+      "case": 9,
+      "variant": 10,
+      "name": "memoized-probe-outcomes",
+      "processes": 9,
+      "changing_query_speedup": 0.9828489915351607,
+      "changing_cycle_speedup": 0.9818981012341766,
+      "operator_only_speedup": 1.5089554004811092,
+      "min_process_speedup": 0.916267362935793,
+      "max_process_speedup": 1.0956797450276745,
+      "scenario_medians": {
+        "0": 0.9837326415754881,
+        "1": 0.9677785080909275,
+        "2": 1.009202269746486
+      },
+      "phase_medians": {
+        "settled": 1.1346782314542825,
+        "sparse-memtable": 0.9677524438525364,
+        "sparse-flushed-overlap": 1.0029415129660155,
+        "dense-hot-memtable": 0.984529082748101,
+        "dense-flushed-overlap": 0.9787345713790458,
+        "mixed-overlap": 0.9679509508310927,
+        "stale-replay": 0.9705186289578117,
+        "compacted": 1.2151440024936753
+      }
+    },
+    {
+      "case": 10,
+      "variant": 1,
+      "name": "memo-distinct-outer",
+      "processes": 9,
+      "changing_query_speedup": 1.1138736023450875,
+      "changing_cycle_speedup": 1.0589946063632305,
+      "operator_only_speedup": 6.3994399521312255,
+      "min_process_speedup": 0.9905715150543126,
+      "max_process_speedup": 1.2645882728869229,
+      "scenario_medians": {
+        "0": 0.9914791681236452,
+        "1": 1.2221897715904908,
+        "2": 1.144758489289833
+      },
+      "phase_medians": {
+        "settled": 2.5236089264885946,
+        "sparse-memtable": 1.1198004586785055,
+        "sparse-flushed-overlap": 1.1153913464289784,
+        "dense-hot-memtable": 1.0650729564926615,
+        "dense-flushed-overlap": 1.0591516160530008,
+        "mixed-overlap": 1.0595407061212891,
+        "stale-replay": 1.0756627789893924,
+        "compacted": 2.3049880504895817
+      }
+    },
+    {
+      "case": 10,
+      "variant": 2,
+      "name": "hash-decorrelation",
+      "processes": 9,
+      "changing_query_speedup": 1.1374106702405713,
+      "changing_cycle_speedup": 1.0442417115715874,
+      "operator_only_speedup": 3.896919660019898,
+      "min_process_speedup": 1.0230011320428638,
+      "max_process_speedup": 1.262173764471217,
+      "scenario_medians": {
+        "0": 1.1031582651584295,
+        "1": 1.2097943037769123,
+        "2": 1.1125903564392947
+      },
+      "phase_medians": {
+        "settled": 2.1940196509040164,
+        "sparse-memtable": 1.1583099130254628,
+        "sparse-flushed-overlap": 1.1671685523845148,
+        "dense-hot-memtable": 1.1196523325371248,
+        "dense-flushed-overlap": 1.1185220300368237,
+        "mixed-overlap": 1.112213535136518,
+        "stale-replay": 1.1363424612624282,
+        "compacted": 1.9808744059919041
+      }
+    },
+    {
+      "case": 10,
+      "variant": 3,
+      "name": "dense-decorrelation",
+      "processes": 9,
+      "changing_query_speedup": 1.1429799954547186,
+      "changing_cycle_speedup": 1.0599168442521871,
+      "operator_only_speedup": 15.29312800869834,
+      "min_process_speedup": 1.1107733295923305,
+      "max_process_speedup": 1.302369970184913,
+      "scenario_medians": {
+        "0": 1.1316438410249934,
+        "1": 1.2359618697563581,
+        "2": 1.1429799954547186
+      },
+      "phase_medians": {
+        "settled": 3.070302148246298,
+        "sparse-memtable": 1.147518654649833,
+        "sparse-flushed-overlap": 1.1407097148724932,
+        "dense-hot-memtable": 1.128554665807561,
+        "dense-flushed-overlap": 1.128195882739018,
+        "mixed-overlap": 1.1154431689223494,
+        "stale-replay": 1.1680437428092738,
+        "compacted": 2.8114354223479543
+      }
+    },
+    {
+      "case": 10,
+      "variant": 4,
+      "name": "sorted-range-lookup",
+      "processes": 9,
+      "changing_query_speedup": 1.1020961620076255,
+      "changing_cycle_speedup": 1.0210137554751118,
+      "operator_only_speedup": 2.5589483073812627,
+      "min_process_speedup": 1.013915261663517,
+      "max_process_speedup": 1.1568758254990847,
+      "scenario_medians": {
+        "0": 1.0254949652136827,
+        "1": 1.106430324418825,
+        "2": 1.1393947290700601
+      },
+      "phase_medians": {
+        "settled": 1.5735579571745841,
+        "sparse-memtable": 1.1165388133007608,
+        "sparse-flushed-overlap": 1.1023919194334078,
+        "dense-hot-memtable": 1.1275123665933324,
+        "dense-flushed-overlap": 1.116932904112401,
+        "mixed-overlap": 1.0813957362348001,
+        "stale-replay": 1.115421713010447,
+        "compacted": 1.788702041294031
+      }
+    },
+    {
+      "case": 10,
+      "variant": 5,
+      "name": "key-row-position-index",
+      "processes": 9,
+      "changing_query_speedup": 1.1084599460018363,
+      "changing_cycle_speedup": 1.0515566280800452,
+      "operator_only_speedup": 2.7258305393181907,
+      "min_process_speedup": 1.023567590394372,
+      "max_process_speedup": 1.1960833246024012,
+      "scenario_medians": {
+        "0": 1.09560273019525,
+        "1": 1.1084599460018363,
+        "2": 1.1540026784335946
+      },
+      "phase_medians": {
+        "settled": 1.6688421453647553,
+        "sparse-memtable": 1.091422818649696,
+        "sparse-flushed-overlap": 1.0885887588311867,
+        "dense-hot-memtable": 1.1126335003295296,
+        "dense-flushed-overlap": 1.1222811048521983,
+        "mixed-overlap": 1.1060890821054712,
+        "stale-replay": 1.1355842385893908,
+        "compacted": 1.7345836336237963
+      }
+    },
+    {
+      "case": 10,
+      "variant": 6,
+      "name": "demand-filtered-aggregate",
+      "processes": 9,
+      "changing_query_speedup": 1.1460573655232882,
+      "changing_cycle_speedup": 1.065998780052186,
+      "operator_only_speedup": 9.186890576590901,
+      "min_process_speedup": 1.0400011313351045,
+      "max_process_speedup": 1.2710946503240304,
+      "scenario_medians": {
+        "0": 1.0698731176766128,
+        "1": 1.1850179220892412,
+        "2": 1.1460573655232882
+      },
+      "phase_medians": {
+        "settled": 2.8728093405451145,
+        "sparse-memtable": 1.1284537650997029,
+        "sparse-flushed-overlap": 1.15220761612735,
+        "dense-hot-memtable": 1.1250959673111711,
+        "dense-flushed-overlap": 1.1298255719156012,
+        "mixed-overlap": 1.1243581829205125,
+        "stale-replay": 1.1335198702874647,
+        "compacted": 2.6039375256884503
+      }
+    },
+    {
+      "case": 10,
+      "variant": 7,
+      "name": "parallel-partial-decorrelation",
+      "processes": 9,
+      "changing_query_speedup": 1.1002181251401366,
+      "changing_cycle_speedup": 1.049857187257967,
+      "operator_only_speedup": 4.718397867445631,
+      "min_process_speedup": 1.0048608761786448,
+      "max_process_speedup": 1.1888832329796049,
+      "scenario_medians": {
+        "0": 1.0342268930915732,
+        "1": 1.1375863520216714,
+        "2": 1.1334568769450672
+      },
+      "phase_medians": {
+        "settled": 2.282582380276661,
+        "sparse-memtable": 1.129692876713196,
+        "sparse-flushed-overlap": 1.12993910287801,
+        "dense-hot-memtable": 1.0862058999105781,
+        "dense-flushed-overlap": 1.0773713032444316,
+        "mixed-overlap": 1.040668302439997,
+        "stale-replay": 1.0773041993114345,
+        "compacted": 2.0537197110060355
+      }
+    },
+    {
+      "case": 10,
+      "variant": 8,
+      "name": "parallel-dependent-scans",
+      "processes": 9,
+      "changing_query_speedup": 1.1440255919947284,
+      "changing_cycle_speedup": 1.062847402230074,
+      "operator_only_speedup": 3.478046040687124,
+      "min_process_speedup": 1.069428008636018,
+      "max_process_speedup": 1.218953809381313,
+      "scenario_medians": {
+        "0": 1.0996805511400027,
+        "1": 1.2184305335633143,
+        "2": 1.1440255919947284
+      },
+      "phase_medians": {
+        "settled": 2.075380793415416,
+        "sparse-memtable": 1.173963508165141,
+        "sparse-flushed-overlap": 1.1424792271608584,
+        "dense-hot-memtable": 1.1057489466468886,
+        "dense-flushed-overlap": 1.1580170012941953,
+        "mixed-overlap": 1.091383876614034,
+        "stale-replay": 1.1503638533134226,
+        "compacted": 1.864450521078361
+      }
+    },
+    {
+      "case": 10,
+      "variant": 9,
+      "name": "sorted-prefix-sums",
+      "processes": 9,
+      "changing_query_speedup": 1.1328872339401599,
+      "changing_cycle_speedup": 1.0668020725415281,
+      "operator_only_speedup": 2.3592223398523715,
+      "min_process_speedup": 1.0405608058631666,
+      "max_process_speedup": 1.2314900697834974,
+      "scenario_medians": {
+        "0": 1.0776494722279106,
+        "1": 1.2272279362391771,
+        "2": 1.119239475653793
+      },
+      "phase_medians": {
+        "settled": 1.9770150698628435,
+        "sparse-memtable": 1.1262987638669384,
+        "sparse-flushed-overlap": 1.1613448816470364,
+        "dense-hot-memtable": 1.107675825672124,
+        "dense-flushed-overlap": 1.138521821417678,
+        "mixed-overlap": 1.1362776626628366,
+        "stale-replay": 1.1049047836955914,
+        "compacted": 1.7584679710283864
+      }
+    },
+    {
+      "case": 10,
+      "variant": 10,
+      "name": "demand-bitmap-dense-fold",
+      "processes": 9,
+      "changing_query_speedup": 1.189170480666327,
+      "changing_cycle_speedup": 1.0913190892076938,
+      "operator_only_speedup": 62.0977697027148,
+      "min_process_speedup": 1.088822465774404,
+      "max_process_speedup": 1.2587770825097444,
+      "scenario_medians": {
+        "0": 1.1551743271814041,
+        "1": 1.2159205858680546,
+        "2": 1.189170480666327
+      },
+      "phase_medians": {
+        "settled": 3.503325971151774,
+        "sparse-memtable": 1.1849779989308924,
+        "sparse-flushed-overlap": 1.1893285076815927,
+        "dense-hot-memtable": 1.182242623995088,
+        "dense-flushed-overlap": 1.1627131334927683,
+        "mixed-overlap": 1.1517636301295988,
+        "stale-replay": 1.1901898795574155,
+        "compacted": 3.1355251441695873
+      }
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "exact_answers": 24,
+  "resource_refusals": 0,
+  "complete_success": true,
+  "scope": "SQL between mutation batches; source model and textual result rendering included; resource refusals are failures, not successful timings"
+}

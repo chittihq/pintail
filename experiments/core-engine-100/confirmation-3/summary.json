@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 3,
+      "variant": 6,
+      "name": "parallel-local-hash",
+      "processes": 3,
+      "changing_query_speedup": 0.9924221455021108,
+      "changing_cycle_speedup": 1.0188855538473476,
+      "operator_only_speedup": 1.563151375442982,
+      "min_process_speedup": 0.9601968701139831,
+      "max_process_speedup": 1.09720197368109,
+      "scenario_medians": {
+        "0": 0.9924221455021108,
+        "1": 0.9601968701139831,
+        "2": 1.09720197368109
+      },
+      "phase_medians": {
+        "settled": 1.0745448007769036,
+        "sparse-memtable": 1.0135447061878131,
+        "sparse-flushed-overlap": 0.9979783719650075,
+        "dense-hot-memtable": 1.0118089113229862,
+        "dense-flushed-overlap": 1.0113807446619045,
+        "mixed-overlap": 0.9385218366187962,
+        "stale-replay": 1.0025915403442776,
+        "compacted": 1.0897206058131896
+      }
+    }
+  ]
+}

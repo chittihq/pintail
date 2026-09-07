@@ -1,0 +1,612 @@
+{
+  "correct": true,
+  "filtered_join": false,
+  "phases": [
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.470022,
+          "rows": 87,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.323446,
+          "rows": 1000,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.298604,
+          "rows": 25,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.202819,
+          "rows": 26,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 281.847803,
+          "rows": 5,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 0.32664,
+          "rows": 25,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.18649000000000002,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 4.620896,
+          "rows": 1000,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 9.823874,
+          "rows": 1000,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 2.069942,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 0
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.9817359999999999,
+          "rows": 86,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.980662,
+          "rows": 1000,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.729019,
+          "rows": 26,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.593697,
+          "rows": 27,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 261.676523,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.19472,
+          "rows": 26,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.7336820000000001,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.107780999999999,
+          "rows": 1000,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.263588,
+          "rows": 1000,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 4.055689,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 1
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.559919,
+          "rows": 86,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.733418,
+          "rows": 1000,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.6047020000000001,
+          "rows": 26,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.592381,
+          "rows": 27,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 262.08056400000004,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.450748,
+          "rows": 26,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.7128730000000001,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.283938,
+          "rows": 1000,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.350248,
+          "rows": 1000,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 4.401126,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 2
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.559589,
+          "rows": 67,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.7450300000000001,
+          "rows": 991,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.6374599999999999,
+          "rows": 32,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.685994,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 142.68862299999998,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.1761490000000001,
+          "rows": 32,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.840731,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.1903060000000005,
+          "rows": 991,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.579687,
+          "rows": 991,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 3.796917,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 3
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.64269,
+          "rows": 67,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.7709820000000001,
+          "rows": 991,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.632657,
+          "rows": 32,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.674427,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 143.177411,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.281008,
+          "rows": 32,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.8952549999999999,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.224852,
+          "rows": 991,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.3143,
+          "rows": 991,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 3.60715,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 4
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.55128,
+          "rows": 65,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.7281759999999999,
+          "rows": 991,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.633448,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.622144,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 131.88171400000002,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.358876,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.7963129999999999,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.3590979999999995,
+          "rows": 991,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.384797,
+          "rows": 991,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 4.370731999999999,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 5
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.6182489999999999,
+          "rows": 65,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.797442,
+          "rows": 991,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.799033,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.7011,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 143.35102799999999,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 1.3369129999999998,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.678876,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 5.231274,
+          "rows": 991,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 11.75269,
+          "rows": 991,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 3.674219,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 6
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 0.156139,
+          "rows": 65,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 0.319102,
+          "rows": 991,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 0.22886700000000001,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 0.185347,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 143.117769,
+          "rows": 6,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 125 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 0.264673,
+          "rows": 31,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 0.286263,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 4.587434,
+          "rows": 991,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 255 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 255 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 255 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": true,
+          "ms": 9.80244,
+          "rows": 991,
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 1.872999,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 7
+    }
+  ],
+  "query_memory_limit_bytes": 268435456,
+  "record_resource_errors": false,
+  "rows": 1000,
+  "scenario": 1,
+  "seed": 41,
+  "settled_memo_disabled": true
+}

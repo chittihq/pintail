@@ -1,10 +1,12 @@
 //! Isolated algorithm experiments. None changes the production executor.
 use std::collections::BTreeMap;
 
+pub mod anchor;
 pub mod correlated;
 pub mod distinct;
 pub mod high;
 pub mod join;
+pub mod live;
 pub mod low;
 pub mod membership;
 pub mod merge;
@@ -12,7 +14,7 @@ pub mod scan;
 pub mod topk;
 pub mod window;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Row {
     pub id: usize,
     pub key: usize,
@@ -21,7 +23,9 @@ pub struct Row {
     pub valid: bool,
 }
 
+#[derive(Clone)]
 pub struct Data {
+    pub history: Option<Vec<merge::Version>>,
     pub rows: Vec<Row>,
     pub domain: usize,
     pub low_domain: usize,
@@ -58,6 +62,7 @@ impl Data {
             })
             .collect();
         Self {
+            history: None,
             rows,
             domain,
             low_domain,
@@ -152,6 +157,58 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    #[test]
+    fn mutations_flush_compaction_replay_and_restart_preserve_all_answers() {
+        for scenario in 0..3 {
+            let mut fixture = live::Fixture::new(129, 17, scenario);
+            for phase in 1..=8 {
+                let expected = fixture.expected();
+                let pinned = fixture.table.snapshot();
+                let events = fixture.events(phase);
+                live::advance(&mut fixture.table, &events, phase);
+                let actual = live::read(&pinned, &expected);
+                assert_eq!(actual.rows, expected.rows);
+                for case in 1..=10 {
+                    let reference = run(case, 0, &expected);
+                    if case == 2 {
+                        let logical: Vec<i128> = expected
+                            .rows
+                            .iter()
+                            .flat_map(|r| {
+                                [
+                                    r.id as i128,
+                                    r.key as i128,
+                                    r.low as i128,
+                                    i128::from(r.value),
+                                    i128::from(r.valid),
+                                ]
+                            })
+                            .collect();
+                        assert_eq!(reference, logical, "version oracle");
+                    }
+                    for variant in 1..=10 {
+                        assert_eq!(
+                            run(case, variant, &actual),
+                            reference,
+                            "live case={case} variant={variant} phase={phase}"
+                        );
+                    }
+                }
+                fixture.update_model(&events);
+                let latest = fixture.expected();
+                assert_eq!(
+                    live::read(&fixture.table.snapshot(), &latest).rows,
+                    latest.rows,
+                    "latest phase={phase} scenario={scenario}"
+                );
             }
         }
     }

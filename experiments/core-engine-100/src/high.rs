@@ -18,7 +18,7 @@ pub fn top(groups: Groups, heap: bool, select: bool) -> Vec<i128> {
     let mut ranks: Vec<_> = if heap {
         let mut h = BinaryHeap::new();
         for (k, a) in groups {
-            h.push((Reverse(a.sum), k, a.rows, a.count));
+            h.push((a.count == 0, Reverse(a.sum), k, a.rows, a.count));
             if h.len() > 32 {
                 h.pop();
             }
@@ -27,7 +27,7 @@ pub fn top(groups: Groups, heap: bool, select: bool) -> Vec<i128> {
     } else {
         groups
             .into_iter()
-            .map(|(k, a)| (Reverse(a.sum), k, a.rows, a.count))
+            .map(|(k, a)| (a.count == 0, Reverse(a.sum), k, a.rows, a.count))
             .collect()
     };
     if select && ranks.len() > 32 {
@@ -39,7 +39,7 @@ pub fn top(groups: Groups, heap: bool, select: bool) -> Vec<i128> {
     flat(
         ranks
             .into_iter()
-            .map(|(Reverse(sum), key, rows, count)| (key, Agg { rows, count, sum })),
+            .map(|(_, Reverse(sum), key, rows, count)| (key, Agg { rows, count, sum })),
     )
 }
 pub fn run(v: usize, d: &Data) -> Vec<i128> {
@@ -68,7 +68,7 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
                 .map(|b| {
                     let map = low::hash(b, false);
                     let mut ranked: Vec<_> = map.into_iter().collect();
-                    ranked.sort_unstable_by_key(|(k, a)| (Reverse(a.sum), *k));
+                    ranked.sort_unstable_by_key(|(k, a)| (a.count == 0, Reverse(a.sum), *k));
                     ranked.truncate(32);
                     ranked
                 })

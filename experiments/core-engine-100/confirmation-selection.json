@@ -1,0 +1,55 @@
+{
+  "rule": "highest screen median changing-query ratio, selected before holdout; one fresh seed per distribution at twice the rows",
+  "selection": [
+    {
+      "case": 1,
+      "variant": 1,
+      "name": "selective-predicate-first"
+    },
+    {
+      "case": 2,
+      "variant": 3,
+      "name": "sorted-two-way"
+    },
+    {
+      "case": 3,
+      "variant": 6,
+      "name": "parallel-local-hash"
+    },
+    {
+      "case": 4,
+      "variant": 2,
+      "name": "dense-heap"
+    },
+    {
+      "case": 5,
+      "variant": 7,
+      "name": "parallel-dense-probe"
+    },
+    {
+      "case": 6,
+      "variant": 5,
+      "name": "parallel-local-bitmaps"
+    },
+    {
+      "case": 7,
+      "variant": 2,
+      "name": "quickselect-prefix"
+    },
+    {
+      "case": 8,
+      "variant": 7,
+      "name": "parallel-halo-windows"
+    },
+    {
+      "case": 9,
+      "variant": 3,
+      "name": "dense-membership-bitmap"
+    },
+    {
+      "case": 10,
+      "variant": 10,
+      "name": "demand-bitmap-dense-fold"
+    }
+  ]
+}

@@ -15,12 +15,22 @@ pub const NAMES: &[&str] = &[
     "copy-winning-runs",
 ];
 #[derive(Clone, Copy)]
-struct Version {
-    row: Row,
-    version: u64,
-    dead: bool,
+pub struct Version {
+    pub row: Row,
+    pub version: u64,
+    pub dead: bool,
 }
 fn inputs(d: &Data) -> (Vec<Version>, Vec<Version>) {
+    if let Some(history) = &d.history {
+        let base: Vec<_> = history.iter().filter(|v| v.version == 1).copied().collect();
+        let mut tail = BTreeMap::new();
+        for v in history.iter().filter(|v| v.version != 1) {
+            tail.entry(v.row.id)
+                .and_modify(|old| *old = newer(*old, *v))
+                .or_insert(*v);
+        }
+        return (base, tail.into_values().collect());
+    }
     let base: Vec<_> = d
         .rows
         .iter()
@@ -119,7 +129,7 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
         }
         3 => output(merge(&a, &b)),
         4 => {
-            let max = a.last().map_or(0, |v| v.row.id + 1);
+            let max = a.iter().chain(&b).map(|v| v.row.id + 1).max().unwrap_or(0);
             let mut slots = vec![None; max];
             for x in a.iter().chain(&b) {
                 let slot = &mut slots[x.row.id];
@@ -130,19 +140,22 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
         5 => {
             let mut x = a;
             for update in b {
-                let i = x
-                    .binary_search_by_key(&update.row.id, |v| v.row.id)
-                    .unwrap();
-                x[i] = newer(x[i], update);
+                match x.binary_search_by_key(&update.row.id, |v| v.row.id) {
+                    Ok(i) => x[i] = newer(x[i], update),
+                    Err(i) => x.insert(i, update),
+                }
             }
             output(x)
         }
         6 => {
-            let updates: HashMap<_, _> = b.into_iter().map(|v| (v.row.id, v)).collect();
-            output(
-                a.into_iter()
-                    .map(|x| updates.get(&x.row.id).map_or(x, |&u| newer(x, u))),
-            )
+            let mut updates: HashMap<_, _> = b.into_iter().map(|v| (v.row.id, v)).collect();
+            let mut out: Vec<_> = a
+                .into_iter()
+                .map(|x| updates.remove(&x.row.id).map_or(x, |u| newer(x, u)))
+                .collect();
+            out.extend(updates.into_values());
+            out.sort_unstable_by_key(|v| v.row.id);
+            output(out)
         }
         7 => {
             let mut out = Vec::new();
@@ -157,6 +170,7 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
                     out.extend(merge(block, &b[l..h]));
                 }
             }
+            append_new(&a, &b, &mut out);
             output(out)
         }
         8 => {
@@ -168,15 +182,18 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
                     merge(block, &b[l..h])
                 })
                 .collect();
-            output(chunks.into_iter().flatten())
+            let mut out: Vec<_> = chunks.into_iter().flatten().collect();
+            append_new(&a, &b, &mut out);
+            output(out)
         }
         9 => {
             let mut live = vec![u64::MAX; a.len().div_ceil(64)];
             let mut patches = Vec::new();
             for update in b {
-                let i = a
-                    .binary_search_by_key(&update.row.id, |v| v.row.id)
-                    .unwrap();
+                let Ok(i) = a.binary_search_by_key(&update.row.id, |v| v.row.id) else {
+                    patches.push(update);
+                    continue;
+                };
                 if update.version > a[i].version {
                     live[i / 64] &= !(1 << (i % 64));
                     patches.push(update);
@@ -196,16 +213,32 @@ pub fn run(v: usize, d: &Data) -> Vec<i128> {
             let mut out = Vec::with_capacity(a.len());
             let mut start = 0;
             for update in b {
-                let i = a
-                    .binary_search_by_key(&update.row.id, |v| v.row.id)
-                    .unwrap();
+                let i = a.partition_point(|v| v.row.id < update.row.id);
                 out.extend_from_slice(&a[start..i]);
-                out.push(newer(a[i], update));
-                start = i + 1;
+                if i < a.len() && a[i].row.id == update.row.id {
+                    out.push(newer(a[i], update));
+                    start = i + 1;
+                } else {
+                    out.push(update);
+                    start = i;
+                }
             }
             out.extend_from_slice(&a[start..]);
             output(out)
         }
         _ => unreachable!(),
+    }
+}
+
+fn append_new(a: &[Version], b: &[Version], out: &mut Vec<Version>) {
+    let mut changed = false;
+    for &v in b {
+        if a.binary_search_by_key(&v.row.id, |r| r.row.id).is_err() {
+            out.push(v);
+            changed = true;
+        }
+    }
+    if changed {
+        out.sort_unstable_by_key(|v| v.row.id);
     }
 }
