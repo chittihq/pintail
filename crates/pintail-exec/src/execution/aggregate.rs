@@ -129,6 +129,33 @@ const DISTINCT_BITMAP_MAX_SPAN: i128 = 1 << 20;
 const DISTINCT_BITMAP_MIN_COUNT: usize = 64;
 
 #[derive(Clone)]
+/// Boxed so the `min`/`max` tracking added for the bitmap (e77) does not
+/// grow every `DistinctSeen` (and so every `AggregateState`) by the size
+/// of two `i128`s: one lives per GROUP, of which a query can have
+/// hundreds of thousands, so that growth alone regressed a two-pass
+/// aggregate's tight memory ceiling past a spill it used to make cleanly
+/// (`tests/sqllogic/tests/two_pass_spill.rs`) even though the group's own
+/// distinct count never got near the bitmap threshold.
+struct IntsSeen {
+    set: HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>,
+    min: i128,
+    max: i128,
+}
+
+#[derive(Clone)]
+/// Boxed for the same reason as [`IntsSeen`]: an `i128` field inline in
+/// an enum variant forces the WHOLE enum to 16-byte alignment, padding
+/// `DistinctSeen` up even when this variant is never the active one -
+/// boxing both `i128`-carrying variants keeps every enum field a plain
+/// pointer-sized value, so `DistinctSeen` costs no more per group than it
+/// did before the bitmap existed.
+struct BitmapSeen {
+    min: i128,
+    bits: Vec<u64>,
+    count: usize,
+}
+
+#[derive(Clone)]
 /// DISTINCT key set. Integer-keyed values dedup through a plain i128 set
 /// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); once
 /// enough of them span fewer than `DISTINCT_BITMAP_MAX_SPAN` values, they
@@ -138,17 +165,9 @@ const DISTINCT_BITMAP_MIN_COUNT: usize = 64;
 /// this happens at most once per group. The first non-integer key
 /// migrates whichever of the two is active to normalized Values.
 enum DistinctSeen {
-    Ints {
-        set: HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>,
-        min: i128,
-        max: i128,
-    },
+    Ints(Box<IntsSeen>),
     /// Exact membership over `min..min + bits.len() * 64`.
-    Bitmap {
-        min: i128,
-        bits: Vec<u64>,
-        count: usize,
-    },
+    Bitmap(Box<BitmapSeen>),
     Values(HashSet<Value>),
 }
 
@@ -256,7 +275,8 @@ impl DistinctSeen {
         collation: Collation,
     ) -> Result<bool, ExecError> {
         match self {
-            Self::Ints { set, min, max } => {
+            Self::Ints(ints) => {
+                let IntsSeen { set, min, max } = ints.as_mut();
                 reserve_hash_set_entries(
                     set,
                     1,
@@ -275,7 +295,8 @@ impl DistinctSeen {
                 }
                 Ok(inserted)
             }
-            Self::Bitmap { min, bits, count } => {
+            Self::Bitmap(bitmap) => {
+                let BitmapSeen { min, bits, count } = bitmap.as_mut();
                 let span = bits.len().saturating_mul(64);
                 if let Some(offset) = key
                     .checked_sub(*min)
@@ -334,9 +355,10 @@ impl DistinctSeen {
     /// switches to it (experiments/RESULTS.md e77). Only called once that
     /// span already passed [`DISTINCT_BITMAP_MAX_SPAN`]'s check.
     fn promote_to_bitmap(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
-        let Self::Ints { set, min, max } = self else {
+        let Self::Ints(ints) = self else {
             return Ok(());
         };
+        let IntsSeen { set, min, max } = ints.as_mut();
         let span =
             usize::try_from(*max - *min).expect("checked under DISTINCT_BITMAP_MAX_SPAN") + 1;
         let words = span.div_ceil(64);
@@ -347,11 +369,11 @@ impl DistinctSeen {
             let offset = usize::try_from(key - *min).expect("within the span just computed");
             bits[offset / 64] |= 1_u64 << (offset % 64);
         }
-        *self = Self::Bitmap {
+        *self = Self::Bitmap(Box::new(BitmapSeen {
             min: *min,
             bits,
             count,
-        };
+        }));
         Ok(())
     }
 
@@ -365,9 +387,10 @@ impl DistinctSeen {
         new_max: i128,
         memory: &MemoryTracker,
     ) -> Result<(), ExecError> {
-        let Self::Bitmap { min, bits, count } = self else {
+        let Self::Bitmap(bitmap) = self else {
             return Ok(());
         };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
         let new_words = usize::try_from(new_max - new_min + 1)
             .expect("checked span")
             .div_ceil(64);
@@ -381,11 +404,11 @@ impl DistinctSeen {
             let offset = usize::try_from(key - new_min).expect("within the new span");
             new_bits[offset / 64] |= 1_u64 << (offset % 64);
         }
-        *self = Self::Bitmap {
+        *self = Self::Bitmap(Box::new(BitmapSeen {
             min: new_min,
             bits: new_bits,
             count: *count,
-        };
+        }));
         Ok(())
     }
 
@@ -393,9 +416,10 @@ impl DistinctSeen {
     /// set, widened to also cover `incoming`. Does not insert `incoming`
     /// itself - the caller's own `insert_int` retry does that.
     fn demote_bitmap_to_ints(&mut self, incoming: i128) {
-        let Self::Bitmap { min, bits, count } = self else {
+        let Self::Bitmap(bitmap) = self else {
             return;
         };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
         let mut set = HashSet::with_capacity_and_hasher(
             count.saturating_add(1),
             std::hash::BuildHasherDefault::default(),
@@ -415,7 +439,7 @@ impl DistinctSeen {
         // Memory already charged when the bitmap and the set it grew from
         // were built; this conversion is not itself charged again, matching
         // `migrate_to_values` below.
-        *self = Self::Ints { set, min, max };
+        *self = Self::Ints(Box::new(IntsSeen { set, min, max }));
     }
 
     /// Inserts a key that another distinct set already normalized. Text
@@ -456,8 +480,8 @@ impl DistinctSeen {
         collation: Collation,
     ) -> Result<(), ExecError> {
         let ints: Vec<i128> = match self {
-            Self::Ints { set, .. } => std::mem::take(set).into_iter().collect(),
-            Self::Bitmap { min, bits, .. } => bitmap_members(*min, bits).collect(),
+            Self::Ints(ints) => std::mem::take(&mut ints.set).into_iter().collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits).collect(),
             Self::Values(_) => return Ok(()),
         };
         let mut set = HashSet::with_capacity(ints.len());
@@ -476,10 +500,10 @@ impl DistinctSeen {
 
     fn drain_values(self) -> Vec<Value> {
         match self {
-            Self::Ints { set, .. } => set.into_iter().map(int_key_value).collect(),
-            Self::Bitmap { min, bits, .. } => {
-                bitmap_members(min, &bits).map(int_key_value).collect()
-            }
+            Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
+                .map(int_key_value)
+                .collect(),
             Self::Values(set) => set.into_iter().collect(),
         }
     }
@@ -657,10 +681,12 @@ impl AggregateState {
         Self {
             collation: aggregate.collation,
             value,
-            seen: aggregate.distinct.then(|| DistinctSeen::Ints {
-                set: HashSet::default(),
-                min: i128::MAX,
-                max: i128::MIN,
+            seen: aggregate.distinct.then(|| {
+                DistinctSeen::Ints(Box::new(IntsSeen {
+                    set: HashSet::default(),
+                    min: i128::MAX,
+                    max: i128::MIN,
+                }))
             }),
             extreme_number: None,
             extreme_units: None,
@@ -5070,17 +5096,19 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
 
 #[cfg(test)]
 mod distinct_bitmap_tests {
-    use super::{DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, MemoryTracker};
+    use super::{
+        DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, IntsSeen, MemoryTracker,
+    };
     use crate::collation::Collation;
     use pintail_types::Value;
     use std::collections::HashSet;
 
     fn ints() -> DistinctSeen {
-        DistinctSeen::Ints {
+        DistinctSeen::Ints(Box::new(IntsSeen {
             set: HashSet::default(),
             min: i128::MAX,
             max: i128::MIN,
-        }
+        }))
     }
 
     /// The general (hashed) path's answer for a batch of keys, including
@@ -5109,7 +5137,7 @@ mod distinct_bitmap_tests {
             }
         }
         assert!(
-            matches!(seen, DistinctSeen::Bitmap { .. }),
+            matches!(seen, DistinctSeen::Bitmap(_)),
             "a span this narrow, with more than DISTINCT_BITMAP_MIN_COUNT keys, must promote"
         );
         assert_eq!(inserted_new, expected_count(&keys));
@@ -5151,7 +5179,7 @@ mod distinct_bitmap_tests {
         )
         .expect("insert");
         assert!(
-            matches!(seen, DistinctSeen::Ints { .. }),
+            matches!(seen, DistinctSeen::Ints(_)),
             "a span past DISTINCT_BITMAP_MAX_SPAN must stay hashed rather than allocate a huge table"
         );
     }
@@ -5165,10 +5193,7 @@ mod distinct_bitmap_tests {
             seen.insert_int(key, &memory, Collation::default())
                 .expect("insert");
         }
-        assert!(
-            matches!(seen, DistinctSeen::Bitmap { .. }),
-            "promotes first"
-        );
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)), "promotes first");
         // Far outside the bitmap's window, and wide enough on its own to
         // rule out ever re-promoting.
         let far = DISTINCT_BITMAP_MAX_SPAN * 2;
@@ -5178,7 +5203,7 @@ mod distinct_bitmap_tests {
             .expect("insert past the window");
         assert!(inserted, "a genuinely new key must still count as new");
         assert!(
-            matches!(seen, DistinctSeen::Ints { .. }),
+            matches!(seen, DistinctSeen::Ints(_)),
             "outgrowing the bitmap's window demotes back to the general set"
         );
         let mut drained: Vec<i128> = seen
@@ -5205,7 +5230,7 @@ mod distinct_bitmap_tests {
             seen.insert_int(key, &memory, Collation::default())
                 .expect("insert");
         }
-        assert!(matches!(seen, DistinctSeen::Bitmap { .. }));
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)));
         assert!(
             !seen
                 .insert_int(0, &memory, Collation::default())
