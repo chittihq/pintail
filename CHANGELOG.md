@@ -6,6 +6,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- The benchmark's resource sampler now reads one long-lived `docker stats`
+  stream per container instead of a fresh `docker stats --no-stream` call
+  every 250 ms, which on the shared remote docker host regularly took
+  longer than the query it was sampling and reported 0% CPU. The README's
+  generated benchmark table now shows the memo-off "engine speed" table
+  first and the memo-hit table second, so the headline comparison is the
+  one where both engines execute.
+
 ### Added
 
 - One table can be paused while the rest of its database keeps

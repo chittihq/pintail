@@ -2685,3 +2685,45 @@ merge; after = the overlay masks the superseded rows from a direct decode.
 speed plus one packed key column; the merge remains for the shapes the
 overlay declines (stale versions, composite keys, partial segments,
 version-retaining segments, key-ordered consumers).
+
+## e74 — The resource sampler was racing an SSH connection, not the query
+
+`benchmark/run.ts`'s CPU/memory sampler ran `docker stats --no-stream`
+once every 250 ms in a loop. Over the ssh:// docker context that call pays
+a fresh SSH round trip each time; on a sub-second query the sampler could
+start and stop without a single `--no-stream` call completing, which is
+why `benchmark/results.md`'s CPU column reads 0% on six of the eight
+queries in the "Engine speed (memo DISABLED)" row set despite one of them
+(Q6) also showing 39% from a run where a call happened to land.
+
+Fix: one `docker stats <container>` (streaming, not `--no-stream`) spawned
+per container the first time it is sampled and left running for the rest
+of the process; `sampled()` now marks a start/stop index into that
+stream's growing sample list instead of spawning a process per tick. The
+streaming format turned out to interleave cursor-home/clear-line/clear-
+screen escape codes with each refresh (a mode built for a redrawn
+terminal, not a pipe), so a data line opens with `\x1b[H` and closes with
+`\x1b[K`; the reader strips `\x1b\[[0-9;]*[A-Za-z]` before parsing.
+
+Verified locally (Docker Desktop, not the shared benchmark host — this
+checks the mechanism, not a query's real CPU%): a container running four
+CPU-bound loops under `--cpus=4`, sampled for 4 seconds. Before the fix,
+`--no-stream` in a loop over a local (non-SSH) daemon still occasionally
+returns zero samples within a short window because the loop's own 250 ms
+`Bun.sleep` plus process-spawn latency can outlast the window; after the
+fix, the same window reliably reads several samples with peak CPU near
+the container's 400% ceiling:
+
+| approach | window | samples seen | peak CPU read |
+|---|---:|---:|---:|
+| `--no-stream` loop (`benchmark/run.ts` before) | 4 s | 0 | 0% |
+| long-lived stream (after) | 4 s | 7 | 401% |
+
+The SSH round-trip cost that motivated this — and that produces the 0%
+rows in `benchmark/results.md` — only reproduces on the shared remote
+docker host; re-running the full benchmark to confirm the fixed column is
+the owner's call (`benchmark/run.ts` is the stable-release gate, not a
+mid-flow tool).
+
+**Verdict: keep.** No engine code changed; this only makes the evidence
+the harness already collects honest.

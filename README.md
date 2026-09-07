@@ -146,11 +146,29 @@ if it exactly matches MySQL's answer. Two numbers matter here and they say
 different things, so they are reported separately rather than averaged into
 one headline.
 
-**Repeated queries.** Pintail keeps an exact-result memo for aggregates over
-a settled snapshot, invalidated by any ingest, so re-running the same query
-on an unchanged replica is served from it. ClickHouse's query cache is off,
-so this compares Pintail's cache against ClickHouse's execution — a fair
-measure of what a dashboard refresh costs, and not a measure of engine speed.
+**Engine speed — memo off, both engines execute.** The same eight
+queries against Pintail restarted with its settled aggregate memo off,
+on the same replica as the memo table below. This is the honest
+engine-speed comparison, and ClickHouse is still faster on the grouped
+and joined shapes.
+
+| Query | MySQL | Pintail (no memo) | CH RMT+FINAL | vs CH |
+|---|---:|---:|---:|---:|
+| Full table count | 1,437 ms | 29 ms | 57 ms | 1.97× |
+| Filtered count | 587 ms | 87 ms | 218 ms | 2.51× |
+| Group by status | 34,398 ms | 194 ms | 101 ms | 0.52× |
+| Region × status breakdown | 13,054 ms | 193 ms | 203 ms | 1.05× |
+| Monthly revenue (2023) | 5,462 ms | 135 ms | 49 ms | 0.36× |
+| Top 10 spenders | 889,417 ms | 420 ms | 158 ms | 0.38× |
+| Regional analytics | 53,410 ms | 405 ms | 140 ms | 0.35× |
+| Join users + orders | 796,769 ms | 524 ms | 194 ms | 0.37× |
+
+**Repeated queries — memo hit vs execution.** Pintail keeps an exact-result
+memo for aggregates over a settled snapshot, invalidated by any ingest, so
+re-running the same query on an unchanged replica is served from it.
+ClickHouse's query cache is off, so this compares Pintail's cache against
+ClickHouse's execution — a fair measure of what a dashboard refresh costs,
+and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
@@ -163,10 +181,10 @@ measure of what a dashboard refresh costs, and not a measure of engine speed.
 | Regional analytics | 53,410 ms | 13 ms | 141 ms |
 | Join users + orders | 796,769 ms | 12 ms | 178 ms |
 
-**Novel queries — raw engine speed.** The same shapes with constants the memo
-has never seen, so both engines actually execute. **ClickHouse is faster here.**
-This is the honest measure of execution performance, and Pintail does not yet
-win it.
+**Novel queries — memo-cold constants.** Distinct predicate variants the
+memo has never seen, run once per engine with no warmup, so neither the
+memo nor any plan cache is warm. A second, independent read on the same
+engine-speed question above.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|

@@ -542,49 +542,126 @@ async function verifyCounts(
   log(`all engines expose ${orderRows.toLocaleString()} orders`)
 }
 
-/// Polls docker stats for one container while an engine is being measured.
-/// CPU% is cumulative across cores (an 8-cpu container can read 800%).
-function startResourceSampler(container: string) {
-  const samples: { cpuPct: number; memMb: number }[] = []
-  let active = true
-  const loop = (async () => {
-    while (active) {
-      try {
-        const out = (
-          await docker('stats', '--no-stream', '--format', '{{.CPUPerc}}|{{.MemUsage}}', container)
-        ).stdout
-        const [cpuText, memText] = out.split('|')
-        const cpuPct = Number.parseFloat(cpuText)
-        // MemUsage reads "512.3MiB / 8GiB": only the usage half decides
-        // the unit, or the ever-present GiB limit inflates MiB by 1024.
-        const usageText = memText.split('/')[0]
-        const memValue = Number.parseFloat(usageText)
-        const memMb = usageText.includes('GiB')
-          ? memValue * 1024
-          : usageText.includes('KiB')
-            ? memValue / 1024
-            : memValue
-        if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
-          samples.push({ cpuPct, memMb })
+type ResourceSample = { cpuPct: number; memMb: number }
+
+// One `docker stats` per container, spawned once and left streaming for the
+// life of the run. A one-shot `docker stats --no-stream` call over the
+// ssh:// context pays a fresh SSH round trip per call, which on the shared
+// remote daemon routinely runs longer than the query it was meant to
+// measure, so a query timed in the hundreds of milliseconds could complete
+// (and stop the sampler) before its single sample ever came back, reading
+// as 0% CPU. Reading lines off one long-lived stream removes the per-sample
+// process spawn: samples land at the daemon's own stats cadence instead of
+// racing an SSH connection.
+class ResourceStream {
+  private samples: ResourceSample[] = []
+  private ready: Promise<void>
+  private proc: ReturnType<typeof Bun.spawn>
+
+  constructor(container: string) {
+    this.proc = Bun.spawn(
+      ['docker', 'stats', '--format', '{{.CPUPerc}}|{{.MemUsage}}', container],
+      { stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' },
+    )
+    this.ready = this.pump()
+  }
+
+  private async pump() {
+    const reader = this.proc.stdout.pipeThrough(new TextDecoderStream()).getReader()
+    let buffered = ''
+    try {
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buffered += value
+        let newline: number
+        while ((newline = buffered.indexOf('\n')) !== -1) {
+          const line = buffered.slice(0, newline)
+          buffered = buffered.slice(newline + 1)
+          this.recordLine(line)
         }
-      } catch {
-        // Container gone or stats hiccup: keep sampling.
       }
-      if (active) await Bun.sleep(250)
+    } catch {
+      // Stream closed underneath us (container removed mid-run): stop pumping.
     }
-  })()
+  }
+
+  private recordLine(rawLine: string) {
+    // Streaming `docker stats` is written for a redrawn terminal, not a
+    // pipe: every refresh interleaves cursor-home/clear-line/clear-screen
+    // codes with the data, so a data-bearing line still opens with
+    // `\x1b[H` and closes with `\x1b[K`.
+    const line = rawLine.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '')
+    const [cpuText, memText] = line.split('|')
+    if (cpuText === undefined || memText === undefined) return
+    const cpuPct = Number.parseFloat(cpuText)
+    // MemUsage reads "512.3MiB / 8GiB": only the usage half decides the
+    // unit, or the ever-present GiB limit inflates MiB by 1024.
+    const usageText = memText.split('/')[0] ?? ''
+    const memValue = Number.parseFloat(usageText)
+    const memMb = usageText.includes('GiB')
+      ? memValue * 1024
+      : usageText.includes('KiB')
+        ? memValue / 1024
+        : memValue
+    if (Number.isFinite(cpuPct) && Number.isFinite(memMb)) {
+      this.samples.push({ cpuPct, memMb })
+    }
+  }
+
+  /// Samples collected so far; a window taken between two calls to this is
+  /// the resources used during that window.
+  count(): number {
+    return this.samples.length
+  }
+
+  since(startIndex: number): ResourceSample[] {
+    return this.samples.slice(startIndex)
+  }
+
+  stop() {
+    this.proc.kill('SIGTERM')
+    return this.ready
+  }
+}
+
+const resourceStreams = new Map<string, ResourceStream>()
+
+function resourceStreamFor(container: string): ResourceStream {
+  let stream = resourceStreams.get(container)
+  if (!stream) {
+    stream = new ResourceStream(container)
+    resourceStreams.set(container, stream)
+  }
+  return stream
+}
+
+async function stopResourceStreams() {
+  const streams = [...resourceStreams.values()]
+  resourceStreams.clear()
+  await Promise.all(streams.map((stream) => stream.stop()))
+}
+
+function summarizeSamples(samples: ResourceSample[]): EngineResources {
+  if (samples.length === 0) return { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 }
+  return {
+    cpuPeakPct: Math.round(Math.max(...samples.map((sample) => sample.cpuPct))),
+    cpuAvgPct: Math.round(
+      samples.reduce((total, sample) => total + sample.cpuPct, 0) / samples.length,
+    ),
+    memPeakMb: Math.round(Math.max(...samples.map((sample) => sample.memMb))),
+  }
+}
+
+/// Marks a window on one container's long-lived stats stream while an
+/// engine is being measured. CPU% is cumulative across cores (an 8-cpu
+/// container can read 800%).
+function startResourceSampler(container: string) {
+  const stream = resourceStreamFor(container)
+  const startIndex = stream.count()
   return {
     async stop(): Promise<EngineResources> {
-      active = false
-      await loop
-      if (samples.length === 0) return { cpuPeakPct: 0, cpuAvgPct: 0, memPeakMb: 0 }
-      return {
-        cpuPeakPct: Math.round(Math.max(...samples.map((sample) => sample.cpuPct))),
-        cpuAvgPct: Math.round(
-          samples.reduce((total, sample) => total + sample.cpuPct, 0) / samples.length,
-        ),
-        memPeakMb: Math.round(Math.max(...samples.map((sample) => sample.memMb))),
-      }
+      return summarizeSamples(stream.since(startIndex))
     },
   }
 }
@@ -1343,8 +1420,9 @@ function publishResults(
     '## Resources during measured runs',
     '',
     'Peak container CPU (cumulative across 8 cores, so up to 800%) and peak',
-    'memory, sampled via `docker stats` every 250 ms while each engine ran.',
-    'MySQL shows n/a when its cold baseline came from the cache.',
+    'memory, sampled from one long-lived `docker stats` stream per container',
+    "at the daemon's own update cadence while each engine ran. MySQL shows",
+    'n/a when its cold baseline came from the cache.',
     '',
     '| Query | Pintail CPU | Pintail mem | CH CPU | CH mem | MySQL CPU | MySQL mem |',
     '|---|---:|---:|---:|---:|---:|---:|',
@@ -1371,6 +1449,7 @@ function publishResults(
 }
 
 async function cleanup() {
+  await stopResourceStreams()
   // Engine logs outlive failures: a crashed pintail container's last lines
   // are the only evidence once cleanup removes it (run #10, socket-closed).
   try {

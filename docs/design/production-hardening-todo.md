@@ -326,6 +326,45 @@ prints.
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
 
+## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
+
+G2 and G3 above are their own brief; this section is everything else the
+"Engine speed (memo DISABLED)" table in `benchmark/results.md` and the
+`experiments/RESULTS.md` profiler entries (e65, e70) point at.
+
+- [x] **H0. The resource sampler raced an SSH connection, not the query.**
+  `docker stats --no-stream` in a loop over the ssh:// docker context
+  could start and stop without a single call completing on a sub-second
+  query, reading 0% CPU. Closed: one long-lived `docker stats` stream per
+  container; see e74 in `experiments/RESULTS.md`. The README's generated
+  benchmark table now shows the memo-off table first.
+- [ ] **H1. The HTTP path's fixed cost.** `execute_query` builds a fresh
+  `ReplicaEngine` per request, revalidates the replica cache, hashes the
+  API key against metadata, and serialises rows through an intermediate
+  `serde_json::Value` tree — 25-40 ms outside the engine on every query
+  (e65). Hold one `ReplicaEngine` per process, cache the API-key lookup,
+  and serialise straight from column values into the response writer.
+- [ ] **H2. Dense join build for a contiguous build key.** Q8's fused
+  join-aggregate probes a general hash table at about 20 ns a probe,
+  scaling with the execution pool (e65). Extend `DenseJoinTable` to a
+  direct-index table when the build key's span fits a budget, and resolve
+  the group slot once per build row when the group key comes from the
+  build side.
+- [ ] **H3. Bitset `COUNT(DISTINCT)`.** A hash set per group for an
+  integer column with a known range should be a bitmap per group instead,
+  charged to the tracker; the hash-set form stays as the fallback for a
+  wide or unknown range.
+- [ ] **H4. High-cardinality `GROUP BY` into a top-K.** Q6 groups by
+  ~200K users, sorts, and takes ten. Radix-partition the group keys by
+  worker so each worker folds a disjoint range with no cross-worker merge,
+  and stream finished groups into the top-K heap instead of materialising
+  every group first.
+- [ ] **H5. Scan follow-ups already measured.** e65 measured sixteen scan
+  threads beating eight on an 8-CPU host; default the scan pool (not the
+  execution pool) to twice the CPU count. e70 noted the sliced scan idles
+  between rounds; prefetch the next slice while the consumer works the
+  current one.
+
 ## F. Still open from earlier reviews
 
 - The rename orphan left in `snapshotting` (owner decision 2026-09-05:
