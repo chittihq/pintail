@@ -210,6 +210,7 @@ impl std::fmt::Debug for ReplicaEngine {
 }
 
 struct LoadedReplica {
+    server_version: String,
     database: DatabaseRecord,
     tables: Vec<TableRecord>,
     targets: Vec<ReaderTarget>,
@@ -978,6 +979,7 @@ impl ReplicaEngine {
             .collect::<Result<Vec<_>, _>>()?;
         Ok((
             LoadedReplica {
+                server_version: report.server.version,
                 database,
                 tables,
                 targets,
@@ -1126,7 +1128,10 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
 /// Probe-derived facts the catalog schema does not carry, for
 /// `information_schema.columns` fidelity.
 fn column_facts(replica: &LoadedReplica) -> SourceFacts {
-    let mut facts = SourceFacts::default();
+    let mut facts = SourceFacts {
+        server_version: Some(replica.server_version.clone()),
+        ..SourceFacts::default()
+    };
     for target in &replica.targets {
         let source = &target.source;
         for column in &source.columns {

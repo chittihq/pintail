@@ -190,7 +190,7 @@ fn aggregate(
         }
         AggregateFunction::GroupConcat => {
             column.coltype = ColumnType::MysqlTypeLongBlob;
-            column.column_length = 4096;
+            column.column_length = 1024 * if mysql80(facts) { 16 } else { 64 };
             set_flags(&mut column, 0);
         }
         _ => {}
@@ -549,13 +549,15 @@ fn expression(
                 ScalarFunction::DatePart(part) => {
                     column.coltype = ColumnType::MysqlTypeLonglong;
                     column.column_length = match part {
+                        DatePart::Year if mysql80(facts) => 5,
                         DatePart::Year | DatePart::Hour => 4,
                         DatePart::Quarter | DatePart::DayOfWeek | DatePart::WeekDay => 2,
                         _ => 3,
                     };
-                    column
-                        .colflags
-                        .set(ColumnFlags::UNSIGNED_FLAG, *part == DatePart::Year);
+                    column.colflags.set(
+                        ColumnFlags::UNSIGNED_FLAG,
+                        *part == DatePart::Year && !mysql80(facts),
+                    );
                 }
                 ScalarFunction::DateInterval { .. } => {
                     if let Some(first) = first {
@@ -690,6 +692,13 @@ fn expression(
         column.colflags.set(ColumnFlags::NOT_NULL_FLAG, false);
     }
     column
+}
+
+fn mysql80(facts: &SourceFacts) -> bool {
+    facts
+        .server_version
+        .as_deref()
+        .is_some_and(|version| version.starts_with("8.0."))
 }
 
 fn date_format_width(format: &str) -> u32 {
@@ -918,6 +927,32 @@ mod tests {
             ),
             (ColumnType::MysqlTypeDatetime, 63, 6)
         );
+    }
+
+    #[test]
+    fn source_version_controls_year_and_group_concat_declarations() {
+        let catalog = CatalogSnapshot::new([]).unwrap();
+        for (version, year_width, unsigned_year, concat_width) in
+            [("8.0.46", 5, false, 16384), ("8.4.8", 4, true, 65536)]
+        {
+            let facts = SourceFacts {
+                server_version: Some(version.to_owned()),
+                ..SourceFacts::default()
+            };
+            let statement =
+                pintail_sql::parse_statement("SELECT YEAR('2025-01-02'), GROUP_CONCAT('x')")
+                    .unwrap();
+            let query = pintail_sql::Binder::new(&catalog, None)
+                .bind(&statement)
+                .unwrap();
+            let fields = columns(&query, &catalog, &facts);
+            assert_eq!(fields[0].column_length, year_width);
+            assert_eq!(
+                fields[0].colflags.contains(ColumnFlags::UNSIGNED_FLAG),
+                unsigned_year
+            );
+            assert_eq!(fields[1].column_length, concat_width);
+        }
     }
 
     #[test]

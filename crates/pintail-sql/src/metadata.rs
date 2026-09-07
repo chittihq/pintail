@@ -34,6 +34,8 @@ pub struct MetadataResult {
 /// without probe data pass [`SourceFacts::default`].
 #[derive(Clone, Debug, Default)]
 pub struct SourceFacts {
+    /// Source server version, when recorded by the probe.
+    pub server_version: Option<String>,
     /// Per-column facts.
     pub columns: Vec<ColumnFacts>,
     /// Per-index facts (primary and unique constraints).
@@ -2597,6 +2599,7 @@ mod tests {
             DatabaseEntry::new(DatabaseId::new(1), "Analytics", [table]).expect("database");
         let catalog = CatalogSnapshot::new([database]).expect("catalog");
         let facts = SourceFacts {
+            server_version: None,
             columns: vec![
                 crate::ColumnFacts {
                     database: "Analytics".to_owned(),

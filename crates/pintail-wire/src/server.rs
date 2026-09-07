@@ -1847,7 +1847,13 @@ fn negotiated_column(
         };
         column.column_length = u32::try_from(group_concat_max_len)
             .unwrap_or(u32::MAX)
-            .saturating_mul(if group_concat_max_len > 512 { 64 } else { 4 });
+            .saturating_mul(if group_concat_max_len > 512 {
+                // The declaration uses the default 1024-byte limit and retains
+                // the source version's text-width multiplier.
+                declared.column_length / 1024
+            } else {
+                4
+            });
     }
     column
 }
