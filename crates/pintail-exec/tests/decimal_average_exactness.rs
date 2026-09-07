@@ -341,3 +341,53 @@ fn an_average_agrees_with_the_sum_over_the_count_on_realistic_values() {
         }
     }
 }
+
+/// Quotients that do not terminate, with the answers taken from `MySQL`
+/// 8.4 rather than derived here.
+///
+/// A group of forty averages exactly, because forty divides a power of
+/// ten - so every earlier arm in this file measured a division that never
+/// had to round. These group sizes (six, seven, nine, thirteen) force the
+/// division to round at the result's sixth fraction digit, which is the
+/// only place `AVG` and `SUM(_) / COUNT(*)` could ever part company. In
+/// `MySQL` they never do, over eight thousand rows of varied sums; the
+/// pairs below are its own readings.
+#[test]
+fn a_non_terminating_average_rounds_the_way_mysql_rounds() {
+    // (rows in the group, the group's exact sum, MySQL's AVG at scale 6,
+    //  MySQL's ROUND(AVG, 4)).
+    const CASES: [(u64, &str, &str, &str); 4] = [
+        (9, "1398.20", "155.355556", "155.3556"),
+        (7, "1090.41", "155.772857", "155.7729"),
+        (13, "1857.09", "142.853077", "142.8531"),
+        (6, "888.38", "148.063333", "148.0633"),
+    ];
+    for (index, (count, sum, expected_avg, expected_round)) in CASES.iter().enumerate() {
+        // `count - 1` rows of a round hundred, then whatever makes the sum.
+        let base = 100_u64;
+        let filled = (count - 1) * base;
+        let cents = (sum.replace('.', "").parse::<u64>().expect("sum")) - filled * 100;
+        let mut rows = Vec::new();
+        for seat in 0..(count - 1) {
+            rows.push(row(seat + 1, 1, &format!("{base}.00")));
+        }
+        rows.push(row(
+            *count,
+            1,
+            &format!("{}.{:02}", cents / 100, cents % 100),
+        ));
+
+        let exact = run_on("SELECT AVG(total) FROM orders", &rows);
+        assert_eq!(
+            exact,
+            vec![vec![(*expected_avg).to_owned()]],
+            "case {index}: AVG at its result scale over {count} rows summing to {sum}"
+        );
+        let rounded = run_on("SELECT ROUND(AVG(total), 4) FROM orders", &rows);
+        assert_eq!(
+            rounded,
+            vec![vec![(*expected_round).to_owned()]],
+            "case {index}: ROUND(AVG, 4) over {count} rows summing to {sum}"
+        );
+    }
+}

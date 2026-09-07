@@ -102,7 +102,21 @@ pub(super) fn two_pass_lanes(
                             column,
                             data_type: storage,
                         }),
-                        DataType::Float64 => Some(TwoPassLane::Float { column }),
+                        // An average the planner typed as an exact decimal
+                        // must never accumulate through a float: f64
+                        // addition is not associative, so the answer would
+                        // move with however the rows were split across
+                        // workers and merged. The arm below already asks
+                        // this question before it picks an exact lane; this
+                        // one did not, so a decimal column whose batch
+                        // materialized as `Float64` took the inexact lane
+                        // while the plan said otherwise. `None` here is not
+                        // a fallback to something worse - it declines the
+                        // two-pass lane, and the general path's
+                        // `DecimalAverage` accumulates scaled integers.
+                        DataType::Float64 => decimal_average_scale(aggregate)
+                            .is_none()
+                            .then_some(TwoPassLane::Float { column }),
                         _ => match batch.column(column)?.data_type() {
                             // SUM and exact AVG both ride the packed-units
                             // lane; the per-row apply branches on the
