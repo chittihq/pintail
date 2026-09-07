@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- Clients can negotiate multi-statement text requests. Statements execute
+  in order, with a result for each and the protocol's more-results flag
+  until the last. A failure stops the batch at that statement; quoted and
+  commented semicolons do not split a request.
+
 - Compound interval literals are accepted by date arithmetic, including
   year-month and day-through-second qualifiers. Signs and omitted leading
   fields follow the source's parsing rules; malformed extra fields yield

@@ -29,6 +29,10 @@ impl CapabilityFlags {
     pub const CLIENT_SSL: Self = Self(0x0000_0800);
     /// 4.1-style authentication.
     pub const CLIENT_SECURE_CONNECTION: Self = Self(0x0000_8000);
+    /// Multiple statements in one text query.
+    pub const CLIENT_MULTI_STATEMENTS: Self = Self(0x0001_0000);
+    /// Multiple result sets in one command response.
+    pub const CLIENT_MULTI_RESULTS: Self = Self(0x0002_0000);
     /// Client can be told which authentication plugin to use.
     pub const CLIENT_PLUGIN_AUTH: Self = Self(0x0008_0000);
     /// Client sends connection attributes after the auth response.

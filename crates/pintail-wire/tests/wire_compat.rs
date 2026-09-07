@@ -335,6 +335,31 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("session setup");
+    let mut batch = connection
+        .query_iter("SET time_zone='+00:00'; SELECT ';'; SELECT 2; -- tail")
+        .await
+        .expect("multi-statement setup and results");
+    assert!(
+        batch
+            .collect::<mysql_async::Row>()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(batch.collect::<String>().await.unwrap(), vec![";"]);
+    assert_eq!(batch.collect::<u64>().await.unwrap(), vec![2]);
+    batch.drop_result().await.unwrap();
+    assert!(
+        connection
+            .query_drop("SELECT 1; SELECT missing FROM missing_table; SET time_zone='+03:00'")
+            .await
+            .is_err()
+    );
+    let zone: Option<String> = connection
+        .query_first("SELECT @@session.time_zone")
+        .await
+        .unwrap();
+    assert_eq!(zone.as_deref(), Some("+00:00"));
     // Real session state: time_zone shifts statement-pinned NOW() and
     // echoes through @@session probes; bad zones and charsets error.
     connection

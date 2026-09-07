@@ -1251,6 +1251,10 @@ impl Handler for Backend {
             .unwrap_or(false)
     }
 
+    fn first_statement<'a>(&self, sql: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+        pintail_sql::first_statement(sql, false)
+    }
+
     async fn query(&mut self, sql: &[u8]) -> Response {
         let Ok(sql) = std::str::from_utf8(sql) else {
             return Response::Error(

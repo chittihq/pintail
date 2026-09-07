@@ -5,6 +5,8 @@ mod bound;
 mod hints;
 mod interval;
 mod metadata;
+mod request;
+pub use request::first_statement;
 
 use std::fmt;
 use std::ops::ControlFlow;

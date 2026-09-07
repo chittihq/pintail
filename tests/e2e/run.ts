@@ -1274,6 +1274,23 @@ async function phasePooling() {
     waitForConnections: true,
   })
   const phase = 'pooling'
+  const batchConnection = await mysql.createConnection({ ...settings, multipleStatements: true })
+  try {
+    const [expected] = await mysqlRows('SELECT COUNT(*) FROM orders')
+    const [batch] = await batchConnection.query({
+      sql: "SET time_zone='+00:00'; SELECT ';' AS marker; SELECT COUNT(*) AS n FROM orders",
+      rowsAsArray: true,
+    })
+    const sets = batch as unknown as unknown[][][]
+    results.push({
+      phase, check: 'wire:multi-statement-setup-and-results',
+      status: sets.length === 3 && sets[1][0][0] === ';' && String(sets[2][0][0]) === String(expected[0]) ? 'PASS' : 'FAIL',
+    })
+  } catch (error) {
+    results.push({ phase, check: 'wire:multi-statement-setup-and-results', status: 'FAIL', detail: String(error) })
+  } finally {
+    await batchConnection.end()
+  }
   try {
     // Far more borrows than sockets, issued at once: every borrow must get
     // a working connection and the same answer as the source.

@@ -30,6 +30,8 @@ pub fn server_capabilities() -> CapabilityFlags {
         | CapabilityFlags::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
         | CapabilityFlags::CLIENT_CONNECT_ATTRS
         | CapabilityFlags::CLIENT_DEPRECATE_EOF
+        | CapabilityFlags::CLIENT_MULTI_STATEMENTS
+        | CapabilityFlags::CLIENT_MULTI_RESULTS
 }
 
 /// One result set a handler produces.
@@ -111,6 +113,11 @@ pub trait Handler: Send + Sync {
 
     /// Runs a text-protocol statement.
     async fn query(&mut self, sql: &[u8]) -> Response;
+
+    /// Finds one statement using this session's current lexical rules.
+    fn first_statement<'a>(&self, sql: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+        (!sql.is_empty()).then_some((sql, &[]))
+    }
 
     /// Prepares a statement.
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)>;
@@ -510,14 +517,32 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 Err((kind, message)) => self.write_error(kind, &message).await?,
             },
             Command::Query(sql) => {
-                let response = match watch {
-                    Some(watch) => match self.race(watch, handler.query(sql)).await {
-                        Some(response) => response,
-                        None => return Ok(false),
-                    },
-                    None => handler.query(sql).await,
-                };
-                self.write_response(response).await?;
+                if !self.serve_query(handler, watch, sql).await? {
+                    return Ok(false);
+                }
+            }
+            Command::SetOption(option) => {
+                match option {
+                    0 => {
+                        self.capabilities =
+                            self.capabilities | CapabilityFlags::CLIENT_MULTI_STATEMENTS;
+                    }
+                    1 => {
+                        self.capabilities = CapabilityFlags::from_bits(
+                            self.capabilities.bits()
+                                & !CapabilityFlags::CLIENT_MULTI_STATEMENTS.bits(),
+                        );
+                    }
+                    _ => {
+                        self.write_error(
+                            ErrorKind::ErWrongArguments,
+                            "unknown multi-statement option",
+                        )
+                        .await?;
+                        return Ok(true);
+                    }
+                }
+                self.write_eof().await?;
             }
             Command::Prepare(sql) => match handler.prepare(sql).await {
                 Ok(statement) => self.write_prepare_response(&statement).await?,
@@ -599,19 +624,78 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         self.writer.flush().await
     }
 
+    async fn serve_query(
+        &mut self,
+        handler: &mut dyn Handler,
+        mut watch: Option<&mut dyn DisconnectWatch>,
+        sql: &[u8],
+    ) -> std::io::Result<bool> {
+        let multi = self
+            .capabilities
+            .contains(CapabilityFlags::CLIENT_MULTI_STATEMENTS);
+        let mut remaining = sql;
+        loop {
+            let (statement, tail) = handler
+                .first_statement(remaining)
+                .unwrap_or((remaining, &[]));
+            if !multi && handler.first_statement(tail).is_some() {
+                self.write_error(
+                    ErrorKind::ErParseError,
+                    "multiple statements were not enabled by this client",
+                )
+                .await?;
+                return Ok(true);
+            }
+            let response = match watch.as_mut() {
+                Some(watch) => match self.race(&mut **watch, handler.query(statement)).await {
+                    Some(response) => response,
+                    None => return Ok(false),
+                },
+                None => handler.query(statement).await,
+            };
+            let more = !matches!(response, Response::Error(..))
+                && multi
+                && handler.first_statement(tail).is_some();
+            let status = if more {
+                StatusFlags::SERVER_MORE_RESULTS_EXISTS
+            } else {
+                StatusFlags::empty()
+            };
+            self.write_response_status(response, status).await?;
+            if !more {
+                return Ok(true);
+            }
+            remaining = tail;
+        }
+    }
+
     async fn write_response(&mut self, response: Response) -> std::io::Result<()> {
+        self.write_response_status(response, StatusFlags::empty())
+            .await
+    }
+
+    async fn write_response_status(
+        &mut self,
+        response: Response,
+        status: StatusFlags,
+    ) -> std::io::Result<()> {
         match response {
-            Response::Ok(packet, info) => {
+            Response::Ok(mut packet, info) => {
+                packet.status = packet.status | status;
                 let payload = encode_ok(packet, &info);
                 self.writer.write_payload(&payload).await?;
                 self.writer.flush().await
             }
             Response::Error(kind, message) => self.write_error(kind, &message).await,
-            Response::Rows(result) => self.write_result_set(&result).await,
+            Response::Rows(result) => self.write_result_set(&result, status).await,
         }
     }
 
-    async fn write_result_set(&mut self, result: &ResultSet) -> std::io::Result<()> {
+    async fn write_result_set(
+        &mut self,
+        result: &ResultSet,
+        status: StatusFlags,
+    ) -> std::io::Result<()> {
         let mut header = Vec::new();
         put_length_encoded_integer(&mut header, result.columns.len() as u64);
         self.writer.write_payload(&header).await?;
@@ -639,7 +723,9 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             };
             self.writer.write_payload(&payload).await?;
         }
-        self.write_eof().await
+        let payload = encode_eof(self.capabilities, status, 0);
+        self.writer.write_payload(&payload).await?;
+        self.writer.flush().await
     }
 
     async fn write_prepare_response(

@@ -432,8 +432,7 @@ stays readable as a list of things to fix.
   `ALLOW_INVALID_DATES` and the combination modes (`ANSI`, `DB2`,
   `MAXDB`, `MSSQL`, `ORACLE`, `POSTGRESQL`) all reject: the parser is a
   fixed `MySQL` dialect, so honouring them is not possible and accepting
-  them would answer a different question than the client asked. Multiple
-  SQL statements in one command are not supported.
+  them would answer a different question than the client asked.
 - Variable-width text, binary, and JSON expressions without a retained source
   declaration report a type-derived `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
