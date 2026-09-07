@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Result metadata retains declared decimal scale, temporal precision and
 unsignedness before optimization changes the execution carrier. Exact integer
 rounding stays integral, and prepared result bytes follow the advertised type.
+Spatial columns and text-carried temporal functions preserve their wire types;
+connection settings retain the value types expected during driver startup.
 
 - Short reads on a warm replica no longer lose reserved execution capacity
   just because the whole database is large. Admission bounds the query's

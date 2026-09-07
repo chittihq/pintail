@@ -2132,6 +2132,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     let mut output = None;
     for (expression, alias) in projection {
         let expression = expression
+            .to_ascii_lowercase()
             .replace("@@session.", "@@")
             .replace("@@global.", "@@");
         let mut item = compatibility_single(&format!("SELECT {expression}"), database, session)?;
@@ -2204,7 +2205,7 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             Value::UInt64(DEFAULT_WIRE_IDLE_TIMEOUT.as_secs()),
         )
     } else if normalized.contains("@@socket") {
-        ("@@socket", Value::Null)
+        ("@@socket", Value::Utf8(String::new()))
     } else if normalized.contains("@@system_time_zone") {
         ("@@system_time_zone", Value::Utf8("UTC".to_owned()))
     } else if normalized.contains("@@auto_increment_increment")
@@ -3103,6 +3104,30 @@ mod tests {
         );
         assert_eq!(datetime.decimals, 6);
         assert_eq!(datetime.column_length, 26);
+    }
+
+    #[test]
+    fn connection_settings_keep_socket_a_string_for_tcp_only_servers() {
+        use pintail_types::Value;
+        let output = compatibility_query(
+            "SELECT @@socket, @@max_allowed_packet, @@wait_timeout",
+            "analytics",
+            &Session::default(),
+        )
+        .unwrap();
+        assert_eq!(output.fields.len(), 3);
+        assert_eq!(output.fields[0].name, "@@socket");
+        assert_eq!(output.rows[0][0], Value::Utf8(String::new()));
+        assert!(matches!(output.rows[0][1], Value::UInt64(_)));
+        assert!(matches!(output.rows[0][2], Value::UInt64(_)));
+        let versions = compatibility_query(
+            "SELECT @@version, @@GLOBAL.version",
+            "analytics",
+            &Session::default(),
+        )
+        .unwrap();
+        assert_eq!(versions.fields.len(), 2);
+        assert_eq!(versions.rows[0][0], versions.rows[0][1]);
     }
 
     #[test]

@@ -294,6 +294,12 @@ fn expression(
                     set_flags(&mut column, flags);
                 }
             }
+            if reference.geometry {
+                column.coltype = ColumnType::MysqlTypeGeometry;
+                column.character_set = 63;
+                column.column_length = u32::MAX;
+                column.colflags |= ColumnFlags::from_bits(16 | 128);
+            }
         }
         BoundExprKind::GroupKey(index) => {
             if let Some(expr) = query.group_by.get(*index) {
@@ -481,6 +487,14 @@ fn expression(
                         width.saturating_add(input.column_length)
                     });
                 }
+                ScalarFunction::Hex => {
+                    if let Some(first) = first {
+                        column.column_length = first.column_length.saturating_mul(8);
+                        if column.column_length > 65535 {
+                            column.coltype = ColumnType::MysqlTypeLongBlob;
+                        }
+                    }
+                }
                 ScalarFunction::Md5 => column.column_length = 128,
                 ScalarFunction::Sha1 => column.column_length = 160,
                 ScalarFunction::Coalesce
@@ -589,11 +603,27 @@ fn expression(
                     column.colflags |= ColumnFlags::BINARY_FLAG;
                 }
                 ScalarFunction::DayName | ScalarFunction::MonthName => column.column_length = 36,
-                ScalarFunction::MakeTime => {
-                    column.coltype = ColumnType::MysqlTypeTime;
+                ScalarFunction::MakeTime
+                | ScalarFunction::SecToTime
+                | ScalarFunction::ConvertTz => {
+                    column.coltype = if matches!(function, ScalarFunction::ConvertTz) {
+                        ColumnType::MysqlTypeDatetime
+                    } else {
+                        ColumnType::MysqlTypeTime
+                    };
                     column.character_set = 63;
-                    column.column_length = 10;
-                    column.decimals = 0;
+                    let precision_input = if matches!(function, ScalarFunction::MakeTime) {
+                        inputs.get(2)
+                    } else {
+                        first
+                    };
+                    column.decimals = precision_input.map_or(0, |input| input.decimals.min(6));
+                    column.column_length = if matches!(function, ScalarFunction::ConvertTz) {
+                        19
+                    } else {
+                        10
+                    } + u32::from(column.decimals > 0)
+                        + u32::from(column.decimals);
                     set_flags(&mut column, 128);
                 }
                 ScalarFunction::If => {
@@ -642,6 +672,9 @@ fn expression(
                                 | ScalarFunction::DayName
                                 | ScalarFunction::MonthName
                                 | ScalarFunction::LastDay
+                                | ScalarFunction::SecToTime
+                                | ScalarFunction::MakeTime
+                                | ScalarFunction::ConvertTz
                         ),
                 );
             }
@@ -828,6 +861,64 @@ fn source_declaration(column: &mut Column, fact: &pintail_sql::ColumnFacts) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spatial_and_text_carried_temporal_declarations_survive_binding() {
+        use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
+        use pintail_types::{Column as SchemaColumn, TableSchema};
+        let schema = TableSchema::new(
+            1,
+            vec![
+                SchemaColumn::new(0, "location", DataType::Binary, false).with_geometry(true),
+                SchemaColumn::new(1, "at", DataType::DateTime64 { fsp: 6 }, true),
+            ],
+        )
+        .unwrap();
+        let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+            DatabaseId::new(1),
+            "sample",
+            [TableEntry::new(
+                TableId::new(1),
+                "markers",
+                schema,
+                pintail_catalog::TableStatistics::default(),
+            )
+            .unwrap()],
+        )
+        .unwrap()])
+        .unwrap();
+        let statement = pintail_sql::parse_statement(
+            "SELECT location, HEX(location), SEC_TO_TIME(3661), CONVERT_TZ(at, '+00:00', '+05:30') FROM markers"
+        ).unwrap();
+        let query = pintail_sql::Binder::new(&catalog, Some("sample"))
+            .bind(&statement)
+            .unwrap();
+        let fields = columns(&query, &catalog, &SourceFacts::default());
+        assert_eq!(
+            (fields[0].coltype, fields[0].character_set),
+            (ColumnType::MysqlTypeGeometry, 63)
+        );
+        assert_eq!(
+            (fields[1].coltype, fields[1].column_length),
+            (ColumnType::MysqlTypeLongBlob, u32::MAX)
+        );
+        assert_eq!(
+            (
+                fields[2].coltype,
+                fields[2].character_set,
+                fields[2].decimals
+            ),
+            (ColumnType::MysqlTypeTime, 63, 0)
+        );
+        assert_eq!(
+            (
+                fields[3].coltype,
+                fields[3].character_set,
+                fields[3].decimals
+            ),
+            (ColumnType::MysqlTypeDatetime, 63, 6)
+        );
+    }
 
     #[test]
     fn declared_decimal_scale_and_temporal_precision_survive_binding() {
