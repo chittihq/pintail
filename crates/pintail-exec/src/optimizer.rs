@@ -919,13 +919,13 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
     if referenced_tables.len() != 1 {
         return false;
     }
-    let table = *referenced_tables
+    let table = referenced_tables
         .iter()
         .next()
         .expect("single referenced table");
 
     match plan {
-        LogicalPlan::Scan(scan) if table_key(&scan.table) == table => {
+        LogicalPlan::Scan(scan) if &table_key(&scan.table) == table => {
             // Recursive working tables are virtual: their scans replay
             // in-memory deltas that never see storage predicates, so
             // filters must stay above as Filter nodes.
@@ -968,16 +968,16 @@ fn push_conjunct(plan: &mut LogicalPlan, predicate: &BoundExpr) -> bool {
     }
 }
 
-fn contains_table(plan: &LogicalPlan, table: TableKey) -> bool {
+fn contains_table(plan: &LogicalPlan, table: &TableKey) -> bool {
     match plan {
-        LogicalPlan::Scan(scan) => table_key(&scan.table) == table,
+        LogicalPlan::Scan(scan) => &table_key(&scan.table) == table,
         LogicalPlan::Recursive { anchor, member, .. } => {
             contains_table(anchor, table) || contains_table(member, table)
         }
         LogicalPlan::Derived { input, columns } => {
             columns
                 .iter()
-                .any(|column| (column.database_id, column.table_id) == table)
+                .any(|column| column_table_key(column) == *table)
                 || contains_table(input, table)
         }
         LogicalPlan::CrossJoin { inputs } => {
@@ -1129,8 +1129,8 @@ fn joins_two_sides(conjunct: &BoundExpr, left: &LogicalPlan, right: &LogicalPlan
         if tables.is_empty() {
             return None;
         }
-        let in_left = tables.iter().all(|table| contains_table(left, *table));
-        let in_right = tables.iter().all(|table| contains_table(right, *table));
+        let in_left = tables.iter().all(|table| contains_table(left, table));
+        let in_right = tables.iter().all(|table| contains_table(right, table));
         match (in_left, in_right) {
             (true, false) => Some(false),
             (false, true) => Some(true),
@@ -1260,6 +1260,15 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
 fn prune_projections(plan: &mut LogicalPlan) {
     let mut required = BTreeSet::new();
     collect_plan_columns(plan, &mut required);
+    // Attribution needs the relation instance; a projection does not. Two
+    // aliases of one table are two reads of one file, and the scan under
+    // each is planned from the same column set, so the relation is dropped
+    // here rather than narrowing one alias to a width the other does not
+    // share.
+    let required: BTreeSet<ScanColumnKey> = required
+        .into_iter()
+        .map(|(database, table, _, column)| (database, table, column))
+        .collect();
     prune_scan_columns(plan, &required);
 }
 
@@ -1367,7 +1376,7 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
     }
 }
 
-fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
+fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ScanColumnKey>) {
     match plan {
         LogicalPlan::Recursive { anchor, member, .. } => {
             prune_scan_columns(anchor, required);
@@ -1378,7 +1387,9 @@ fn prune_scan_columns(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>) {
                 .table
                 .columns
                 .iter()
-                .filter(|column| required.contains(&column_key(column)))
+                .filter(|column| {
+                    required.contains(&(column.database_id, column.table_id, column.column_id))
+                })
                 .map(|column| column.column_id)
                 .collect();
         }
@@ -1464,7 +1475,7 @@ fn referenced_tables(expr: &BoundExpr) -> BTreeSet<TableKey> {
     collect_expr_columns(expr, &mut columns);
     columns
         .into_iter()
-        .map(|column| (column.0, column.1))
+        .map(|column| (column.0, column.1, column.2))
         .collect()
 }
 
@@ -1592,8 +1603,20 @@ fn collect_bound_query_columns(query: &BoundQuery, columns: &mut BTreeSet<Column
     }
 }
 
-type TableKey = (DatabaseId, TableId);
-type ColumnKey = (DatabaseId, TableId, u32);
+/// Identifies one relation instance, not one table.
+///
+/// A self-join puts two instances of the same physical table in one query,
+/// and every rule that attributes a predicate, a derived constant or a
+/// column reference has to tell them apart. The query-visible relation name
+/// is what separates them: SQL requires the aliases in a `FROM` clause to be
+/// unique, so within the scope any of these rules walks, the name is the
+/// instance. Blocks nested below reuse names freely, which only ever makes a
+/// rule refuse - `push_conjunct`'s scan arm is an exact match, so a name that
+/// resolves to the wrong subtree finds nothing to attach to.
+type TableKey = (DatabaseId, TableId, String);
+type ColumnKey = (DatabaseId, TableId, String, u32);
+/// A scan's projection, which relation instances share.
+type ScanColumnKey = (DatabaseId, TableId, u32);
 
 /// Carries a literal across a join equality so the other side can prune.
 ///
@@ -1878,22 +1901,22 @@ fn derive_into(plan: &mut LogicalPlan, target: &BoundColumn, source: &BoundColum
             right: Box::new(literal_expr(value.clone())),
         },
     };
-    let table = (target.database_id, target.table_id);
-    // A self-join puts two instances of one table under the same key, and
-    // only one of them is the side the constant was derived for. Nothing
-    // distinguishes them here - the alias is not part of the key - so a
-    // subtree holding more than one scan of the table is left alone rather
-    // than filtered on a fact that holds for only one instance.
-    if count_scans(plan, table) != 1 {
+    let table = column_table_key(target);
+    // The key names one relation instance, so a self-join's two scans are
+    // distinguishable and the constant reaches the side it was derived for.
+    // More than one scan still answering to that key means the name was
+    // reused by a nested block; the fact holds for only one of them, so the
+    // subtree is left alone.
+    if count_scans(plan, &table) != 1 {
         return;
     }
-    add_scan_predicate(plan, table, &predicate);
+    add_scan_predicate(plan, &table, &predicate);
 }
 
 /// Scans of one table that [`add_scan_predicate`] could reach in a subtree.
-fn count_scans(plan: &LogicalPlan, table: TableKey) -> usize {
+fn count_scans(plan: &LogicalPlan, table: &TableKey) -> usize {
     match plan {
-        LogicalPlan::Scan(scan) => usize::from(table_key(&scan.table) == table),
+        LogicalPlan::Scan(scan) => usize::from(&table_key(&scan.table) == table),
         LogicalPlan::Join { left, right, .. } => {
             count_scans(left, table) + count_scans(right, table)
         }
@@ -1905,10 +1928,10 @@ fn count_scans(plan: &LogicalPlan, table: TableKey) -> usize {
     }
 }
 
-fn add_scan_predicate(plan: &mut LogicalPlan, table: TableKey, predicate: &BoundExpr) {
+fn add_scan_predicate(plan: &mut LogicalPlan, table: &TableKey, predicate: &BoundExpr) {
     match plan {
         LogicalPlan::Scan(scan) => {
-            if table_key(&scan.table) == table
+            if &table_key(&scan.table) == table
                 && !scan.predicates.iter().any(|existing| existing == predicate)
             {
                 scan.predicates.push(predicate.clone());
@@ -1943,11 +1966,29 @@ fn add_scan_predicate(plan: &mut LogicalPlan, table: TableKey, predicate: &Bound
 }
 
 fn table_key(table: &pintail_sql::BoundTable) -> TableKey {
-    (table.database_id, table.table_id)
+    (
+        table.database_id,
+        table.table_id,
+        table.relation_name.clone(),
+    )
+}
+
+/// The relation instance a column reference resolves to.
+fn column_table_key(column: &BoundColumn) -> TableKey {
+    (
+        column.database_id,
+        column.table_id,
+        column.relation_name.clone(),
+    )
 }
 
 fn column_key(column: &BoundColumn) -> ColumnKey {
-    (column.database_id, column.table_id, column.column_id)
+    (
+        column.database_id,
+        column.table_id,
+        column.relation_name.clone(),
+        column.column_id,
+    )
 }
 
 #[cfg(test)]
@@ -2025,6 +2066,45 @@ mod tests {
         found
     }
 
+    fn relation_scans(plan: &LogicalPlan) -> Vec<(String, usize)> {
+        fn walk(plan: &LogicalPlan, found: &mut Vec<(String, usize)>) {
+            match plan {
+                LogicalPlan::Scan(scan) => {
+                    found.push((scan.table.relation_name.clone(), scan.predicates.len()));
+                }
+                LogicalPlan::Join { left, right, .. } | LogicalPlan::SetOp { left, right, .. } => {
+                    walk(left, found);
+                    walk(right, found);
+                }
+                LogicalPlan::Filter { input, .. }
+                | LogicalPlan::Project { input, .. }
+                | LogicalPlan::Aggregate { input, .. }
+                | LogicalPlan::Window { input, .. }
+                | LogicalPlan::Distinct { input, .. }
+                | LogicalPlan::Sort { input, .. }
+                | LogicalPlan::Limit { input, .. }
+                | LogicalPlan::Derived { input, .. } => walk(input, found),
+                LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+                    for input in inputs {
+                        walk(input, found);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut found = Vec::new();
+        walk(plan, &mut found);
+        found
+    }
+
+    fn predicates_on_relation(plan: &LogicalPlan, relation: &str) -> usize {
+        relation_scans(plan)
+            .into_iter()
+            .filter(|(name, _)| name == relation)
+            .map(|(_, count)| count)
+            .sum()
+    }
+
     fn predicates_on(plan: &LogicalPlan, table: &str) -> usize {
         scans(plan)
             .into_iter()
@@ -2088,14 +2168,38 @@ mod tests {
     }
 
     #[test]
-    fn a_self_join_is_left_alone() {
+    fn a_self_join_attributes_a_predicate_to_the_alias_it_names() {
         let plan =
             optimized("SELECT a.name FROM events a JOIN events b ON b.id = a.id WHERE a.id = 7");
-        // Two instances of one table share a key here - the alias is not
-        // part of it - so pushdown cannot attribute `a.id = 7` to either
-        // scan and it stays above the join. Nothing to read, nothing to
-        // derive, and the count guard refuses the case pushdown does not.
-        assert_eq!(predicates_on(&plan, "events"), 0);
+        // The two instances of `events` are separate relations, so `a.id = 7`
+        // reaches `a`'s scan, and the join equality then carries the constant
+        // to `b` as it would between two different tables. Both scans prune.
+        assert_eq!(predicates_on_relation(&plan, "a"), 1);
+        assert_eq!(predicates_on_relation(&plan, "b"), 1);
+    }
+
+    #[test]
+    fn a_self_join_keeps_each_alias_to_its_own_predicate() {
+        // Only `a` is filtered, and `b.id = a.id` is not an equality the
+        // constant rule can carry `a.name = 'x'` across, so `b` stays open.
+        let plan =
+            optimized("SELECT a.id FROM events a JOIN events b ON b.id = a.id WHERE a.name = 'x'");
+        assert_eq!(predicates_on_relation(&plan, "a"), 1);
+        assert_eq!(predicates_on_relation(&plan, "b"), 0);
+    }
+
+    #[test]
+    fn an_alias_reused_by_a_nested_block_is_left_alone() {
+        // The outer `a` and the derived table's own `a` answer to the same
+        // relation name. Attributing the outer predicate would have to choose
+        // between them, so nothing is pushed into either scan and the filter
+        // stays where binding put it.
+        let plan = optimized(
+            "SELECT a.name FROM events a \
+             JOIN (SELECT a.id FROM events a WHERE a.name = 'x') d ON d.id = a.id \
+             WHERE a.id = 7",
+        );
+        assert_eq!(predicates_on(&plan, "events"), 1);
     }
 
     #[test]
