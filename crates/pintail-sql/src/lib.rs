@@ -3,7 +3,12 @@
 mod binder;
 mod bound;
 mod hints;
+mod interval;
 mod metadata;
+mod mode;
+pub use mode::{ParseMode, session_parse_mode, with_parse_mode};
+mod request;
+pub use request::first_statement;
 
 use std::fmt;
 use std::ops::ControlFlow;
@@ -12,7 +17,7 @@ use sqlparser::dialect::{Dialect, MySqlDialect};
 use sqlparser::parser::{Parser, ParserError};
 
 mod admission;
-pub use admission::has_bounded_admission_shape;
+pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 
 mod repeatable;
 pub use repeatable::is_repeatable_statement;
@@ -32,7 +37,7 @@ pub use bound::{
 pub use hints::max_execution_time_hint;
 pub use metadata::{
     ColumnFacts, ForeignKeyFacts, IndexFacts, MetadataError, MetadataField, MetadataResult,
-    SourceFacts, execute_metadata,
+    SourceFacts, execute_metadata, metadata_relations,
 };
 
 /// An error produced while parsing a SQL request.
@@ -87,8 +92,22 @@ impl From<ParserError> for ParseError {
 ///
 /// Returns [`ParseError::InvalidSql`] when tokenization or parsing fails.
 pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
-    let mut statements =
-        Parser::parse_sql(&PintailDialect(MySqlDialect {}), sql).map_err(ParseError::from)?;
+    let dialect = PintailDialect(MySqlDialect {}, session_parse_mode());
+    let mut tokens = sqlparser::tokenizer::Tokenizer::new(&dialect, sql)
+        .tokenize_with_location()
+        .map_err(ParserError::from)?;
+    if !dialect.1.pipes_as_concat {
+        for token in &mut tokens {
+            if token.token == sqlparser::tokenizer::Token::StringConcat {
+                token.token = sqlparser::tokenizer::Token::make_keyword("OR");
+            }
+        }
+    }
+    interval::rewrite(&mut tokens);
+    let mut statements = Parser::new(&dialect)
+        .with_tokens_with_locations(tokens)
+        .parse_statements()
+        .map_err(ParseError::from)?;
     // sqlparser's MySQL dialect parses the right side of DIV with a full
     // `parse_expr`, swallowing every lower-precedence continuation
     // (`a DIV b AND c` becomes `a DIV (b AND c)`). Rebalance those nodes to
@@ -331,7 +350,7 @@ mod tests {
 /// into `allow_extract_custom`, which routes unknown fields through
 /// `DateTimeField::Custom` instead.
 #[derive(Debug)]
-struct PintailDialect(MySqlDialect);
+struct PintailDialect(MySqlDialect, ParseMode);
 
 impl Dialect for PintailDialect {
     fn dialect(&self) -> std::any::TypeId {
@@ -344,13 +363,13 @@ impl Dialect for PintailDialect {
         self.0.is_identifier_part(ch)
     }
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
-        self.0.is_delimited_identifier_start(ch)
+        (self.1.ansi_quotes && ch == '"') || self.0.is_delimited_identifier_start(ch)
     }
     fn identifier_quote_style(&self, identifier: &str) -> Option<char> {
         self.0.identifier_quote_style(identifier)
     }
     fn supports_string_literal_backslash_escape(&self) -> bool {
-        self.0.supports_string_literal_backslash_escape()
+        !self.1.no_backslash_escapes
     }
     fn supports_string_literal_concatenation(&self) -> bool {
         self.0.supports_string_literal_concatenation()
@@ -366,6 +385,11 @@ impl Dialect for PintailDialect {
     }
     fn supports_multiline_comment_hints(&self) -> bool {
         self.0.supports_multiline_comment_hints()
+    }
+    fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
+        (self.1.pipes_as_concat
+            && parser.peek_token().token == sqlparser::tokenizer::Token::StringConcat)
+            .then_some(Ok(45))
     }
     fn parse_infix(
         &self,
@@ -449,4 +473,62 @@ impl Dialect for PintailDialect {
     fn allow_extract_custom(&self) -> bool {
         true
     }
+}
+
+/// A projection of connection variables or zero-argument identity functions.
+/// Tables and arbitrary expressions stay on the normal query path.
+#[must_use]
+pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
+    use sqlparser::ast::{Expr, SelectItem, SetExpr};
+    let Statement::Query(query) = parse_statement(sql).ok()? else {
+        return None;
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    if !select.from.is_empty() || select.selection.is_some() {
+        return None;
+    }
+    select
+        .projection
+        .iter()
+        .map(|item| {
+            let (expr, alias) = match item {
+                SelectItem::UnnamedExpr(expr) => (expr, None),
+                SelectItem::ExprWithAlias { expr, alias } => (expr, Some(alias.value.clone())),
+                _ => return None,
+            };
+            let text = expr.to_string();
+            let simple = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
+                && text.starts_with("@@");
+            if !simple
+                && !["VERSION()", "DATABASE()"]
+                    .iter()
+                    .any(|name| text.eq_ignore_ascii_case(name))
+            {
+                return None;
+            }
+            Some((text.clone(), alias.unwrap_or(text)))
+        })
+        .collect()
+}
+
+/// Resolves the current-database identity in a discovery statement before binding.
+pub fn resolve_database_function(statement: &mut Statement, database: &str) {
+    use sqlparser::ast::{Expr, FunctionArguments, Value, VisitMut, VisitorMut};
+    struct Resolve<'a>(&'a str);
+    impl VisitorMut for Resolve<'_> {
+        type Break = ();
+        fn post_visit_expr(&mut self, expression: &mut Expr) -> ControlFlow<()> {
+            if let Expr::Function(function) = expression
+                && function.name.to_string().eq_ignore_ascii_case("database")
+                && matches!(&function.args, FunctionArguments::List(args) if args.args.is_empty() && args.clauses.is_empty())
+                && function.over.is_none()
+            {
+                *expression = Expr::Value(Value::SingleQuotedString(self.0.to_owned()).into());
+            }
+            ControlFlow::Continue(())
+        }
+    }
+    let _ = statement.visit(&mut Resolve(database));
 }

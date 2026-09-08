@@ -17,7 +17,11 @@ Pintail stay identical while the source is abused:
    shapes: joins up to five tables, set ops, aggregates, subqueries, CTEs,
    windows, JSON, temporal grains, regex, SET/geometry byte contracts, and
    the 21 BI-tool compilation shapes) on both engines, comparing normalized
-   results. The banked headline counts checks across phases — the corpus
+   results and wire column type, length, decimals, charset and client-facing
+   flags. Raw flag differences remain in the log; key/default/temporary-field
+   flags and numeric BINARY_FLAG are diagnostic because they depend on the
+   source execution plan. Nullability, unsignedness and binary text semantics
+   remain strict. The banked headline counts checks across phases — the corpus
    replays after every settled phase — not independent behaviors.
 
 Operations Pintail documents as gaps (table RENAME quarantine, in-place

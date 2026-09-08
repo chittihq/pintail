@@ -123,7 +123,10 @@ stays readable as a list of things to fix.
 
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 
-- Date parsing accepts the canonical date and date-time forms implemented by the M2 evaluator. `DATE_ADD` and `DATE_SUB` accept one interval field at a time; compound intervals such as `INTERVAL '1-2' YEAR_MONTH` are not implemented (#13). Compound qualifiers are rejected early by the SQL parser rather than during engine binding: sqlparser 0.62 only accepts simple interval unit keywords, so a compound qualifier fails with `INTERVAL requires a unit after the literal value`; supporting them requires the parser to accept the qualifier first (an upstream change). `EXTRACT` covers `YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `SECOND`, `QUARTER`, `WEEK`, and the non-microsecond composite units (`YEAR_MONTH` through `MINUTE_SECOND`, as concatenated decimal); `MICROSECOND` and its composites reject explicitly.
+- Date parsing is limited to canonical date and date-time forms. Compound
+  interval quantities must be literals; dynamic compound interval expressions
+  are not implemented. `EXTRACT(MICROSECOND ...)` and its microsecond composite
+  qualifiers remain unsupported.
 
 - The all-zero `DATE`/`DATETIME` (`0000-00-00`) is preserved as a value, as
   MySQL does: it is returned by a `SELECT`, does not match `IS NULL`, and is
@@ -267,11 +270,13 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
-- The mysql_common 0.37.3 binlog decoder panics on a transaction-payload
-  header field ID above 255. A corrupted source event can therefore terminate
-  replication processing instead of returning a decoding error. The minimized
-  reproducer is in [the fuzzing guide](../fuzz/README.md). The dependency needs
-  a fallible conversion and a version update; this finding remains unfixed.
+- The binlog decoder is pinned to a fork. Published `mysql_common` panics
+  on a transaction-payload header whose field id or compression type falls
+  outside the range it narrows to, and `mysql_async` decodes those events
+  inside its own stream, so no guard on Pintail's side can prevent it. The
+  fork returns an error there instead. Until the fix lands upstream the
+  crate resolves from git rather than crates.io, which puts it outside
+  `cargo audit` and Dependabot; upstream 0.38 still carries both unwraps.
 
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a
   newly committed event may wait for the next cycle.
@@ -438,37 +443,27 @@ stays readable as a list of things to fix.
   keypair, or cleartext from a client that trusts its transport), validated
   against the stored verifiers. Keys from before metadata schema version 6
   lack both verifiers and must still be rotated.
-- The endpoint is read-only. `SET sql_mode` accepts only modes that are
-  genuinely inert on a read-only replica: write and DDL modes
-  (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`) are stored and
-  echoed, while modes that would change how a statement parses or
-  evaluates are refused rather than accepted and ignored. `ANSI_QUOTES`,
-  `PIPES_AS_CONCAT`, `HIGH_NOT_PRECEDENCE`, `NO_BACKSLASH_ESCAPES`,
-  `IGNORE_SPACE`, `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`,
-  `ALLOW_INVALID_DATES` and the combination modes (`ANSI`, `DB2`,
-  `MAXDB`, `MSSQL`, `ORACLE`, `POSTGRESQL`) all reject: the parser is a
-  fixed `MySQL` dialect, so honouring them is not possible and accepting
-  them would answer a different question than the client asked. Multiple
-  SQL statements in one command are not supported.
-- Variable-width text, binary, and JSON expressions without a retained source
-  declaration report a type-derived `column_length` fallback of 1024. Only a
+- The endpoint is read-only. Parsing modes `HIGH_NOT_PRECEDENCE` and
+  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`
+  and `ALLOW_INVALID_DATES`, and combination modes (`ANSI`, `DB2`, `MAXDB`,
+  `MSSQL`, `ORACLE`, `POSTGRESQL`) remain refused.
+- Variable-width expressions outside the declaration rules use a type-derived
+  `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB
   threshold from `group_concat_max_len`; wrappers and derived projections do
   not retain that aggregate provenance.
 - Certificate rotation requires a restart. The HTTP endpoint still expects a
   TLS-capable ingress when exposed across a network.
-- A handful of result-metadata types are narrower than MySQL's while the
-  values agree byte-for-byte: `ROUND`/`CEIL`/`FLOOR` of an exact integer
-  advertise DOUBLE where MySQL says LONGLONG, and `SUM` over exact integers
-  advertises the integer carrier where MySQL widens to DECIMAL(N,0).
-  Correcting either means reconciling two result-shaping layers that
-  currently compensate for each other; JSON arithmetic remains rejected.
+- Result key/default flags and numeric `BINARY_FLAG` can differ from the
+  source because they reflect temporary-field and execution-plan choices.
+  They do not certify source index use or a result's updatability.
 - `KILL QUERY <id>` interrupts the target connection's running statement;
   the interrupted side reports MySQL's query-interrupted error. Bare `KILL`
   and `KILL CONNECTION` reject explicitly - terminating another session is
   not meaningful on a read-only replica and pretending otherwise would leave
   clients believing a connection died that did not.
-- DBeaver and Metabase application-level smokes are not automated in CI.
+- Desktop BI application UI flows are outside the automated driver and
+  Metabase smoke matrix.
 - A request waiting on another request's identical execution keeps the
   admission permit it took, so sharing removes executions rather than
   freeing concurrency slots: sixteen simultaneous copies of one statement
@@ -477,16 +472,29 @@ stays readable as a list of things to fix.
   past which a request executes on its own.
 ## Operations and backup
 
+- A restored copy is not refreshed automatically and provides no failover or
+  promotion. Its reported data age measures the installed backup manifest's
+  creation time, excluding source replication lag and capture-to-publication
+  delay; it is not a source freshness guarantee. Older restores without that
+  timestamp report an unknown age.
+
 - Memory cancellation is cooperative, and allocator RSS may stay high after
   a query releases its reservations. The watchdog waits five seconds between
   victims; prolonged pressure can still cancel successive queries. Untracked
   snapshot and response-buffer allocations cannot be attributed to a victim.
 
-- Reserved query admission currently applies only to simple queries on a
-  revalidated cached database with at most 1,024 physical rows and 4 MiB of
-  stamped files across the entire database. Short queries on larger replicas,
-  including point lookups, use the general pool and cannot use the reserve.
-  This does not isolate dashboard traffic on production-sized databases.
+- Reserved query admission requires a warm, revalidated replica and a plan
+  bounded to 256 Ki physical input rows or 32 MiB of projected fixed-width
+  input, with at most 1,000 output rows. The bound counts overlapping
+  segments and the pinned WAL tail, not estimated filter selectivity.
+  Variable-width values qualify only through the row budget. Eligibility
+  covers one table or one storage-key equality join; windows, unfiltered
+  aggregates, subqueries, and sorts without a storage-key order match use
+  general capacity. Tiny databases retain their existing eligibility rule.
+  Cold or stale replicas also need general capacity. Classification is not
+  a latency guarantee: reserved reads still share CPU, memory and storage.
+  `--reserved-query-slots` / `PINTAIL_RESERVED_QUERY_SLOTS` sizes the reserve;
+  zero disables it, and at least one general slot is retained.
 
 - The supervisor is finite-cycle rather than a permanently attached stream, so
   a newly committed event may wait for the next five-second cycle.

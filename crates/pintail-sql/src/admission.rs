@@ -6,6 +6,46 @@ use sqlparser::ast::{
     visit_expressions,
 };
 
+/// Caps planning work before a query takes an admission permit. Physical
+/// costing still rejects unsupported expressions and unbounded operators.
+#[must_use]
+pub fn has_bounded_planning_shape(statement: &Statement) -> bool {
+    let Statement::Query(query) = statement else {
+        return false;
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return false;
+    };
+    if query.with.is_some()
+        || select.from.len() > 1
+        || select.from.iter().any(|from| {
+            from.joins.len() > 1
+                || !matches!(from.relation, TableFactor::Table { .. })
+                || from
+                    .joins
+                    .iter()
+                    .any(|join| !matches!(join.relation, TableFactor::Table { .. }))
+        })
+    {
+        return false;
+    }
+    let mut count = 0;
+    visit_expressions(statement, |expr| {
+        count += 1;
+        if count > 128
+            || matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. }
+            )
+        {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })
+    .is_continue()
+}
+
 /// Whether a statement has a small, predictable operator shape. This is only
 /// syntax eligibility: callers must also bound the actual pinned input size.
 /// Functions, joins, subqueries and unknown syntax always use general capacity.

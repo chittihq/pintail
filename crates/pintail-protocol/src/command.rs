@@ -41,6 +41,8 @@ pub enum Command<'a> {
     InitDb(&'a [u8]),
     /// `COM_FIELD_LIST`: legacy column listing, still used by old clients.
     FieldList(&'a [u8]),
+    /// `COM_SET_OPTION`: enable (0) or disable (1) multi-statements.
+    SetOption(u16),
     /// `COM_PING`.
     Ping,
     /// `COM_QUIT`.
@@ -90,6 +92,7 @@ impl<'a> Command<'a> {
             0x18 => Self::parse_send_long_data(body).unwrap_or(Self::Unknown(code)),
             0x19 => statement_handle().map_or(Self::Unknown(code), Self::Close),
             0x1a => statement_handle().map_or(Self::Unknown(code), Self::ResetStatement),
+            0x1b if body.len() == 2 => Self::SetOption(u16::from_le_bytes([body[0], body[1]])),
             0x1f => Self::ResetConnection,
             other => Self::Unknown(other),
         }

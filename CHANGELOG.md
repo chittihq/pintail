@@ -121,7 +121,52 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   more shapes.
 
 ## [0.1.2-rc10] - 2026-09-07
+
+### Fixed
+
+Result metadata retains declared decimal scale, temporal precision and
+unsignedness before optimization changes the execution carrier. Exact integer
+rounding stays integral, and prepared result bytes follow the advertised type.
+Spatial columns and text-carried temporal functions preserve their wire types;
+connection settings retain the value types expected during driver startup.
+Version-dependent YEAR and GROUP_CONCAT metadata follows the recorded source
+version for replicas.
+
+- Short reads on a warm replica no longer lose reserved execution capacity
+  just because the whole database is large. Admission bounds the query's
+  physical inputs and operators; point lookups, small filtered aggregates,
+  and bounded listings can use the reserve. `--reserved-query-slots` and
+  `PINTAIL_RESERVED_QUERY_SLOTS` let operators size that capacity.
+
+- A malformed transaction-payload header could panic while replication read
+  its next event. Oversized header field IDs return a decoding error with
+  the event position, without advancing the checkpoint.
+
+- The MySQL client dependency is updated to fix a race in its statement
+  cache. The workspace and fuzz harness use the same client version.
 ### Added
+
+Restored databases report the installed backup timestamp and `data_age_seconds`
+in the API, with a restored-data age gauge in metrics. The timestamp survives
+restarts; old restores with no recorded timestamp report an unknown age.
+
+The RC validation profile runs Metabase schema sync and saved time-grain and
+filter questions, plus JDBC metadata discovery and prepared-result checks.
+Connection probes return all requested session variables, and complex
+metadata projections use the SQL executor.
+
+Session parsing honors `ANSI_QUOTES`, `PIPES_AS_CONCAT` and
+`NO_BACKSLASH_ESCAPES`, including the mode captured by prepared statements.
+
+- Clients can negotiate multi-statement text requests. Statements execute
+  in order, with a result for each and the protocol's more-results flag
+  until the last. A failure stops the batch at that statement; quoted and
+  commented semicolons do not split a request.
+
+- Compound interval literals are accepted by date arithmetic, including
+  year-month and day-through-second qualifiers. Signs and omitted leading
+  fields follow the source's parsing rules; malformed extra fields yield
+  NULL. Time-grain queries can use these qualifiers directly.
 
 - One table can be paused while the rest of its database keeps
   replicating: `POST /api/databases/{id}/tables/{name}/pause` and

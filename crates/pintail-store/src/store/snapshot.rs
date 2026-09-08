@@ -113,6 +113,20 @@ impl TableSnapshot {
         )
     }
 
+    /// Physical rows whose segment key bounds overlap this range. Includes
+    /// every pinned memtable row conservatively, without scanning its values.
+    #[must_use]
+    pub fn physical_range_row_upper_bound(&self, start: &PrimaryKey, end: &PrimaryKey) -> u64 {
+        self.manifest
+            .segments
+            .iter()
+            .filter(|segment| segment.min_key <= *end && segment.max_key >= *start)
+            .fold(
+                u64::try_from(self.memtable.len()).unwrap_or(u64::MAX),
+                |rows, segment| rows.saturating_add(segment.row_count),
+            )
+    }
+
     /// Bytes of unflushed rows this snapshot keeps resident: the WAL tail
     /// replayed into memory at open, or the writer's live memtable. Segment
     /// data is read from files and not counted.

@@ -595,20 +595,10 @@ where
     }
 }
 
-/// `sql_mode` flags that change how a statement parses or evaluates, and
-/// that Pintail does not implement.
-///
-/// The parser is a fixed `MySqlDialect`, so `PIPES_AS_CONCAT` cannot make
-/// `||` concatenate and `ANSI_QUOTES` cannot make `"x"` an identifier.
-/// Storing such a mode and carrying on would answer a different question
-/// than the client asked - `a || b` returning a boolean where the client
-/// expected a string - with no error to notice. These are refused instead.
+/// Modes whose grammar or evaluation semantics remain unsupported.
 const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     // Parsing.
-    "ANSI_QUOTES",
-    "PIPES_AS_CONCAT",
     "HIGH_NOT_PRECEDENCE",
-    "NO_BACKSLASH_ESCAPES",
     "IGNORE_SPACE",
     // Evaluation.
     "REAL_AS_FLOAT",
@@ -714,6 +704,7 @@ struct Authenticated {
 
 #[derive(Clone, Debug)]
 struct Prepared {
+    parse_mode: pintail_sql::ParseMode,
     sql: String,
     parameters: usize,
     /// Types from the last EXECUTE that rebound them, reused when a later
@@ -931,6 +922,14 @@ impl Backend {
     }
 
     async fn execute(&self, sql: &str) -> Result<QueryOutput, QueryError> {
+        self.execute_mode(sql, None).await
+    }
+
+    async fn execute_mode(
+        &self,
+        sql: &str,
+        mode: Option<pintail_sql::ParseMode>,
+    ) -> Result<QueryOutput, QueryError> {
         let started = std::time::Instant::now();
         let authenticated = self
             .authenticated()
@@ -963,25 +962,35 @@ impl Backend {
             full: pintail_log::enabled(pintail_log::DEBUG).then(|| sql.to_owned()),
         });
         let sql = sql.to_owned();
+        let parse_mode =
+            mode.unwrap_or_else(|| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode));
         let execution = tokio::task::spawn_blocking(move || {
-            pintail_exec::with_execution_cancellation(cancellation, || {
-                // The session zone shifts statement-pinned time functions;
-                // optimization runs on this thread, so install-and-restore
-                // brackets exactly one statement.
-                let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
-                pintail_sql::set_session_default_collation(Some(session.collation_connection));
-                pintail_exec::set_session_group_concat_max_len(Some(session.group_concat_max_len));
-                pintail_exec::set_session_cte_max_recursion_depth(Some(
-                    session.cte_max_recursion_depth,
-                ));
-                let result =
-                    engine.execute_with_deadline(&database_id, &sql, DEFAULT_MAX_ROWS, deadline);
-                let warnings = pintail_exec::take_session_group_concat_warnings();
-                pintail_exec::set_session_group_concat_max_len(None);
-                pintail_exec::set_session_cte_max_recursion_depth(None);
-                pintail_sql::set_session_default_collation(None);
-                let _ = pintail_exec::set_session_time_zone(None);
-                (result, warnings)
+            pintail_sql::with_parse_mode(parse_mode, || {
+                pintail_exec::with_execution_cancellation(cancellation, || {
+                    // The session zone shifts statement-pinned time functions;
+                    // optimization runs on this thread, so install-and-restore
+                    // brackets exactly one statement.
+                    let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                    pintail_sql::set_session_default_collation(Some(session.collation_connection));
+                    pintail_exec::set_session_group_concat_max_len(Some(
+                        session.group_concat_max_len,
+                    ));
+                    pintail_exec::set_session_cte_max_recursion_depth(Some(
+                        session.cte_max_recursion_depth,
+                    ));
+                    let result = engine.execute_with_deadline(
+                        &database_id,
+                        &sql,
+                        DEFAULT_MAX_ROWS,
+                        deadline,
+                    );
+                    let warnings = pintail_exec::take_session_group_concat_warnings();
+                    pintail_exec::set_session_group_concat_max_len(None);
+                    pintail_exec::set_session_cte_max_recursion_depth(None);
+                    pintail_sql::set_session_default_collation(None);
+                    let _ = pintail_exec::set_session_time_zone(None);
+                    (result, warnings)
+                })
             })
         })
         .await
@@ -1100,7 +1109,9 @@ impl Backend {
             | "character_set_connection"
             | "character_set_results") => {
                 let charset = value.to_ascii_lowercase();
-                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
+                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary")
+                    || (name == "character_set_results" && charset == "null")
+                {
                     match name {
                         "character_set_client" => session.charset_client = charset,
                         "character_set_connection" => session.charset_connection = charset,
@@ -1251,6 +1262,16 @@ impl Handler for Backend {
             .unwrap_or(false)
     }
 
+    fn first_statement<'a>(&self, sql: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+        let mode = self
+            .session
+            .lock()
+            .ok()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .unwrap_or_default();
+        pintail_sql::first_statement(sql, mode)
+    }
+
     async fn query(&mut self, sql: &[u8]) -> Response {
         let Ok(sql) = std::str::from_utf8(sql) else {
             return Response::Error(
@@ -1294,9 +1315,18 @@ impl Handler for Backend {
             record_prepared_refused();
             return Err((ErrorKind::ErMaxPreparedStmtCountReached, refusal));
         }
-        let parameters = placeholder_count(sql);
-        let preview = substitute_parameters(sql, &placeholder_preview_literals(sql))
-            .map_err(|error| (ErrorKind::ErParseError, error))?;
+        let parse_mode = self
+            .session
+            .lock()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?;
+        let (parameters, preview) = pintail_sql::with_parse_mode(parse_mode, || {
+            (
+                placeholder_count(sql),
+                substitute_parameters(sql, &placeholder_preview_literals(sql)),
+            )
+        });
+        let preview = preview.map_err(|error| (ErrorKind::ErParseError, error))?;
         let output = Backend::execute(self, &preview)
             .await
             .map_err(|error| (error_kind(&error), error.to_string()))?;
@@ -1306,6 +1336,7 @@ impl Handler for Backend {
         self.prepared.insert(
             statement_id,
             Prepared {
+                parse_mode,
                 sql: sql.to_owned(),
                 parameters,
                 parameter_types: None,
@@ -1370,13 +1401,17 @@ impl Handler for Backend {
         }
         let literals = match values
             .iter()
-            .map(parameter_literal)
+            .map(|value| {
+                pintail_sql::with_parse_mode(statement.parse_mode, || parameter_literal(value))
+            })
             .collect::<Result<Vec<_>, _>>()
         {
             Ok(literals) => literals,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
-        let query = match substitute_parameters(&statement.sql, &literals) {
+        let query = match pintail_sql::with_parse_mode(statement.parse_mode, || {
+            substitute_parameters(&statement.sql, &literals)
+        }) {
             Ok(query) => query,
             Err(error) => return Response::Error(ErrorKind::ErWrongArguments, error),
         };
@@ -1387,7 +1422,7 @@ impl Handler for Backend {
             );
         };
         query_output_to_response(
-            Backend::execute(self, &query).await,
+            self.execute_mode(&query, Some(statement.parse_mode)).await,
             group_concat_max_len,
             &charset,
             negotiated,
@@ -1571,6 +1606,33 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
 // One arm per wire type: splitting it hides the correspondence.
 #[allow(clippy::too_many_lines)]
 fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<Vec<u8>>> {
+    if let Some(column) = &field.wire_column {
+        if matches!(column.coltype, ColumnType::MysqlTypeNewdecimal)
+            && !matches!(value, Value::Null)
+        {
+            let mut encoded = Vec::new();
+            put_length_encoded_bytes(&mut encoded, &text_column_value(value).unwrap_or_default());
+            return Ok(Some(encoded));
+        }
+        let integer = match value {
+            Value::Int64(value) => Some(*value),
+            Value::UInt64(value) => Some(i64::from_le_bytes(value.to_le_bytes())),
+            Value::Boolean(value) => Some(i64::from(*value)),
+            _ => None,
+        };
+        if let Some(integer) = integer {
+            let width = match column.coltype {
+                ColumnType::MysqlTypeTiny => Some(IntWidth::Tiny),
+                ColumnType::MysqlTypeShort => Some(IntWidth::Short),
+                ColumnType::MysqlTypeLong => Some(IntWidth::Long),
+                ColumnType::MysqlTypeLonglong => Some(IntWidth::LongLong),
+                _ => None,
+            };
+            if let Some(width) = width {
+                return Ok(Some(encode_binary_int(integer, width)));
+            }
+        }
+    }
     let length_encoded = |bytes: &[u8]| {
         let mut encoded = Vec::new();
         put_length_encoded_bytes(&mut encoded, bytes);
@@ -1762,12 +1824,49 @@ fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     }
 }
 
-fn mysql_column(
+fn negotiated_column(
+    field: &QueryField,
+    declared: &Column,
+    group_concat_max_len: usize,
+    charset: &str,
+    negotiated: u16,
+) -> Column {
+    let mut column = declared.clone();
+    column.column.clone_from(&field.name);
+    if column.character_set != 63 {
+        column.character_set = mysql_text_character_set(charset, negotiated);
+        if column.character_set == 63 {
+            column.colflags |= ColumnFlags::BINARY_FLAG;
+        }
+    }
+    if field.group_concat {
+        column.coltype = if group_concat_max_len > 512 {
+            ColumnType::MysqlTypeLongBlob
+        } else {
+            ColumnType::MysqlTypeVarString
+        };
+        column.column_length = u32::try_from(group_concat_max_len)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(if group_concat_max_len > 512 {
+                // The declaration uses the default 1024-byte limit and retains
+                // the source version's text-width multiplier.
+                declared.column_length / 1024
+            } else {
+                4
+            });
+    }
+    column
+}
+
+pub(crate) fn mysql_column(
     field: &QueryField,
     group_concat_max_len: usize,
     charset: &str,
     negotiated: u16,
 ) -> Column {
+    if let Some(column) = &field.wire_column {
+        return negotiated_column(field, column, group_concat_max_len, charset, negotiated);
+    }
     let (coltype, unsigned) = match (field.wire_hint, field.data_type) {
         // Values stay variable-width text (SEC_TO_TIME's fraction follows
         // its input), but the column TYPE matches what MySQL advertises.
@@ -1985,6 +2084,8 @@ fn random_salt() -> [u8; 20] {
     let mut salt = [0_u8; 20];
     rand::rng().fill_bytes(&mut salt);
     for byte in &mut salt {
+        // The greeting carries an ASCII scramble, terminated by NUL.
+        *byte &= 0x7f;
         if matches!(*byte, 0 | b'$') {
             *byte = byte.wrapping_add(1);
         }
@@ -2031,11 +2132,68 @@ fn error_kind(error: &QueryError) -> ErrorKind {
 }
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
+    let Some(projection) = pintail_sql::connection_projection(sql) else {
+        return compatibility_single(sql, database, session);
+    };
+    let mut output = None;
+    for (expression, alias) in projection {
+        let expression = expression
+            .to_ascii_lowercase()
+            .replace("@@session.", "@@")
+            .replace("@@global.", "@@");
+        let mut item = compatibility_single(&format!("SELECT {expression}"), database, session)?;
+        item.fields[0].name = alias;
+        if let Some(result) = &mut output {
+            let result: &mut QueryOutput = result;
+            result.fields.extend(item.fields);
+            result.rows[0].append(&mut item.rows[0]);
+        } else {
+            output = Some(item);
+        }
+    }
+    output
+}
+
+#[allow(clippy::too_many_lines)]
+fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     if normalized.starts_with("show warnings") {
         return Some(group_concat_warnings_output(session));
     }
-    let (name, value) = if normalized.starts_with("select version()") {
+    let (name, value) = if matches!(
+        normalized.as_str(),
+        "show grants" | "show grants for current_user()" | "show grants for current_user"
+    ) {
+        (
+            "Grants for current user",
+            Value::Utf8(format!(
+                "GRANT SELECT ON `{}`.* TO CURRENT_USER()",
+                database.replace('`', "``")
+            )),
+        )
+    } else if normalized.contains("@@character_set_server") {
+        ("@@character_set_server", Value::Utf8("utf8mb4".to_owned()))
+    } else if normalized.contains("@@collation_server") {
+        (
+            "@@collation_server",
+            Value::Utf8("utf8mb4_0900_ai_ci".to_owned()),
+        )
+    } else if normalized.contains("@@init_connect") {
+        ("@@init_connect", Value::Utf8(String::new()))
+    } else if normalized.contains("@@license") {
+        ("@@license", Value::Utf8("Apache-2.0".to_owned()))
+    } else if normalized.contains("@@performance_schema") {
+        ("@@performance_schema", Value::UInt64(0))
+    } else if normalized.contains("@@net_write_timeout") {
+        ("@@net_write_timeout", Value::UInt64(60))
+    } else if normalized.contains("@@transaction_isolation")
+        || normalized.contains("@@tx_isolation")
+    {
+        (
+            "@@transaction_isolation",
+            Value::Utf8("REPEATABLE-READ".to_owned()),
+        )
+    } else if normalized.starts_with("select version()") {
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
         ("DATABASE()", Value::Utf8(database.to_owned()))
@@ -2046,6 +2204,20 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         )
     } else if normalized.contains("@@version") {
         ("@@version", Value::Utf8(mysql_compat_version()))
+    } else if normalized.contains("@@wait_timeout") || normalized.contains("@@interactive_timeout")
+    {
+        (
+            "@@wait_timeout",
+            Value::UInt64(DEFAULT_WIRE_IDLE_TIMEOUT.as_secs()),
+        )
+    } else if normalized.contains("@@socket") {
+        ("@@socket", Value::Utf8(String::new()))
+    } else if normalized.contains("@@system_time_zone") {
+        ("@@system_time_zone", Value::Utf8("UTC".to_owned()))
+    } else if normalized.contains("@@auto_increment_increment")
+        || normalized.contains("@@autocommit")
+    {
+        ("@@auto_increment_increment", Value::UInt64(1))
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
     } else if normalized.contains("@@lower_case_table_names") {
@@ -2084,6 +2256,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     };
     Some(QueryOutput {
         fields: vec![QueryField {
+            wire_column: None,
             name: name.to_owned(),
             data_type: value.data_type(),
             nullable: false,
@@ -2108,6 +2281,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
     QueryOutput {
         fields: vec![
             QueryField {
+                wire_column: None,
                 name: "Level".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -2118,6 +2292,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 wire_hint: None,
             },
             QueryField {
+                wire_column: None,
                 name: "Code".to_owned(),
                 data_type: Some(DataType::UInt64),
                 nullable: false,
@@ -2128,6 +2303,7 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 wire_hint: None,
             },
             QueryField {
+                wire_column: None,
                 name: "Message".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -2164,6 +2340,11 @@ fn compatibility_charset_query(
     normalized: &str,
     session: &Session,
 ) -> Option<(&'static str, Value)> {
+    if normalized.contains("@@character_set_results")
+        && session.charset_results.eq_ignore_ascii_case("null")
+    {
+        return Some(("@@character_set_results", Value::Null));
+    }
     let (name, value) = if normalized.contains("@@character_set_client") {
         ("@@character_set_client", session.charset_client.clone())
     } else if normalized.contains("@@character_set_connection") {
@@ -2387,7 +2568,11 @@ fn sql_code_only(sql: &str) -> Vec<u8> {
             delimiter @ (b'\'' | b'"' | b'`') => {
                 index += 1;
                 while index < bytes.len() {
-                    if bytes[index] == b'\\' {
+                    if bytes[index] == b'\\'
+                        && delimiter != b'`'
+                        && !pintail_sql::session_parse_mode().no_backslash_escapes
+                        && !(delimiter == b'"' && pintail_sql::session_parse_mode().ansi_quotes)
+                    {
                         index += 2;
                         continue;
                     }
@@ -2472,7 +2657,11 @@ fn parameter_literal(value: &BinaryValue) -> Result<String, String> {
             |value| {
                 Ok(format!(
                     "'{}'",
-                    value.replace('\\', "\\\\").replace('\'', "''")
+                    if pintail_sql::session_parse_mode().no_backslash_escapes {
+                        value.replace('\'', "''")
+                    } else {
+                        value.replace('\\', "\\\\").replace('\'', "''")
+                    }
                 ))
             },
         ),
@@ -2620,6 +2809,35 @@ mod tests {
     use super::{QueryError, SqlRejection, error_kind};
 
     #[test]
+    fn connection_probe_returns_every_requested_variable() {
+        let output = compatibility_query("SELECT @@max_allowed_packet AS packet, @@system_time_zone AS zone, @@session.time_zone AS session_zone, @@auto_increment_increment AS step", "analytics", &Session::default()).unwrap();
+        assert_eq!(
+            output
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["packet", "zone", "session_zone", "step"]
+        );
+        assert_eq!(output.rows[0].len(), 4);
+        assert_eq!(
+            output.rows[0][1],
+            pintail_types::Value::Utf8("UTC".to_owned())
+        );
+    }
+
+    #[test]
+    fn greeting_scrambles_are_ascii_without_terminators() {
+        for _ in 0..64 {
+            assert!(
+                super::random_salt()
+                    .iter()
+                    .all(|byte| byte.is_ascii() && !matches!(*byte, 0 | b'$'))
+            );
+        }
+    }
+
+    #[test]
     fn a_local_session_refuses_the_transaction_guarantees_it_cannot_keep() {
         use super::{
             AUTOCOMMIT_REQUIRED, TRANSACTION_CONTROL_UNSUPPORTED, is_session_command,
@@ -2728,6 +2946,7 @@ mod tests {
     fn json_results_advertise_mysql_json_metadata() {
         let column = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "document".to_owned(),
                 data_type: Some(DataType::Json),
                 nullable: true,
@@ -2751,6 +2970,7 @@ mod tests {
         // TIMESTAMP does. Without the flag this advertised DATETIME (12).
         let stamped = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "updated_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 6 }),
                 nullable: true,
@@ -2767,6 +2987,7 @@ mod tests {
         assert_eq!(stamped.coltype, ColumnType::MysqlTypeTimestamp);
         let plain = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "created_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 0 }),
                 nullable: false,
@@ -2787,6 +3008,7 @@ mod tests {
     fn result_columns_preserve_numeric_binary_and_nullability_flags() {
         let unsigned = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "ordinal_position".to_owned(),
                 data_type: Some(DataType::UInt64),
                 nullable: false,
@@ -2806,6 +3028,7 @@ mod tests {
 
         let nullable_text = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "column_default".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: true,
@@ -2824,6 +3047,7 @@ mod tests {
 
         let binary = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "payload".to_owned(),
                 data_type: Some(DataType::Binary),
                 nullable: true,
@@ -2847,6 +3071,7 @@ mod tests {
     fn result_columns_report_decimal_and_temporal_scale() {
         let decimal = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "amount".to_owned(),
                 data_type: Some(DataType::Decimal {
                     precision: 18,
@@ -2869,6 +3094,7 @@ mod tests {
 
         let datetime = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "created_at".to_owned(),
                 data_type: Some(DataType::DateTime64 { fsp: 6 }),
                 nullable: false,
@@ -2884,6 +3110,30 @@ mod tests {
         );
         assert_eq!(datetime.decimals, 6);
         assert_eq!(datetime.column_length, 26);
+    }
+
+    #[test]
+    fn connection_settings_keep_socket_a_string_for_tcp_only_servers() {
+        use pintail_types::Value;
+        let output = compatibility_query(
+            "SELECT @@socket, @@max_allowed_packet, @@wait_timeout",
+            "analytics",
+            &Session::default(),
+        )
+        .unwrap();
+        assert_eq!(output.fields.len(), 3);
+        assert_eq!(output.fields[0].name, "@@socket");
+        assert_eq!(output.rows[0][0], Value::Utf8(String::new()));
+        assert!(matches!(output.rows[0][1], Value::UInt64(_)));
+        assert!(matches!(output.rows[0][2], Value::UInt64(_)));
+        let versions = compatibility_query(
+            "SELECT @@version, @@GLOBAL.version",
+            "analytics",
+            &Session::default(),
+        )
+        .unwrap();
+        assert_eq!(versions.fields.len(), 2);
+        assert_eq!(versions.rows[0][0], versions.rows[0][1]);
     }
 
     #[test]
@@ -2905,6 +3155,7 @@ mod tests {
         ] {
             let column = mysql_column(
                 &QueryField {
+                    wire_column: None,
                     name: "value".to_owned(),
                     data_type: Some(DataType::Utf8),
                     nullable: true,
@@ -2929,6 +3180,7 @@ mod tests {
         // any client that negotiated something else.
         let column = mysql_column(
             &QueryField {
+                wire_column: None,
                 name: "value".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: true,
@@ -2950,6 +3202,7 @@ mod tests {
     #[test]
     fn group_concat_metadata_follows_the_session_limit_threshold() {
         let field = QueryField {
+            wire_column: None,
             name: "labels".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: true,
@@ -2972,6 +3225,7 @@ mod tests {
     #[test]
     fn text_result_metadata_follows_the_session_charset() {
         let field = QueryField {
+            wire_column: None,
             name: "label".to_owned(),
             data_type: Some(DataType::Utf8),
             nullable: false,
@@ -3159,25 +3413,19 @@ mod tests {
 
     #[test]
     fn sql_mode_refuses_modes_that_would_change_results() {
-        // PIPES_AS_CONCAT is the sharpest case: the parser is a fixed
-        // MySqlDialect, so `a || b` stays OR. Accepting the mode would
-        // answer a different question than the client asked, silently.
-        let refused = super::reject_unsupported_sql_modes("PIPES_AS_CONCAT")
-            .expect_err("must refuse a mode it cannot honour");
-        assert!(refused.contains("PIPES_AS_CONCAT"), "got: {refused}");
-
-        for mode in ["ANSI_QUOTES", "NO_BACKSLASH_ESCAPES", "ALLOW_INVALID_DATES"] {
-            assert!(
-                super::reject_unsupported_sql_modes(mode).is_err(),
-                "{mode} changes results and must be refused"
-            );
+        for mode in [
+            "HIGH_NOT_PRECEDENCE",
+            "REAL_AS_FLOAT",
+            "ALLOW_INVALID_DATES",
+        ] {
+            assert!(super::reject_unsupported_sql_modes(mode).is_err());
         }
         // Compound modes turn the above on by another name.
         assert!(super::reject_unsupported_sql_modes("ANSI").is_err());
         // Refusal must survive being buried in a list, which is how clients
         // actually send sql_mode.
         assert!(
-            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,PIPES_AS_CONCAT,NO_ZERO_DATE")
+            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,REAL_AS_FLOAT,NO_ZERO_DATE")
                 .is_err()
         );
     }
@@ -3189,6 +3437,7 @@ mod tests {
         for mode in [
             "",
             "STRICT_TRANS_TABLES",
+            "ANSI_QUOTES,PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES",
             "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         ] {

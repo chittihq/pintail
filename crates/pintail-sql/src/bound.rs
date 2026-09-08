@@ -767,6 +767,13 @@ pub enum ScalarFunction {
     },
     /// Explicit scalar conversion.
     Cast(DataType),
+    /// User-declared cast, retaining an optional character width for presentation.
+    DeclaredCast {
+        /// Requested scalar type.
+        target: DataType,
+        /// Maximum character count of an explicit CHAR declaration.
+        characters: Option<u32>,
+    },
     /// Current local date and time.
     Now,
     /// Current local date.
@@ -777,6 +784,11 @@ pub enum ScalarFunction {
     Time,
     /// Extract a calendar/time component.
     DatePart(DatePart),
+    /// Concatenated decimal date/time components with their display width.
+    PackedDateParts {
+        /// Maximum decimal characters, including a sign.
+        width: u8,
+    },
     /// Format a date/time with a `MySQL` format string.
     DateFormat,
     /// Add or subtract one date/time interval.
@@ -881,6 +893,8 @@ pub enum AggregateFunction {
 /// One deduplicated aggregate computation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundAggregate {
+    /// Whether the SQL text explicitly requested this aggregate.
+    pub declared: bool,
     /// Aggregate operation.
     pub function: AggregateFunction,
     /// Optional input expression. `COUNT(*)` has no expression.
@@ -1129,6 +1143,8 @@ pub struct BoundFrom {
 /// A resolved explicit join.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundJoin {
+    /// This join was lowered from a scalar aggregate subquery.
+    pub scalar_aggregate: bool,
     /// Join semantics.
     pub kind: BoundJoinKind,
     /// Right-hand table.

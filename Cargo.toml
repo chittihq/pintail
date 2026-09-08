@@ -54,7 +54,7 @@ jsonwebtoken = { version = "=10.3.0", default-features = false, features = ["rus
 lz4_flex = "0.11.5"
 mime_guess = "2.0.5"
 md-5 = "0.10.6"
-mysql_async = { version = "0.37.0", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
+mysql_async = { version = "0.37.1", default-features = false, features = ["binlog", "minimal-rust", "rustls-tls", "ring"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # 0.26 rather than 0.25: 0.25 pulls rustls 0.22, whose rustls-webpki 0.102
 # carries a high-severity panic on a malformed CRL BIT STRING. 0.26 shares the
@@ -150,3 +150,14 @@ debug = false
 [profile.recovery]
 inherits = "dev"
 opt-level = 2
+
+# The published `mysql_common` panics on a corrupted transaction-payload
+# header: both `TryFrom<u64>` impls narrow an unrecognised value to `u8`
+# with `unwrap()` before putting it in the error that reports it, so a
+# value above 255 aborts on exactly the input the error exists for. The
+# panic is unreachable from our own code - `mysql_async` decodes those
+# events inside its stream, before an event reaches us - so a guard on our
+# side cannot prevent it. Pinned to a fork carrying that fix until it lands
+# upstream; 0.38 still has both unwraps.
+[patch.crates-io]
+mysql_common = { git = "https://github.com/chittihq/rust_mysql_common", rev = "74369dbd353fb20d4f7537055e922a92c525a275" }

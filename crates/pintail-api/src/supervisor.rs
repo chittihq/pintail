@@ -1014,6 +1014,7 @@ mod tests {
     /// thing and the assertion names the cause.
     fn streaming_replica() -> DatabaseRecord {
         DatabaseRecord {
+            restored_backup_created_at: None,
             id: "db-1".to_owned(),
             name: "shop".to_owned(),
             encrypted_dsn: vec![1, 2, 3],

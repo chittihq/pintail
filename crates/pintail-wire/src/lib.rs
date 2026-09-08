@@ -4,13 +4,15 @@ mod admission;
 mod engine;
 mod limits;
 mod observe;
+mod presentation;
 mod replica_cache;
 mod server;
 mod shared_query;
 
 pub use admission::{
     DEFAULT_QUEUE_WAIT, QueryAdmission, QueryClass, QueryPermit, default_max_concurrent_queries,
-    init_shared_admission, init_shared_admission_with_wait, shared_admission,
+    init_shared_admission, init_shared_admission_with_reserved, init_shared_admission_with_wait,
+    shared_admission,
 };
 pub use engine::{
     DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
@@ -30,3 +32,5 @@ pub use server::{
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
 pub use shared_query::{SharedQueryStats, shared_query_stats};
+
+mod metadata_provider;

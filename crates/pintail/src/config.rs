@@ -193,6 +193,10 @@ pub struct Cli {
     #[arg(long)]
     pub query_queue_wait_seconds: Option<f64>,
 
+    /// Query slots reserved for bounded reads. Zero disables the reserve.
+    #[arg(long)]
+    pub reserved_query_slots: Option<usize>,
+
     /// Byte ceiling shared by every concurrent query. The per-query limit
     /// bounds one query; this bounds their sum. Zero disables the bound.
     #[arg(long)]
@@ -224,6 +228,7 @@ pub struct AppConfig {
     query_memory_limit_bytes: usize,
     max_concurrent_queries: usize,
     query_queue_wait: Duration,
+    reserved_query_slots: usize,
     total_query_memory_limit_bytes: usize,
     query_spill_limit_bytes: u64,
     global_spill_limit_bytes: u64,
@@ -419,6 +424,27 @@ impl AppConfig {
             .or(environment_max_concurrent_queries)
             .or(file.query.max_concurrent_queries)
             .unwrap_or_else(default_max_concurrent_queries);
+        let environment_reserved_query_slots = environment
+            .get(&OsString::from("PINTAIL_RESERVED_QUERY_SLOTS"))
+            .map(|value| {
+                value
+                    .to_str()
+                    .context("PINTAIL_RESERVED_QUERY_SLOTS must be valid UTF-8")?
+                    .parse::<usize>()
+                    .context("PINTAIL_RESERVED_QUERY_SLOTS must be a non-negative integer")
+            })
+            .transpose()?;
+        let reserved_query_slots = cli
+            .reserved_query_slots
+            .or(environment_reserved_query_slots)
+            .or(file.query.reserved_query_slots)
+            .unwrap_or(if max_concurrent_queries < 4 {
+                0
+            } else if max_concurrent_queries < 8 {
+                1
+            } else {
+                2
+            });
         let environment_query_queue_wait = environment
             .get(&OsString::from("PINTAIL_QUERY_QUEUE_WAIT_SECONDS"))
             .map(|value| {
@@ -546,6 +572,7 @@ impl AppConfig {
             query_memory_limit_bytes,
             max_concurrent_queries,
             query_queue_wait,
+            reserved_query_slots,
             total_query_memory_limit_bytes,
             query_spill_limit_bytes,
             global_spill_limit_bytes,
@@ -630,6 +657,12 @@ impl AppConfig {
         self.query_queue_wait
     }
 
+    /// Slots reserved for bounded reads, clamped at admission initialization.
+    #[must_use]
+    pub const fn reserved_query_slots(&self) -> usize {
+        self.reserved_query_slots
+    }
+
     #[must_use]
     pub const fn total_query_memory_limit_bytes(&self) -> usize {
         self.total_query_memory_limit_bytes
@@ -689,6 +722,7 @@ struct FileQueryConfig {
     memory_limit_bytes: Option<usize>,
     max_concurrent_queries: Option<usize>,
     queue_wait_seconds: Option<f64>,
+    reserved_query_slots: Option<usize>,
     total_memory_limit_bytes: Option<usize>,
     spill_limit_bytes: Option<u64>,
 }
@@ -744,6 +778,7 @@ mod tests {
             query_memory_limit_bytes: None,
             max_concurrent_queries: None,
             query_queue_wait_seconds: None,
+            reserved_query_slots: None,
             total_query_memory_limit_bytes: None,
             spill_dir: None,
             query_spill_limit_bytes: None,
@@ -805,6 +840,32 @@ mod tests {
                 "an 'unlimited' cgroup sentinel {limit} must not be treated as a limit"
             );
         }
+    }
+
+    #[test]
+    fn reserve_accepts_zero_and_cli_overrides_environment() {
+        let env = [("PINTAIL_RESERVED_QUERY_SLOTS".into(), "0".into())];
+        assert_eq!(
+            AppConfig::load_from(&cli(), env.clone())
+                .unwrap()
+                .reserved_query_slots(),
+            0
+        );
+        let mut args = cli();
+        args.reserved_query_slots = Some(4);
+        assert_eq!(
+            AppConfig::load_from(&args, env)
+                .unwrap()
+                .reserved_query_slots(),
+            4
+        );
+        assert!(
+            AppConfig::load_from(
+                &cli(),
+                [("PINTAIL_RESERVED_QUERY_SLOTS".into(), "-1".into())]
+            )
+            .is_err()
+        );
     }
 
     #[test]

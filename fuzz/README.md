@@ -3,7 +3,7 @@
 These targets use the same wire/storage code and MySQL decoder version as
 Pintail. They need no server, credentials, network connection or Docker.
 The separate lockfile is tracked. Keep its MySQL decoder version aligned with
-`Cargo.lock`; the pinned mysql_async 0.37.0 remains resolvable from that lockfile.
+`Cargo.lock`; the pinned mysql_async 0.37.1 uses the same decoder as the workspace.
 
 Local deterministic smoke checks (stable Rust):
 
@@ -35,21 +35,30 @@ minimized regressions in the corpus; transient libFuzzer artifacts and newly
 expanded corpus entries stay ignored. A smoke run is bounded evidence, not a
 claim of exhaustive parser safety. No target catches panics.
 
-## Known dependency finding
+## Transaction-payload regression
 
-The binlog target exposes a panic in mysql_common 0.37.3: a transaction-payload
-header field ID above 255 reaches a narrowing conversion with `unwrap()`.
-The same conversion was still present in upstream master when inspected on
-2026-09-05. This is a source/binlog decoder finding, not the pre-login wire
-parser. Dependency vendoring is outside this slice.
+Both `TryFrom<u64>` impls for the transaction-payload header narrowed an
+unrecognised value to `u8` with `unwrap()` before putting it in the error
+that reports it, so a value above 255 panicked on exactly the input the
+error exists for. `mysql_async` decodes those events inside its own binlog
+stream, before an event reaches Pintail, so nothing on our side could
+prevent it - the fix has to be in the decoder. The workspace and this
+harness pin a fork carrying it (`Cargo.toml`, `[patch.crates-io]`);
+upstream 0.38 still has both unwraps.
 
-The deterministic regression is explicitly ignored in ordinary smoke checks
-because it currently **fails**. Reproduce it without fuzz tooling:
+Pintail also refuses such a header in
+`pintail_cdc::check_transaction_payload_header` before handing the event
+on, which adds the event's position to the report and covers anything that
+reaches `decode_event` directly. It is the second line, not the fix.
+
+The minimized artifact is checked in under
+`corpus/binlog/transaction_payload_field`; its field id is 256. The
+deterministic regression asserts that the stream's own decode returns an
+invalid-data error rather than aborting:
 
 ```sh
-CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload_field -- --ignored
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload
 ```
 
-The unrestricted binlog fuzz target remains enabled and reports crashes; it
-is not claimed green. Remove the ignore only after updating or fixing the
-production dependency and proving the reproducer no longer panics.
+The unrestricted binlog fuzz target is unchanged. Fixing this reproducer is
+not a claim that all malformed inputs are safe.

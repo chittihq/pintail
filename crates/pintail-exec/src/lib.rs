@@ -1,5 +1,8 @@
 //! Planner, optimizer, and vectorized executor for Pintail.
 
+mod admission;
+pub use admission::AdmissionCost;
+
 pub mod array;
 mod batch;
 pub mod collation;

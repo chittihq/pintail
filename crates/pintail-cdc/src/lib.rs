@@ -7,6 +7,8 @@
 
 mod ddl;
 mod decoder;
+mod event;
+pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
 mod gtid;
 
 use std::{
@@ -475,16 +477,13 @@ async fn run_cdc_inner(
                     event
                 }
                 Err(error) => {
-                    stream_error = Some(error);
+                    stream_error = Some(self::event::stream_error(error)?);
                     break;
                 }
             };
             let event_position = u64::from(event.header().log_pos());
             let event_type = event.header().event_type_raw();
-            let Some(data) = event
-                .read_data()
-                .map_err(|error| CdcError::Decode(error.to_string()))?
-            else {
+            let Some(data) = self::event::decode_event(&event)? else {
                 continue;
             };
             match data {

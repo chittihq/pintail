@@ -335,6 +335,31 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("session setup");
+    let mut batch = connection
+        .query_iter("SET time_zone='+00:00'; SELECT ';'; SELECT 2; -- tail")
+        .await
+        .expect("multi-statement setup and results");
+    assert!(
+        batch
+            .collect::<mysql_async::Row>()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(batch.collect::<String>().await.unwrap(), vec![";"]);
+    assert_eq!(batch.collect::<u64>().await.unwrap(), vec![2]);
+    batch.drop_result().await.unwrap();
+    assert!(
+        connection
+            .query_drop("SELECT 1; SELECT missing FROM missing_table; SET time_zone='+03:00'")
+            .await
+            .is_err()
+    );
+    let zone: Option<String> = connection
+        .query_first("SELECT @@session.time_zone")
+        .await
+        .unwrap();
+    assert_eq!(zone.as_deref(), Some("+00:00"));
     // Real session state: time_zone shifts statement-pinned NOW() and
     // echoes through @@session probes; bad zones and charsets error.
     connection
@@ -411,18 +436,30 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore utf8mb4 names");
-    // ANSI_QUOTES changes how a statement parses, and the parser is a fixed
-    // MySqlDialect. Accepting and echoing it - which this test used to
-    // assert - meant a client could ask for identifier quoting, be told it
-    // succeeded, and silently get string literals instead.
-    let refused = connection
-        .query_drop("SET sql_mode = 'ANSI_QUOTES'")
+    connection
+        .query_drop("SET sql_mode='ANSI_QUOTES,PIPES_AS_CONCAT,NO_BACKSLASH_ESCAPES'")
         .await
-        .expect_err("a result-changing sql_mode must be refused");
-    assert!(
-        refused.to_string().contains("ANSI_QUOTES"),
-        "refusal must name the mode, got: {refused}"
-    );
+        .unwrap();
+    let quoted: Option<String> = connection
+        .query_first(r#"SELECT "name" || '!' FROM events WHERE id=2"#)
+        .await
+        .unwrap();
+    assert_eq!(quoted.as_deref(), Some("land!"));
+    let literal: Option<String> = connection.query_first(r"SELECT 'a\nb'").await.unwrap();
+    assert_eq!(literal.as_deref(), Some(r"a\nb"));
+    let prepared_mode = connection
+        .prep(r#"SELECT "name" || ? FROM events WHERE id=2"#)
+        .await
+        .unwrap();
+    connection.query_drop("SET sql_mode=''").await.unwrap();
+    let prepared_value: Option<String> = connection
+        .exec_first(&prepared_mode, (r"\tail",))
+        .await
+        .unwrap();
+    assert_eq!(prepared_value.as_deref(), Some(r"land\tail"));
+    connection.close(prepared_mode).await.unwrap();
+    let boolean: Option<u64> = connection.query_first("SELECT 0 || 1").await.unwrap();
+    assert_eq!(boolean, Some(1));
     // A mode that is genuinely inert on a read-only replica still round-trips.
     connection
         .query_drop("SET sql_mode = 'STRICT_TRANS_TABLES'")
@@ -532,7 +569,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .columns()
             .expect("long group concat columns")[0]
             .column_type(),
-        ColumnType::MYSQL_TYPE_BLOB
+        ColumnType::MYSQL_TYPE_LONG_BLOB
     );
     let _: Vec<mysql_async::Row> = long_concat_metadata
         .collect()
@@ -547,6 +584,42 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("wire query");
     assert_eq!(rows, vec![(1, "launch".to_owned()), (2, "land".to_owned())]);
+
+    let mut exact = connection
+        .exec_iter("SELECT SUM(id), COUNT(*), CAST(1 AS DECIMAL(18,4)), ROUND(CAST(9223372036854775807 AS SIGNED), 0) FROM events", ())
+        .await
+        .expect("prepared exact metadata");
+    let exact_columns = exact.columns().expect("exact columns");
+    assert_eq!(
+        exact_columns[0].column_type(),
+        ColumnType::MYSQL_TYPE_NEWDECIMAL
+    );
+    assert_eq!(exact_columns[0].decimals(), 0);
+    assert!(
+        exact_columns[1]
+            .flags()
+            .contains(ColumnFlags::NOT_NULL_FLAG)
+    );
+    assert!(
+        !exact_columns[1]
+            .flags()
+            .contains(ColumnFlags::UNSIGNED_FLAG)
+    );
+    assert_eq!(exact_columns[2].decimals(), 4);
+    assert_eq!(
+        exact_columns[3].column_type(),
+        ColumnType::MYSQL_TYPE_LONGLONG
+    );
+    let exact_rows: Vec<mysql_async::Row> = exact.collect().await.expect("prepared exact rows");
+    assert_eq!(
+        exact_rows[0].clone().unwrap(),
+        vec![
+            mysql_async::Value::Bytes(b"3".to_vec()),
+            mysql_async::Value::Int(2),
+            mysql_async::Value::Bytes(b"1.0000".to_vec()),
+            mysql_async::Value::Int(i64::MAX),
+        ]
+    );
 
     let mut json_result = connection
         .query_iter(
@@ -986,6 +1059,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .expect("wire server");
 }
 
+#[allow(clippy::too_many_lines)]
 fn external_client_gate(address: std::net::SocketAddr) {
     const METADATA_CORPUS: &str =
         include_str!("../../../tests/integration/wire-clients/metadata.sql");
@@ -1085,6 +1159,19 @@ fn external_client_gate(address: std::net::SocketAddr) {
     assert!(go_output.contains(r#""bound_name":"land""#), "{go_output}");
     assert!(go_output.contains(r#""columns":2"#), "{go_output}");
     assert!(go_output.contains(r#""tables":2"#), "{go_output}");
+    let jdbc = Command::new("bun")
+        .args(["run", "client-jdbc.ts"])
+        .current_dir(&clients)
+        .env("PINTAIL_WIRE_HOST", "127.0.0.1")
+        .env("PINTAIL_WIRE_PORT", &port)
+        .output()
+        .expect("run JDBC client");
+    assert!(
+        jdbc.status.success(),
+        "JDBC failed: {}",
+        String::from_utf8_lossy(&jdbc.stderr)
+    );
+    assert!(String::from_utf8_lossy(&jdbc.stdout).contains("JDBC-PASS"));
 }
 
 #[allow(clippy::too_many_lines)]

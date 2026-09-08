@@ -69,9 +69,10 @@ async fn main() -> Result<()> {
 
     // Installed before either listener binds so every query on both
     // surfaces draws from one bound.
-    pintail_wire::init_shared_admission_with_wait(
+    pintail_wire::init_shared_admission_with_reserved(
         config.max_concurrent_queries(),
         config.query_queue_wait(),
+        config.reserved_query_slots(),
     );
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
     raise_open_file_limit();

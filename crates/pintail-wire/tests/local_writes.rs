@@ -336,7 +336,7 @@ fn numeric_and_temporal_edges_follow_mysql() {
     let row = &output.rows[0];
     assert_eq!(
         row[0],
-        pintail_types::Value::float64(4.0),
+        pintail_types::Value::Int64(4),
         "ROUND with an unsigned digit count past i64"
     );
     assert_eq!(

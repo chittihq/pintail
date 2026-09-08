@@ -96,6 +96,8 @@ pub struct NewAuditEvent<'a> {
 /// Durable source-database configuration and status.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DatabaseRecord {
+    /// Creation timestamp of the backup from which this database was restored.
+    pub restored_backup_created_at: Option<String>,
     pub id: String,
     pub name: String,
     pub encrypted_dsn: Vec<u8>,
@@ -1859,7 +1861,7 @@ fn database_select_sql() -> &'static str {
     "SELECT id, name, mysql_dsn_encrypted, mode, effective_mode, state, probe_json, \
             include_tables, exclude_tables, poll_interval_seconds, \
             reconcile_interval_seconds, created_at, updated_at, keyless_policy, \
-            kind, workspace_id \
+            kind, workspace_id, restored_backup_created_at \
      FROM databases"
 }
 
@@ -1867,6 +1869,7 @@ fn decode_database(row: &rusqlite::Row<'_>) -> rusqlite::Result<DatabaseRecord> 
     let poll_interval: i64 = row.get(9)?;
     let reconcile_interval: i64 = row.get(10)?;
     Ok(DatabaseRecord {
+        restored_backup_created_at: row.get(16)?,
         id: row.get(0)?,
         name: row.get(1)?,
         encrypted_dsn: row.get(2)?,

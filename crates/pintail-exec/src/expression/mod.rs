@@ -1201,7 +1201,7 @@ impl CompiledExpr {
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     // Numeric and temporal casts can expand compact input
                     // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
-                    ScalarFunction::Cast(_) => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
@@ -1279,6 +1279,7 @@ impl CompiledExpr {
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
+                    | ScalarFunction::PackedDateParts { .. }
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
                     | ScalarFunction::Round { .. }
@@ -1390,7 +1391,7 @@ impl CompiledExpr {
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
-                    ScalarFunction::Cast(_) => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
@@ -1460,6 +1461,7 @@ impl CompiledExpr {
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
+                    | ScalarFunction::PackedDateParts { .. }
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
                     | ScalarFunction::Round { .. }
@@ -1888,7 +1890,9 @@ fn evaluate_eager_scalar_inner(
                 text.to_uppercase()
             }))
         }
-        ScalarFunction::Collate { .. } => Ok(values[0].clone()),
+        ScalarFunction::Collate { .. } | ScalarFunction::PackedDateParts { .. } => {
+            Ok(values[0].clone())
+        }
         ScalarFunction::JsonModify { insert, replace } => {
             if values.iter().any(|value| matches!(value, Value::Null)) {
                 // A NULL document or path is NULL; a NULL VALUE argument is
@@ -2085,10 +2089,21 @@ fn evaluate_eager_scalar_inner(
                 _ => return Err(ExecError::InvalidExpressionType),
             }))
         }
-        ScalarFunction::Cast(DataType::Year) => {
-            cast_mysql_year(&values[0], argument_types.first().copied().flatten())
-        }
+        ScalarFunction::Cast(DataType::Year)
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Year,
+            ..
+        } => cast_mysql_year(&values[0], argument_types.first().copied().flatten()),
         ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
+        ScalarFunction::DeclaredCast { target, characters } => {
+            let mut value = cast_scalar(&values[0], Some(target))?;
+            if let (Some(characters), Value::Utf8(text)) = (characters, &mut value)
+                && let Some((offset, _)) = text.char_indices().nth(characters as usize)
+            {
+                text.truncate(offset);
+            }
+            Ok(value)
+        }
         ScalarFunction::Abs { decimal } => match &values[0] {
             Value::Int64(signed) => signed
                 .checked_abs()
@@ -2518,6 +2533,34 @@ fn evaluate_eager_scalar_inner(
             Ok(base64_decode(&text).map_or(Value::Null, Value::Binary))
         }
         ScalarFunction::Round { decimal } => {
+            if matches!(values[0], Value::Int64(_) | Value::UInt64(_)) {
+                let digits = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);
+                if digits >= 0 {
+                    return Ok(values[0].clone());
+                }
+                let input = match values[0] {
+                    Value::Int64(value) => i128::from(value),
+                    Value::UInt64(value) => i128::from(value),
+                    _ => unreachable!(),
+                };
+                let rounded = if let Some(factor) = u32::try_from(digits.saturating_neg())
+                    .ok()
+                    .and_then(|power| 10_i128.checked_pow(power))
+                {
+                    let magnitude = (input.abs() + factor / 2) / factor * factor;
+                    if input < 0 { -magnitude } else { magnitude }
+                } else {
+                    0
+                };
+                return match values[0] {
+                    Value::UInt64(_) => u64::try_from(rounded)
+                        .map(Value::UInt64)
+                        .map_err(|_| ExecError::NumericOverflow),
+                    _ => i64::try_from(rounded)
+                        .map(Value::Int64)
+                        .map_err(|_| ExecError::NumericOverflow),
+                };
+            }
             if decimal && let Value::Utf8(text) = &values[0] {
                 let digits = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);
                 let input_scale = i64::try_from(
@@ -2594,6 +2637,9 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::Ceil { decimal } => {
+            if matches!(values[0], Value::Int64(_) | Value::UInt64(_)) {
+                return Ok(values[0].clone());
+            }
             if decimal && let Value::Utf8(text) = &values[0] {
                 return decimal_integer_bound(text, true);
             }
@@ -2605,6 +2651,9 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::Floor { decimal } => {
+            if matches!(values[0], Value::Int64(_) | Value::UInt64(_)) {
+                return Ok(values[0].clone());
+            }
             if decimal && let Value::Utf8(text) = &values[0] {
                 return decimal_integer_bound(text, false);
             }
@@ -6323,6 +6372,36 @@ mod tests {
     /// Each function is exercised only at an arity its binder accepts —
     /// calling one with too few arguments proves nothing, because the
     /// binder rejects that before evaluation ever runs.
+    #[test]
+    fn integer_rounding_preserves_values_beyond_floating_point_precision() {
+        for function in [
+            ScalarFunction::Round { decimal: false },
+            ScalarFunction::Ceil { decimal: false },
+            ScalarFunction::Floor { decimal: false },
+        ] {
+            for value in [Value::Int64(i64::MAX), Value::UInt64(u64::MAX)] {
+                assert_eq!(
+                    super::evaluate_eager_scalar(
+                        function,
+                        std::slice::from_ref(&value),
+                        value.data_type()
+                    )
+                    .unwrap(),
+                    value
+                );
+            }
+        }
+        assert_eq!(
+            super::evaluate_eager_scalar(
+                ScalarFunction::Round { decimal: false },
+                &[Value::Int64(-125), Value::Int64(-1)],
+                Some(DataType::Int64)
+            )
+            .unwrap(),
+            Value::Int64(-130)
+        );
+    }
+
     #[test]
     fn hostile_arguments_never_abort_the_process() {
         use pintail_types::{DataType, Value};

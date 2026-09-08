@@ -113,6 +113,8 @@ pub(crate) struct RestoreResponse {
     state: &'static str,
     restored_bytes: u64,
     restored_objects: u64,
+    restored_backup_created_at: String,
+    data_age_seconds: Option<u64>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -435,6 +437,9 @@ pub(crate) async fn restore(
     let manifest = load_manifest(store.as_ref(), &config.prefix, &database_id, &record.id)
         .await
         .map_err(unavailable)?;
+    let backup_created_at = chrono::DateTime::parse_from_rfc3339(&manifest.created_at)
+        .map_err(unavailable)?
+        .to_rfc3339();
     let control: ControlPlane =
         serde_json::from_value(manifest.control_plane.clone()).map_err(ApiError::internal)?;
     let restored_id = crate::state::random_identifier("db_", 12);
@@ -442,7 +447,8 @@ pub(crate) async fn restore(
     let restored = restore_backup(store.as_ref(), manifest, &target)
         .await
         .map_err(unavailable)?;
-    register_restore(&metadata, &restored_id, name, &control).map_err(ApiError::internal)?;
+    register_restore(&metadata, &restored_id, name, &control, &backup_created_at)
+        .map_err(ApiError::internal)?;
     // Without this the restored row keeps a NULL workspace_id, and every
     // dashboard listing filters on `workspace_id = ?`. Restore would report
     // success, write the segments and register the tables, and produce a
@@ -472,6 +478,8 @@ pub(crate) async fn restore(
             state: "restored",
             restored_bytes: restored.restored_bytes,
             restored_objects: restored.restored_objects,
+            data_age_seconds: restored_data_age(Some(&backup_created_at), "restored", Utc::now()),
+            restored_backup_created_at: backup_created_at,
         }),
     ))
 }
@@ -840,6 +848,7 @@ fn register_restore(
     database_id: &str,
     name: &str,
     control: &ControlPlane,
+    backup_created_at: &str,
 ) -> anyhow::Result<()> {
     let tables = control
         .tables
@@ -864,6 +873,7 @@ fn register_restore(
             binlog_pos: checkpoint.binlog_pos,
         });
     metadata.register_restored_database(&RestoredDatabase {
+        backup_created_at,
         id: database_id,
         name,
         probe_json: &control.database.probe_json,
@@ -1034,4 +1044,42 @@ fn bad_request(error: impl std::fmt::Display) -> ApiError {
 
 fn unavailable(error: impl std::fmt::Display) -> ApiError {
     ApiError::unavailable(error.to_string())
+}
+
+/// Age of the installed backup, available only while the copy is restored.
+pub(crate) fn restored_data_age(
+    created_at: Option<&str>,
+    state: &str,
+    now: chrono::DateTime<Utc>,
+) -> Option<u64> {
+    if state != "restored" {
+        return None;
+    }
+    let created = chrono::DateTime::parse_from_rfc3339(created_at?).ok()?;
+    u64::try_from(now.signed_duration_since(created).num_seconds().max(0)).ok()
+}
+
+#[cfg(test)]
+mod restored_age_tests {
+    use super::*;
+    #[test]
+    fn age_uses_backup_time_and_clamps_clock_skew() {
+        let now = chrono::DateTime::parse_from_rfc3339("2024-02-03T02:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            restored_data_age(Some("2024-02-03T00:00:00Z"), "restored", now),
+            Some(7200)
+        );
+        assert_eq!(
+            restored_data_age(Some("2024-02-03T03:00:00Z"), "restored", now),
+            Some(0)
+        );
+        assert_eq!(restored_data_age(None, "restored", now), None);
+        assert_eq!(restored_data_age(Some("invalid"), "restored", now), None);
+        assert_eq!(
+            restored_data_age(Some("2024-02-03T00:00:00Z"), "streaming", now),
+            None
+        );
+    }
 }

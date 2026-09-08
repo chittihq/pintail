@@ -91,7 +91,7 @@ async function introspect(endpoint: MysqlEndpoint): Promise<Captured<string>> {
     new Response(child.stderr).text(),
     child.exited,
   ])
-  if (exitCode !== 0) {
+  if (exitCode !== 0 || !stdout.trim()) {
     const safeError = (stderr.trim() || stdout.trim()).replaceAll(endpoint.password, '<redacted>')
     throw new Error(`prisma db pull failed (${exitCode}): ${safeError}`)
   }

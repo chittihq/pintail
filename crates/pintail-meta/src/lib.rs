@@ -21,7 +21,7 @@ pub use control::{
     WorkspaceMemberRecord, WorkspaceRecord,
 };
 
-const CURRENT_SCHEMA_VERSION: u32 = 22;
+const CURRENT_SCHEMA_VERSION: u32 = 23;
 
 /// An initialized Pintail control-plane database.
 pub struct MetaStore {
@@ -2141,7 +2141,19 @@ fn migrate(connection: &mut Connection) -> Result<()> {
     if found < 22 {
         migration_v22(connection.transaction()?)?;
     }
+    if found < 23 {
+        migration_v23(connection.transaction()?)?;
+    }
     Ok(())
+}
+
+fn migration_v23(transaction: Transaction<'_>) -> Result<()> {
+    transaction
+        .execute_batch(include_str!("../migrations/023_restored_backup_age.sql"))
+        .context("failed to apply metadata migration 23")?;
+    transaction
+        .commit()
+        .context("failed to commit metadata migration 23")
 }
 
 fn migration_v22(transaction: Transaction<'_>) -> Result<()> {

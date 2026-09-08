@@ -57,6 +57,8 @@ pub(crate) const AUTOCOMMIT_REQUIRED: &str = "autocommit cannot be disabled on a
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)] // independent per-column wire facts
 pub struct QueryField {
+    /// Presentation metadata retained independently of execution carriers.
+    pub wire_column: Option<pintail_protocol::Column>,
     pub name: String,
     pub data_type: Option<DataType>,
     pub nullable: bool,
@@ -209,6 +211,7 @@ impl std::fmt::Debug for ReplicaEngine {
 }
 
 struct LoadedReplica {
+    server_version: String,
     /// Identifies this load, and only this one. Taken fresh every time a
     /// replica is built, so anything that reloads it - a CDC commit, a
     /// local write, a schema change - gives the same statement a different
@@ -380,51 +383,62 @@ impl ReplicaEngine {
         (self.data_dir.clone(), database_id.to_owned())
     }
 
-    // Only reuse a revalidated, small pinned replica for reserved work. A
-    // concurrent CDC write after this stamp does not change the pinned view.
-    // Cold/stale replicas are loaded only after obtaining general capacity.
+    // Classification reads only cached metadata. Freshness is checked under
+    // the permit; a stale candidate releases it before requesting general
+    // capacity to load storage.
     fn short_query_replica(
         &self,
         database_id: &str,
         statement: &Statement,
     ) -> Option<Arc<LoadedReplica>> {
-        if !pintail_sql::has_bounded_admission_shape(statement) {
+        if !pintail_sql::has_bounded_planning_shape(statement) {
             return None;
         }
         let key = self.cache_key(database_id);
         let replica = self.cache.peek(&key)?;
-        if replica.targets.len() > 16 {
-            return None;
-        }
-        let mut rows = 0_u64;
-        let mut columns = 0_usize;
-        for table in &replica.targets {
-            rows = rows.saturating_add(table.snapshot.physical_row_upper_bound());
-            columns = columns.saturating_add(table.snapshot.schema().columns().len());
-            if rows > 1024 || columns > 128 {
-                return None;
-            }
-        }
         let stamp = self.replica_stamp(database_id);
-        if stamp.files() > 128 {
+        let tiny = pintail_sql::has_bounded_admission_shape(statement)
+            && replica.targets.len() <= 16
+            && replica.targets.iter().fold(0_u64, |rows, table| {
+                rows.saturating_add(table.snapshot.physical_row_upper_bound())
+            }) <= 1024
+            && replica
+                .targets
+                .iter()
+                .map(|table| table.snapshot.schema().columns().len())
+                .sum::<usize>()
+                <= 128
+            && {
+                // Taken from disk, not from what the cache happens to hold:
+                // the same stamp screens the size below and proves the
+                // replica current at the end, so a short query never reads
+                // a snapshot a commit has already superseded.
+                stamp.files() <= 128
+                    && stamp
+                        .tables
+                        .values()
+                        .flatten()
+                        .fold(0_u64, |bytes, file| bytes.saturating_add(file.1))
+                        <= 4 * 1024 * 1024
+            };
+        if tiny {
+            return revalidated(&self.cache, &key, &stamp, &replica);
+        }
+        let catalog = build_catalog(&replica).ok()?;
+        let bound = Binder::new(&catalog, Some(&replica.database.name))
+            .bind(statement)
+            .ok()?;
+        let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
+            .unwrap_or_default();
+        let physical =
+            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)), collation)
+                .ok()?;
+        let provider = build_provider(&replica).ok()?;
+        let cost = provider.admission_cost(&physical)?;
+        if QueryClass::from_cost(Some(cost)) != QueryClass::Short {
             return None;
         }
-        // The tables' files only: the metadata store grows with audit and
-        // auth history for the whole deployment and says nothing about how
-        // much this replica's queries will read.
-        let bytes = stamp
-            .tables
-            .values()
-            .flatten()
-            .fold(0_u64, |total, file| total.saturating_add(file.1));
-        if bytes > 4 * 1024 * 1024 {
-            return None;
-        }
-        match self.cache.lookup(&key, &stamp) {
-            // The size checks above must describe exactly the copy we return.
-            Lookup::Hit(current) if Arc::ptr_eq(&replica, &current) => Some(current),
-            _ => None,
-        }
+        revalidated(&self.cache, &key, &stamp, &replica)
     }
 
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
@@ -531,6 +545,7 @@ impl ReplicaEngine {
     ///
     /// Returns the same errors as [`Self::execute`], plus
     /// [`QueryError::Interrupted`] when the deadline elapses.
+    #[allow(clippy::too_many_lines)]
     pub fn execute_with_deadline(
         &self,
         database_id: &str,
@@ -550,10 +565,18 @@ impl ReplicaEngine {
             } else {
                 QueryClass::General
             };
-            let permit = self
+            let mut permit = self
                 .admission
                 .try_admit_class(class)
                 .ok_or(QueryError::Overloaded)?;
+            let replica = replica.filter(|candidate| {
+                matches!(self.cache.lookup(&self.cache_key(database_id), &self.replica_stamp(database_id)),
+                    Lookup::Hit(current) if Arc::ptr_eq(candidate, &current))
+            });
+            if class == QueryClass::Short && replica.is_none() {
+                drop(permit);
+                permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
+            }
             (statement, replica, permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
@@ -595,6 +618,27 @@ impl ReplicaEngine {
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
+        if matches!(statement, Statement::Query(_))
+            && sql.to_ascii_lowercase().contains("information_schema")
+        {
+            let mut statement = statement.clone();
+            pintail_sql::resolve_database_function(&mut statement, &replica.database.name);
+            let (metadata_catalog, metadata_provider) =
+                crate::metadata_provider::MetadataProvider::new(&catalog, &facts)?;
+            return self.execute_select(
+                &statement,
+                sql,
+                &metadata_catalog,
+                &metadata_provider,
+                &SourceFacts::default(),
+                "information_schema",
+                QueryStats::default(),
+                started,
+                max_rows,
+                deadline,
+                false,
+            );
+        }
         match statement {
             Statement::Query(_) => {
                 let run = || {
@@ -605,10 +649,11 @@ impl ReplicaEngine {
                         &provider,
                         &facts,
                         &replica.database.name,
-                        table_count,
+                        provider_stats(&provider, table_count),
                         started,
                         max_rows,
                         deadline,
+                        true,
                     )
                 };
                 // Several clients asking the same question of the same
@@ -714,25 +759,27 @@ impl ReplicaEngine {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     fn execute_select(
         &self,
         statement: &Statement,
         sql: &str,
         catalog: &CatalogSnapshot,
-        provider: &SnapshotScanProvider<'_>,
+        provider: &impl pintail_exec::ScanProvider,
         facts: &SourceFacts,
         database_name: &str,
-        table_count: usize,
+        mut stats: QueryStats,
         started: Instant,
         max_rows: usize,
         deadline: Option<Instant>,
+        optimize: bool,
     ) -> Result<QueryOutput, QueryError> {
         let bound = Binder::new(catalog, Some(database_name))
             .with_source(sql)
             .bind(statement)
             .map_err(|error| query_bind_error(&error))?;
         let result_nullability = source_result_nullability(&bound, catalog, facts);
+        let wire_columns = crate::presentation::columns(&bound, catalog, facts);
         let result_collations = bound
             .projection
             .iter()
@@ -776,7 +823,12 @@ impl ReplicaEngine {
         // query, and every operator below compares text with it.
         let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
             .unwrap_or_default();
-        let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
+        let logical = LogicalPlanner::plan(bound);
+        let logical = if optimize {
+            Optimizer::optimize(logical)
+        } else {
+            logical
+        };
         let physical = PhysicalPlanner::plan(logical, collation)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
         let mut execution = Execution::start_with_deadline(
@@ -792,6 +844,7 @@ impl ReplicaEngine {
             .iter()
             .enumerate()
             .map(|(index, field)| QueryField {
+                wire_column: wire_columns.get(index).cloned(),
                 name: field.name.clone(),
                 data_type: field.data_type,
                 nullable: result_nullability
@@ -818,7 +871,6 @@ impl ReplicaEngine {
                 profile.render().trim_end()
             );
         }
-        let mut stats = provider_stats(provider, table_count);
         stats.duration_ms = elapsed_ms(started);
         stats.rows = rows.len();
         stats.batches = batches;
@@ -858,6 +910,7 @@ impl ReplicaEngine {
         stats.rows = 1;
         Ok(QueryOutput {
             fields: vec![QueryField {
+                wire_column: None,
                 name: "plan".to_owned(),
                 data_type: Some(DataType::Utf8),
                 nullable: false,
@@ -968,6 +1021,7 @@ impl ReplicaEngine {
             .collect::<Result<Vec<_>, _>>()?;
         Ok((
             LoadedReplica {
+                server_version: report.server.version,
                 load_id: NEXT_REPLICA_LOAD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 database,
                 tables,
@@ -1091,6 +1145,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
             .fields
             .into_iter()
             .map(|field| QueryField {
+                wire_column: None,
                 name: field.name,
                 data_type: Some(field.data_type),
                 nullable: field.nullable,
@@ -1116,7 +1171,10 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
 /// Probe-derived facts the catalog schema does not carry, for
 /// `information_schema.columns` fidelity.
 fn column_facts(replica: &LoadedReplica) -> SourceFacts {
-    let mut facts = SourceFacts::default();
+    let mut facts = SourceFacts {
+        server_version: Some(replica.server_version.clone()),
+        ..SourceFacts::default()
+    };
     for target in &replica.targets {
         let source = &target.source;
         for column in &source.columns {
@@ -1276,6 +1334,27 @@ fn source_result_nullability(
                 .and_then(|fact| fact.nullable)
         })
         .collect()
+}
+
+/// The cached replica, but only when `stamp` - taken from disk - says
+/// nothing has moved since it was loaded, and only when the copy returned
+/// is the one the caller's checks were made against.
+///
+/// A short query skips `load_replica_cached`, so this is the ONLY place
+/// its snapshot is proved current. Judging it against the stamp the cache
+/// already holds would prove nothing: that stamp was recorded when the
+/// replica was loaded, and the commit this query must see may have landed
+/// since.
+fn revalidated(
+    cache: &ReplicaCache<LoadedReplica>,
+    key: &CacheKey,
+    stamp: &ReplicaStamp,
+    replica: &Arc<LoadedReplica>,
+) -> Option<Arc<LoadedReplica>> {
+    match cache.lookup(key, stamp) {
+        Lookup::Hit(current) if Arc::ptr_eq(replica, &current) => Some(current),
+        _ => None,
+    }
 }
 
 fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError> {
@@ -1680,9 +1759,6 @@ mod admission_tests {
         let _permits = (0..3)
             .map(|_| engine.admission.try_admit().unwrap())
             .collect::<Vec<_>>();
-        assert!(matches!(
-            engine.execute("db", "SELECT id FROM a LIMIT 1", 10),
-            Err(QueryError::Overloaded)
-        ));
+        assert!(engine.execute("db", "SELECT id FROM a LIMIT 1", 10).is_ok());
     }
 }
