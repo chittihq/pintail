@@ -144,6 +144,25 @@ export function stripSecondaryIndexes(schema: string): { stripped: string; alter
   return { stripped, alters }
 }
 
+/// The flags that keep a copy free of metadata the receiving daemon cannot
+/// restore are not the same on every tar. `--no-mac-metadata` exists only
+/// where Apple extended attributes do, and a tar that does not know it
+/// refuses the whole invocation rather than ignoring the flag — which is
+/// how a copy that worked from a Mac failed the moment the same harness ran
+/// on the build host. Each candidate is offered to the local tar once and
+/// kept only if it is understood.
+async function supportedTarFlags(candidates: string[]): Promise<string[]> {
+  const kept: string[] = []
+  for (const flag of candidates) {
+    const probe = Bun.spawn(['tar', flag, '--version'], {
+      stdout: 'ignore',
+      stderr: 'ignore',
+    })
+    if ((await probe.exited) === 0) kept.push(flag)
+  }
+  return kept
+}
+
 /// Moves the decompressed dataset into the container's secure_file_priv
 /// directory. Against a local daemon this is a plain `docker cp`. Against an
 /// ssh:// context, `docker cp` streams hundreds of megabytes of tar through
@@ -170,7 +189,8 @@ async function copyDatasetIntoContainer(txtDir: string, o: LoadOptions): Promise
   o.log('copying dataset over ssh (gzipped tar into remote docker cp)')
   // --no-xattrs/--no-mac-metadata: macOS tar embeds Apple extended
   // attributes that a Linux daemon cannot restore (lsetxattr fails).
-  const pipeline = `set -o pipefail; tar --no-xattrs --no-mac-metadata -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
+  const strip = (await supportedTarFlags(['--no-xattrs', '--no-mac-metadata'])).join(' ')
+  const pipeline = `set -o pipefail; tar ${strip} -C ${JSON.stringify(txtDir)} -cf - . | gzip -1 | ssh ${JSON.stringify(target)} 'gzip -dc | docker cp - ${JSON.stringify(`${o.mysqlName}:/var/lib/mysql-files/ds`)}'`
   // Job control puts the pipeline in its own process group so the whole
   // chain can be signalled. Killing the shell alone leaves tar and ssh
   // orphaned to PPID 1, still holding the transfer open — measured, after a
