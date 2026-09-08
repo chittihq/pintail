@@ -267,24 +267,30 @@ stays readable as a list of things to fix.
   export as bytes and cannot be used for spatial predicates.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB.
-- `AVG` over a `DECIMAL` column can return a value one unit in the last
-  place away from `MySQL`'s, while `SUM(...) / COUNT(*)` over the same rows
-  in the same statement stays exact. Seen at thirty-six rows reading
-  327.1610 against 327.1609, and repeatedly at thirty-one rows reading
-  322.8552 against 322.8551. Tracked as G14, and open.
+- `AVG` over a `DECIMAL` column rounds its quotient twice, so it can return
+  a value one unit in the last place above `MySQL`'s where a single rounding
+  would not. `ROUND(AVG(x), 4)` is where it shows; `SUM(x) / COUNT(*)` over
+  the same rows is exact, because that division is a computed chain and the
+  rounding family reads its internal digits. Tracked as G14.
 
-  Three fixes have been argued to close it and have not. Two of them - a
-  memoized aggregate served to a table that replaced another at the same
-  path, and a fold span that dropped its rows when its ranged read declined
-  - are real defects with reproductions of their own, and the symptom
-  survives both. The third, an exact average riding the float lane, is
-  guarded and was proven to fix the branch that reproduced it.
+  `MySQL` renders an average at the declared scale - the column's scale plus
+  four - but carries the fraction in whole nine-digit words and lets `ROUND`
+  and `CAST` read those digits. A column of `DECIMAL(_,2)` is declared at six
+  and held at nine; declared at ten it is held at eighteen. Pintail
+  materializes the finished average at the declared scale, so the digits
+  past it are gone before `ROUND` sees the value, and an intermediate that
+  is an exact half at the target place gets carried upward.
 
-  It has no in-process reproduction. Every shape a hand-built catalog can
-  express is exact, including the failing query's own spelling.
+  Measured against MySQL 8.4: 161 rows summing to 54001.34 average to
+  335.41204968944..., which MySQL renders 335.412050, holds as
+  335.412049689, and rounds to four places as 335.4120. Pintail answers
+  335.4121. `crates/pintail-exec/tests/decimal_average_exactness.rs`
+  reproduces it and is `#[ignore]`d until the fix lands.
 
-  This entry stays until a run which would have failed passes for a reason
-  that can be pointed at.
+  Fixing it means letting an average expose its exact quotient - the units
+  and the count are both still held - to the same chain the rounding family
+  already uses for computed operands, rather than widening the stored value,
+  which renders the extra digits to clients.
 
 ## CDC engine
 

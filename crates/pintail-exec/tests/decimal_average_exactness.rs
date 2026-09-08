@@ -442,3 +442,37 @@ fn a_top_k_by_average_agrees_with_the_sum_over_the_count() {
         }
     }
 }
+
+/// `ROUND(AVG(_), 4)` must round the quotient once, not twice.
+///
+/// `MySQL` displays `AVG` over a `DECIMAL(_,2)` at six fraction digits, but
+/// keeps the division's full precision for anything that reads it. One
+/// hundred and sixty-one rows summing to 54001.34 average to
+/// 335.41204968944..., which shows as 335.412050 and rounds to four places
+/// as 335.4120 - because the digits past the sixth place are below a half.
+///
+/// Rounding to six places first and letting `ROUND` round that again turns
+/// the same value into 335.4121: the intermediate 335.412050 is an exact
+/// half at the fourth place, and half-up carries it upward. The answer is
+/// then a unit in the last place above MySQL's, which is G14's signature.
+///
+/// The numbers come from a live MySQL 8.4: `AVG` reads 335.412050 and
+/// `ROUND(AVG(total), 4)` reads 335.4120 over exactly this fixture.
+#[test]
+#[ignore = "G14 is open: this reproduces it and fails until AVG stops rounding twice"]
+fn rounding_an_average_does_not_round_it_twice() {
+    let mut rows = vec![row(1, 1, "335.74")];
+    rows.extend((2..=161).map(|id| row(id, 1, "335.41")));
+    let out = run_on(
+        "SELECT grp, ROUND(AVG(total), 4) AS avg_total, \
+         ROUND(SUM(total) / COUNT(*), 4) AS mean_check FROM orders GROUP BY grp",
+        &rows,
+    );
+    assert_eq!(out.len(), 1, "one group");
+    assert_eq!(
+        out[0][1], "335.4120",
+        "MySQL rounds the exact quotient once; got {:?}",
+        out[0]
+    );
+    assert_eq!(out[0][1], out[0][2], "AVG and SUM/COUNT must agree");
+}
