@@ -1,0 +1,418 @@
+[
+  {
+    "text": false,
+    "width": 1,
+    "changed": 0,
+    "opt_in": true,
+    "median_ms": 1.474622,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 0,
+    "opt_in": false,
+    "median_ms": 1.468322,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 1,
+    "opt_in": true,
+    "median_ms": 1.625977,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 1,
+    "opt_in": false,
+    "median_ms": 13.205147,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 1000,
+    "opt_in": true,
+    "median_ms": 1.882153,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 1000,
+    "opt_in": false,
+    "median_ms": 13.364723999999999,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 20000,
+    "opt_in": true,
+    "median_ms": 2.2073739999999997,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 1,
+    "changed": 20000,
+    "opt_in": false,
+    "median_ms": 15.823899999999998,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 0,
+    "opt_in": true,
+    "median_ms": 1.898981,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 0,
+    "opt_in": false,
+    "median_ms": 1.895635,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 1,
+    "opt_in": true,
+    "median_ms": 2.207518,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 1,
+    "opt_in": false,
+    "median_ms": 25.824225,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 1000,
+    "opt_in": true,
+    "median_ms": 3.1823889999999997,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 1000,
+    "opt_in": false,
+    "median_ms": 25.989137,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 20000,
+    "opt_in": true,
+    "median_ms": 3.601652,
+    "overlay_slices": [
+      1
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": false,
+    "width": 4,
+    "changed": 20000,
+    "opt_in": false,
+    "median_ms": 26.939371,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 0,
+    "opt_in": true,
+    "median_ms": 1.478048,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 0,
+    "opt_in": false,
+    "median_ms": 1.4707459999999999,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 1,
+    "opt_in": true,
+    "median_ms": 16.617761,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 1,
+    "opt_in": false,
+    "median_ms": 16.4757,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 1000,
+    "opt_in": true,
+    "median_ms": 16.708099,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 1000,
+    "opt_in": false,
+    "median_ms": 16.730576,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 20000,
+    "opt_in": true,
+    "median_ms": 22.336608000000002,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 1,
+    "changed": 20000,
+    "opt_in": false,
+    "median_ms": 22.18119,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 0,
+    "opt_in": true,
+    "median_ms": 3.076949,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 0,
+    "opt_in": false,
+    "median_ms": 3.096939,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      0
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 1,
+    "opt_in": true,
+    "median_ms": 35.439964999999994,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 1,
+    "opt_in": false,
+    "median_ms": 35.374739000000005,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 1000,
+    "opt_in": true,
+    "median_ms": 35.564373,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 1000,
+    "opt_in": false,
+    "median_ms": 35.737939000000004,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 20000,
+    "opt_in": true,
+    "median_ms": 38.230767,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  },
+  {
+    "text": true,
+    "width": 4,
+    "changed": 20000,
+    "opt_in": false,
+    "median_ms": 38.519566,
+    "overlay_slices": [
+      0
+    ],
+    "merge_parts": [
+      1
+    ]
+  }
+]

@@ -19,3 +19,15 @@ end-to-end measurements. Document untested boundaries and failures explicitly;
 never claim a production breakthrough from a microbenchmark alone.
 
 [Ten core workloads × ten approaches: results](core-engine-100/RESULTS.md)
+
+## Execution-path evidence — owner direction, 2026-09-08
+
+Before attributing a result to an optimization, prove the harness enables it at
+its required lifecycle point and record actual path counters. Treat zero phase
+time or zero optimized slices as a possible path mismatch, not free work.
+Include an explicit fallback control and fixtures that actually carry each
+claimed key type. An integer fixture with opt-in omitted is not evidence of a
+text-key workload's performance. Preserve update, snapshot and maintenance
+correctness checks when exploring a replacement.
+
+[Controlled join proof](f2-proof/RESULTS.md) · [Typed-key overlay investigation](overlay-proof/README.md)
