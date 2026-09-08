@@ -386,6 +386,7 @@ impl ReplicaEngine {
         }
         let key = self.cache_key(database_id);
         let replica = self.cache.peek(&key)?;
+        let stamp = self.replica_stamp(database_id);
         let tiny = pintail_sql::has_bounded_admission_shape(statement)
             && replica.targets.len() <= 16
             && replica.targets.iter().fold(0_u64, |rows, table| {
@@ -397,7 +398,11 @@ impl ReplicaEngine {
                 .map(|table| table.snapshot.schema().columns().len())
                 .sum::<usize>()
                 <= 128
-            && self.cache.cached_stamp(&key).is_some_and(|stamp| {
+            && {
+                // Taken from disk, not from what the cache happens to hold:
+                // the same stamp screens the size below and proves the
+                // replica current at the end, so a short query never reads
+                // a snapshot a commit has already superseded.
                 stamp.files() <= 128
                     && stamp
                         .tables
@@ -405,9 +410,9 @@ impl ReplicaEngine {
                         .flatten()
                         .fold(0_u64, |bytes, file| bytes.saturating_add(file.1))
                         <= 4 * 1024 * 1024
-            });
+            };
         if tiny {
-            return Some(replica);
+            return revalidated(&self.cache, &key, &stamp, &replica);
         }
         let catalog = build_catalog(&replica).ok()?;
         let bound = Binder::new(&catalog, Some(&replica.database.name))
@@ -420,7 +425,10 @@ impl ReplicaEngine {
                 .ok()?;
         let provider = build_provider(&replica).ok()?;
         let cost = provider.admission_cost(&physical)?;
-        (QueryClass::from_cost(Some(cost)) == QueryClass::Short).then_some(replica)
+        if QueryClass::from_cost(Some(cost)) != QueryClass::Short {
+            return None;
+        }
+        revalidated(&self.cache, &key, &stamp, &replica)
     }
 
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
@@ -1291,6 +1299,27 @@ fn source_result_nullability(
                 .and_then(|fact| fact.nullable)
         })
         .collect()
+}
+
+/// The cached replica, but only when `stamp` - taken from disk - says
+/// nothing has moved since it was loaded, and only when the copy returned
+/// is the one the caller's checks were made against.
+///
+/// A short query skips `load_replica_cached`, so this is the ONLY place
+/// its snapshot is proved current. Judging it against the stamp the cache
+/// already holds would prove nothing: that stamp was recorded when the
+/// replica was loaded, and the commit this query must see may have landed
+/// since.
+fn revalidated(
+    cache: &ReplicaCache<LoadedReplica>,
+    key: &CacheKey,
+    stamp: &ReplicaStamp,
+    replica: &Arc<LoadedReplica>,
+) -> Option<Arc<LoadedReplica>> {
+    match cache.lookup(key, stamp) {
+        Lookup::Hit(current) if Arc::ptr_eq(replica, &current) => Some(current),
+        _ => None,
+    }
 }
 
 fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError> {

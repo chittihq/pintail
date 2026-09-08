@@ -154,14 +154,6 @@ impl<R> ReplicaCache<R> {
             .map(|entry| Arc::clone(&entry.replica))
     }
 
-    pub(crate) fn cached_stamp(&self, key: &CacheKey) -> Option<ReplicaStamp> {
-        self.entries
-            .lock()
-            .ok()?
-            .get(key)
-            .map(|entry| entry.stamp.clone())
-    }
-
     /// Judges the cached replica for `key` against `current`, the stamp
     /// just taken from disk.
     pub(crate) fn lookup(&self, key: &CacheKey, current: &ReplicaStamp) -> Lookup<R> {
