@@ -365,27 +365,24 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
-- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically,
-  run to run.** `SELECT customer_id, AVG(total) FROM orders GROUP BY
-  customer_id HAVING COUNT(*) >= 2` (`tests/e2e/queries.ts`, "decimal
-  column average beyond simple sum") has returned a value one unit off
-  in the last decimal place against MySQL - `330.8824` vs `330.8823` on
-  one `--profile rc` run, `324.2510` vs `324.2509` at a different
-  customer on another, same binary, same data, same code, only the run
-  differs. `SUM(total) / COUNT(*)` on the same rows is correct every
-  time, which rules out a dropped or duplicated row and points at `AVG`
-  specifically taking a run-to-run-varying computation path - the
-  two-pass lane's own average is exact integer arithmetic top to bottom
-  (`decimal_units_from_int` then `checked_add`, both order-independent),
-  so the general aggregate's average (which is not known to be exact -
-  it may accumulate through `f64`) is the leading suspect. First noticed
-  chasing section H's scan-pool item (a wider pool seemed to make it more
-  frequent, most plausibly because Rust's per-process hash-seed
-  randomization changes `HashMap` iteration and rayon merge order between
-  runs regardless of thread count) but reproduced with the pool back at
-  its original default too, so the scan-pool width is not the cause
-  (e90 in `experiments/RESULTS.md`). Not traced past ruling out the exact
-  lane; not confirmed whether it predates this brief's other commits.
+- [x] **G14. `AVG` on a decimal column answered wrong, nondeterministically.**
+  Closed 2026-09-08. The two-pass lane is chosen from a batch column's
+  storage type, and the arm for a `Float64` column returned the float
+  accumulator without asking whether the planner had typed the aggregate as
+  an exact decimal - the arm beside it, for a decimal column, does ask. An
+  average that fell through accumulated in `f64`, whose addition is not
+  associative, so the answer moved with how the rows were split across
+  workers.
+
+  Guarded first and proved afterwards, by accident. Eight in-process arms
+  never reproduced the defect, so the guard shipped as "closes a hole the
+  plan could fall through, not known to be the cause". Then
+  `fix/operational-blockers`, which forked before the guard, failed the
+  corpus check in ALL TWELVE e2e phases at the same row - the deterministic
+  reproduction that had been missing. Merging dev into that branch, rather
+  than rebasing, left its own commits byte for byte identical and made the
+  guard the only variable: the same corpus then passed, on both MySQL
+  majors. Nine clean runs on dev say the same thing less directly.
 
 ## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
 

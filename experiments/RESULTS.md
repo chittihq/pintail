@@ -3827,3 +3827,40 @@ where reading the same span costs 14.6 ms. Closing that gap is worth
 roughly four to five times rather than 1.75, and the obvious suspect - the
 packed-column to `ColumnVector` conversion - already has typed fast paths,
 so it needs a measurement rather than another guess.
+
+## e95 — G14 confirmed, by gating a branch that predates its fix
+
+The `AVG`-on-decimal defect was guarded in `ab69a20` without ever being
+reproduced: eight in-process arms - every shape, magnitude, group count and
+live-row mix a hand-built catalog can produce, plus four non-terminating
+quotients whose answers came from MySQL 8.4 - all took the exact lane and
+all agreed with MySQL. The guard shipped as "closes a hole the plan could
+fall through", explicitly not as a fix.
+
+The reproduction arrived by accident. `fix/operational-blockers` forked
+from dev BEFORE the guard, and its rc gate failed
+`tests/e2e`'s "decimal column average beyond simple sum" in **all twelve
+phases, at the same row**, where dev had passed nine consecutive runs.
+
+| tree | e2e |
+|---|---|
+| the branch, without the guard | 12 of 12 phases FAIL, same row |
+| the branch with dev merged in | PASS, both MySQL majors |
+
+Dev was MERGED into the branch rather than rebased onto it, so the
+branch's own fourteen commits are byte for byte identical between the two
+runs and the guard is the only thing that differs. That is a controlled
+before and after rather than another green gate.
+
+Two things worth keeping from how this went.
+
+**A defect that will not reproduce in process may still be deterministic
+somewhere else.** In process it looked random; through the real
+replication path it failed every phase at the same row. The in-process
+harness was not reaching whatever selects the inexact lane, which is the
+caveat `AGENTS.md` already gives for that loop, and which eight passing
+arms did nothing to contradict.
+
+**Gating unmerged branches is worth its twenty minutes for reasons other
+than the branch.** This run was meant to verify someone else's work. What
+it produced was the control arm for a defect nobody could reproduce.
