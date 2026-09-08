@@ -1063,6 +1063,11 @@ pub trait BatchStream: Send {
         None
     }
 
+    /// Per-segment spans a grouped aggregate can fold and keep.
+    fn grouped_fold_input(&self) -> Option<GroupedFoldInput> {
+        None
+    }
+
     /// Per-segment SMAs plus residual memtable rows for a bare full-table
     /// scan whose fold is provably exact under merge-on-read (WS3-B).
     /// Default: none.
@@ -1083,6 +1088,38 @@ pub struct SmaFoldInput {
     pub(crate) segments: Vec<pintail_store::SegmentSmas>,
     /// Projected memtable rows above the whole segment key space.
     pub(crate) rows: Vec<Vec<Value>>,
+}
+
+/// What a grouped aggregate needs to fold one segment at a time.
+///
+/// A segment file is never rewritten, so a grouped fold taken over its key
+/// span stays true while that file is in the manifest. A query can
+/// therefore keep the fold and, on its next run, redo only the spans the
+/// memtable has since touched - which under replication is the newest one
+/// rather than all of them. The settled result memo cannot do this: one
+/// ingest invalidates the whole answer and the next query pays for the
+/// whole table.
+#[derive(Clone)]
+pub struct GroupedFoldInput {
+    /// A reader-owned view; cloning one is a few `Arc` bumps, and it lets
+    /// the fold open its own ranged reads without borrowing the provider.
+    pub(crate) snapshot: pintail_store::TableSnapshot,
+    pub(crate) directory: std::path::PathBuf,
+    /// Key-disjoint segment spans in key order.
+    pub(crate) spans: Vec<pintail_store::GroupedFoldSpan>,
+    /// Projected column ids, index-aligned with aggregate column indexes.
+    pub(crate) column_ids: Vec<u32>,
+    /// The table's key columns, so a span read masks the memtable rows it
+    /// covers instead of merging row by row.
+    pub(crate) key_column_ids: Vec<u32>,
+    pub(crate) types: Vec<DataType>,
+    /// Parallel to `types`: declared ENUM labels and SET members, so the
+    /// fold reattaches the declaration index the way every other scan path
+    /// does. Without them a grouped fold would sort an ENUM by its text.
+    pub(crate) enum_labels: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    pub(crate) set_members: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    /// Projected memtable rows outside every segment span.
+    pub(crate) outside: Vec<Vec<Value>>,
 }
 
 /// Projected memtable rows riding above a generation-keyed aggregate memo

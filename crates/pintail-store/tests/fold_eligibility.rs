@@ -68,7 +68,11 @@ fn whether_a_flushed_update_leaves_the_segments_disjoint() {
     println!(
         "  {:>44} : {}",
         "one segment, empty memtable",
-        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" }
+        if store.snapshot().sma_fold_state().is_some() {
+            "yes"
+        } else {
+            "NO"
+        }
     );
     // A flush of scattered updates: the new segment spans the base's keys.
     store
@@ -77,13 +81,21 @@ fn whether_a_flushed_update_leaves_the_segments_disjoint() {
     println!(
         "  {:>44} : {}",
         "after flushing 1,000 scattered updates",
-        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" }
+        if store.snapshot().sma_fold_state().is_some() {
+            "yes"
+        } else {
+            "NO"
+        }
     );
     let compacted = store.compact().expect("compact");
     println!(
         "  {:>44} : {} ({} segments in)",
         "after compaction merges them",
-        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" },
+        if store.snapshot().sma_fold_state().is_some() {
+            "yes"
+        } else {
+            "NO"
+        },
         compacted.input_segments()
     );
 }

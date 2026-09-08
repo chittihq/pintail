@@ -3766,3 +3766,64 @@ than the table, and the residual cap already keeps it small. It restricts
 the aggregates to those whose payload has an additive inverse: COUNT and
 SUM can be corrected, MIN and MAX cannot, which is the same split e80
 arrived at. Not built.
+
+## e94 — A grouped aggregate folded one segment at a time
+
+`crates/pintail-exec/tests/grouped_fold.rs`, release, ten million rows in
+ten segments, grouped by a five-value column, `PINTAIL_DISABLE_GROUPED_FOLD`
+giving the control arm. Ignored: a measurement, not a gate.
+
+A segment file is never rewritten, so a grouped fold taken over its key
+span stays true while that file is in the manifest. The query keeps those
+folds and, on its next run, re-reads only the spans the memtable has since
+touched. The settled result memo cannot do this: one ingest invalidates
+the whole answer and the next query pays for the whole table.
+
+| | control | folded |
+|---|---:|---:|
+| settled table | 37.3 ms | 31.7 ms (declines) |
+| first run under ingest, populating | 84.9 ms | 122.3 ms |
+| **steady state under ingest** | **86.7 ms** | **49.6 ms** |
+
+Nine of ten spans reuse their fold on every run after the first; only the
+newest is re-read. **1.75x on the query a dashboard runs against a mirror**,
+after a one-off population that costs about half a scan extra.
+
+Unlike the fold e93 measured, this one serves tables that take UPDATES. A
+span the memtable touches is re-read rather than corrected, so no
+additive-inverse arithmetic is needed and a superseded row is simply seen
+at its new value.
+
+**Four guards, each earned by a measurement rather than assumed.** Decline
+when every span is dirty, because the fold is then the general path plus
+bookkeeping - scattered updates across a whole table look like that.
+Decline when no span is dirty, because a settled table is the memo's job
+and folding there read ten spans where the general path reads the table
+once in parallel, three times slower. Decline aggregates whose finished
+values cannot merge across disjoint rows. And read the key columns even
+when the query does not project them, or the overlay cannot mask and the
+span falls onto the row-by-row merge.
+
+**What the fixtures taught, which is most of what this entry is worth.**
+
+The overlay refuses to mask when a memtable row is OLDER than the
+segment's maximum version, because that is a possible stale replay and the
+comparing merge is the right answer for it. The first fixture used a row's
+key as its version, so an update to an old row looked stale and every span
+fell onto the merge. Real replication carries a newer version. Fixing the
+fixture alone took a ranged span read from 370 ms to 14.6 ms, and nothing
+about the engine changed.
+
+The cache key first held the table directory, the segment file name and
+the aggregate signature. That signature names its columns by their
+position in the PROJECTION, so `SELECT status, COUNT(*)` and `SELECT
+amount, COUNT(*)` sign identically over one segment and would have read
+each other's fold. It showed up as a test that failed in a suite run and
+passed alone. The projection is in the key now, with the span's bounds
+beside the file name.
+
+**Left on the table, measured and not taken:** the dirty span costs 48 ms
+where reading the same span costs 14.6 ms. Closing that gap is worth
+roughly four to five times rather than 1.75, and the obvious suspect - the
+packed-column to `ColumnVector` conversion - already has typed fast paths,
+so it needs a measurement rather than another guess.

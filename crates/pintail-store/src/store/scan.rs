@@ -1295,6 +1295,13 @@ impl ProjectedColumnChunk {
 
     /// Materializes projected columns into per-row values.
     #[must_use]
+    /// The decoded columns and the row count, without turning packed
+    /// values into one `Value` per cell. A consumer with its own typed
+    /// representation wants these, not `into_columns`.
+    pub fn take_columns(self) -> (Vec<DecodedColumn>, usize) {
+        (self.columns, self.row_count)
+    }
+
     pub fn into_columns(self) -> Vec<Vec<pintail_types::Value>> {
         self.columns
             .into_iter()
