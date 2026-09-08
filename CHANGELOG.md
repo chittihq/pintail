@@ -32,9 +32,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   end-to-end phases and passed once the fix was merged in, with nothing
   else changed.
 
-  This entry claimed the defect itself was fixed. It was not: the symptom
-  returned with the guard present, so there is a second path. G14 stays
-  open and `docs/limitations.md` records what is known.
+- The second path, and the one that produced the reported symptom: a
+  cached aggregate could be served to the wrong table. The settled
+  aggregate memo is keyed by a table's directory and manifest generation,
+  and a directory reclaimed by a dropped table hands its successor - which
+  restarts from an empty manifest and walks the same generations - a key
+  the previous table already answered. `AVG` read a unit in the last place
+  away from `MySQL` while `SUM(_) / COUNT(*)` matched, which is what one
+  stale row looks like when its two columns round differently, not an
+  arithmetic fault. Store openings now carry an identity the key includes.
 
 ## [0.1.2-rc11] - 2026-09-07
 

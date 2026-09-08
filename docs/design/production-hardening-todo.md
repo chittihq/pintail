@@ -365,59 +365,56 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
-- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically.**
-  Reopened 2026-09-08, having been closed earlier the same day. The fix
-  below is real and stays; what was wrong was treating it as the whole
-  cause. The symptom returned on dev with that fix present, so the defect
-  has a second path.
+- [x] **G14. `AVG` on a decimal column answered wrong, nondeterministically.**
+  Closed 2026-09-08, on the second attempt, with a reproduction this time.
 
-  What the reopening establishes. The gate failed the corpus check with
-  `AVG` one unit in the last place above `MySQL` while `SUM(_) / COUNT(*)`
-  over the same rows, in the same statement, matched exactly - so the
-  engine disagrees with its own arithmetic, and the delivered data is not
-  in question. Two runs, two shapes: thirty-six rows reading 327.1610
-  against 327.1609, and thirty-one rows reading 322.8552 against 322.8551.
+  The settled aggregate memo is keyed by the table's directory and manifest
+  generation, and neither identifies a table. A directory is reclaimed when
+  a table is dropped, and its successor starts from an empty manifest at
+  generation zero and walks the same generations, so it presents a key the
+  previous table already answered. The map is process-global and is only
+  cleared wholesale on overflow, so nothing removed the entry in between.
+  Every store opening now takes an identity from a process counter, carried
+  on its snapshots and into the memo key.
 
-  The settled aggregate memo is necessary to reproduce it. With the memo,
-  the grouped segment fold and shared queries all disabled, both e2e legs
-  pass; with only the memo enabled, the check fails again at the same row
-  with the same value. Whether the memo commits the error or replays one
-  made elsewhere is not yet decided - the value repeating exactly across
-  runs is what a cached result looks like, so disabling the memo may be
-  hiding the defect rather than removing it.
+  Why it looked like arithmetic, and was not. `AVG` read a unit in the last
+  place away from `MySQL` while `SUM(_) / COUNT(*)` over the same rows
+  matched exactly, which reads as the engine disagreeing with itself. Both
+  columns come from one memoized row; they round differently, so
+  `ROUND(SUM/COUNT, 4)` can agree across two incarnations of a table while
+  `ROUND(AVG, 4)` differs. Nothing was miscomputed - the answer belonged to
+  data that no longer existed. That asymmetry sent the search into the
+  aggregate lanes, where nine in-process arms found nothing, because there
+  was nothing there.
 
-  It does not reproduce in process. Nine arms in
-  `crates/pintail-exec/tests/decimal_average_exactness.rs` now cover every
-  shape a hand-built catalog can express, including the gate's own query
-  spelling - top-k ordered by the average under test, under a `LIMIT`,
-  over group sizes whose quotients do not terminate, across three live-row
-  splits. All exact. The defect needs the server.
+  Why no test could see it. Every in-process test opens its store under a
+  fresh temporary directory, and a path used once cannot collide with
+  itself. The regression test reuses one directory and fails deterministically
+  without the fix.
 
-  The fix that closed a real hole, kept. The two-pass lane is chosen from a
-  batch column's
-  storage type, and the arm for a `Float64` column returned the float
-  accumulator without asking whether the planner had typed the aggregate as
-  an exact decimal - the arm beside it, for a decimal column, does ask. An
-  average that fell through accumulated in `f64`, whose addition is not
-  associative, so the answer moved with how the rows were split across
-  workers.
+  The grouped segment fold shares the key shape and the defect - it names a
+  segment by its file name, and that counter also restarts with an empty
+  manifest. Its key carries the opening now. That is a guard by
+  construction, not a proven fix: two attempts at a test for it passed
+  against deliberately broken code and were removed rather than kept as
+  evidence they were not.
 
-  Guarded first and proved afterwards, by accident. Eight in-process arms
-  never reproduced the defect, so the guard shipped as "closes a hole the
-  plan could fall through, not known to be the cause". Then
-  `fix/operational-blockers`, which forked before the guard, failed the
-  corpus check in ALL TWELVE e2e phases at the same row - the deterministic
-  reproduction that had been missing. Merging dev into that branch, rather
-  than rebasing, left its own commits byte for byte identical and made the
-  guard the only variable: the same corpus then passed, on both MySQL
-  majors.
+  What the first closure got wrong, kept as the lesson. The two-pass float
+  lane guard below is real and stays. `fix/operational-blockers`, which
+  forked before it, failed the check in all twelve e2e phases and passed
+  once the guard was merged in with nothing else changed. That differential
+  closes the path it varied; it says nothing about a second cause the same
+  corpus reaches only sometimes. Read as proof of the symptom, it retired a
+  limitation entry whose own closing sentence had set the right standard -
+  that it stays until a run which would have failed passes for a reason
+  that can be pointed at.
 
-  That differential stands - it proves the guard fixed the hole it names.
-  What it does not prove, and was read as proving, is that the hole was
-  the only one. A branch that predates a fix failing, and passing once the
-  fix arrives, says the fix works; it says nothing about a second cause
-  that the same corpus reaches only sometimes. The lesson is the narrow
-  one: a differential closes the path it varies, not the symptom.
+  The two-pass lane is chosen from a batch column's storage type, and the
+  arm for a `Float64` column returned the float accumulator without asking
+  whether the planner had typed the aggregate as an exact decimal - the arm
+  beside it, for a decimal column, does ask. An average that fell through
+  accumulated in `f64`, whose addition is not associative, so the answer
+  moved with how the rows were split across workers.
 
 ## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
 
