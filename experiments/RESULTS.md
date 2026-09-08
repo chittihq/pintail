@@ -3709,3 +3709,46 @@ actually describing: it is not the per-row `Value` materialization in
 nothing), not the fragmentation of the mask (one excluded row costs what
 twenty thousand do), and not the slice width (one slice costs what
 sixteen do).
+
+## e93 — When the per-segment fold can serve a query at all
+
+`crates/pintail-store/tests/fold_eligibility.rs`, release, one hundred
+thousand rows in one segment. Ignored: an eligibility measurement.
+
+e78 measured a grouped aggregate served from per-segment partials at
+seventy-three times the scan, and argued the number holds under continuous
+replication because a flush adds a segment's partials rather than
+invalidating a result. Before building that, this asks the prior question:
+on which tables does the fold engage?
+
+`Snapshot::sma_fold_state` is the gate, and it is stricter than "the
+segments are immutable". Every memtable row must be an insert ABOVE the
+segment key space; a row at or below the segments' maximum key returns
+`None` for the whole table.
+
+| what is in the memtable | fold eligible |
+|---|---|
+| nothing | yes |
+| one insert above the segment | yes |
+| fifty thousand inserts above the segment | yes |
+| **one update of a row the segment holds** | **no** |
+| **one delete of a row the segment holds** | **no** |
+
+**So the fold serves append-only tables, and one update anywhere in the
+table disqualifies it entirely.** e78's fixture inserts with increasing
+keys, which is why its seventy-three times looked general. A mirrored
+table whose rows are inserted and then updated in place - a record that
+gains timestamps as it progresses through states, which is an ordinary
+shape - is disqualified by its first update and stays disqualified.
+
+Building grouped partials on this eligibility would therefore buy nothing
+for an update-carrying mirror, which is the case that motivated it.
+
+**What a version that served updates would need**, recorded so the design
+is not re-derived: partials per segment, plus a correction per memtable
+row that supersedes a segment row - read the superseded row, subtract its
+contribution, add the new one. That bounds the work by the memtable rather
+than the table, and the residual cap already keeps it small. It restricts
+the aggregates to those whose payload has an additive inverse: COUNT and
+SUM can be corrected, MIN and MAX cannot, which is the same split e80
+arrived at. Not built.
