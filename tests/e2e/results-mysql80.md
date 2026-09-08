@@ -1,10 +1,10 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-07T18:02:26.963Z.
+Measured 2026-09-08T17:27:18.259Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**5417 passed, 0 failed, 58 documented-gap warnings, 44 skipped.**
+**5446 passed, 0 failed, 30 documented-gap warnings, 44 skipped.**
 
 176 unique corpus queries produced 4928 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
@@ -172,7 +172,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:bi superset: lag and lead against a named window | PASS |  |
 | snapshot | query:bi superset: quartile counts from ntile | PASS |  |
 | snapshot | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| snapshot | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| snapshot | query:bi superset: compound interval grains | PASS |  |
 | snapshot | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | snapshot | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | snapshot | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -386,7 +386,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:bi superset: lag and lead against a named window | PASS |  |
 | orm-compat | query:bi superset: quartile counts from ntile | PASS |  |
 | orm-compat | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| orm-compat | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| orm-compat | query:bi superset: compound interval grains | PASS |  |
 | orm-compat | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | orm-compat | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | orm-compat | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -576,7 +576,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:bi superset: lag and lead against a named window | PASS |  |
 | crud | query:bi superset: quartile counts from ntile | PASS |  |
 | crud | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| crud | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| crud | query:bi superset: compound interval grains | PASS |  |
 | crud | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | crud | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | crud | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -766,7 +766,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:bi superset: lag and lead against a named window | PASS |  |
 | composite-keys | query:bi superset: quartile counts from ntile | PASS |  |
 | composite-keys | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| composite-keys | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| composite-keys | query:bi superset: compound interval grains | PASS |  |
 | composite-keys | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | composite-keys | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | composite-keys | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -956,7 +956,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:bi superset: lag and lead against a named window | PASS |  |
 | type-edges | query:bi superset: quartile counts from ntile | PASS |  |
 | type-edges | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| type-edges | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| type-edges | query:bi superset: compound interval grains | PASS |  |
 | type-edges | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | type-edges | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | type-edges | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -1151,7 +1151,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:bi superset: lag and lead against a named window | PASS |  |
 | ddl | query:bi superset: quartile counts from ntile | PASS |  |
 | ddl | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| ddl | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| ddl | query:bi superset: compound interval grains | PASS |  |
 | ddl | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | ddl | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | ddl | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -1343,7 +1343,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:bi superset: lag and lead against a named window | PASS |  |
 | schema-drift-minimal | query:bi superset: quartile counts from ntile | PASS |  |
 | schema-drift-minimal | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| schema-drift-minimal | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| schema-drift-minimal | query:bi superset: compound interval grains | PASS |  |
 | schema-drift-minimal | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | schema-drift-minimal | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | schema-drift-minimal | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -1535,7 +1535,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:bi superset: lag and lead against a named window | PASS |  |
 | schema-drift-unseen | query:bi superset: quartile counts from ntile | PASS |  |
 | schema-drift-unseen | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| schema-drift-unseen | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| schema-drift-unseen | query:bi superset: compound interval grains | PASS |  |
 | schema-drift-unseen | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | schema-drift-unseen | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | schema-drift-unseen | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -1733,7 +1733,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:bi superset: lag and lead against a named window | PASS |  |
 | churn | query:bi superset: quartile counts from ntile | PASS |  |
 | churn | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| churn | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| churn | query:bi superset: compound interval grains | PASS |  |
 | churn | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | churn | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | churn | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -1925,7 +1925,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:bi superset: lag and lead against a named window | PASS |  |
 | contention | query:bi superset: quartile counts from ntile | PASS |  |
 | contention | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| contention | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| contention | query:bi superset: compound interval grains | PASS |  |
 | contention | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | contention | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | contention | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2122,7 +2122,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:bi superset: lag and lead against a named window | PASS |  |
 | execution-budget | query:bi superset: quartile counts from ntile | PASS |  |
 | execution-budget | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| execution-budget | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| execution-budget | query:bi superset: compound interval grains | PASS |  |
 | execution-budget | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | execution-budget | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | execution-budget | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2318,7 +2318,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:bi superset: lag and lead against a named window | PASS |  |
 | spill | query:bi superset: quartile counts from ntile | PASS |  |
 | spill | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| spill | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| spill | query:bi superset: compound interval grains | PASS |  |
 | spill | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | spill | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | spill | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2346,6 +2346,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:order_items: product rollup without the orders table | PASS |  |
 | spill | query:shipments: carrier value through the items bridge | PASS |  |
 | spill | query:json: distinct case variants survive a derived table | PASS |  |
+| pooling | wire:multi-statement-setup-and-results | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
 | pooling | pool:session-state-survives-borrow-like-mysql | PASS |  |
@@ -2513,7 +2514,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:bi superset: lag and lead against a named window | PASS |  |
 | pooling | query:bi superset: quartile counts from ntile | PASS |  |
 | pooling | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| pooling | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| pooling | query:bi superset: compound interval grains | PASS |  |
 | pooling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | pooling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | pooling | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2724,7 +2725,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:bi superset: lag and lead against a named window | PASS |  |
 | local-database | query:bi superset: quartile counts from ntile | PASS |  |
 | local-database | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| local-database | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| local-database | query:bi superset: compound interval grains | PASS |  |
 | local-database | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | local-database | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | local-database | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2917,7 +2918,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:bi superset: lag and lead against a named window | PASS |  |
 | restart | query:bi superset: quartile counts from ntile | PASS |  |
 | restart | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| restart | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart | query:bi superset: compound interval grains | PASS |  |
 | restart | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | restart | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | restart | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -2945,11 +2946,11 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_f6a1974efeb9f83c659bef49ce432a61 |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_657aae3aa58ba6ccff55ff2d65740f17 |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 1ms over 150000 rows |
 | activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 26ms p99 38ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 27ms p99 33ms |
 | activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 2ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
@@ -3115,7 +3116,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:bi superset: lag and lead against a named window | PASS |  |
 | activity-history | query:bi superset: quartile counts from ntile | PASS |  |
 | activity-history | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| activity-history | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| activity-history | query:bi superset: compound interval grains | PASS |  |
 | activity-history | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | activity-history | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | activity-history | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -3143,10 +3144,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4925 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4925 requests: p50 1ms p99 7ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6997 vs source 6997 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4923 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4923 requests: p50 1ms p99 9ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 1ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6954 vs source 6954 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -3311,7 +3312,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:bi superset: lag and lead against a named window | PASS |  |
 | poll-storm | query:bi superset: quartile counts from ntile | PASS |  |
 | poll-storm | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| poll-storm | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| poll-storm | query:bi superset: compound interval grains | PASS |  |
 | poll-storm | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | poll-storm | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | poll-storm | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -3525,7 +3526,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:bi superset: lag and lead against a named window | PASS |  |
 | control-plane | query:bi superset: quartile counts from ntile | PASS |  |
 | control-plane | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| control-plane | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| control-plane | query:bi superset: compound interval grains | PASS |  |
 | control-plane | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | control-plane | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | control-plane | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -3719,7 +3720,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:bi superset: lag and lead against a named window | PASS |  |
 | snapshot-ddl-window | query:bi superset: quartile counts from ntile | PASS |  |
 | snapshot-ddl-window | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| snapshot-ddl-window | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| snapshot-ddl-window | query:bi superset: compound interval grains | PASS |  |
 | snapshot-ddl-window | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | snapshot-ddl-window | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | snapshot-ddl-window | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -3917,7 +3918,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:bi superset: lag and lead against a named window | PASS |  |
 | drop-table-cdc | query:bi superset: quartile counts from ntile | PASS |  |
 | drop-table-cdc | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| drop-table-cdc | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-cdc | query:bi superset: compound interval grains | PASS |  |
 | drop-table-cdc | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-cdc | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-cdc | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4113,7 +4114,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:bi superset: lag and lead against a named window | PASS |  |
 | drop-table-recreate | query:bi superset: quartile counts from ntile | PASS |  |
 | drop-table-recreate | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| drop-table-recreate | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-recreate | query:bi superset: compound interval grains | PASS |  |
 | drop-table-recreate | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-recreate | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-recreate | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4144,7 +4145,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"id":"db_f6a1974efeb9f83c659bef49ce432a61","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-07T17:55:22.462671326+00:00","updated_at":"2026-09-07T18:01:17.621784516+00:00"},"tables":21,"rows":9722} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_657aae3aa58ba6ccff55ff2d65740f17","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-08T17:20:12.187670301+00:00","updated_at":"2026-09-08T17:26:08.441649751+00:00"},"tables":21,"rows":9679} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -4311,7 +4312,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:bi superset: lag and lead against a named window | PASS |  |
 | drop-table-polling | query:bi superset: quartile counts from ntile | PASS |  |
 | drop-table-polling | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| drop-table-polling | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-table-polling | query:bi superset: compound interval grains | PASS |  |
 | drop-table-polling | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-table-polling | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-table-polling | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4508,7 +4509,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:bi superset: lag and lead against a named window | PASS |  |
 | restart-during-snapshot | query:bi superset: quartile counts from ntile | PASS |  |
 | restart-during-snapshot | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| restart-during-snapshot | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart-during-snapshot | query:bi superset: compound interval grains | PASS |  |
 | restart-during-snapshot | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | restart-during-snapshot | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | restart-during-snapshot | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4707,7 +4708,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:bi superset: lag and lead against a named window | PASS |  |
 | restart-during-resync | query:bi superset: quartile counts from ntile | PASS |  |
 | restart-during-resync | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| restart-during-resync | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| restart-during-resync | query:bi superset: compound interval grains | PASS |  |
 | restart-during-resync | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | restart-during-resync | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | restart-during-resync | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4736,12 +4737,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-resync | query:json: distinct case variants survive a derived table | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 93 ok, dashboards 108 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 73 ok, dashboards 103 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 93 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 200ms p99 780ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 18ms over 8 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 164MB with a 256MB budget |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 73 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 206ms p99 971ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 2ms over 8 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 173MB with a 256MB budget |
 | memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200800 vs source 200800 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
@@ -4909,7 +4910,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:bi superset: lag and lead against a named window | PASS |  |
 | memory-pressure | query:bi superset: quartile counts from ntile | PASS |  |
 | memory-pressure | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| memory-pressure | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| memory-pressure | query:bi superset: compound interval grains | PASS |  |
 | memory-pressure | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | memory-pressure | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | memory-pressure | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -4941,7 +4942,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 56MB before, peak 200MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 57MB before, peak 223MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -5107,7 +5108,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:bi superset: lag and lead against a named window | PASS |  |
 | reconcile-memory | query:bi superset: quartile counts from ntile | PASS |  |
 | reconcile-memory | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| reconcile-memory | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| reconcile-memory | query:bi superset: compound interval grains | PASS |  |
 | reconcile-memory | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | reconcile-memory | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | reconcile-memory | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -5308,7 +5309,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:bi superset: lag and lead against a named window | PASS |  |
 | drop-database | query:bi superset: quartile counts from ntile | PASS |  |
 | drop-database | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| drop-database | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| drop-database | query:bi superset: compound interval grains | PASS |  |
 | drop-database | query:bi looker: symmetric aggregate across a fanned-out join | PASS |  |
 | drop-database | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | drop-database | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -5501,7 +5502,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:bi superset: lag and lead against a named window | PASS |  |
 | ddl-documented-gaps | query:bi superset: quartile counts from ntile | PASS |  |
 | ddl-documented-gaps | query:bi superset: first and last value over an unbounded frame | PASS |  |
-| ddl-documented-gaps | query:bi superset: compound interval grains | WARN | compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them |
+| ddl-documented-gaps | query:bi superset: compound interval grains | PASS |  |
 | ddl-documented-gaps | query:bi looker: symmetric aggregate across a fanned-out join | SKIP |  |
 | ddl-documented-gaps | query:bi looker: any_value reads a functionally dependent column | PASS |  |
 | ddl-documented-gaps | query:bi looker: a grouped foreign key reads the joined dimension | PASS |  |
@@ -5538,28 +5539,28 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | 1.9 | 0.0 | 0.1 |
 | crud | 0.0 | 1.1 | 0.1 |
 | composite-keys | 0.0 | 2.4 | 0.1 |
-| type-edges | 0.0 | 2.6 | 0.1 |
+| type-edges | 0.0 | 2.4 | 0.1 |
 | ddl | 7.4 | 2.6 | 0.1 |
 | schema-drift-minimal | 0.0 | 2.3 | 0.1 |
 | schema-drift-unseen | 0.0 | 2.3 | 0.1 |
 | churn | 0.2 | 2.1 | 0.1 |
-| contention | 13.5 | 0.1 | 0.6 |
+| contention | 13.6 | 0.1 | 0.7 |
 | execution-budget | 0.0 | 0.1 | 0.7 |
-| spill | 5.2 | 0.4 | 0.6 |
-| pooling | 0.1 | 1.3 | 0.6 |
-| local-database | 0.0 | 0.1 | 0.6 |
-| restart | 0.5 | 2.7 | 0.6 |
-| activity-history | 1.0 | 0.4 | 0.6 |
-| poll-storm | 21.7 | 0.1 | 0.6 |
-| control-plane | 32.1 | 0.1 | 0.4 |
-| snapshot-ddl-window | 5.1 | 0.1 | 0.4 |
+| spill | 5.6 | 0.4 | 0.7 |
+| pooling | 0.1 | 1.3 | 0.7 |
+| local-database | 0.0 | 0.1 | 0.7 |
+| restart | 0.5 | 2.7 | 0.7 |
+| activity-history | 1.0 | 0.4 | 0.7 |
+| poll-storm | 21.4 | 0.1 | 0.7 |
+| control-plane | 32.2 | 0.1 | 0.4 |
+| snapshot-ddl-window | 5.0 | 0.1 | 0.4 |
 | drop-table-cdc | 8.1 | 0.1 | 0.8 |
-| drop-table-recreate | 129.2 | 0.1 | 0.7 |
-| drop-table-polling | 104.2 | 0.1 | 0.4 |
-| restart-during-snapshot | 2.2 | 0.1 | 0.4 |
+| drop-table-recreate | 129.0 | 0.1 | 0.8 |
+| drop-table-polling | 104.3 | 0.1 | 0.4 |
+| restart-during-snapshot | 2.4 | 0.1 | 0.4 |
 | restart-during-resync | 4.1 | 0.1 | 0.4 |
-| memory-pressure | 10.9 | 0.1 | 0.4 |
-| reconcile-memory | 32.4 | 0.1 | 0.4 |
-| drop-database | 11.2 | 0.1 | 0.4 |
-| ddl-documented-gaps | 0.0 | 0.1 | 0.3 |
-| total | 391.1 | 21.5 | 10.9 |
+| memory-pressure | 10.8 | 0.1 | 0.4 |
+| reconcile-memory | 32.2 | 0.1 | 0.4 |
+| drop-database | 11.5 | 0.1 | 0.4 |
+| ddl-documented-gaps | 0.0 | 0.1 | 0.4 |
+| total | 391.5 | 21.5 | 12.1 |

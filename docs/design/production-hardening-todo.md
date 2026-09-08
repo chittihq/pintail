@@ -365,74 +365,32 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
-- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically.**
-  Closed twice on 2026-09-08 and reopened twice. Still open.
+- [x] **G14. Decimal `AVG` was rounded twice by enclosing rounding functions.**
+  Closed 2026-09-08. The finished average used to discard its quotient
+  after rendering at the declared scale. An enclosing `ROUND` could then
+  round that intermediate half upward, while `SUM / COUNT` retained the
+  internal digits and answered correctly.
 
-  The second closure repeated the first one's error while its own entry was
-  describing that error. Two real defects were found and fixed - a memoized
-  aggregate served to a table that had replaced another at the same path,
-  and a fold span silently dropping its rows - the first with a
-  deterministic reproduction and a control, the second with a
-  single-variable proof. Neither is this. The gate failed again with both
-  in, at the same row and the same value: thirty-one rows reading 322.8552
-  against MySQL's 322.8551.
+  A boxed decimal-average value now retains the scaled sum and count
+  alongside its declared-scale text. Exact expression evaluation exposes
+  the quotient at whole nine-digit fractional words; rounding functions
+  and decimal casts consume those digits. Display, ordinary scalar
+  identity, and the 32-byte `Value` layout are preserved. Batch repacking,
+  spill, nested aggregates, decimal predicates, and window range bounds
+  handle the new carrier; dependent memo keys do not conflate hidden digits.
 
-  A fix with a reproduction of its own is still not a fix for this until a
-  run that would have failed passes.
+  Verification: all 15 `decimal_average_exactness` tests pass, including
+  the formerly ignored reproduction; executor/store suites and workspace
+  clippy pass. RC run `2026-09-08T16-39-19-997Z-rc` passed all nine stages
+  at `bbc456f`. Three complete e2e passes per MySQL version (8.4 and 8.0)
+  each recorded 5,446 passes and zero failures, with the existing
+  documented warnings and skips. The final ledgers are banked in
+  `tests/e2e/results.md` and `tests/e2e/results-mysql80.md`.
 
-  One tool the earlier bisect leaned on is weaker than it looked.
-  `PINTAIL_DISABLE_SETTLED_MEMO` does not only disable the memo: it leaves
-  `memo_key` unset, which is the condition guarding the insert-only
-  delta-merge path, so setting it swaps one path for another rather than
-  removing one. "Memo off, passes" therefore does not isolate the memo.
-
-  The settled aggregate memo is keyed by the table's directory and manifest
-  generation, and neither identifies a table. A directory is reclaimed when
-  a table is dropped, and its successor starts from an empty manifest at
-  generation zero and walks the same generations, so it presents a key the
-  previous table already answered. The map is process-global and is only
-  cleared wholesale on overflow, so nothing removed the entry in between.
-  Every store opening now takes an identity from a process counter, carried
-  on its snapshots and into the memo key.
-
-  Why it looked like arithmetic, and was not. `AVG` read a unit in the last
-  place away from `MySQL` while `SUM(_) / COUNT(*)` over the same rows
-  matched exactly, which reads as the engine disagreeing with itself. Both
-  columns come from one memoized row; they round differently, so
-  `ROUND(SUM/COUNT, 4)` can agree across two incarnations of a table while
-  `ROUND(AVG, 4)` differs. Nothing was miscomputed - the answer belonged to
-  data that no longer existed. That asymmetry sent the search into the
-  aggregate lanes, where nine in-process arms found nothing, because there
-  was nothing there.
-
-  Why no test could see it. Every in-process test opens its store under a
-  fresh temporary directory, and a path used once cannot collide with
-  itself. The regression test reuses one directory and fails deterministically
-  without the fix.
-
-  The grouped segment fold shares the key shape and the defect - it names a
-  segment by its file name, and that counter also restarts with an empty
-  manifest. Its key carries the opening now. That is a guard by
-  construction, not a proven fix: two attempts at a test for it passed
-  against deliberately broken code and were removed rather than kept as
-  evidence they were not.
-
-  What the first closure got wrong, kept as the lesson. The two-pass float
-  lane guard below is real and stays. `fix/operational-blockers`, which
-  forked before it, failed the check in all twelve e2e phases and passed
-  once the guard was merged in with nothing else changed. That differential
-  closes the path it varied; it says nothing about a second cause the same
-  corpus reaches only sometimes. Read as proof of the symptom, it retired a
-  limitation entry whose own closing sentence had set the right standard -
-  that it stays until a run which would have failed passes for a reason
-  that can be pointed at.
-
-  The two-pass lane is chosen from a batch column's storage type, and the
-  arm for a `Float64` column returned the float accumulator without asking
-  whether the planner had typed the aggregate as an exact decimal - the arm
-  beside it, for a decimal column, does ask. An average that fell through
-  accumulated in `f64`, whose addition is not associative, so the answer
-  moved with how the rows were split across workers.
+  The earlier float-lane and table-opening cache-identity fixes remain
+  valid fixes for separate defects; their green runs did not prove this
+  double-rounding defect was closed. See
+  [the handover](g14-decimal-average-handover.md) for the original diagnosis.
 
 ## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
 

@@ -812,8 +812,7 @@
   {
     "phase": "snapshot",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "snapshot",
@@ -1883,8 +1882,7 @@
   {
     "phase": "orm-compat",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "orm-compat",
@@ -2834,8 +2832,7 @@
   {
     "phase": "crud",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "crud",
@@ -3785,8 +3782,7 @@
   {
     "phase": "composite-keys",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "composite-keys",
@@ -4736,8 +4732,7 @@
   {
     "phase": "type-edges",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "type-edges",
@@ -5713,8 +5708,7 @@
   {
     "phase": "ddl",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "ddl",
@@ -6675,8 +6669,7 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-minimal",
@@ -7637,8 +7630,7 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "schema-drift-unseen",
@@ -8629,8 +8621,7 @@
   {
     "phase": "churn",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "churn",
@@ -9591,8 +9582,7 @@
   {
     "phase": "contention",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "contention",
@@ -10578,8 +10568,7 @@
   {
     "phase": "execution-budget",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "execution-budget",
@@ -11560,8 +11549,7 @@
   {
     "phase": "spill",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "spill",
@@ -11696,6 +11684,11 @@
   {
     "phase": "spill",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "wire:multi-statement-setup-and-results",
     "status": "PASS"
   },
   {
@@ -12537,8 +12530,7 @@
   {
     "phase": "pooling",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "pooling",
@@ -13594,8 +13586,7 @@
   {
     "phase": "local-database",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "local-database",
@@ -14561,8 +14552,7 @@
   {
     "phase": "restart",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "restart",
@@ -14703,7 +14693,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150028 sync_runs rows for db_23f0a6328507e181367b68a0d2c347c5"
+    "detail": "150028 sync_runs rows for db_2805fe33af3febfd29f08bed39c1757d"
   },
   {
     "phase": "activity-history",
@@ -14715,19 +14705,19 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms over 150000 rows"
+    "detail": "p50 1ms p95 1ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms"
+    "detail": "p50 1ms p95 1ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 25ms p99 33ms"
+    "detail": "p50 27ms p99 43ms"
   },
   {
     "phase": "activity-history",
@@ -15559,8 +15549,7 @@
   {
     "phase": "activity-history",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "activity-history",
@@ -15701,13 +15690,13 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4912"
+    "detail": "0 failed of 4933"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4912 requests: p50 1ms p99 9ms"
+    "detail": "4933 requests: p50 1ms p99 9ms"
   },
   {
     "phase": "poll-storm",
@@ -15719,7 +15708,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 7551 vs source 7551"
+    "detail": "orders replica 7547 vs source 7547"
   },
   {
     "phase": "poll-storm",
@@ -16545,8 +16534,7 @@
   {
     "phase": "poll-storm",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "poll-storm",
@@ -17617,8 +17605,7 @@
   {
     "phase": "control-plane",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "control-plane",
@@ -18589,8 +18576,7 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "snapshot-ddl-window",
@@ -19582,8 +19568,7 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-cdc",
@@ -20565,8 +20550,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -20722,7 +20706,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_23f0a6328507e181367b68a0d2c347c5\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-07T17:48:19.724407120+00:00\",\"updated_at\":\"2026-09-07T17:54:16.359208686+00:00\"},\"tables\":21,\"rows\":10276}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_2805fe33af3febfd29f08bed39c1757d\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-08T17:13:08.997456195+00:00\",\"updated_at\":\"2026-09-08T17:19:06.210534406+00:00\"},\"tables\":21,\"rows\":10272}"
   },
   {
     "phase": "drop-table-polling",
@@ -21558,8 +21542,7 @@
   {
     "phase": "drop-table-polling",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-polling",
@@ -22546,8 +22529,7 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "restart-during-snapshot",
@@ -23545,8 +23527,7 @@
   {
     "phase": "restart-during-resync",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "restart-during-resync",
@@ -23693,7 +23674,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 91 ok, dashboards 105 ok; no errors"
+    "detail": "wire 240 ok, http 80 ok, dashboards 105 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -23705,25 +23686,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 91"
+    "detail": "wire 240 of 240, http 80"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 206ms p99 845ms over 240 queries"
+    "detail": "wire p50 210ms p99 1094ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 17ms over 8 samples"
+    "detail": "health p99 2ms over 8 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 170MB with a 256MB budget"
+    "detail": "peak RSS 163MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -24566,8 +24547,7 @@
   {
     "phase": "memory-pressure",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "memory-pressure",
@@ -24732,7 +24712,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 63MB before, peak 185MB during (margin 768MB)"
+    "detail": "RSS 73MB before, peak 183MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -25563,8 +25543,7 @@
   {
     "phase": "reconcile-memory",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "reconcile-memory",
@@ -26571,8 +26550,7 @@
   {
     "phase": "drop-database",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "drop-database",
@@ -27541,8 +27519,7 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:bi superset: compound interval grains",
-    "status": "WARN",
-    "detail": "compound interval units (YEAR_MONTH, DAY_SECOND) are not parsed; sqlparser-rs has no qualifier for them\nError: sql parser error: INTERVAL requires a unit after the literal value at Line: 1, Column: 48"
+    "status": "PASS"
   },
   {
     "phase": "ddl-documented-gaps",

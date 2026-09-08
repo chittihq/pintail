@@ -21,6 +21,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Decimal `AVG` retains its quotient behind its declared-scale display,
+  so enclosing rounding functions and decimal casts no longer round an
+  already-rounded average. Spill and batch boundaries preserve the extra
+  precision without exposing extra digits to clients. The deterministic
+  regression, full RC profile, and three e2e passes on each MySQL version
+  pass, closing G14.
+
 - One path by which `AVG` over a `DECIMAL` column could answer a unit in
   the last place away from `MySQL` is closed. The two-pass lane is chosen
   from the batch column's storage type, and the arm for a `Float64` column
@@ -32,17 +39,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   end-to-end phases and passed once the fix was merged in, with nothing
   else changed.
 
-- A cached aggregate could be served to the wrong table. This was reported
-  here as the path that produced G14's symptom; it is not - the symptom
-  survives this fix. The defect below is real and has a reproduction, but
-  G14 remains open. The settled
-  aggregate memo is keyed by a table's directory and manifest generation,
-  and a directory reclaimed by a dropped table hands its successor - which
-  restarts from an empty manifest and walks the same generations - a key
-  the previous table already answered. `AVG` read a unit in the last place
-  away from `MySQL` while `SUM(_) / COUNT(*)` matched, which is what one
-  stale row looks like when its two columns round differently, not an
-  arithmetic fault. Store openings now carry an identity the key includes.
+- Settled aggregate and segment-fold caches now include each table
+  opening's identity. Dropping and recreating a table at the same path
+  can no longer reuse cached results from its predecessor.
 
 ## [0.1.2-rc11] - 2026-09-07
 

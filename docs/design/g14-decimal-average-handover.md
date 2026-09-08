@@ -1,7 +1,22 @@
 # G14: decimal AVG rounds its quotient twice
 
-Instructions for taking the fix forward. The defect is diagnosed, reproduced
-and specified; what remains is the implementation and its verification.
+Implemented in `bbc456f` on 2026-09-08. The formerly ignored reproduction
+is enabled, and all 15 tests in `decimal_average_exactness` pass. The full
+RC profile passed (`2026-09-08T16-39-19-997Z-rc`), followed by two additional
+complete e2e passes on each MySQL version. Each of the six e2e runs recorded
+5,446 passes and zero failures, with the existing documented warnings and
+skips. Final ledgers: [MySQL 8.4](../../tests/e2e/results.md) and
+[MySQL 8.0](../../tests/e2e/results-mysql80.md).
+
+The implementation carries declared-scale text and the scaled quotient in
+a boxed value, preserving `Value`'s 32-byte layout. The rounding family and
+decimal casts read internal fractional words; ordinary display and scalar
+identity use the text. Spill retains the quotient, and typed repacking
+falls back to the original values. Regressions also cover input scales
+0/2/6, negative values, wide exact averages, nested aggregates, predicates,
+grouping, and window range bounds.
+
+The diagnosis and implementation brief below record the pre-fix state.
 
 ## The defect
 
