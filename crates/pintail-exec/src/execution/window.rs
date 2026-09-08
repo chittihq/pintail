@@ -591,7 +591,8 @@ fn numeric_range_target(
                 overflow()
             }
         }
-        Value::Utf8(text) if decimal => {
+        value if decimal && value.text().is_some() => {
+            let text = value.text().expect("guarded text");
             let current_scale = text
                 .split_once('.')
                 .map_or(0, |(_, fraction)| fraction.len());
@@ -720,7 +721,9 @@ fn range_bound_for_target(
                     Value::Boolean(value) => i8::from(*value).to_string(),
                     Value::Int64(value) => value.to_string(),
                     Value::UInt64(value) => value.to_string(),
-                    Value::Utf8(value) if *decimal => value.clone(),
+                    value if *decimal && value.text().is_some() => {
+                        value.text().expect("guarded text").to_owned()
+                    }
                     _ => return Ordering::Equal,
                 };
                 let ordering = compare_decimal_text(

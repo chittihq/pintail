@@ -357,6 +357,17 @@ impl DecimalRational {
     }
 
     fn from_value(value: &Value) -> Result<Option<Self>, ExecError> {
+        if let Value::DecimalAverage(quotient) = value {
+            let factor = 10_i128
+                .checked_pow(u32::from(quotient.scale))
+                .ok_or(ExecError::NumericOverflow)?;
+            let sum = Self::new(quotient.units, factor)?;
+            let count = Self::new(i128::from(quotient.count), 1)?;
+            return sum
+                .divide(count)?
+                .map(|exact| exact.truncated(quotient.scale.max(1).div_ceil(9).saturating_mul(9)))
+                .transpose();
+        }
         let Some((units, scale)) = decimal_units_of(value) else {
             return Ok(None);
         };
@@ -436,6 +447,11 @@ impl DecimalRational {
         let factor = 10_i128
             .checked_pow(u32::from(scale))
             .ok_or(ExecError::NumericOverflow)?;
+        // An already representable fraction needs no expansion. Multiplying
+        // a wide exact value by unused trailing zeros can overflow otherwise.
+        if factor % self.denominator == 0 {
+            return Ok(self);
+        }
         let cancel = decimal_gcd(factor, self.denominator)?;
         let numerator = self
             .numerator
@@ -1083,11 +1099,17 @@ impl CompiledExpr {
         batch: &RecordBatch,
         row: usize,
     ) -> Result<Option<Value>, ExecError> {
-        // Columns and literals already hold their display value exactly;
-        // only computed subtrees retain hidden digits. The declared scale
-        // floors the materialization so the consumer's render clamp still
+        // Materialized averages and computed subtrees retain hidden digits.
+        // The declared scale floors the materialization so the consumer's render clamp still
         // sees every declared digit when the exact value needs fewer.
         let declared = match self {
+            Self::Literal(Value::DecimalAverage(quotient)) => quotient.scale,
+            Self::Column(index) => {
+                match batch.column(*index).and_then(|column| column.value(row)) {
+                    Some(Value::DecimalAverage(quotient)) => quotient.scale,
+                    _ => return Ok(None),
+                }
+            }
             Self::Binary {
                 data_type: Some(DataType::Decimal { scale, .. }),
                 ..
@@ -1530,6 +1552,10 @@ fn scalar_string_upper_bound(value: &Value) -> usize {
         Value::Boolean(_) => 1,
         Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
         Value::Utf8(value) | Value::Enum { label: value, .. } => value.len(),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            value.len()
+        }
         Value::Binary(value) => value.len(),
     }
 }
@@ -1671,7 +1697,7 @@ fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
 
 // A scalar call carries its function, arguments and their types, any compiled
 // regex, its result type, the row it evaluates against, and how text compares.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn evaluate_scalar(
     function: ScalarFunction,
     args: &[CompiledExpr],
@@ -1745,7 +1771,12 @@ fn evaluate_scalar(
         ScalarFunction::Round { decimal: true }
         | ScalarFunction::Truncate { decimal: true }
         | ScalarFunction::Ceil { decimal: true }
-        | ScalarFunction::Floor { decimal: true } => {
+        | ScalarFunction::Floor { decimal: true }
+        | ScalarFunction::Cast(DataType::Decimal { .. })
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Decimal { .. },
+            ..
+        } => {
             // The rounding family reads a computed operand's internal digits,
             // not its declared display scale (see internal_decimal_value);
             // the declared scale still caps the RESULT via argument_types.
@@ -2113,6 +2144,12 @@ fn evaluate_eager_scalar_inner(
             Value::Utf8(text) if decimal => Ok(Value::Utf8(
                 text.strip_prefix('-').unwrap_or(text).to_owned(),
             )),
+            Value::DecimalAverage(average) if decimal => {
+                let text = &average.label;
+                Ok(Value::Utf8(
+                    text.strip_prefix('-').unwrap_or(text).to_owned(),
+                ))
+            }
             value => Ok(Value::float64(mysql_f64(value)?.abs())),
         },
         ScalarFunction::Sign => {
@@ -2499,6 +2536,10 @@ fn evaluate_eager_scalar_inner(
                 .expect("clamped to u8 range");
             let text = match &values[0] {
                 Value::Utf8(text) | Value::Enum { label: text, .. } => text.trim().to_owned(),
+                Value::DecimalAverage(average) => {
+                    let text = &average.label;
+                    text.trim().to_owned()
+                }
                 Value::Int64(number) => number.to_string(),
                 Value::UInt64(number) => number.to_string(),
                 Value::Boolean(flag) => u8::from(*flag).to_string(),
@@ -3302,6 +3343,10 @@ fn scalar_string(value: &Value) -> Result<String, ExecError> {
         Value::UInt64(value) => Ok(value.to_string()),
         Value::Float64(value) => Ok(value.get().to_string()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Ok(value.clone())
+        }
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }
@@ -3379,6 +3424,9 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             Value::Utf8(text) | Value::Enum { label: text, .. }
                 if text.trim_start().starts_with('-') =>
             {
+                mysql_i64(value)?.cast_unsigned()
+            }
+            Value::DecimalAverage(average) if average.label.trim_start().starts_with('-') => {
                 mysql_i64(value)?.cast_unsigned()
             }
             other => mysql_u64(other)?,
@@ -3809,6 +3857,10 @@ fn cast_decimal(value: &Value, scale: u8) -> Result<Value, ExecError> {
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
             pintail_types::parse_decimal_rounded(text, scale)
         }
+        Value::DecimalAverage(average) => {
+            let text = &average.label;
+            pintail_types::parse_decimal_rounded(text, scale)
+        }
         Value::Boolean(flag) => decimal_units_from_i128(i128::from(*flag), scale),
         Value::Int64(signed) => decimal_units_from_i128(i128::from(*signed), scale),
         Value::UInt64(unsigned) => decimal_units_from_i128(i128::from(*unsigned), scale),
@@ -3864,6 +3916,10 @@ fn compare_decimal_values(left: &Value, right: &Value) -> Result<Ordering, ExecE
             Value::Int64(value) => Ok(value.to_string()),
             Value::UInt64(value) => Ok(value.to_string()),
             Value::Utf8(value) => Ok(value.clone()),
+            Value::DecimalAverage(average) => {
+                let value = &average.label;
+                Ok(value.clone())
+            }
             _ => Err(ExecError::InvalidExpressionType),
         }
     };
@@ -3874,17 +3930,17 @@ fn compare_decimal_values(left: &Value, right: &Value) -> Result<Ordering, ExecE
 /// carries: canonical decimal text keeps its written fraction width,
 /// integers are scale zero. `None` for floats and non-numeric text.
 fn decimal_units_of(value: &Value) -> Option<(i128, u8)> {
-    match value {
-        Value::Utf8(text) => {
-            let fraction = text
-                .split_once('.')
-                .map_or(0, |(_, fraction)| fraction.len());
-            let scale = u8::try_from(fraction).ok()?;
-            if scale > 30 {
-                return None;
-            }
-            pintail_types::parse_decimal_scaled(text, scale).map(|units| (units, scale))
+    if let Some(text) = value.text() {
+        let fraction = text
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        let scale = u8::try_from(fraction).ok()?;
+        if scale > 30 {
+            return None;
         }
+        return pintail_types::parse_decimal_scaled(text, scale).map(|units| (units, scale));
+    }
+    match value {
         Value::Boolean(flag) => Some((i128::from(*flag), 0)),
         Value::Int64(signed) => Some((i128::from(*signed), 0)),
         Value::UInt64(unsigned) => Some((i128::from(*unsigned), 0)),
@@ -4346,6 +4402,10 @@ pub(crate) fn json_value_of(value: &Value) -> serde_json::Value {
         Value::UInt64(inner) => serde_json::Value::from(*inner),
         Value::Float64(inner) => serde_json::Value::from(inner.get()),
         Value::Utf8(inner) | Value::Enum { label: inner, .. } => {
+            serde_json::Value::String(inner.clone())
+        }
+        Value::DecimalAverage(average) => {
+            let inner = &average.label;
             serde_json::Value::String(inner.clone())
         }
         Value::Binary(inner) => {
@@ -4961,6 +5021,13 @@ fn sql_value_to_json(value: &Value) -> serde_json::Value {
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
             serde_json::from_str(text).unwrap_or_else(|_| serde_json::Value::String(text.clone()))
         }
+        Value::DecimalAverage(average) => {
+            let text = &average.label;
+            {
+                serde_json::from_str(text)
+                    .unwrap_or_else(|_| serde_json::Value::String(text.clone()))
+            }
+        }
         Value::Binary(bytes) => {
             serde_json::Value::String(String::from_utf8_lossy(bytes).into_owned())
         }
@@ -5507,7 +5574,11 @@ pub(crate) fn compare_mysql(
     collation: Collation,
 ) -> Result<Ordering, ExecError> {
     match (left, right) {
-        (Value::Utf8(left), Value::Utf8(right)) => Ok(compare_utf8_mysql(left, right, collation)),
+        (left, right) if left.text().is_some() && right.text().is_some() => Ok(compare_utf8_mysql(
+            left.text().unwrap(),
+            right.text().unwrap(),
+            collation,
+        )),
         // MySQL compares ENUM values as STRINGS in predicates, MIN/MAX and
         // BETWEEN - the declaration index governs only sorting, which the
         // sort comparator handles. Measured differentially against MySQL
@@ -5703,6 +5774,10 @@ pub(crate) fn mysql_truth(value: &Value) -> Result<Option<bool>, ExecError> {
         Value::Utf8(value) | Value::Enum { label: value, .. } => {
             Ok(Some(parse_mysql_number(value) != 0.0))
         }
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Ok(Some(parse_mysql_number(value) != 0.0))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             Ok(Some(parse_mysql_number(value) != 0.0))
@@ -5723,6 +5798,10 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
             .map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => Ok(value.get()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(parse_mysql_number(value)),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Ok(parse_mysql_number(value))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             Ok(parse_mysql_number(value))
@@ -5741,6 +5820,10 @@ fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
         Value::UInt64(unsigned) => i64::try_from(*unsigned).unwrap_or(i64::MAX),
         Value::Float64(number) => saturating_i64(number.get()),
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            saturating_i64(parse_mysql_number(text))
+        }
+        Value::DecimalAverage(average) => {
+            let text = &average.label;
             saturating_i64(parse_mysql_number(text))
         }
         other => mysql_i64(other)?,
@@ -5765,6 +5848,10 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
         Value::Utf8(value) | Value::Enum { label: value, .. } => {
             float_to_i64(parse_mysql_number(value))
         }
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            float_to_i64(parse_mysql_number(value))
+        }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
             float_to_i64(parse_mysql_number(value))
@@ -5780,6 +5867,10 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         Value::UInt64(value) => Ok(*value),
         Value::Float64(value) => float_to_u64(value.get()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => {
+            float_to_u64(parse_mysql_number(value))
+        }
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
             float_to_u64(parse_mysql_number(value))
         }
         Value::Binary(value) => {

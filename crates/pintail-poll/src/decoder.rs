@@ -132,6 +132,10 @@ pub(crate) fn key_part(value: &Value) -> Option<KeyPart> {
             Some(KeyPart::Utf8(normalized.to_string()))
         }
         Value::Utf8(value) | Value::Enum { label: value, .. } => Some(KeyPart::Utf8(value.clone())),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Some(KeyPart::Utf8(value.clone()))
+        }
         Value::Binary(value) => Some(KeyPart::Binary(value.clone())),
     }
 }

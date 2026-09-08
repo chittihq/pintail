@@ -1598,6 +1598,10 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
         Value::Float64(value) => Some(value.get().to_string().into_bytes()),
         // Clients see an ENUM as its label, exactly as MySQL sends it.
         Value::Utf8(value) | Value::Enum { label: value, .. } => Some(value.clone().into_bytes()),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Some(value.clone().into_bytes())
+        }
         Value::Binary(value) => Some(value.clone()),
     }
 }
@@ -1746,6 +1750,7 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
                 }
             }
         }
+        (_, Value::DecimalAverage(value)) => length_encoded(value.label.as_bytes()),
         (_, Value::Binary(value)) => length_encoded(value),
     }))
 }

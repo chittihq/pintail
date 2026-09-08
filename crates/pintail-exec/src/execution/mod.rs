@@ -4578,6 +4578,10 @@ fn scalar_string_memory_upper_bound(value: &Value) -> usize {
         Value::Boolean(_) => 1,
         Value::Int64(_) | Value::UInt64(_) | Value::Float64(_) => 24,
         Value::Utf8(value) | Value::Enum { label: value, .. } => value.len(),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            value.len()
+        }
         Value::Binary(value) => value.len(),
     }
 }
@@ -7034,10 +7038,12 @@ mod tests {
             Some(&Value::UInt64(2))
         );
         assert_eq!(
-            batch.column(4).and_then(|column| column.value(row)),
-            // MySQL AVG over integers is DECIMAL widened by four fraction
-            // digits, carried as canonical text.
-            Some(&Value::Utf8("1.5000".to_owned()))
+            batch
+                .column(4)
+                .and_then(|column| column.value(row))
+                .and_then(Value::text),
+            // Integer averages render at four fractional digits.
+            Some("1.5000")
         );
         assert_eq!(
             batch.column(5).and_then(|column| column.value(row)),

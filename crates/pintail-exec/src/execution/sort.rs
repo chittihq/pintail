@@ -733,7 +733,12 @@ pub(super) fn compare_sort_values(
         (Value::Utf8(text), Value::Enum { label, .. }) => {
             order_direction(compare_utf8_mysql(text, label, collation), key.ascending)
         }
-        (Value::Utf8(left), Value::Utf8(right)) => {
+        (left, right)
+            if left.text().is_some()
+                && right.text().is_some()
+                && !matches!((left, right), (Value::Enum { .. }, Value::Enum { .. })) =>
+        {
+            let (left, right) = (left.text().unwrap(), right.text().unwrap());
             // Canonical decimal text orders numerically; lexical ordering
             // would put "9.00" after "10.00". Unparseable text (shouldn't
             // happen for decimal-typed keys) falls back to text order.

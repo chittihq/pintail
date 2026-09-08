@@ -73,6 +73,9 @@ fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
         (BucketMode::Text, Value::Utf8(value) | Value::Enum { label: value, .. }) => {
             super::join::normalized_collation_text(value, collation).hash(&mut hash);
         }
+        (BucketMode::Text, Value::DecimalAverage(value)) => {
+            super::join::normalized_collation_text(&value.label, collation).hash(&mut hash);
+        }
         _ => return 0,
     }
     usize::try_from(hash.finish() % PARTITIONS as u64).expect("partition fits usize")

@@ -152,10 +152,23 @@ impl std::hash::Hash for Float64 {
     }
 }
 
-/// A nullable scalar value stored in a table row.
+/// The scaled sum and count retained by a finished decimal average.
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,
 )]
+pub struct DecimalQuotient {
+    /// Canonical text at the declared result scale.
+    pub label: String,
+    /// Sum in units of the declared result scale.
+    pub units: i128,
+    /// Number of non-null inputs.
+    pub count: u64,
+    /// Declared result scale, also used to render the average.
+    pub scale: u8,
+}
+
+/// A nullable scalar value stored in a table row.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum Value {
     /// SQL `NULL`.
     Null,
@@ -171,6 +184,9 @@ pub enum Value {
     Utf8(String),
     /// Arbitrary bytes.
     Binary(Vec<u8>),
+    /// A decimal average displays its declared scale while exact arithmetic
+    /// and rounding can read its quotient. Boxing keeps scalar rows compact.
+    DecimalAverage(Box<DecimalQuotient>),
     /// A `MySQL` ENUM: its declaration index alongside its label.
     ///
     /// `MySQL` orders and compares ENUM by the declaration index and displays
@@ -182,7 +198,7 @@ pub enum Value {
     /// an unaudited path at today's behaviour rather than giving it a new
     /// one; only comparison, which is the defect, changes.
     ///
-    /// Derived `Ord` compares `index` before `label`, which is the ordering
+    /// Scalar ordering compares `index` before `label`, which is the ordering
     /// `MySQL` uses.
     Enum {
         /// One-based declaration index for an ENUM, or the member bitmask
@@ -212,7 +228,7 @@ impl Value {
             // Reports Utf8 on purpose: an ENUM displays as its label, so
             // any path that has not learned about ENUM keeps treating it
             // exactly as it treated the label before.
-            Self::Utf8(_) | Self::Enum { .. } => Some(DataType::Utf8),
+            Self::Utf8(_) | Self::Enum { .. } | Self::DecimalAverage(_) => Some(DataType::Utf8),
             Self::Binary(_) => Some(DataType::Binary),
         }
     }
@@ -222,12 +238,13 @@ impl Value {
     pub fn heap_bytes(&self) -> usize {
         match self {
             Self::Utf8(value) | Self::Enum { label: value, .. } => value.len(),
+            Self::DecimalAverage(value) => value.label.len() + size_of::<DecimalQuotient>(),
             Self::Binary(value) => value.len(),
             _ => 0,
         }
     }
 
-    /// The text an ENUM or string value displays as.
+    /// The text a string, ENUM, or decimal average displays as.
     ///
     /// Lets a caller read the label without matching both variants, which is
     /// how most existing string handling should treat an ENUM.
@@ -235,6 +252,7 @@ impl Value {
     pub fn text(&self) -> Option<&str> {
         match self {
             Self::Utf8(value) | Self::Enum { label: value, .. } => Some(value),
+            Self::DecimalAverage(value) => Some(&value.label),
             _ => None,
         }
     }
@@ -246,5 +264,84 @@ impl Value {
             Self::Enum { index, .. } => Some(*index),
             _ => None,
         }
+    }
+}
+
+// The quotient is execution precision, not scalar identity. Ordinary value
+// consumers keep the same equality, hashing and ordering as the display text.
+#[derive(Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum ValueKey<'a> {
+    Null,
+    Boolean(bool),
+    Int64(i64),
+    UInt64(u64),
+    Float64(Float64),
+    Utf8(&'a str),
+    Binary(&'a [u8]),
+    Enum(u64, &'a str),
+}
+
+impl Value {
+    fn key(&self) -> ValueKey<'_> {
+        match self {
+            Self::Null => ValueKey::Null,
+            Self::Boolean(value) => ValueKey::Boolean(*value),
+            Self::Int64(value) => ValueKey::Int64(*value),
+            Self::UInt64(value) => ValueKey::UInt64(*value),
+            Self::Float64(value) => ValueKey::Float64(*value),
+            Self::Utf8(value) => ValueKey::Utf8(value),
+            Self::DecimalAverage(value) => ValueKey::Utf8(&value.label),
+            Self::Binary(value) => ValueKey::Binary(value),
+            Self::Enum { index, label } => ValueKey::Enum(*index, label),
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        self.key() == other.key()
+    }
+}
+impl Eq for Value {}
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Value {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.key().cmp(&other.key())
+    }
+}
+impl std::hash::Hash for Value {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.key().hash(state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DecimalQuotient, Value};
+    use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn decimal_precision_does_not_change_scalar_identity_or_layout() {
+        let average = Value::DecimalAverage(Box::new(DecimalQuotient {
+            label: "1.0000".to_owned(),
+            units: 20_000,
+            count: 2,
+            scale: 4,
+        }));
+        let text = Value::Utf8("1.0000".to_owned());
+        assert_eq!(average, text);
+        assert_eq!(average.cmp(&text), std::cmp::Ordering::Equal);
+        let hash = |value: &Value| {
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            value.hash(&mut state);
+            state.finish()
+        };
+        assert_eq!(hash(&average), hash(&text));
+        assert_eq!(size_of::<Value>(), 32);
+        assert_eq!(average.heap_bytes(), size_of::<DecimalQuotient>() + 6);
     }
 }

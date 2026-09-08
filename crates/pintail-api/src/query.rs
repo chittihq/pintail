@@ -129,6 +129,10 @@ impl Serialize for JsonCell<'_> {
             Value::Utf8(value) | Value::Enum { label: value, .. } => {
                 serializer.serialize_str(value)
             }
+            Value::DecimalAverage(average) => {
+                let value = &average.label;
+                serializer.serialize_str(value)
+            }
             Value::Binary(value) => serializer.serialize_str(&format!("0x{}", encode_hex(value))),
         }
     }

@@ -113,7 +113,14 @@ impl DependentMemo {
 
     /// The cached result for `slot` under `key`, if there is one.
     pub(super) fn get(&mut self, slot: SubquerySlot, key: &[Value]) -> Option<Vec<Value>> {
-        if self.disabled || !self.memoizable.get(slot).copied().unwrap_or(false) {
+        // Display equality does not identify the hidden digits consumed by
+        // a correlated decimal expression, so these tuples are not memo keys.
+        if self.disabled
+            || !self.memoizable.get(slot).copied().unwrap_or(false)
+            || key
+                .iter()
+                .any(|value| matches!(value, Value::DecimalAverage(_)))
+        {
             return None;
         }
         // The lookup allocates its key only on the miss path below; a hit
@@ -137,7 +144,14 @@ impl DependentMemo {
         key: Vec<Value>,
         values: &[Value],
     ) {
-        if self.disabled || !self.memoizable.get(slot).copied().unwrap_or(false) {
+        // Display equality does not identify the hidden digits consumed by
+        // a correlated decimal expression, so these tuples are not memo keys.
+        if self.disabled
+            || !self.memoizable.get(slot).copied().unwrap_or(false)
+            || key
+                .iter()
+                .any(|value| matches!(value, Value::DecimalAverage(_)))
+        {
             return;
         }
         if self.entries.len() >= MAX_ENTRIES {
@@ -393,6 +407,41 @@ mod tests {
         assert_eq!(memo.get(0, &[Value::Utf8("A".into())]), None);
         let stats = memo.finish(&memory);
         assert_eq!((stats.hits, stats.misses), (2, 1));
+        assert_eq!(memory.used(), 0);
+    }
+
+    #[test]
+    fn hidden_decimal_digits_do_not_share_a_display_only_memo_key() {
+        let memory = tracker(1 << 20);
+        let mut memo = DependentMemo {
+            entries: std::collections::HashMap::new(),
+            reserved: 0,
+            memoizable: vec![true],
+            disabled: false,
+            cursor: 0,
+            hits: 0,
+            misses: 0,
+        };
+        let average = Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
+            label: "0.3333".to_owned(),
+            units: 10_000,
+            count: 3,
+            scale: 4,
+        }));
+        memo.insert(
+            &memory,
+            0,
+            vec![Value::Utf8("0.3333".into())],
+            &[Value::UInt64(1)],
+        );
+        assert!(memo.get(0, std::slice::from_ref(&average)).is_none());
+        memo.insert(&memory, 0, vec![average], &[Value::UInt64(2)]);
+        assert_eq!(memo.entries.len(), 1);
+        assert_eq!(
+            memo.get(0, &[Value::Utf8("0.3333".into())]),
+            Some(vec![Value::UInt64(1)])
+        );
+        memo.finish(&memory);
         assert_eq!(memory.used(), 0);
     }
 

@@ -207,7 +207,7 @@ fn two_pass_key_bits(value: &Value) -> Option<(u64, bool)> {
         Value::Float64(value) => Some((value.get().to_bits(), false)),
         Value::Boolean(value) => Some((u64::from(*value), false)),
         // Text-shaped values have no fixed-width lane key.
-        Value::Utf8(_) | Value::Binary(_) | Value::Enum { .. } => None,
+        Value::Utf8(_) | Value::Binary(_) | Value::Enum { .. } | Value::DecimalAverage(_) => None,
     }
 }
 

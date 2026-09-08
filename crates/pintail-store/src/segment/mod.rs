@@ -4299,6 +4299,20 @@ fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Cell {
                     Cell::Utf8(value.clone())
                 }
             }
+            Value::DecimalAverage(average) => {
+                let value = &average.label;
+                {
+                    if let Some(units) = spec.native {
+                        // The probe already verified every value round-trips.
+                        let parsed = units
+                            .parse_exact(value)
+                            .expect("probed native column value round-trips");
+                        Cell::Int64(parsed)
+                    } else {
+                        Cell::Utf8(value.clone())
+                    }
+                }
+            }
             Value::Boolean(value) => Cell::Boolean(*value),
             Value::Int64(value) => Cell::Int64(*value),
             Value::UInt64(value) => Cell::UInt64(*value),

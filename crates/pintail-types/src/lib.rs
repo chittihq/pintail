@@ -17,4 +17,4 @@ pub use canonical::{
 };
 pub use row::{KeyPart, PrimaryKey, StoredRow};
 pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
-pub use value::{DataType, Float64, Value};
+pub use value::{DataType, DecimalQuotient, Float64, Value};

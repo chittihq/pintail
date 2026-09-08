@@ -153,6 +153,13 @@ fn hash_value(hash: &mut u64, value: &Value) {
             hash_bytes(hash, b"s");
             hash_sized(hash, value.as_bytes());
         }
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            {
+                hash_bytes(hash, b"s");
+                hash_sized(hash, value.as_bytes());
+            }
+        }
         Value::Binary(value) => {
             hash_bytes(hash, b"b");
             hash_sized(hash, value);

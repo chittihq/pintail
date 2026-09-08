@@ -30,6 +30,7 @@ const TAG_BINARY: u8 = 6;
 /// declaration indexes, so the same query answered differently depending on
 /// whether it happened to spill.
 const TAG_ENUM: u8 = 7;
+const TAG_DECIMAL_AVERAGE: u8 = 8;
 
 /// Appends primitive fields to a spill payload.
 pub(crate) struct Encoder {
@@ -106,6 +107,13 @@ impl Encoder {
             Value::Utf8(inner) => {
                 self.u8(TAG_UTF8);
                 self.str(inner);
+            }
+            Value::DecimalAverage(quotient) => {
+                self.u8(TAG_DECIMAL_AVERAGE);
+                self.str(&quotient.label);
+                self.bytes.extend_from_slice(&quotient.units.to_le_bytes());
+                self.u64(quotient.count);
+                self.u8(quotient.scale);
             }
             Value::Enum { index, label } => {
                 self.u8(TAG_ENUM);
@@ -222,6 +230,24 @@ impl<'a> Decoder<'a> {
             TAG_UINT64 => Ok(Value::UInt64(self.u64()?)),
             TAG_FLOAT64 => Ok(Value::Float64(Float64::new(self.f64()?))),
             TAG_UTF8 => Ok(Value::Utf8(self.string()?)),
+            TAG_DECIMAL_AVERAGE => {
+                let label = self.string()?;
+                let units = i128::from_le_bytes(
+                    self.take(16)?
+                        .try_into()
+                        .map_err(|_| "invalid decimal quotient")?,
+                );
+                let count = self.u64()?;
+                let scale = self.u8()?;
+                Ok(Value::DecimalAverage(Box::new(
+                    pintail_types::DecimalQuotient {
+                        label,
+                        units,
+                        count,
+                        scale,
+                    },
+                )))
+            }
             TAG_ENUM => {
                 let index = self.u64()?;
                 Ok(Value::Enum {
@@ -294,6 +320,12 @@ mod tests {
             Value::float64(-0.5),
             Value::Utf8("mixed ünïcode ✅".to_owned()),
             Value::Binary(vec![0, 1, 255, 128]),
+            Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
+                label: "335.412050".to_owned(),
+                units: 54_001_340_000,
+                count: 161,
+                scale: 6,
+            })),
         ]
     }
 
@@ -303,7 +335,16 @@ mod tests {
         encoder.values(&sample());
         let bytes = encoder.finish();
         let mut decoder = Decoder::new(&bytes);
-        assert_eq!(decoder.values().expect("decode"), sample());
+        let restored = decoder.values().expect("decode");
+        assert_eq!(restored, sample());
+        let Value::DecimalAverage(actual) = restored.last().expect("average") else {
+            panic!("quotient lost");
+        };
+        let expected = sample();
+        let Value::DecimalAverage(expected) = expected.last().expect("average") else {
+            unreachable!()
+        };
+        assert_eq!(actual, expected);
     }
 
     #[test]

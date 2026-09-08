@@ -90,10 +90,19 @@ fn run_on(sql: &str, fixture: &[StoredRow]) -> Vec<Vec<String>> {
 /// harness otherwise never exercises that path, and a value's typed
 /// representation can differ between the two.
 fn run_split(sql: &str, fixture: &[StoredRow], live: usize) -> Vec<Vec<String>> {
+    run_with_schema(sql, fixture, live, schema())
+}
+
+fn run_with_schema(
+    sql: &str,
+    fixture: &[StoredRow],
+    live: usize,
+    schema: TableSchema,
+) -> Vec<Vec<String>> {
     let row_count = fixture.len() as u64;
     let directory = tempfile::tempdir().expect("temporary table");
-    let mut table =
-        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open table");
+    let mut table = TableStore::open(directory.path(), schema.clone(), StoreOptions::default())
+        .expect("open table");
     let split = fixture.len().saturating_sub(live);
     let (stamped, streamed) = fixture.split_at(split);
     table
@@ -107,7 +116,7 @@ fn run_split(sql: &str, fixture: &[StoredRow], live: usize) -> Vec<Vec<String>> 
     let entry = TableEntry::new(
         table_id,
         "orders",
-        schema(),
+        schema,
         TableStatistics::with_row_count(row_count),
     )
     .expect("entry")
@@ -146,6 +155,7 @@ fn run_split(sql: &str, fixture: &[StoredRow], live: usize) -> Vec<Vec<String>> 
                     .expect("selected value");
                 values.push(match value {
                     Value::Utf8(text) => text,
+                    Value::DecimalAverage(average) => average.label,
                     Value::UInt64(number) => number.to_string(),
                     Value::Int64(number) => number.to_string(),
                     Value::Null => "NULL".to_owned(),
@@ -454,12 +464,11 @@ fn a_top_k_by_average_agrees_with_the_sum_over_the_count() {
 /// Rounding to six places first and letting `ROUND` round that again turns
 /// the same value into 335.4121: the intermediate 335.412050 is an exact
 /// half at the fourth place, and half-up carries it upward. The answer is
-/// then a unit in the last place above MySQL's, which is G14's signature.
+/// then a unit in the last place above `MySQL`'s, which is G14's signature.
 ///
-/// The numbers come from a live MySQL 8.4: `AVG` reads 335.412050 and
+/// The numbers come from a live `MySQL` 8.4: `AVG` reads 335.412050 and
 /// `ROUND(AVG(total), 4)` reads 335.4120 over exactly this fixture.
 #[test]
-#[ignore = "G14 is open: this reproduces it and fails until AVG stops rounding twice"]
 fn rounding_an_average_does_not_round_it_twice() {
     let mut rows = vec![row(1, 1, "335.74")];
     rows.extend((2..=161).map(|id| row(id, 1, "335.41")));
@@ -475,4 +484,146 @@ fn rounding_an_average_does_not_round_it_twice() {
         out[0]
     );
     assert_eq!(out[0][1], out[0][2], "AVG and SUM/COUNT must agree");
+}
+
+#[test]
+fn average_consumers_keep_internal_digits_and_declared_rendering() {
+    for sign in ["", "-"] {
+        let mut rows = vec![row(1, 1, &format!("{sign}335.74"))];
+        rows.extend((2..=161).map(|id| row(id, 1, &format!("{sign}335.41"))));
+        for live in [0, 80] {
+            let out = run_split(
+                "SELECT AVG(total), ROUND(AVG(total), 9), CAST(AVG(total) AS DECIMAL(15,4)), \
+                 TRUNCATE(AVG(total), 4), ROUND(AVG(total) + 0, 4), \
+                 CAST(AVG(total) AS CHAR), ROUND(-AVG(total), 4) FROM orders",
+                &rows,
+                live,
+            );
+            let opposite = if sign.is_empty() { "-" } else { "" };
+            assert_eq!(
+                out,
+                vec![vec![
+                    format!("{sign}335.412050"),
+                    format!("{sign}335.412050"),
+                    format!("{sign}335.4120"),
+                    format!("{sign}335.4120"),
+                    format!("{sign}335.4120"),
+                    format!("{sign}335.412050"),
+                    format!("{opposite}335.4120"),
+                ]]
+            );
+        }
+    }
+}
+
+#[test]
+fn materialized_averages_support_predicates_and_outer_aggregates() {
+    let rows = vec![row(1, 1, "1.00"), row(2, 2, "1.00"), row(3, 2, "1.00")];
+    assert_eq!(
+        run_on(
+            "SELECT AVG(total), ABS(AVG(total)) FROM orders HAVING AVG(total) > 0",
+            &rows
+        ),
+        vec![vec!["1.000000".to_owned(), "1.000000".to_owned()]]
+    );
+    assert_eq!(
+        run_on(
+            "SELECT SUM(a), AVG(a), MIN(a), MAX(a) FROM \
+         (SELECT AVG(total) AS a FROM orders GROUP BY grp) AS means",
+            &rows
+        ),
+        vec![vec![
+            "2.000000".to_owned(),
+            "1.0000000000".to_owned(),
+            "1.000000".to_owned(),
+            "1.000000".to_owned()
+        ]]
+    );
+    assert_eq!(
+        run_on(
+            "SELECT a, COUNT(*) FROM (SELECT AVG(total) AS a FROM orders GROUP BY grp) AS means GROUP BY a",
+            &rows
+        ),
+        vec![vec!["1.000000".to_owned(), "2".to_owned()]]
+    );
+}
+
+#[test]
+fn averages_retain_whole_fraction_words_for_each_declared_scale() {
+    for (scale, displayed, internal) in [
+        (0, "0.3333", "0.333333333000000000"),
+        (2, "0.333333", "0.333333333000000000"),
+        (6, "0.3333333333", "0.333333333333333333"),
+    ] {
+        let schema = TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::UInt64, false),
+                Column::new(2, "grp", DataType::UInt64, false),
+                Column::new(
+                    3,
+                    "total",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale,
+                    },
+                    false,
+                ),
+            ],
+        )
+        .expect("schema");
+        let rows = vec![row(1, 1, "1"), row(2, 1, "0"), row(3, 1, "0")];
+        assert_eq!(
+            run_with_schema(
+                "SELECT AVG(total), CAST(AVG(total) AS DECIMAL(30,18)) FROM orders",
+                &rows,
+                0,
+                schema
+            ),
+            vec![vec![displayed.to_owned(), internal.to_owned()]]
+        );
+    }
+}
+
+#[test]
+fn window_range_bounds_read_materialized_average_text() {
+    let rows = vec![row(1, 1, "1.00"), row(2, 2, "2.00"), row(3, 3, "4.00")];
+    assert_eq!(
+        run_on(
+            "SELECT a, SUM(a) OVER (ORDER BY a RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) \
+         FROM (SELECT AVG(total) AS a FROM orders GROUP BY grp) AS means",
+            &rows
+        ),
+        vec![
+            vec!["1.000000".to_owned(), "1.000000".to_owned()],
+            vec!["2.000000".to_owned(), "3.000000".to_owned()],
+            vec!["4.000000".to_owned(), "4.000000".to_owned()]
+        ]
+    );
+}
+
+#[test]
+fn wide_exact_averages_do_not_expand_unused_internal_digits() {
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "grp", DataType::UInt64, false),
+            Column::new(
+                3,
+                "total",
+                DataType::Decimal {
+                    precision: 33,
+                    scale: 2,
+                },
+                false,
+            ),
+        ],
+    )
+    .expect("schema");
+    let rows = vec![row(1, 1, "1000000000000000000000000000000.01")];
+    assert_eq!(
+        run_with_schema("SELECT ROUND(AVG(total), 2) FROM orders", &rows, 0, schema),
+        vec![vec!["1000000000000000000000000000000.01".to_owned()]]
+    );
 }

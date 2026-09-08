@@ -513,6 +513,7 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
                 uint64 = None;
                 float64 = None;
             }
+            Value::DecimalAverage(_) => return None,
             Value::Boolean(_) | Value::Binary(_) => {
                 int64 = None;
                 uint64 = None;

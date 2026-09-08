@@ -250,6 +250,10 @@ fn encode_value(encoder: &mut Encoder, value: &Value) -> Result<(), StoreError> 
         // the column declaration, not of the value, so persisting it per row
         // would store the same number a million times and go stale the
         // moment the declaration changes.
+        Value::DecimalAverage(value) => {
+            encoder.u8(5);
+            encoder.bytes(value.label.as_bytes(), "UTF-8 value")?;
+        }
         Value::Enum { label, .. } => {
             encoder.u8(5);
             encoder.bytes(label.as_bytes(), "UTF-8 value")?;

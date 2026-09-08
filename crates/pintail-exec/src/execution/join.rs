@@ -424,6 +424,16 @@ fn encode_group_value(
             let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
             out.extend_from_slice(&length.to_le_bytes());
         }
+        Value::DecimalAverage(average) => {
+            let text = &average.label;
+            {
+                out.push(5);
+                let start = out.len();
+                keys.append(text, collation, out);
+                let length = u32::try_from(out.len() - start).unwrap_or(u32::MAX);
+                out.extend_from_slice(&length.to_le_bytes());
+            }
+        }
         Value::Binary(bytes) => {
             out.push(6);
             out.extend_from_slice(bytes);
@@ -2103,6 +2113,9 @@ pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> 
         // a string column by string, so `enum_col = varchar_col` keys must
         // collide with the plain-text side.
         Value::Enum { label, .. } => Value::Utf8(normalized_collation_text(&label, collation)),
+        Value::DecimalAverage(value) => {
+            Value::Utf8(normalized_collation_text(&value.label, collation))
+        }
         value => value,
     }
 }

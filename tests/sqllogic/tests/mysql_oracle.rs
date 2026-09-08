@@ -624,6 +624,10 @@ fn canonical_value(value: &Value) -> OracleValue {
         // The oracle compares what MySQL displays, and MySQL displays an
         // ENUM as its label.
         Value::Utf8(value) | Value::Enum { label: value, .. } => OracleValue::Exact(value.clone()),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            OracleValue::Exact(value.clone())
+        }
         Value::Binary(value) => OracleValue::Exact(String::from_utf8_lossy(value).into_owned()),
     }
 }

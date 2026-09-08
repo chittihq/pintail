@@ -763,6 +763,10 @@ impl AggregateState {
             // parse would fail, and every group answered {}.
             let fragment = match value {
                 Value::Utf8(text) => text.clone(),
+                Value::DecimalAverage(average) => {
+                    let text = &average.label;
+                    text.clone()
+                }
                 other => {
                     crate::expression::mysql_json_text(&crate::expression::json_value_of(other))
                 }
@@ -802,6 +806,10 @@ impl AggregateState {
         {
             let units = match value {
                 Value::Utf8(text) => crate::batch::parse_decimal_scaled(text, scale),
+                Value::DecimalAverage(average) => {
+                    let text = &average.label;
+                    crate::batch::parse_decimal_scaled(text, scale)
+                }
                 Value::Boolean(flag) => decimal_units_from_int(i128::from(*flag), scale),
                 Value::Int64(signed) => decimal_units_from_int(i128::from(*signed), scale),
                 Value::UInt64(unsigned) => decimal_units_from_int(i128::from(*unsigned), scale),
@@ -856,6 +864,10 @@ impl AggregateState {
             AggregateValue::DecimalSum { units, scale, .. } => {
                 let text = match value {
                     Value::Utf8(text) => text.as_str(),
+                    Value::DecimalAverage(average) => {
+                        let text = &average.label;
+                        text.as_str()
+                    }
                     _ => {
                         return Err(ExecError::InvalidPhysicalPlan(
                             "decimal sum updated with a non-text value",
@@ -898,6 +910,10 @@ impl AggregateState {
                 } else {
                     match value {
                         Value::Utf8(text) => crate::batch::parse_decimal_scaled(text, *scale),
+                        Value::DecimalAverage(average) => {
+                            let text = &average.label;
+                            crate::batch::parse_decimal_scaled(text, *scale)
+                        }
                         Value::Boolean(flag) => decimal_units_from_int(i128::from(*flag), *scale),
                         Value::Int64(signed) => decimal_units_from_int(i128::from(*signed), *scale),
                         Value::UInt64(unsigned) => {
@@ -1043,6 +1059,7 @@ impl AggregateState {
                 let scaled = crate::batch::parse_decimal_scaled(
                     match &right {
                         Value::Utf8(text) => text,
+                        Value::DecimalAverage(average) => &average.label,
                         _ => {
                             return Err(ExecError::InvalidPhysicalPlan(
                                 "decimal sum merged with a non-text sum",
@@ -1487,7 +1504,12 @@ impl AggregateState {
             } => {
                 let average = pintail_types::div_decimal_round_half_up(units, i128::from(count))
                     .ok_or(ExecError::NumericOverflow)?;
-                Value::Utf8(pintail_types::format_decimal_scaled(average, scale))
+                Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
+                    label: pintail_types::format_decimal_scaled(average, scale),
+                    units,
+                    count,
+                    scale,
+                }))
             }
             AggregateValue::JsonArrayAgg { items } if items.is_empty() => Value::Null,
             AggregateValue::JsonArrayAgg { items } => {
@@ -5682,7 +5704,7 @@ pub(super) fn compare_aggregate_values(
     collation: Collation,
 ) -> Result<Ordering, ExecError> {
     if matches!(data_type, Some(DataType::Decimal { .. })) {
-        let (Value::Utf8(left), Value::Utf8(right)) = (left, right) else {
+        let (Some(left), Some(right)) = (left.text(), right.text()) else {
             return Err(ExecError::InvalidExpressionType);
         };
         return compare_decimal_text(left, right);
@@ -5757,6 +5779,10 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::UInt64(value) => Ok(value.to_string()),
         Value::Float64(value) => Ok(value.get().to_string()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
+        Value::DecimalAverage(average) => {
+            let value = &average.label;
+            Ok(value.clone())
+        }
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }

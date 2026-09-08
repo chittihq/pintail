@@ -733,7 +733,8 @@ fn key_literal(expression: &BoundExpr, key_type: &KeyPart) -> Option<KeyPart> {
             | Value::Float64(_)
             | Value::Utf8(_)
             | Value::Binary(_)
-            | Value::Enum { .. },
+            | Value::Enum { .. }
+            | Value::DecimalAverage(_),
             _,
         ) => None,
     }

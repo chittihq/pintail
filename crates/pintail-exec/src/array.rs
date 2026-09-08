@@ -659,6 +659,7 @@ impl ColumnArray {
         let mut kind = Kind::Unknown;
         for value in values {
             let observed = match value {
+                Value::DecimalAverage(_) => return None,
                 Value::Null => continue,
                 Value::Boolean(_) => Kind::Boolean,
                 Value::Int64(_) => Kind::Int64,
