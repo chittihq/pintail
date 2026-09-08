@@ -21,16 +21,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- `AVG` over a `DECIMAL` column could answer one unit in the last place
-  away from `MySQL`, and differently between runs over the same data. The
-  two-pass lane is chosen from the batch column's storage type, and the arm
-  for a `Float64` column returned the float accumulator without asking
-  whether the planner had typed the aggregate as an exact decimal - the arm
-  beside it, for a decimal column, does ask. Since `f64` addition is not
-  associative, an average that fell through moved with how the rows were
-  split across workers. Confirmed by a branch that predates the fix failing
-  the same check in all twelve end-to-end phases and passing once the fix
-  was merged in, with nothing else changed.
+- One path by which `AVG` over a `DECIMAL` column could answer a unit in
+  the last place away from `MySQL` is closed. The two-pass lane is chosen
+  from the batch column's storage type, and the arm for a `Float64` column
+  returned the float accumulator without asking whether the planner had
+  typed the aggregate as an exact decimal - the arm beside it, for a
+  decimal column, does ask. Since `f64` addition is not associative, an
+  average that fell through moved with how the rows were split across
+  workers. A branch predating the fix failed the same check in all twelve
+  end-to-end phases and passed once the fix was merged in, with nothing
+  else changed.
+
+  This entry claimed the defect itself was fixed. It was not: the symptom
+  returned with the guard present, so there is a second path. G14 stays
+  open and `docs/limitations.md` records what is known.
 
 ## [0.1.2-rc11] - 2026-09-07
 

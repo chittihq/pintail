@@ -267,6 +267,33 @@ stays readable as a list of things to fix.
   export as bytes and cannot be used for spatial predicates.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB.
+- `AVG` over a `DECIMAL` column can return a value one unit in the last
+  place away from `MySQL`'s, while `SUM(...) / COUNT(*)` over the same rows
+  in the same statement stays exact - so the engine disagrees with its own
+  arithmetic rather than with the delivered data. Seen at thirty-six rows
+  reading 327.1610 against 327.1609, and at thirty-one rows reading
+  322.8552 against 322.8551. Tracked as G14.
+
+  It needs the settled aggregate memo to appear: with the memo, the grouped
+  segment fold and shared queries all disabled both end-to-end legs pass,
+  and with only the memo enabled the check fails again at the same row with
+  the same value. Whether the memo commits the error or replays one made
+  elsewhere is undecided, so disabling it is not known to be a fix.
+
+  It has no in-process reproduction. Every shape a hand-built catalog can
+  express is covered and exact, including the failing query's own spelling:
+  top-k ordered by the average under test, under a `LIMIT`, over group
+  sizes whose quotients do not terminate, across live-row splits.
+
+  One path that could produce exactly this has been closed: the two-pass
+  lane for a column whose batch storage is `Float64` was chosen without
+  asking whether the planner had typed the average as an exact decimal, so
+  an exact average could accumulate through an order-dependent `f64`. That
+  guard is in place, and a branch predating it reproduced the defect
+  deterministically and stopped once it arrived. This entry was removed on
+  the strength of that and restored the same day, because the symptom
+  returned with the guard present: the differential closed the path it
+  varied, not the symptom.
 
 ## CDC engine
 

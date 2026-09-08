@@ -365,8 +365,36 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
-- [x] **G14. `AVG` on a decimal column answered wrong, nondeterministically.**
-  Closed 2026-09-08. The two-pass lane is chosen from a batch column's
+- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically.**
+  Reopened 2026-09-08, having been closed earlier the same day. The fix
+  below is real and stays; what was wrong was treating it as the whole
+  cause. The symptom returned on dev with that fix present, so the defect
+  has a second path.
+
+  What the reopening establishes. The gate failed the corpus check with
+  `AVG` one unit in the last place above `MySQL` while `SUM(_) / COUNT(*)`
+  over the same rows, in the same statement, matched exactly - so the
+  engine disagrees with its own arithmetic, and the delivered data is not
+  in question. Two runs, two shapes: thirty-six rows reading 327.1610
+  against 327.1609, and thirty-one rows reading 322.8552 against 322.8551.
+
+  The settled aggregate memo is necessary to reproduce it. With the memo,
+  the grouped segment fold and shared queries all disabled, both e2e legs
+  pass; with only the memo enabled, the check fails again at the same row
+  with the same value. Whether the memo commits the error or replays one
+  made elsewhere is not yet decided - the value repeating exactly across
+  runs is what a cached result looks like, so disabling the memo may be
+  hiding the defect rather than removing it.
+
+  It does not reproduce in process. Nine arms in
+  `crates/pintail-exec/tests/decimal_average_exactness.rs` now cover every
+  shape a hand-built catalog can express, including the gate's own query
+  spelling - top-k ordered by the average under test, under a `LIMIT`,
+  over group sizes whose quotients do not terminate, across three live-row
+  splits. All exact. The defect needs the server.
+
+  The fix that closed a real hole, kept. The two-pass lane is chosen from a
+  batch column's
   storage type, and the arm for a `Float64` column returned the float
   accumulator without asking whether the planner had typed the aggregate as
   an exact decimal - the arm beside it, for a decimal column, does ask. An
@@ -382,7 +410,14 @@ prints.
   reproduction that had been missing. Merging dev into that branch, rather
   than rebasing, left its own commits byte for byte identical and made the
   guard the only variable: the same corpus then passed, on both MySQL
-  majors. Nine clean runs on dev say the same thing less directly.
+  majors.
+
+  That differential stands - it proves the guard fixed the hole it names.
+  What it does not prove, and was read as proving, is that the hole was
+  the only one. A branch that predates a fix failing, and passing once the
+  fix arrives, says the fix works; it says nothing about a second cause
+  that the same corpus reaches only sometimes. The lesson is the narrow
+  one: a differential closes the path it varies, not the symptom.
 
 ## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
 

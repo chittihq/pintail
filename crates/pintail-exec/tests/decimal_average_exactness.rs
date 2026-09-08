@@ -391,3 +391,50 @@ fn a_non_terminating_average_rounds_the_way_mysql_rounds() {
         );
     }
 }
+
+/// The corpus shape: group sizes that do not divide a power of ten, ordered
+/// by the average itself under a `LIMIT`.
+///
+/// The arms above fix the group size at fourteen and order by the group key.
+/// The gate's failing query does neither - its groups are whatever the data
+/// made them, and it takes the twenty largest averages, so the ordering reads
+/// the very value under test and a top-k path decides which rows survive.
+/// Thirty-one and thirty-six rows both force the division to round at the
+/// sixth fraction digit, the only place `AVG` and `SUM(_) / COUNT(*)` can
+/// part company.
+#[test]
+fn a_top_k_by_average_agrees_with_the_sum_over_the_count() {
+    let mut rows = Vec::new();
+    let mut id = 1_u64;
+    let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+    // Sizes around the shapes the gate reported, none of them a divisor of a
+    // power of ten, so every group's average is a non-terminating quotient.
+    for (grp, per_group) in (1..=400_u64).map(|grp| (grp, 29 + (grp % 9))) {
+        for _ in 0..per_group {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let cents = 30_000 + (seed >> 33) % 5_000;
+            rows.push(row(id, grp, &format!("{}.{:02}", cents / 100, cents % 100)));
+            id += 1;
+        }
+    }
+    for live in [0, rows.len() / 4, rows.len() / 2] {
+        let out = run_split(
+            "SELECT grp, ROUND(AVG(total), 4) AS avg_total, \
+             ROUND(SUM(total) / COUNT(*), 4) AS mean_check FROM orders \
+             GROUP BY grp HAVING COUNT(*) >= 2 \
+             ORDER BY avg_total DESC, grp LIMIT 20",
+            &rows,
+            live,
+        );
+        assert_eq!(out.len(), 20, "the limit decides the row count (live={live})");
+        for row in &out {
+            assert_eq!(
+                row[1], row[2],
+                "AVG and SUM/COUNT must agree for group {} (live={live})",
+                row[0]
+            );
+        }
+    }
+}
