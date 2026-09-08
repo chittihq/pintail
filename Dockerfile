@@ -20,21 +20,18 @@ WORKDIR /source
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY vendor ./vendor
 COPY tests/sqllogic ./tests/sqllogic
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 ARG PINTAIL_PGO=0
 COPY --from=planner /source/recipe.json recipe.json
-COPY vendor ./vendor
 # Rebuilds only when Cargo.lock changes.
 RUN --mount=type=cache,target=/source/target,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo chef cook --locked --release --package pintail --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY vendor ./vendor
 COPY tests/sqllogic ./tests/sqllogic
 COPY scripts/pgo-build.sh ./scripts/pgo-build.sh
 COPY --from=dashboard /source/packages/dashboard/.output/public \
