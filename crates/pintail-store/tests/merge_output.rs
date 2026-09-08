@@ -59,6 +59,12 @@ fn timed_projection(snapshot: &TableSnapshot, projection: &[u32]) -> (f64, usize
         .scan_projected_range_stream(&low, &high, projection)
         .expect("scan")
     {
+        // What the engine does (`pintail-exec/src/storage.rs`). The overlay
+        // is opt-in, and a scan that does not ask for it falls back to
+        // merging the segment with the memtable row by row - which is a
+        // path production does not take, and measuring it as though it
+        // were is how the first version of e92 came to be wrong.
+        stream.enable_memtable_overlay(&[1]);
         loop {
             let chunks = stream
                 .next_column_chunks(projection.len(), 512 << 20)

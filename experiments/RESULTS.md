@@ -3657,64 +3657,55 @@ narrows how long a table sits on it; it does not make it cheaper.
 `crates/pintail-store/tests/merge_output.rs`, release, two million rows,
 one stamped segment plus a memtable. Ignored measurements.
 
-e81 timed two overlapping SEGMENTS and e91 shortened how long a table
-sits in that state. Neither describes the state a mirror is actually in
-most of the time: changed rows are in the MEMTABLE, so the scan takes the
-overlay path - decode the segment, mask what the memtable supersedes -
-and never merges two segments at all.
-
-| projection | overlay | direct | ratio |
-|---|---:|---:|---:|
-| `id`, the `UInt64` key | 395.6 | 6.3 | 62.4x |
-| a five-value text column | 566.8 | 6.8 | 83.0x |
-| a unique text column | 599.3 | 35.4 | 16.9x |
-| an `Int64` column | 420.9 | 6.2 | 67.4x |
-| all four | 1126.2 | 13.4 | 83.8x |
-
-**The cost does not depend on how much changed.** One projected column,
-varying only the number of rows in the memtable:
+**The overlay does its job.** One projected column, varying only how many
+rows sit in the memtable, against a direct scan of the same rows at
+6.6 ms:
 
 | rows changed | overlay ms | against a direct scan |
 |---:|---:|---:|
-| 1 | 388.1 | 62.9x |
-| 10 | 390.0 | 63.2x |
-| 100 | 390.7 | 63.3x |
-| 1,000 | 391.0 | 63.3x |
-| 10,000 | 400.2 | 64.8x |
-| 20,000 | 399.3 | 64.7x |
+| 1 | 6.9 | 1.0x |
+| 10 | 10.0 | 1.5x |
+| 100 | 11.8 | 1.8x |
+| 1,000 | 12.1 | 1.8x |
+| 10,000 | 14.8 | 2.2x |
+| 20,000 | 16.4 | 2.5x |
 
-Flat from one changed row to twenty thousand. **A single row in the
-memtable costs a table sixty-three times its read speed**, and under
-continuous replication the memtable is never empty, so this is the
-ordinary state rather than an edge of it. It is a larger and more
-persistent penalty than e81's merge cliff, which compaction can at least
-retire.
+Over all four columns at twenty thousand changed rows the overlay reads in
+162.5 ms against 23.1 ms direct, 7.0x - the wider projection carries more
+of the memtable's rows into the output, so the ratio grows with what is
+projected as well as with what changed.
 
-Three explanations were measured and refused, each of which looked
-convincing first:
+A mirrored table under continuous replication reads at close to its
+quiescent speed, and the cost grows with what actually changed rather than
+with the size of the table. That is what the overlay was built for and it
+is worth recording as confirmed rather than assumed.
 
-**Not materialization.** `DecodedColumn::interleave` converts a whole
-packed column to one `Value` per row for every representation except
-`Int64` and `UInt64` - a `String` allocation per row for a text column.
-Giving text, float and dictionary columns their own typed interleave
-moved the number by nothing. The `id`-only projection is `UInt64`, which
-already had the typed path, and still costs 62x.
+**The first version of this entry claimed the opposite** - a flat 63x
+whatever changed - and was wrong in a way worth writing down. The overlay
+is opt-in: `enable_memtable_overlay` must be called before the first
+chunk, and a scan that does not call it falls back to merging the segment
+with the memtable row by row. `pintail-exec/src/storage.rs` calls it; the
+measurement did not. So the flat 63x was real, but it was the merge
+fallback, measured against a path production never takes and reported as
+the path it always takes.
 
-**Not mask fragmentation.** Twenty thousand excluded rows split the range
-into twenty thousand pieces, and one excluded row splits it into two. Both
-cost the same.
+**What survives is narrower and still worth having.**
+`enable_memtable_overlay` refuses unless EVERY key column is an integer
+type, and a scan it refuses gets no `ScanPart::Overlay` at all. So a table
+whose primary key has a text, decimal or temporal part pays the merge path
+on every scan for as long as its memtable is non-empty - which under
+replication is always. The accidental measurement quantifies that case:
+63x on one projected column, 84x on four, flat from one changed row to
+twenty thousand, because the fallback is a property of the key's type
+rather than of how much changed.
 
-**Not slicing.** The overlay decodes in `DIRECT_SLICE_ROWS` slices where a
-direct scan takes the segment whole. Raising the constant until the
-overlay used a single slice changed nothing.
+That is worth confirming with a text-keyed fixture before it is acted on,
+which this entry does not do.
 
-What is left, and what the next attempt should start from: the overlay
-always supplies a selector, so its slice decodes through the
-predicate-read path (`read_projected_columns`, the selector, then either
-`retain_predicate_fetch` or a ranged re-read) rather than
-`decode_column_chunk`. That machinery is the remaining difference between
-6 ms and 390 ms, and it is the same area as G2, where a second predicate
-on a scan measured five times the first. A profiler would name the
-function in one run; `perf_event_paranoid` blocks it on this host, and
-guessing has now been wrong three times, so the next step is instrumented
-timings inside that path rather than another hypothesis.
+Three explanations for the flat cost were measured and refused before the
+opt-in was found, and they stay refuted for the merge path they were
+actually describing: it is not the per-row `Value` materialization in
+`interleave` (giving text, float and dictionary columns typed paths moved
+nothing), not the fragmentation of the mask (one excluded row costs what
+twenty thousand do), and not the slice width (one slice costs what
+sixteen do).
