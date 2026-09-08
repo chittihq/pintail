@@ -231,9 +231,12 @@ stays readable as a list of things to fix.
   different answer.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
-- Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
-  with an exact catalog cardinality of one. Pintail has no relationship or
-  uniqueness statistics that would justify broader rewrites safely.
+- General aggregate pre-aggregation across equi-joins is not implemented.
+  Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
+  with an exact catalog cardinality of one. The optimizer has no general rule
+  that proves aggregate decomposability and preservation of join comparison,
+  multiplicity and grouping semantics, then costs pre-aggregation against the
+  original plan. A declared storage key alone does not establish those conditions.
 - `EXPLAIN ANALYZE` scan counters accumulate work from all executions of a
   stable table in the statement, including uncorrelated subqueries.
 - Grouped sub-cubes and predicate-covered blocks are not covered by the
