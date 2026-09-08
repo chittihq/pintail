@@ -33,6 +33,16 @@ pub fn binlog(data: &[u8]) {
         BinlogEventFooter::new(BinlogChecksumAlg::BINLOG_CHECKSUM_ALG_OFF),
     );
     if let Ok(event) = Event::read(&format, framed.as_slice()) {
+        // The guard production reads events through. The decoder panics on
+        // a transaction-payload header carrying a field id or a compression
+        // type it cannot narrow, so the fuzz target exercises the same
+        // order the replication task does rather than a shape it never
+        // reaches.
+        if event.header().event_type_raw() == pintail_cdc::TRANSACTION_PAYLOAD_EVENT
+            && pintail_cdc::check_transaction_payload_header(event.data(), 0).is_err()
+        {
+            return;
+        }
         let _ = event.read_data();
     }
 }
@@ -48,8 +58,14 @@ pub fn storage(data: &[u8]) {
 mod tests {
     use super::{binlog, storage, wire};
 
+    /// The minimized artifact that used to abort the replication task.
+    ///
+    /// The decoder itself still panics on it - the dependency is unpatched
+    /// and this asserts nothing about it. What is asserted is that the
+    /// guard Pintail reads events through refuses the header first, and
+    /// that the fuzz target therefore survives the corpus entry.
     #[test]
-    fn transaction_payload_field_above_u8_is_rejected_without_panicking() {
+    fn transaction_payload_field_above_u8_is_refused_before_the_decoder() {
         use mysql_async::binlog::{
             BinlogChecksumAlg, BinlogVersion,
             events::{BinlogEventFooter, Event, FormatDescriptionEvent},
@@ -60,8 +76,13 @@ mod tests {
             BinlogEventFooter::new(BinlogChecksumAlg::BINLOG_CHECKSUM_ALG_OFF),
         );
         let event = Event::read(&format, input.as_slice()).expect("framed event");
-        let error = event.read_data().expect_err("invalid field must be rejected");
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(
+            event.header().event_type_raw(),
+            pintail_cdc::TRANSACTION_PAYLOAD_EVENT
+        );
+        let refusal = pintail_cdc::check_transaction_payload_header(event.data(), 0)
+            .expect_err("the header must be refused");
+        assert!(matches!(refusal, pintail_cdc::CdcError::Decode(_)));
     }
 
     #[test]

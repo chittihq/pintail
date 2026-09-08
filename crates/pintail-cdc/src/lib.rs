@@ -8,6 +8,7 @@
 mod ddl;
 mod decoder;
 mod event;
+pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
 mod gtid;
 
 use std::{

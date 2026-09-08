@@ -257,6 +257,14 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
+- The binlog decoder is pinned to a fork. Published `mysql_common` panics
+  on a transaction-payload header whose field id or compression type falls
+  outside the range it narrows to, and `mysql_async` decodes those events
+  inside its own stream, so no guard on Pintail's side can prevent it. The
+  fork returns an error there instead. Until the fix lands upstream the
+  crate resolves from git rather than crates.io, which puts it outside
+  `cargo audit` and Dependabot; upstream 0.38 still carries both unwraps.
+
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a
   newly committed event may wait for the next cycle.
 - MariaDB GTID text is captured for diagnostics, but `mysql_common` 0.37 does

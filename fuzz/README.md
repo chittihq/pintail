@@ -37,15 +37,27 @@ claim of exhaustive parser safety. No target catches panics.
 
 ## Transaction-payload regression
 
-The decoder is pinned through a local patch shared by the workspace and this
-harness. Transaction-payload header field IDs above 255 are rejected before
-the narrowing conversion, including when the stream decodes a payload before
-returning its event to CDC. The minimized artifact is checked in under
-`corpus/binlog/transaction_payload_field`; its deterministic regression runs
-in ordinary smoke checks and asserts an invalid-data error:
+Both `TryFrom<u64>` impls for the transaction-payload header narrowed an
+unrecognised value to `u8` with `unwrap()` before putting it in the error
+that reports it, so a value above 255 panicked on exactly the input the
+error exists for. `mysql_async` decodes those events inside its own binlog
+stream, before an event reaches Pintail, so nothing on our side could
+prevent it - the fix has to be in the decoder. The workspace and this
+harness pin a fork carrying it (`Cargo.toml`, `[patch.crates-io]`);
+upstream 0.38 still has both unwraps.
+
+Pintail also refuses such a header in
+`pintail_cdc::check_transaction_payload_header` before handing the event
+on, which adds the event's position to the report and covers anything that
+reaches `decode_event` directly. It is the second line, not the fix.
+
+The minimized artifact is checked in under
+`corpus/binlog/transaction_payload_field`; its field id is 256. The
+deterministic regression asserts that the stream's own decode returns an
+invalid-data error rather than aborting:
 
 ```sh
-CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload_field
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml transaction_payload
 ```
 
 The unrestricted binlog fuzz target is unchanged. Fixing this reproducer is
