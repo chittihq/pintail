@@ -3258,7 +3258,7 @@ fn write_column(
         let cells = block
             .iter()
             .map(|row| cell_for(spec, row))
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         write_block(encoder, spec.logical_type, &cells, compression)?;
     }
     Ok(())
@@ -4278,8 +4278,30 @@ impl Cell {
     }
 }
 
-fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Cell {
-    match spec.source {
+/// One text-carried value as the cell its column stores: fixed-width units
+/// where the column was probed as native, the text itself otherwise.
+///
+/// The probe parses every value of the column with these same units
+/// immediately before the column is written, so a failure here means the
+/// two disagree about a row neither of them changed. A writer that cannot
+/// honour the header it just chose refuses the segment rather than aborting
+/// the thread that asked for it; the message names the column and its units
+/// so a recurrence says which one, and never the value, which is row data.
+fn native_cell(spec: &ColumnSpec, text: &str) -> Result<Cell, StoreError> {
+    let Some(units) = spec.native else {
+        return Ok(Cell::Utf8(text.to_owned()));
+    };
+    units.parse_exact(text).map(Cell::Int64).ok_or_else(|| {
+        StoreError::FormatLimit(format!(
+            "column {} was probed as {units:?} units, but one of its values \
+             does not round-trip through them",
+            spec.id
+        ))
+    })
+}
+
+fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Result<Cell, StoreError> {
+    Ok(match spec.source {
         ColumnSource::Key => Cell::Key(row.key().clone()),
         ColumnSource::Version => Cell::UInt64(row.version()),
         ColumnSource::Tombstone => Cell::Boolean(row.is_deleted()),
@@ -4288,38 +4310,15 @@ fn cell_for(spec: &ColumnSpec, row: &StoredRow) -> Cell {
             // Stored as its label, for the reason given in codec.rs: the
             // index belongs to the declaration, so it is reattached on read
             // rather than duplicated into every row.
-            Value::Utf8(value) | Value::Enum { label: value, .. } => {
-                if let Some(units) = spec.native {
-                    // The probe already verified every value round-trips.
-                    let parsed = units
-                        .parse_exact(value)
-                        .expect("probed native column value round-trips");
-                    Cell::Int64(parsed)
-                } else {
-                    Cell::Utf8(value.clone())
-                }
-            }
-            Value::DecimalAverage(average) => {
-                let value = &average.label;
-                {
-                    if let Some(units) = spec.native {
-                        // The probe already verified every value round-trips.
-                        let parsed = units
-                            .parse_exact(value)
-                            .expect("probed native column value round-trips");
-                        Cell::Int64(parsed)
-                    } else {
-                        Cell::Utf8(value.clone())
-                    }
-                }
-            }
+            Value::Utf8(value) | Value::Enum { label: value, .. } => native_cell(spec, value)?,
+            Value::DecimalAverage(average) => native_cell(spec, &average.label)?,
             Value::Boolean(value) => Cell::Boolean(*value),
             Value::Int64(value) => Cell::Int64(*value),
             Value::UInt64(value) => Cell::UInt64(*value),
             Value::Float64(value) => Cell::Float64(value.to_bits()),
             Value::Binary(value) => Cell::Binary(value.clone()),
         },
-    }
+    })
 }
 
 fn encode_cell(encoder: &mut Encoder, cell: &Cell) -> Result<(), StoreError> {
@@ -5196,7 +5195,10 @@ mod range_read_tests {
 mod native_units_tests {
     use pintail_types::{DataType, Value};
 
-    use super::{NativeUnits, probe_native_column};
+    use super::{
+        ColumnSource, ColumnSpec, LogicalType, NativeUnits, StoreError, cell_for,
+        probe_native_column,
+    };
 
     fn rows_of(values: Vec<Value>) -> Vec<pintail_types::StoredRow> {
         values
@@ -5285,6 +5287,28 @@ mod native_units_tests {
             Value::Utf8("not-a-decimal".to_owned()),
         ]);
         assert_eq!(probe_native_column(decimal, &rows, 0), None);
+    }
+
+    #[test]
+    fn a_native_column_refuses_a_value_its_units_cannot_carry() {
+        // The probe never admits such a value, so reaching the writer with
+        // one means the two disagree. The segment is refused with the column
+        // named, rather than the writing thread dying on an assertion.
+        let spec = ColumnSpec {
+            id: 7,
+            logical_type: LogicalType::Int64,
+            source: ColumnSource::Value(0),
+            native: Some(NativeUnits::Decimal { scale: 2 }),
+        };
+        let rows = rows_of(vec![Value::Utf8("123.4".to_owned())]);
+        let Err(error) = cell_for(&spec, &rows[0]) else {
+            panic!("a value outside the units is refused");
+        };
+        let StoreError::FormatLimit(message) = error else {
+            panic!("a value the format cannot carry is a format limit");
+        };
+        assert!(message.contains("column 7"), "{message}");
+        assert!(message.contains("Decimal"), "{message}");
     }
 }
 

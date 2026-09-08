@@ -59,6 +59,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   end-to-end phases and passed once the fix was merged in, with nothing
   else changed.
 
+- A segment writer that cannot store a value as the fixed-width units it
+  chose for that column refuses the segment, naming the column, instead of
+  asserting inside the thread that asked for it. The assertion fired once
+  during an acceptance snapshot and aborted the snapshot worker with
+  nothing to say about which column or value was involved; it did not
+  recur in twenty-seven further runs over the same data. The writer probes
+  every value of a column immediately before writing it, so a value that
+  fails here contradicts a check that just passed - a segment to refuse,
+  and a report to act on rather than a crash to reconstruct.
+
 - Settled aggregate and segment-fold caches now include each table
   opening's identity. Dropping and recreating a table at the same path
   can no longer reuse cached results from its predecessor.
