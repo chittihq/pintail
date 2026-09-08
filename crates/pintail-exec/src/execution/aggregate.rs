@@ -16,6 +16,10 @@ use pintail_types::{DataType, Value};
 use crate::collation::Collation;
 use rayon::prelude::*;
 
+// `SpanStream` is driven directly by the fold rather than through an
+// operator, so its trait method has to be in scope.
+use crate::BatchStream as _;
+
 use super::join::{
     JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
     normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
@@ -1658,6 +1662,33 @@ fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
         }
 }
 
+/// Nanoseconds a span fold spends reading, converting and aggregating,
+/// written only when `PINTAIL_AGG_DEBUG` is set.
+pub static FOLD_PHASE_NANOS: [std::sync::atomic::AtomicU64; 3] = [
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+    std::sync::atomic::AtomicU64::new(0),
+];
+
+fn record_fold_phase(phase: usize, started: std::time::Instant) {
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        FOLD_PHASE_NANOS[phase].fetch_add(
+            u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+}
+
+/// The phase totals since the last call: store read, conversion, aggregate.
+#[must_use]
+pub fn take_fold_phase_timings() -> [u64; 3] {
+    let mut out = [0_u64; 3];
+    for (slot, counter) in out.iter_mut().zip(&FOLD_PHASE_NANOS) {
+        *slot = counter.swap(0, std::sync::atomic::Ordering::Relaxed);
+    }
+    out
+}
+
 /// One segment span's rows, as batches, so the whole span goes through a
 /// single aggregate.
 ///
@@ -1685,6 +1716,7 @@ impl crate::BatchStream for SpanStream {
                 if row_count == 0 {
                     continue;
                 }
+                let started = std::time::Instant::now();
                 let columns = self
                     .types
                     .iter()
@@ -1700,14 +1732,17 @@ impl crate::BatchStream for SpanStream {
                         )
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                return Ok(Some(RecordBatch::new(row_count, columns).map_err(
-                    |_| ExecError::InvalidBatch("span chunk does not form a batch"),
-                )?));
+                let batch = RecordBatch::new(row_count, columns)
+                    .map_err(|_| ExecError::InvalidBatch("span chunk does not form a batch"))?;
+                record_fold_phase(1, started);
+                return Ok(Some(batch));
             }
+            let started = std::time::Instant::now();
             let chunks = self
                 .inner
                 .next_column_chunks(self.read_width, 512 << 20)
                 .map_err(|error| ExecError::Source(error.to_string()))?;
+            record_fold_phase(0, started);
             if chunks.is_empty() {
                 return Ok(None);
             }
@@ -1757,26 +1792,68 @@ fn fold_span(
         return Ok(Vec::new());
     };
     inner.enable_memtable_overlay(&fold.key_column_ids);
-    let mut span_input = PullOperator::Scan {
-        stream: Box::new(SpanStream {
-            inner,
-            chunks: std::collections::VecDeque::new(),
-            types: fold.types.clone(),
-            enum_labels: fold.enum_labels.clone(),
-            set_members: fold.set_members.clone(),
-            read_width: read_ids.len(),
-        }),
-        expected_types: fold.types.clone(),
+    let mut stream = SpanStream {
+        inner,
+        chunks: std::collections::VecDeque::new(),
+        types: fold.types.clone(),
+        enum_labels: fold.enum_labels.clone(),
+        set_members: fold.set_members.clone(),
+        read_width: read_ids.len(),
     };
-    Ok(build_hash_aggregate_scan(
-        &mut span_input,
-        group_by,
-        aggregates,
-        memory,
-        collation,
-        key_collations,
-    )?
-    .rows)
+    // The span's chunks are aggregated in parallel and their finished
+    // groups merged. A single serial stream through the aggregate measured
+    // 37 ns a row where the general path spends under 9: that path gets its
+    // parallelism from the scan pool adopting chunks across workers, which
+    // a stream built here does not have. Aggregating the chunks themselves
+    // in parallel puts it back, and the merge is exact for the same reason
+    // it is across segments - the chunks are disjoint sets of rows.
+    let started = std::time::Instant::now();
+    let mut folded: Option<Vec<Vec<Value>>> = None;
+    let wave_width = rayon::current_num_threads().max(1) * 2;
+    loop {
+        let mut wave = Vec::with_capacity(wave_width);
+        while wave.len() < wave_width {
+            match stream.next_batch(usize::MAX)? {
+                Some(batch) => wave.push(batch),
+                None => break,
+            }
+        }
+        if wave.is_empty() {
+            break;
+        }
+        let partials = wave
+            .into_par_iter()
+            .map(|batch| {
+                let mut one_shot = PullOperator::Scan {
+                    stream: Box::new(OneShotStream { batch: Some(batch) }),
+                    expected_types: fold.types.clone(),
+                };
+                build_hash_aggregate_scan(
+                    &mut one_shot,
+                    group_by,
+                    aggregates,
+                    memory,
+                    collation,
+                    key_collations,
+                )
+                .map(|rows| rows.rows)
+            })
+            .collect::<Result<Vec<_>, ExecError>>()?;
+        for rows in partials {
+            folded = Some(match folded {
+                None => rows,
+                Some(base) => merge_finished_aggregate_rows(
+                    base,
+                    rows,
+                    group_by.len(),
+                    aggregates,
+                    collation,
+                )?,
+            });
+        }
+    }
+    record_fold_phase(2, started);
+    Ok(folded.unwrap_or_default())
 }
 
 /// `PINTAIL_DISABLE_GROUPED_FOLD` puts a grouped query back on the general

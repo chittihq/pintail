@@ -56,6 +56,16 @@ fn versioned(id: u64, version: u64) -> StoredRow {
     )
 }
 
+/// What `take_fold_phase_timings` reports, in order.
+const FOLD_PHASES: [&str; 3] = ["store read", "to ColumnVectors", "aggregate"];
+
+/// Nanoseconds as milliseconds; a printed measurement resolves far less
+/// than the precision the cast gives up.
+#[allow(clippy::cast_precision_loss)]
+fn millis(nanos: u64) -> f64 {
+    nanos as f64 / 1e6
+}
+
 const SQL: &str = "SELECT status, COUNT(*), SUM(amount) FROM facts GROUP BY status ORDER BY status";
 
 fn run(catalog: &CatalogSnapshot, store: &TableStore) -> (f64, Vec<Vec<String>>) {
@@ -151,7 +161,12 @@ fn a_grouped_aggregate_under_ingest() {
                 .collect(),
         )
         .expect("more updates");
+    let _ = pintail_exec::take_fold_phase_timings();
     let (again, _) = run(&catalog, &store);
+    let phases = pintail_exec::take_fold_phase_timings();
+    for (label, nanos) in FOLD_PHASES.iter().zip(phases) {
+        println!("    {label:>18} = {:7.1} ms", millis(nanos));
+    }
     println!(
         "  after 20,000 more                = {:8.1} ms",
         again * 1e3

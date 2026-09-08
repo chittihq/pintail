@@ -1,4 +1,5 @@
 mod aggregate;
+pub use aggregate::take_fold_phase_timings;
 mod budget;
 mod error;
 mod join;

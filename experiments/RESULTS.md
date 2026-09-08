@@ -3781,9 +3781,27 @@ the whole answer and the next query pays for the whole table.
 
 | | control | folded |
 |---|---:|---:|
-| settled table | 37.3 ms | 31.7 ms (declines) |
-| first run under ingest, populating | 84.9 ms | 122.3 ms |
-| **steady state under ingest** | **86.7 ms** | **49.6 ms** |
+| settled table | 32.1 ms | 32.1 ms (declines) |
+| first run under ingest, populating | 96.3 ms | 79.0 ms |
+| **steady state under ingest** | **78.4 ms** | **32.3 ms** |
+
+**2.4x**, on an idle host. The first reading of this entry had the fold at
+1.75x, with a span read that went through a single serial stream. Timing
+its phases showed why: the store read was 12 ms and the conversion 1 ms,
+while the aggregate spent 37 ns a row where the general path spends under
+9. That path draws its parallelism from the scan pool adopting chunks
+across workers, and a stream built inside the fold has none. Aggregating
+the span's chunks in parallel and merging the finished groups - exact for
+the same reason the merge across segments is - halved it:
+
+| phase | serial | parallel |
+|---|---:|---:|
+| store read | 12.3 ms | 11.2 ms |
+| conversion to `ColumnVector` | 1.3 ms | 1.1 ms |
+| aggregate (nests the read) | 50.4 ms | 30.6 ms |
+
+Still above the general path per row, so there is more here; the phase
+timings say where to look next rather than leaving it to a guess.
 
 Nine of ten spans reuse their fold on every run after the first; only the
 newest is re-read. **1.75x on the query a dashboard runs against a mirror**,
