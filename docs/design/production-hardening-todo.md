@@ -365,8 +365,26 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
-- [x] **G14. `AVG` on a decimal column answered wrong, nondeterministically.**
-  Closed 2026-09-08, on the second attempt, with a reproduction this time.
+- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically.**
+  Closed twice on 2026-09-08 and reopened twice. Still open.
+
+  The second closure repeated the first one's error while its own entry was
+  describing that error. Two real defects were found and fixed - a memoized
+  aggregate served to a table that had replaced another at the same path,
+  and a fold span silently dropping its rows - the first with a
+  deterministic reproduction and a control, the second with a
+  single-variable proof. Neither is this. The gate failed again with both
+  in, at the same row and the same value: thirty-one rows reading 322.8552
+  against MySQL's 322.8551.
+
+  A fix with a reproduction of its own is still not a fix for this until a
+  run that would have failed passes.
+
+  One tool the earlier bisect leaned on is weaker than it looked.
+  `PINTAIL_DISABLE_SETTLED_MEMO` does not only disable the memo: it leaves
+  `memo_key` unset, which is the condition guarding the insert-only
+  delta-merge path, so setting it swaps one path for another rather than
+  removing one. "Memo off, passes" therefore does not isolate the memo.
 
   The settled aggregate memo is keyed by the table's directory and manifest
   generation, and neither identifies a table. A directory is reclaimed when

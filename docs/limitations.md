@@ -267,6 +267,24 @@ stays readable as a list of things to fix.
   export as bytes and cannot be used for spatial predicates.
 - Progress row estimates use `information_schema.TABLES.TABLE_ROWS`, which is
   approximate for InnoDB.
+- `AVG` over a `DECIMAL` column can return a value one unit in the last
+  place away from `MySQL`'s, while `SUM(...) / COUNT(*)` over the same rows
+  in the same statement stays exact. Seen at thirty-six rows reading
+  327.1610 against 327.1609, and repeatedly at thirty-one rows reading
+  322.8552 against 322.8551. Tracked as G14, and open.
+
+  Three fixes have been argued to close it and have not. Two of them - a
+  memoized aggregate served to a table that replaced another at the same
+  path, and a fold span that dropped its rows when its ranged read declined
+  - are real defects with reproductions of their own, and the symptom
+  survives both. The third, an exact average riding the float lane, is
+  guarded and was proven to fix the branch that reproduced it.
+
+  It has no in-process reproduction. Every shape a hand-built catalog can
+  express is exact, including the failing query's own spelling.
+
+  This entry stays until a run which would have failed passes for a reason
+  that can be pointed at.
 
 ## CDC engine
 

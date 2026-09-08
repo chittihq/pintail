@@ -32,8 +32,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   end-to-end phases and passed once the fix was merged in, with nothing
   else changed.
 
-- The second path, and the one that produced the reported symptom: a
-  cached aggregate could be served to the wrong table. The settled
+- A cached aggregate could be served to the wrong table. This was reported
+  here as the path that produced G14's symptom; it is not - the symptom
+  survives this fix. The defect below is real and has a reproduction, but
+  G14 remains open. The settled
   aggregate memo is keyed by a table's directory and manifest generation,
   and a directory reclaimed by a dropped table hands its successor - which
   restarts from an empty manifest and walks the same generations - a key
