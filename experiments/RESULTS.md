@@ -3744,6 +3744,20 @@ shape - is disqualified by its first update and stays disqualified.
 Building grouped partials on this eligibility would therefore buy nothing
 for an update-carrying mirror, which is the case that motivated it.
 
+**The segment half of the gate is already satisfied, and compaction is
+what satisfies it.** The same fixture, asking about segment disjointness
+rather than the memtable:
+
+| state | fold eligible |
+|---|---|
+| one segment, empty memtable | yes |
+| after flushing 1,000 scattered updates | no - the segments overlap |
+| after compaction merges them | **yes** |
+
+So a flush disqualifies a table and a compaction re-qualifies it, and e91
+made that compaction prompt rather than something that waits for a fourth
+segment. Only the memtable condition is left.
+
 **What a version that served updates would need**, recorded so the design
 is not re-derived: partials per segment, plus a correction per memtable
 row that supersedes a segment row - read the superseded row, subtract its

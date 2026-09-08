@@ -50,6 +50,44 @@ fn store_with(live: impl Fn(&mut TableStore)) -> (tempfile::TempDir, TableStore)
     (directory, store)
 }
 
+/// The other half of the gate: the segments themselves must be key-
+/// disjoint. A flush of scattered updates writes a segment covering the
+/// same key span as the base, so this asks whether an update-carrying
+/// table is eligible even with an EMPTY memtable.
+#[test]
+#[ignore = "an eligibility measurement, not a gate"]
+fn whether_a_flushed_update_leaves_the_segments_disjoint() {
+    let directory = tempfile::tempdir().expect("directory");
+    let mut store =
+        TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("store");
+    store
+        .bulk_ingest_snapshot((1..=100_000).map(|id| row(id, 1)).collect())
+        .expect("base");
+    println!();
+    println!("100,000 rows; is the fold eligible after a flush?");
+    println!(
+        "  {:>44} : {}",
+        "one segment, empty memtable",
+        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" }
+    );
+    // A flush of scattered updates: the new segment spans the base's keys.
+    store
+        .bulk_ingest_snapshot((0..1_000).map(|n| row(n * 100 + 1, 2)).collect())
+        .expect("flushed updates");
+    println!(
+        "  {:>44} : {}",
+        "after flushing 1,000 scattered updates",
+        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" }
+    );
+    let compacted = store.compact().expect("compact");
+    println!(
+        "  {:>44} : {} ({} segments in)",
+        "after compaction merges them",
+        if store.snapshot().sma_fold_state().is_some() { "yes" } else { "NO" },
+        compacted.input_segments()
+    );
+}
+
 #[test]
 #[ignore = "an eligibility measurement, not a gate"]
 fn which_memtable_shapes_the_fold_can_serve() {
