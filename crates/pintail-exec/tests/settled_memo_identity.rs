@@ -161,3 +161,77 @@ fn a_recreated_table_does_not_answer_from_its_predecessor() {
         "AVG and SUM/COUNT must agree over the recreated table"
     );
 }
+
+/// The same reuse, through the grouped segment fold rather than the memo.
+///
+/// The fold caches per segment file, and the counter naming segments also
+/// restarts with an empty manifest, so a recreated table writes the same
+/// names over different bytes.
+///
+/// Reaching it takes meeting every one of its conditions at once. The
+/// aggregates must all merge across disjoint rows, which `SUM` over a
+/// `DECIMAL` does not, so this asks for the count. The scan must carry no
+/// predicate and no limit. There must be two key-disjoint segments with a
+/// memtable row inside one of them, so that span is dirty and the other is
+/// not: a settled table is answered by the memo instead, and a table dirty
+/// everywhere falls back to the general path.
+///
+/// The two incarnations carry identical keys, so their segments span the
+/// same ranges and take the same names; only the group each row belongs to
+/// differs, and only in the clean span - the one the fold serves from cache
+/// rather than re-reading.
+#[test]
+fn a_recreated_table_does_not_fold_its_predecessors_segments() {
+    const FOLD_SQL: &str = "SELECT grp, COUNT(*) AS n FROM orders GROUP BY grp ORDER BY grp";
+
+    fn build(path: &std::path::Path, settled_group: u64) -> Vec<Vec<String>> {
+        let mut table =
+            TableStore::open(path, schema(), StoreOptions::default()).expect("open table");
+        // The span that stays clean, and so is answered from the fold cache.
+        let settled: Vec<StoredRow> = (1..=20)
+            .map(|id| row(id, settled_group, "500.00"))
+            .collect();
+        table.bulk_ingest_snapshot(settled).expect("bulk snapshot");
+        // A second, key-disjoint span.
+        let higher: Vec<StoredRow> = (21..=40).map(|id| row(id, 2, "500.00")).collect();
+        table.ingest_cdc(higher).expect("cdc ingest");
+        table.flush().expect("flush");
+        // One live row inside the second span, so it is dirty and the first
+        // is not - the mixed state the fold exists for.
+        table
+            .ingest_cdc(vec![row(25, 2, "600.00")])
+            .expect("live ingest");
+        answer_over(&table, FOLD_SQL)
+    }
+
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("table");
+    std::fs::create_dir(&path).expect("table directory");
+
+    let before = build(&path, 1);
+
+    std::fs::remove_dir_all(&path).expect("drop table");
+    std::fs::create_dir(&path).expect("recreate table directory");
+
+    let after = build(&path, 5);
+
+    assert_ne!(
+        after, before,
+        "the recreated table groups its settled span differently, so a fold \
+         taken over the dropped table's segment must not answer for it \
+         (before={before:?} after={after:?})"
+    );
+    // The fold must answer for the whole table, not just the span it cached.
+    assert_eq!(
+        before,
+        vec![
+            vec!["1".to_owned(), "20".to_owned()],
+            vec!["2".to_owned(), "20".to_owned()],
+        ],
+        "both spans must be counted"
+    );
+    assert!(
+        after.iter().any(|row| row[0] == "5"),
+        "the recreated table's own group must appear; got {after:?}"
+    );
+}

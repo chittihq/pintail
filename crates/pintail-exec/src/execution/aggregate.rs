@@ -1767,6 +1767,12 @@ impl crate::BatchStream for SpanStream {
 /// carry eight, with an allocation for every string - which made a fold
 /// slower than the scan it was replacing.
 #[allow(clippy::too_many_arguments)]
+/// Folds one span, or `None` when the span cannot be read this way.
+///
+/// `None` is not an empty span. A span whose ranged read declines still
+/// holds every one of its rows, so contributing nothing for it would drop
+/// them from the answer - a `GROUP BY` silently missing whole groups. The
+/// caller abandons the fold and lets the general path read the table.
 fn fold_span(
     fold: &crate::execution::GroupedFoldInput,
     span: &pintail_store::GroupedFoldSpan,
@@ -1775,7 +1781,7 @@ fn fold_span(
     memory: &MemoryTracker,
     collation: Collation,
     key_collations: &[Collation],
-) -> Result<Vec<Vec<Value>>, ExecError> {
+) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
     // The overlay masks superseded rows BY the key columns, so they are
     // read even when the query does not select them; without them a span
     // the memtable touches falls onto the row-by-row merge. They are
@@ -1791,7 +1797,7 @@ fn fold_span(
         .scan_projected_range_stream(&span.min_key, &span.max_key, &read_ids)
         .map_err(|error| ExecError::Source(error.to_string()))?
     else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     inner.enable_memtable_overlay(&fold.key_column_ids);
     let mut stream = SpanStream {
@@ -1855,7 +1861,7 @@ fn fold_span(
         }
     }
     record_fold_phase(2, started);
-    Ok(folded.unwrap_or_default())
+    Ok(Some(folded.unwrap_or_default()))
 }
 
 /// `PINTAIL_DISABLE_GROUPED_FOLD` puts a grouped query back on the general
@@ -2017,7 +2023,7 @@ fn try_grouped_segment_fold(
             reused += 1;
             rows
         } else {
-            let folded = fold_span(
+            let Some(folded) = fold_span(
                 &fold,
                 span,
                 group_by,
@@ -2025,7 +2031,13 @@ fn try_grouped_segment_fold(
                 memory,
                 collation,
                 key_collations,
-            )?;
+            )?
+            else {
+                // The span holds rows this read cannot deliver. Folding the
+                // rest would answer without them, so the whole fold is
+                // abandoned and the general path reads the table.
+                return Ok(None);
+            };
             // A span the memtable holds a key inside is correct now and
             // wrong after the next write, so it is used and not kept.
             if !span.dirty {
