@@ -428,7 +428,11 @@ fn a_top_k_by_average_agrees_with_the_sum_over_the_count() {
             &rows,
             live,
         );
-        assert_eq!(out.len(), 20, "the limit decides the row count (live={live})");
+        assert_eq!(
+            out.len(),
+            20,
+            "the limit decides the row count (live={live})"
+        );
         for row in &out {
             assert_eq!(
                 row[1], row[2],

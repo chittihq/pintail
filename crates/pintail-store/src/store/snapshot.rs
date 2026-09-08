@@ -29,6 +29,8 @@ use crate::{
 /// A reader-owned immutable table view.
 #[derive(Clone)]
 pub struct TableSnapshot {
+    /// The opening this snapshot came from; see `TableStore::instance`.
+    pub(super) instance: u64,
     pub(super) memtable: Arc<BTreeMap<PrimaryKey, StoredRow>>,
     pub(super) manifest: Arc<Manifest>,
     pub(super) directory: PathBuf,
@@ -135,16 +137,34 @@ impl TableSnapshot {
         self.estimated_bytes
     }
 
-    /// The snapshot's data identity when every visible row is
-    /// segment-resident: `(table directory, manifest generation)` with an
-    /// empty memtable. Two snapshots with the same identity see byte-for-
-    /// byte identical data, so exactness-preserving caches (the settled
-    /// aggregate memo) key on it; any ingest or flush changes it.
+    /// This snapshot's opening; see `TableStore::instance`.
+    ///
+    /// Anything caching a result against the table's directory has to carry
+    /// this too, or a table recreated at that path is answered from its
+    /// predecessor's bytes.
     #[must_use]
-    pub fn settled_identity(&self) -> Option<(&std::path::Path, u64)> {
-        self.memtable
-            .is_empty()
-            .then(|| (self.directory.as_path(), self.manifest.generation))
+    pub const fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The snapshot's data identity when every visible row is
+    /// segment-resident: `(table directory, opening, manifest generation)`
+    /// with an empty memtable. Two snapshots with the same identity see
+    /// byte-for-byte identical data, so exactness-preserving caches (the
+    /// settled aggregate memo) key on it; any ingest or flush changes it.
+    ///
+    /// The opening is part of it because the other two are not enough: a
+    /// directory can be reclaimed, and the table that replaces it starts
+    /// from an empty manifest and walks the same generations.
+    #[must_use]
+    pub fn settled_identity(&self) -> Option<(&std::path::Path, u64, u64)> {
+        self.memtable.is_empty().then(|| {
+            (
+                self.directory.as_path(),
+                self.instance,
+                self.manifest.generation,
+            )
+        })
     }
 
     /// Per-segment SMAs plus residual memtable rows, when the fold is
@@ -316,6 +336,7 @@ impl TableSnapshot {
             }
             let estimated_bytes = memtable.estimated_bytes();
             return Ok(Self {
+                instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 memtable: memtable.snapshot(),
                 manifest,
                 directory,

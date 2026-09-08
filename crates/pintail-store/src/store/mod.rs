@@ -352,8 +352,23 @@ struct RetiredGeneration {
 }
 
 /// The single-writer handle for one physical table.
+/// Hands every open store an identity no other open in this process
+/// shares.
+///
+/// A table's directory and manifest generation do not identify the table:
+/// a directory can be reclaimed, and what replaces it starts from an empty
+/// manifest and walks the same generations, so two tables can present the
+/// same `(directory, generation)` pair. Anything caching a result against
+/// that pair needs this alongside it.
+pub(crate) static STORE_INSTANCE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
 pub struct TableStore {
     _writer_lock: File,
+    /// Distinguishes this open from any other, including an earlier table
+    /// at the same path. Never persisted: a reopen is a new instance, and
+    /// caches keyed on it correctly stop recognizing their old entries.
+    instance: u64,
     directory: PathBuf,
     schema: TableSchema,
     options: StoreOptions,
@@ -509,6 +524,7 @@ impl TableStore {
 
         Ok(Self {
             _writer_lock: writer_lock,
+            instance: STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             directory,
             schema,
             options,
@@ -1478,6 +1494,7 @@ impl TableStore {
     pub fn snapshot(&self) -> TableSnapshot {
         register_pinned_manifest(&self.directory, &self.manifest);
         TableSnapshot {
+            instance: self.instance,
             memtable: self.memtable.snapshot(),
             manifest: Arc::clone(&self.manifest),
             directory: self.directory.clone(),

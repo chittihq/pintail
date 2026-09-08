@@ -477,16 +477,23 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 // much a pure function of the data version as a bare one —
                 // the predicates and limit simply join the memo key (issue
                 // #6: Q2/Q5/Q7 were excluded for no sound reason).
-                settled: snapshot.settled_identity().map(|(directory, generation)| {
-                    (
-                        directory.to_path_buf(),
-                        generation,
-                        format!(
-                            "{:?}|{:?}|{:?}",
-                            scan.projected_column_ids, scan.predicates, scan.limit
-                        ),
-                    )
-                }),
+                settled: snapshot
+                    .settled_identity()
+                    .map(|(directory, instance, generation)| {
+                        (
+                            directory.to_path_buf(),
+                            generation,
+                            // The store instance leads the signature. A
+                            // directory can be reclaimed and its successor
+                            // walks the same generations, so the path and
+                            // generation alone would let one table be
+                            // answered from another's rows.
+                            format!(
+                                "i{instance}|{:?}|{:?}|{:?}",
+                                scan.projected_column_ids, scan.predicates, scan.limit
+                            ),
+                        )
+                    }),
                 delta,
                 sma,
                 grouped,

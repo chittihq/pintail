@@ -1620,8 +1620,10 @@ fn settled_signature(
 /// aggregated insert-only delta, group by group. Only called for shapes
 /// whose finished values merge exactly (COUNT/int-float SUM/MIN/MAX).
 /// Grouped folds kept per segment file. A segment is never rewritten, so
-/// an entry is stale only when its file leaves the manifest, and the file
-/// name identifies the bytes it was taken over.
+/// within one opening of a table an entry is stale only when its file
+/// leaves the manifest. Across openings the file name is not enough - the
+/// counter that names segments restarts with an empty manifest - so the
+/// key carries the store instance as well.
 type GroupedFoldKey = (std::path::PathBuf, String, String);
 static GROUPED_SEGMENT_FOLDS: std::sync::LazyLock<
     std::sync::Mutex<HashMap<GroupedFoldKey, Vec<Vec<Value>>>>,
@@ -1988,7 +1990,18 @@ fn try_grouped_segment_fold(
         // would otherwise read each other's fold.
         let key = (
             fold.directory.clone(),
-            format!("{}|{:?}..{:?}", span.file_name, span.min_key, span.max_key),
+            // The opening leads the segment identity. Segment file names
+            // come from a counter that restarts with an empty manifest, so
+            // a table recreated at this path writes the same names over
+            // different bytes, and the directory and file name together do
+            // not identify what was folded.
+            format!(
+                "i{}|{}|{:?}..{:?}",
+                fold.snapshot.instance(),
+                span.file_name,
+                span.min_key,
+                span.max_key
+            ),
             format!("{:?}|{signature}", fold.column_ids),
         );
         let cached = (!span.dirty)

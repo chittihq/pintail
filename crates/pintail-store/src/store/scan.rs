@@ -2731,6 +2731,7 @@ impl ProjectedScanStream {
         let mut manifest = self.snapshot.manifest.as_ref().clone();
         manifest.segments = vec![segment];
         let chunk = TableSnapshot {
+            instance: self.snapshot.instance,
             memtable: Arc::new(BTreeMap::new()),
             manifest: Arc::new(manifest),
             directory: self.snapshot.directory.clone(),
