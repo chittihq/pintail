@@ -289,8 +289,19 @@ stays readable as a list of things to fix.
 
   Fixing it means letting an average expose its exact quotient - the units
   and the count are both still held - to the same chain the rounding family
-  already uses for computed operands, rather than widening the stored value,
-  which renders the extra digits to clients.
+  already uses for computed operands. Widening the stored value was tried
+  and reverted: a decimal is `Value::Utf8` text, so a value cannot hold more
+  digits than it renders, and the extra digits reach clients as text the
+  protocol tells them to trust.
+
+  `Value::Enum` is the precedent for the shape this needs. It was added for
+  the same kind of defect - a value that displays one thing and orders by
+  another, where storing only what it displays made `ORDER BY` go
+  alphabetical silently - and it keeps the blast radius small by reporting
+  `DataType::Utf8`, so every site that has not learned about it treats it as
+  the string it displays as. A decimal average wants the same bargain: carry
+  the exact quotient, render the declared scale, and let only the rounding
+  family read the rest.
 
 ## CDC engine
 
