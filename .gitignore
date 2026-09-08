@@ -37,3 +37,4 @@ REVIEW.md
 /tests/integration/wire-clients/pintail-wire-clients
 
 /tests/e2e/results-recovery-partial.md
+*.pyc
