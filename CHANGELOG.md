@@ -4,9 +4,29 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.2-rc12] - 2026-09-09
 
 ### Performance
+
+- A snapshot's copy workers run as tasks rather than sharing one, and a
+  composite-key page seeks by an expanded prefix comparison instead of a
+  row-value tuple. The tuple form made the source scan its index from the
+  beginning on every page, so successive pages re-read rows already copied
+  and the cost grew with the square of the page count; the expanded form
+  reads only the page. Measured on one million synthetic rows over a
+  loopback source: four tables copied 2.90x faster, and a composite-key
+  copy 3.48x faster at the page size that forces a hundred pages. The
+  arms are independent and do not multiply.
+
+- A grouped aggregate folds one segment at a time and keeps the folds of
+  segments the memtable has not touched, so a dashboard query re-reads the
+  fraction of a table that changed rather than all of it. Each span's
+  chunks aggregate in parallel.
+
+- Small responses no longer wait on a delayed acknowledgement. A result
+  ending in a short packet - an OK terminator, a one-row answer - sat in
+  the send buffer until an earlier segment was acknowledged, inflating the
+  round trip by an interval the query never spent working.
 
 - Two overlapping segments are now enough to plan a compaction. The
   planner returned before overlap was ever considered unless the table
@@ -42,6 +62,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Settled aggregate and segment-fold caches now include each table
   opening's identity. Dropping and recreating a table at the same path
   can no longer reuse cached results from its predecessor.
+
+- A grouped aggregate no longer drops a segment's rows when the fold
+  cannot open a ranged read over it. The declined read was treated as an
+  empty segment, so its rows stopped being counted and a `GROUP BY` came
+  back missing whole groups, with no error to notice. A span that cannot
+  be read this way now abandons the fold, and the general path reads the
+  table.
+
+- A predicate naming one alias of a self-joined table now reaches that
+  alias's scan. Two instances of one table answered to the same key, so
+  the planner could not attribute a single-relation predicate to either
+  and left it above the join - reading the filtered side whole and
+  building the hash table from every row rather than the matching ones,
+  which is how a join that fits comfortably otherwise exhausts a query's
+  memory ceiling. The rule that carries a constant across a join equality
+  was blocked for the same reason and now applies.
+
+- A short query proves its replica current before answering, restoring a
+  revalidation that had been removed.
+
+- The binlog decoder is pinned to a fork rather than vendored, and no
+  longer panics on a transaction payload event whose field identifier or
+  compression type falls outside the values it knows.
+
+- The release image stops copying a vendor directory that no longer
+  exists.
 
 ## [0.1.2-rc11] - 2026-09-07
 
