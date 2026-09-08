@@ -1615,6 +1615,374 @@ fn settled_signature(
 /// Merges finished aggregate values of a memoized result with a freshly
 /// aggregated insert-only delta, group by group. Only called for shapes
 /// whose finished values merge exactly (COUNT/int-float SUM/MIN/MAX).
+/// Grouped folds kept per segment file. A segment is never rewritten, so
+/// an entry is stale only when its file leaves the manifest, and the file
+/// name identifies the bytes it was taken over.
+type GroupedFoldKey = (std::path::PathBuf, String, String);
+static GROUPED_SEGMENT_FOLDS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<GroupedFoldKey, Vec<Vec<Value>>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Segment folds kept at once. Cleared wholesale past this, as the settled
+/// memo does: a fold is an optimization, and a bounded map that sometimes
+/// forgets everything is cheaper to reason about than an eviction policy.
+const GROUPED_FOLD_MAX_ENTRIES: usize = 512;
+
+/// Whether an aggregate's finished value can be merged with another
+/// computed over a disjoint set of rows.
+///
+/// The same rule the insert-only delta uses. An average cannot: merging
+/// two finished averages needs their counts, which the finished value has
+/// thrown away. A decimal sum carries its scale in its text and is left
+/// out for the same reason the delta leaves it out.
+fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
+    !aggregate.distinct
+        && match aggregate.function {
+            AggregateFunction::Count
+            | AggregateFunction::Minimum
+            | AggregateFunction::Maximum
+            | AggregateFunction::AnyValue
+            | AggregateFunction::BitAnd
+            | AggregateFunction::BitOr
+            | AggregateFunction::BitXor => true,
+            AggregateFunction::Sum => matches!(
+                aggregate.data_type,
+                Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
+            ),
+            AggregateFunction::Average
+            | AggregateFunction::GroupConcat
+            | AggregateFunction::JsonArrayAgg
+            | AggregateFunction::JsonObjectAgg
+            | AggregateFunction::StdDev { .. }
+            | AggregateFunction::Variance { .. } => false,
+        }
+}
+
+/// One segment span's rows, as batches, so the whole span goes through a
+/// single aggregate.
+///
+/// Aggregating each chunk on its own and merging the results cost four
+/// times what the general path spends per row: every chunk paid to set up
+/// its own group map and then to merge it away again, and the dense lanes
+/// never saw more than a chunk at a time. One stream over the span puts it
+/// back on the same footing as an ordinary scan.
+struct SpanStream {
+    inner: pintail_store::ProjectedScanStream,
+    chunks: std::collections::VecDeque<pintail_store::ProjectedColumnChunk>,
+    /// Columns the query asked for; any key columns read for the mask sit
+    /// after these and are dropped.
+    types: Vec<DataType>,
+    enum_labels: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    set_members: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    read_width: usize,
+}
+
+impl crate::BatchStream for SpanStream {
+    fn next_batch(&mut self, _available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        loop {
+            if let Some(chunk) = self.chunks.pop_front() {
+                let (decoded, row_count) = chunk.take_columns();
+                if row_count == 0 {
+                    continue;
+                }
+                let columns = self
+                    .types
+                    .iter()
+                    .copied()
+                    .zip(decoded.into_iter().take(self.types.len()))
+                    .zip(self.enum_labels.iter().zip(self.set_members.iter()))
+                    .map(|((data_type, column), (labels, members))| {
+                        crate::storage::column_vector_from_decoded(
+                            data_type,
+                            column,
+                            labels.as_ref(),
+                            members.as_ref(),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Some(RecordBatch::new(row_count, columns).map_err(
+                    |_| ExecError::InvalidBatch("span chunk does not form a batch"),
+                )?));
+            }
+            let chunks = self
+                .inner
+                .next_column_chunks(self.read_width, 512 << 20)
+                .map_err(|error| ExecError::Source(error.to_string()))?;
+            if chunks.is_empty() {
+                return Ok(None);
+            }
+            self.chunks.extend(chunks);
+        }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        0
+    }
+
+    fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
+        0
+    }
+}
+
+/// Folds one span by reading it as packed columns rather than as rows.
+///
+/// The row-shaped read costs one `Value` per cell - thirty-two bytes to
+/// carry eight, with an allocation for every string - which made a fold
+/// slower than the scan it was replacing.
+#[allow(clippy::too_many_arguments)]
+fn fold_span(
+    fold: &crate::execution::GroupedFoldInput,
+    span: &pintail_store::GroupedFoldSpan,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    collation: Collation,
+    key_collations: &[Collation],
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    // The overlay masks superseded rows BY the key columns, so they are
+    // read even when the query does not select them; without them a span
+    // the memtable touches falls onto the row-by-row merge. They are
+    // appended, so the query's own columns keep their positions.
+    let mut read_ids = fold.column_ids.clone();
+    for key in &fold.key_column_ids {
+        if !read_ids.contains(key) {
+            read_ids.push(*key);
+        }
+    }
+    let Some(mut inner) = fold
+        .snapshot
+        .scan_projected_range_stream(&span.min_key, &span.max_key, &read_ids)
+        .map_err(|error| ExecError::Source(error.to_string()))?
+    else {
+        return Ok(Vec::new());
+    };
+    inner.enable_memtable_overlay(&fold.key_column_ids);
+    let mut span_input = PullOperator::Scan {
+        stream: Box::new(SpanStream {
+            inner,
+            chunks: std::collections::VecDeque::new(),
+            types: fold.types.clone(),
+            enum_labels: fold.enum_labels.clone(),
+            set_members: fold.set_members.clone(),
+            read_width: read_ids.len(),
+        }),
+        expected_types: fold.types.clone(),
+    };
+    Ok(build_hash_aggregate_scan(
+        &mut span_input,
+        group_by,
+        aggregates,
+        memory,
+        collation,
+        key_collations,
+    )?
+    .rows)
+}
+
+/// `PINTAIL_DISABLE_GROUPED_FOLD` puts a grouped query back on the general
+/// path, which is how the measurement gets a control arm.
+fn grouped_fold_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| std::env::var_os("PINTAIL_DISABLE_GROUPED_FOLD").is_some())
+}
+
+/// Folds a grouped aggregate one segment at a time, keeping the folds of
+/// the segments the memtable has not touched.
+///
+/// The settled result memo answers a repeat of a query over an unchanged
+/// table, and one ingest throws the whole answer away. This throws away
+/// only the spans that changed. Under replication that is the newest
+/// segment and the memtable, so a dashboard's grouped query re-reads a
+/// fraction of the table instead of all of it.
+#[allow(clippy::too_many_lines)]
+fn try_grouped_segment_fold(
+    input: &mut PullOperator,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    collation: Collation,
+    key_collations: &[Collation],
+) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
+    if group_by.is_empty() || aggregates.is_empty() {
+        return Ok(None);
+    }
+    if grouped_fold_disabled() {
+        return Ok(None);
+    }
+    if !aggregates.iter().all(mergeable_across_disjoint_rows) {
+        return Ok(None);
+    }
+    let PullOperator::Scan { stream, .. } = super::unprofiled_ref(input) else {
+        return Ok(None);
+    };
+    let Some(fold) = stream.grouped_fold_input() else {
+        return Ok(None);
+    };
+    let Some(signature) = settled_signature(group_by, aggregates) else {
+        return Ok(None);
+    };
+    if fold.spans.is_empty() {
+        return Ok(None);
+    }
+    // Every span dirty means every span is re-read, and the fold is then
+    // the general path plus bookkeeping. Updates scattered over a whole
+    // table look like this; the clustered ones an ingesting mirror
+    // produces leave the older spans alone, which is where the win is.
+    if fold.spans.iter().all(|span| span.dirty) {
+        return Ok(None);
+    }
+    // A settled table is the memo's job, not this one. The memo keeps the
+    // whole answer and returns it outright, which no per-span fold can
+    // beat; folding here would read ten spans where the general path reads
+    // the table once in parallel, and measured three times slower for it.
+    // This fold earns its keep only while something is being written.
+    if !fold.spans.iter().any(|span| span.dirty) && fold.outside.is_empty() {
+        return Ok(None);
+    }
+
+    // A segment's rows are aggregated a batch at a time and the finished
+    // groups merged, because one batch of a whole segment is past the
+    // executor's row target. The merge is exact here for the same reason
+    // it is across segments: the chunks are disjoint sets of rows.
+    let aggregate_over = |rows: &[Vec<Value>]| -> Result<Vec<Vec<Value>>, ExecError> {
+        let mut folded: Option<Vec<Vec<Value>>> = None;
+        for chunk in rows.chunks(crate::batch::DEFAULT_BATCH_ROWS) {
+            let columns = (0..fold.types.len())
+                .map(|column| {
+                    // An ENUM or SET arrives here as its bare label; the
+                    // declaration index has to go back on, or a grouped
+                    // fold sorts by text where every other path sorts by
+                    // ordinal (the shape of #256).
+                    let labels = fold.enum_labels[column].as_ref();
+                    let members = fold.set_members[column].as_ref();
+                    let values = chunk
+                        .iter()
+                        .map(|row| {
+                            if labels.is_some() || members.is_some() {
+                                crate::storage::ordinal_value(row[column].clone(), labels, members)
+                            } else {
+                                row[column].clone()
+                            }
+                        })
+                        .collect();
+                    ColumnVector::new(fold.types[column], values)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| ExecError::InvalidBatch("fold rows do not match the scan types"))?;
+            let batch = RecordBatch::new(chunk.len(), columns)
+                .map_err(|_| ExecError::InvalidBatch("fold rows do not form a batch"))?;
+            let mut one_shot = PullOperator::Scan {
+                stream: Box::new(OneShotStream { batch: Some(batch) }),
+                expected_types: fold.types.clone(),
+            };
+            let rows = build_hash_aggregate_scan(
+                &mut one_shot,
+                group_by,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            )?
+            .rows;
+            folded = Some(match folded {
+                None => rows,
+                Some(base) => merge_finished_aggregate_rows(
+                    base,
+                    rows,
+                    group_by.len(),
+                    aggregates,
+                    collation,
+                )?,
+            });
+        }
+        Ok(folded.unwrap_or_default())
+    };
+
+    let mut merged: Option<Vec<Vec<Value>>> = None;
+    let mut reused = 0_usize;
+    for span in &fold.spans {
+        // Everything that decides the answer goes in the key. The span's
+        // bounds sit beside the file name, because a name alone would trust
+        // that it is never reused for different bytes. The PROJECTION sits
+        // beside the signature, because the signature names its columns by
+        // their position in the projection - `c0` is whichever column the
+        // query selected first - so `SELECT status, COUNT(*)` and `SELECT
+        // amount, COUNT(*)` sign identically over the same segment and
+        // would otherwise read each other's fold.
+        let key = (
+            fold.directory.clone(),
+            format!("{}|{:?}..{:?}", span.file_name, span.min_key, span.max_key),
+            format!("{:?}|{signature}", fold.column_ids),
+        );
+        let cached = (!span.dirty)
+            .then(|| {
+                GROUPED_SEGMENT_FOLDS
+                    .lock()
+                    .expect("grouped fold cache")
+                    .get(&key)
+                    .cloned()
+            })
+            .flatten();
+        let rows = if let Some(rows) = cached {
+            reused += 1;
+            rows
+        } else {
+            let folded = fold_span(
+                &fold,
+                span,
+                group_by,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            )?;
+            // A span the memtable holds a key inside is correct now and
+            // wrong after the next write, so it is used and not kept.
+            if !span.dirty {
+                let mut cache = GROUPED_SEGMENT_FOLDS.lock().expect("grouped fold cache");
+                if cache.len() >= GROUPED_FOLD_MAX_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(key, folded.clone());
+            }
+            folded
+        };
+        merged = Some(match merged {
+            None => rows,
+            Some(base) => {
+                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
+            }
+        });
+    }
+    if !fold.outside.is_empty() {
+        let rows = aggregate_over(&fold.outside)?;
+        merged = Some(match merged {
+            None => rows,
+            Some(base) => {
+                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
+            }
+        });
+    }
+    let Some(rows) = merged else {
+        return Ok(None);
+    };
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        eprintln!(
+            "[agg] grouped fold: {} spans ({} dirty), {} reused, {} outside rows",
+            fold.spans.len(),
+            fold.spans.iter().filter(|span| span.dirty).count(),
+            reused,
+            fold.outside.len()
+        );
+    }
+    let payload: usize = rows
+        .iter()
+        .map(|row| estimated_row_payload_bytes(row))
+        .sum();
+    memory.reserve(payload)?;
+    Ok(Some(rows))
+}
+
 fn merge_finished_aggregate_rows(
     mut base: Vec<Vec<Value>>,
     delta: Vec<Vec<Value>>,
@@ -1910,6 +2278,30 @@ pub(super) fn build_hash_aggregate(
         && !aggregates.is_empty()
         && let Some(rows) = try_sma_fold(input, aggregates, memory)?
     {
+        if let Some(key) = &memo_key {
+            let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
+            if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
+                memo.clear();
+            }
+            memo.insert(key.clone(), rows.clone());
+        }
+        return Ok(MaterializedRows {
+            rows,
+            position: 0,
+            spilled: None,
+        });
+    }
+    // A grouped aggregate the segments can be folded one at a time. Tried
+    // after the settled memo, which answers an unchanged table outright,
+    // and before the general path, which reads every row.
+    if let Some(rows) = try_grouped_segment_fold(
+        input,
+        group_by,
+        aggregates,
+        memory,
+        collation,
+        key_collations,
+    )? {
         if let Some(key) = &memo_key {
             let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
             if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {

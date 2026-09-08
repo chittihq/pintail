@@ -38,6 +38,21 @@ pub struct TableSnapshot {
     pub(super) estimated_bytes: usize,
 }
 
+/// One segment's identity and key span for a grouped fold.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupedFoldSpan {
+    /// The segment's file name. Segments are never rewritten, so this
+    /// identifies the bytes a fold was taken over.
+    pub file_name: String,
+    /// Inclusive span the segment covers.
+    pub min_key: PrimaryKey,
+    /// Inclusive span the segment covers.
+    pub max_key: PrimaryKey,
+    /// Whether the memtable holds a key inside the span, which makes a
+    /// fold over it correct to use now and wrong to keep.
+    pub dirty: bool,
+}
+
 /// Immutable files pinned by a reader snapshot for native backup.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BackupArtifacts {
@@ -152,6 +167,64 @@ impl TableSnapshot {
             rows.push(row);
         }
         Some((smas, rows))
+    }
+
+    /// Per-segment identity and key span for a grouped fold, plus the
+    /// memtable rows that fall outside every segment.
+    ///
+    /// A segment is a file that is never rewritten, so an aggregate folded
+    /// over one segment's key span stays true for as long as that file is
+    /// in the manifest - which is what lets a caller keep the fold and
+    /// reuse it. `dirty` marks a span the memtable holds a key inside: a
+    /// scan of that span sees the memtable's version, so its fold is
+    /// correct but must not be kept, because the next write changes it.
+    ///
+    /// `None` unless the segments are key-disjoint. Overlapping segments
+    /// would put the same row in two spans, and a fold over each would
+    /// count it twice.
+    /// The table directory these segments live in; with a segment's file
+    /// name it identifies bytes that are never rewritten.
+    #[must_use]
+    pub fn directory(&self) -> &std::path::Path {
+        &self.directory
+    }
+
+    #[must_use]
+    pub fn grouped_fold_spans(&self) -> Option<(Vec<GroupedFoldSpan>, Vec<&StoredRow>)> {
+        let mut segments: Vec<&crate::segment::SegmentMeta> =
+            self.manifest.segments.iter().collect();
+        segments.sort_by(|left, right| left.min_key.cmp(&right.min_key));
+        for pair in segments.windows(2) {
+            if pair[1].min_key <= pair[0].max_key {
+                return None;
+            }
+        }
+        let mut spans = segments
+            .iter()
+            .map(|meta| GroupedFoldSpan {
+                file_name: meta.file_name.clone(),
+                min_key: meta.min_key.clone(),
+                max_key: meta.max_key.clone(),
+                dirty: false,
+            })
+            .collect::<Vec<_>>();
+        let mut outside = Vec::new();
+        for row in self.memtable.values() {
+            match spans
+                .iter_mut()
+                .find(|span| row.key() >= &span.min_key && row.key() <= &span.max_key)
+            {
+                Some(span) => span.dirty = true,
+                // A key no segment covers contributes on its own; a
+                // tombstone out here supersedes nothing and is dropped.
+                None => {
+                    if !row.is_deleted() {
+                        outside.push(row);
+                    }
+                }
+            }
+        }
+        Some((spans, outside))
     }
 
     /// The segment-resident identity plus the memtable rows, when every

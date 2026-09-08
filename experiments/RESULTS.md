@@ -3651,3 +3651,179 @@ is seen compacting without being queried.
 
 The merge path itself is untouched and still costs what e81 says. This
 narrows how long a table sits on it; it does not make it cheaper.
+
+## e92 — What a table pays while it is being written to
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows,
+one stamped segment plus a memtable. Ignored measurements.
+
+**The overlay does its job.** One projected column, varying only how many
+rows sit in the memtable, against a direct scan of the same rows at
+6.6 ms:
+
+| rows changed | overlay ms | against a direct scan |
+|---:|---:|---:|
+| 1 | 6.9 | 1.0x |
+| 10 | 10.0 | 1.5x |
+| 100 | 11.8 | 1.8x |
+| 1,000 | 12.1 | 1.8x |
+| 10,000 | 14.8 | 2.2x |
+| 20,000 | 16.4 | 2.5x |
+
+Over all four columns at twenty thousand changed rows the overlay reads in
+162.5 ms against 23.1 ms direct, 7.0x - the wider projection carries more
+of the memtable's rows into the output, so the ratio grows with what is
+projected as well as with what changed.
+
+A mirrored table under continuous replication reads at close to its
+quiescent speed, and the cost grows with what actually changed rather than
+with the size of the table. That is what the overlay was built for and it
+is worth recording as confirmed rather than assumed.
+
+**The first version of this entry claimed the opposite** - a flat 63x
+whatever changed - and was wrong in a way worth writing down. The overlay
+is opt-in: `enable_memtable_overlay` must be called before the first
+chunk, and a scan that does not call it falls back to merging the segment
+with the memtable row by row. `pintail-exec/src/storage.rs` calls it; the
+measurement did not. So the flat 63x was real, but it was the merge
+fallback, measured against a path production never takes and reported as
+the path it always takes.
+
+**What survives is narrower and still worth having.**
+`enable_memtable_overlay` refuses unless EVERY key column is an integer
+type, and a scan it refuses gets no `ScanPart::Overlay` at all. So a table
+whose primary key has a text, decimal or temporal part pays the merge path
+on every scan for as long as its memtable is non-empty - which under
+replication is always. The accidental measurement quantifies that case:
+63x on one projected column, 84x on four, flat from one changed row to
+twenty thousand, because the fallback is a property of the key's type
+rather than of how much changed.
+
+That is worth confirming with a text-keyed fixture before it is acted on,
+which this entry does not do.
+
+Three explanations for the flat cost were measured and refused before the
+opt-in was found, and they stay refuted for the merge path they were
+actually describing: it is not the per-row `Value` materialization in
+`interleave` (giving text, float and dictionary columns typed paths moved
+nothing), not the fragmentation of the mask (one excluded row costs what
+twenty thousand do), and not the slice width (one slice costs what
+sixteen do).
+
+## e93 — When the per-segment fold can serve a query at all
+
+`crates/pintail-store/tests/fold_eligibility.rs`, release, one hundred
+thousand rows in one segment. Ignored: an eligibility measurement.
+
+e78 measured a grouped aggregate served from per-segment partials at
+seventy-three times the scan, and argued the number holds under continuous
+replication because a flush adds a segment's partials rather than
+invalidating a result. Before building that, this asks the prior question:
+on which tables does the fold engage?
+
+`Snapshot::sma_fold_state` is the gate, and it is stricter than "the
+segments are immutable". Every memtable row must be an insert ABOVE the
+segment key space; a row at or below the segments' maximum key returns
+`None` for the whole table.
+
+| what is in the memtable | fold eligible |
+|---|---|
+| nothing | yes |
+| one insert above the segment | yes |
+| fifty thousand inserts above the segment | yes |
+| **one update of a row the segment holds** | **no** |
+| **one delete of a row the segment holds** | **no** |
+
+**So the fold serves append-only tables, and one update anywhere in the
+table disqualifies it entirely.** e78's fixture inserts with increasing
+keys, which is why its seventy-three times looked general. A mirrored
+table whose rows are inserted and then updated in place - a record that
+gains timestamps as it progresses through states, which is an ordinary
+shape - is disqualified by its first update and stays disqualified.
+
+Building grouped partials on this eligibility would therefore buy nothing
+for an update-carrying mirror, which is the case that motivated it.
+
+**The segment half of the gate is already satisfied, and compaction is
+what satisfies it.** The same fixture, asking about segment disjointness
+rather than the memtable:
+
+| state | fold eligible |
+|---|---|
+| one segment, empty memtable | yes |
+| after flushing 1,000 scattered updates | no - the segments overlap |
+| after compaction merges them | **yes** |
+
+So a flush disqualifies a table and a compaction re-qualifies it, and e91
+made that compaction prompt rather than something that waits for a fourth
+segment. Only the memtable condition is left.
+
+**What a version that served updates would need**, recorded so the design
+is not re-derived: partials per segment, plus a correction per memtable
+row that supersedes a segment row - read the superseded row, subtract its
+contribution, add the new one. That bounds the work by the memtable rather
+than the table, and the residual cap already keeps it small. It restricts
+the aggregates to those whose payload has an additive inverse: COUNT and
+SUM can be corrected, MIN and MAX cannot, which is the same split e80
+arrived at. Not built.
+
+## e94 — A grouped aggregate folded one segment at a time
+
+`crates/pintail-exec/tests/grouped_fold.rs`, release, ten million rows in
+ten segments, grouped by a five-value column, `PINTAIL_DISABLE_GROUPED_FOLD`
+giving the control arm. Ignored: a measurement, not a gate.
+
+A segment file is never rewritten, so a grouped fold taken over its key
+span stays true while that file is in the manifest. The query keeps those
+folds and, on its next run, re-reads only the spans the memtable has since
+touched. The settled result memo cannot do this: one ingest invalidates
+the whole answer and the next query pays for the whole table.
+
+| | control | folded |
+|---|---:|---:|
+| settled table | 37.3 ms | 31.7 ms (declines) |
+| first run under ingest, populating | 84.9 ms | 122.3 ms |
+| **steady state under ingest** | **86.7 ms** | **49.6 ms** |
+
+Nine of ten spans reuse their fold on every run after the first; only the
+newest is re-read. **1.75x on the query a dashboard runs against a mirror**,
+after a one-off population that costs about half a scan extra.
+
+Unlike the fold e93 measured, this one serves tables that take UPDATES. A
+span the memtable touches is re-read rather than corrected, so no
+additive-inverse arithmetic is needed and a superseded row is simply seen
+at its new value.
+
+**Four guards, each earned by a measurement rather than assumed.** Decline
+when every span is dirty, because the fold is then the general path plus
+bookkeeping - scattered updates across a whole table look like that.
+Decline when no span is dirty, because a settled table is the memo's job
+and folding there read ten spans where the general path reads the table
+once in parallel, three times slower. Decline aggregates whose finished
+values cannot merge across disjoint rows. And read the key columns even
+when the query does not project them, or the overlay cannot mask and the
+span falls onto the row-by-row merge.
+
+**What the fixtures taught, which is most of what this entry is worth.**
+
+The overlay refuses to mask when a memtable row is OLDER than the
+segment's maximum version, because that is a possible stale replay and the
+comparing merge is the right answer for it. The first fixture used a row's
+key as its version, so an update to an old row looked stale and every span
+fell onto the merge. Real replication carries a newer version. Fixing the
+fixture alone took a ranged span read from 370 ms to 14.6 ms, and nothing
+about the engine changed.
+
+The cache key first held the table directory, the segment file name and
+the aggregate signature. That signature names its columns by their
+position in the PROJECTION, so `SELECT status, COUNT(*)` and `SELECT
+amount, COUNT(*)` sign identically over one segment and would have read
+each other's fold. It showed up as a test that failed in a suite run and
+passed alone. The projection is in the key now, with the span's bounds
+beside the file name.
+
+**Left on the table, measured and not taken:** the dirty span costs 48 ms
+where reading the same span costs 14.6 ms. Closing that gap is worth
+roughly four to five times rather than 1.75, and the obvious suspect - the
+packed-column to `ColumnVector` conversion - already has typed fast paths,
+so it needs a measurement rather than another guess.

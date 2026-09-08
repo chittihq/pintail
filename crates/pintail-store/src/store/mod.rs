@@ -7,7 +7,7 @@ pub use scan::{
     ColumnValidity, DecodedColumn, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats,
 };
-pub use snapshot::{BackupArtifacts, BackupSegment, TableSnapshot};
+pub use snapshot::{BackupArtifacts, BackupSegment, GroupedFoldSpan, TableSnapshot};
 
 use std::{
     collections::BTreeMap,

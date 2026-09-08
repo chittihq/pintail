@@ -297,6 +297,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 remaining: None,
                 settled: None,
                 sma: None,
+                grouped: None,
                 delta: None,
             }));
         };
@@ -315,6 +316,32 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 column_ids: scan.projected_column_ids.clone(),
                 segments: smas.into_iter().cloned().collect(),
                 rows: rows
+                    .iter()
+                    .map(|row| {
+                        output_positions
+                            .iter()
+                            .map(|position| row.values()[*position].clone())
+                            .collect()
+                    })
+                    .collect(),
+            });
+        // The grouped fold wants the same quiet scan the SMA fold does -
+        // no predicates, no limit, no unique-key visibility - but tolerates
+        // a memtable that supersedes segment rows, because it re-reads the
+        // spans those rows fall in rather than trusting a statistic.
+        let grouped = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
+            .then(|| snapshot.grouped_fold_spans())
+            .flatten()
+            .map(|(spans, outside)| crate::execution::GroupedFoldInput {
+                snapshot: (*snapshot).clone(),
+                directory: snapshot.directory().to_path_buf(),
+                spans,
+                column_ids: scan.projected_column_ids.clone(),
+                key_column_ids: scan.table.key_column_ids.clone(),
+                types: types.clone(),
+                enum_labels: enum_labels.clone(),
+                set_members: set_members.clone(),
+                outside: outside
                     .iter()
                     .map(|row| {
                         output_positions
@@ -424,6 +451,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 }),
                 delta,
                 sma,
+                grouped,
             }));
         }
         let projected = snapshot
@@ -499,6 +527,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             settled: None,
             delta: None,
             sma,
+            grouped,
         }))
     }
 }
@@ -810,6 +839,7 @@ struct SnapshotStream {
     /// Per-segment SMAs + residual memtable rows when the bare-aggregate
     /// fold is provably exact (WS3-B); `None` otherwise.
     sma: Option<crate::execution::SmaFoldInput>,
+    grouped: Option<crate::execution::GroupedFoldInput>,
 }
 
 /// Direct-segment slices a prefetch round asks for per scan thread.
@@ -854,6 +884,10 @@ impl BatchStream for SnapshotStream {
 
     fn sma_fold_input(&self) -> Option<crate::execution::SmaFoldInput> {
         self.sma.clone()
+    }
+
+    fn grouped_fold_input(&self) -> Option<crate::execution::GroupedFoldInput> {
+        self.grouped.clone()
     }
 
     fn insert_only_delta(&self) -> Option<crate::execution::InsertOnlyDelta> {
@@ -1708,7 +1742,7 @@ fn adopt_chunk(
 /// Promotes a text value to an ENUM value carrying its declaration index.
 /// A label absent from the declaration stays text: it has no index, and
 /// inventing one would order it confidently and wrongly.
-fn ordinal_value(
+pub(crate) fn ordinal_value(
     value: pintail_types::Value,
     enum_labels: Option<&Arc<Vec<String>>>,
     set_members: Option<&Arc<Vec<String>>>,
@@ -1760,7 +1794,7 @@ fn ordinal_value(
 /// encoding the segment happened to use, which is worse than not ordering
 /// at all.
 #[allow(clippy::too_many_lines)]
-fn column_vector_from_decoded(
+pub(crate) fn column_vector_from_decoded(
     data_type: pintail_types::DataType,
     decoded: DecodedColumn,
     enum_labels: Option<&Arc<Vec<String>>>,
