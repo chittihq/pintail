@@ -475,6 +475,9 @@ async fn serve_connection(
     tls: Option<WireTls>,
     idle_timeout: Duration,
 ) -> io::Result<()> {
+    // Small response packets must not wait for acknowledgements of earlier
+    // packets before the rest of the response can reach the client.
+    stream.set_nodelay(true)?;
     // Duplicating at the std level (rather than sharing a handle) gives the
     // watch its own OS-level socket registration, independent of the packet
     // reader's — two tokio users polling read-readiness on the SAME
