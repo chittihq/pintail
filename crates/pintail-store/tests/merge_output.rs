@@ -47,16 +47,22 @@ fn row(id: u64, version: u64) -> StoredRow {
 
 /// One full projected scan, returning its duration and the rows it saw.
 fn timed_scan(snapshot: &TableSnapshot) -> (f64, usize) {
+    timed_projection(snapshot, &[1, 2, 3, 4])
+}
+
+fn timed_projection(snapshot: &TableSnapshot, projection: &[u32]) -> (f64, usize) {
     let low = PrimaryKey::new(vec![KeyPart::UInt64(0)]).expect("low");
     let high = PrimaryKey::new(vec![KeyPart::UInt64(u64::MAX)]).expect("high");
     let clock = Instant::now();
     let mut seen = 0;
     if let Some(mut stream) = snapshot
-        .scan_projected_range_stream(&low, &high, &[1, 2, 3, 4])
+        .scan_projected_range_stream(&low, &high, projection)
         .expect("scan")
     {
         loop {
-            let chunks = stream.next_column_chunks(4, 512 << 20).expect("chunks");
+            let chunks = stream
+                .next_column_chunks(projection.len(), 512 << 20)
+                .expect("chunks");
             if chunks.is_empty() {
                 break;
             }
@@ -227,4 +233,176 @@ fn compacting_the_overlap_against_paying_for_it_per_scan() {
         "  so a forced rewrite pays for itself after {:.2} scans",
         rewrite / (merging - timed_scan(&rewritten.snapshot()).0)
     );
+}
+
+/// What a table pays while it is being written to, which is the state a
+/// mirror spends most of its life in: one stamped segment and a memtable
+/// holding the rows that changed since the last flush. Ignored: a
+/// measurement, not a gate.
+///
+/// e81 timed two overlapping SEGMENTS, and e91 shortened how long a table
+/// stays in that state. Neither says what continuous ingest costs, because
+/// changed rows sit in the memtable and the scan takes the overlay path -
+/// decoding the segment directly and masking the rows the memtable
+/// supersedes - rather than merging two segments. This times that against
+/// the same rows with nothing to mask.
+#[test]
+#[ignore = "a measurement over a large table, not a gate"]
+fn an_overlay_scan_against_a_direct_one() {
+    let overlay_dir = tempfile::tempdir().expect("directory");
+    let mut overlaid =
+        TableStore::open(overlay_dir.path(), schema(), StoreOptions::default()).expect("store");
+    overlaid
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+    // Changed rows stay in the memtable: no flush, so the scan masks them
+    // over the segment instead of merging two of them.
+    let stride = BASE_ROWS / CHANGED;
+    overlaid
+        .ingest_cdc((0..CHANGED).map(|n| row(n * stride + 1, 2)).collect())
+        .expect("live changes");
+
+    let plain_dir = tempfile::tempdir().expect("directory");
+    let mut plain =
+        TableStore::open(plain_dir.path(), schema(), StoreOptions::default()).expect("store");
+    plain
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+
+    let overlay = overlaid.snapshot();
+    let direct = plain.snapshot();
+    let _ = timed_scan(&overlay);
+    let _ = timed_scan(&direct);
+    let mut overlay_best = f64::MAX;
+    let mut direct_best = f64::MAX;
+    for round in 0..ROUNDS {
+        if round % 2 == 0 {
+            overlay_best = overlay_best.min(timed_scan(&overlay).0);
+            direct_best = direct_best.min(timed_scan(&direct).0);
+        } else {
+            direct_best = direct_best.min(timed_scan(&direct).0);
+            overlay_best = overlay_best.min(timed_scan(&overlay).0);
+        }
+    }
+
+    println!();
+    println!(
+        "{BASE_ROWS} rows, {CHANGED} changed and still in the memtable ({:.1}%)",
+        f64::from(u32::try_from(CHANGED).expect("small")) * 100.0
+            / f64::from(u32::try_from(BASE_ROWS).expect("small"))
+    );
+    println!(
+        "  overlay scan (segment + memtable) = {:8.1} ms",
+        overlay_best * 1e3
+    );
+    println!(
+        "  direct scan  (nothing to mask)    = {:8.1} ms",
+        direct_best * 1e3
+    );
+    println!(
+        "  the overlay costs                 = {:8.2}x",
+        overlay_best / direct_best
+    );
+}
+
+/// Which column pays. Ignored: a measurement, not a gate.
+#[test]
+#[ignore = "a measurement over a large table, not a gate"]
+fn what_the_overlay_costs_by_column() {
+    let overlay_dir = tempfile::tempdir().expect("directory");
+    let mut overlaid =
+        TableStore::open(overlay_dir.path(), schema(), StoreOptions::default()).expect("store");
+    overlaid
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+    let stride = BASE_ROWS / CHANGED;
+    overlaid
+        .ingest_cdc((0..CHANGED).map(|n| row(n * stride + 1, 2)).collect())
+        .expect("live changes");
+    let plain_dir = tempfile::tempdir().expect("directory");
+    let mut plain =
+        TableStore::open(plain_dir.path(), schema(), StoreOptions::default()).expect("store");
+    plain
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+    let overlay = overlaid.snapshot();
+    let direct = plain.snapshot();
+
+    println!();
+    println!("{BASE_ROWS} rows, {CHANGED} in the memtable; ms by projection");
+    println!(
+        "{:>28}  {:>10}  {:>10}  {:>8}",
+        "projection", "overlay", "direct", "ratio"
+    );
+    for (label, projection) in [
+        ("id (UInt64 key)", &[1_u32][..]),
+        ("status (5 distinct text)", &[2][..]),
+        ("note (unique text)", &[3][..]),
+        ("amount (Int64)", &[4][..]),
+        ("all four", &[1, 2, 3, 4][..]),
+    ] {
+        let _ = timed_projection(&overlay, projection);
+        let _ = timed_projection(&direct, projection);
+        let mut o = f64::MAX;
+        let mut d = f64::MAX;
+        for _ in 0..3 {
+            o = o.min(timed_projection(&overlay, projection).0);
+            d = d.min(timed_projection(&direct, projection).0);
+        }
+        println!(
+            "{label:>28}  {:>10.1}  {:>10.1}  {:>7.1}x",
+            o * 1e3,
+            d * 1e3,
+            o / d
+        );
+    }
+}
+
+/// How the overlay's cost scales with how many rows changed. Ignored: a
+/// measurement, not a gate.
+#[test]
+#[ignore = "a measurement over a large table, not a gate"]
+fn what_the_overlay_costs_by_how_much_changed() {
+    let plain_dir = tempfile::tempdir().expect("directory");
+    let mut plain =
+        TableStore::open(plain_dir.path(), schema(), StoreOptions::default()).expect("store");
+    plain
+        .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+        .expect("base");
+    let direct = plain.snapshot();
+    let _ = timed_projection(&direct, &[1]);
+    let mut baseline = f64::MAX;
+    for _ in 0..3 {
+        baseline = baseline.min(timed_projection(&direct, &[1]).0);
+    }
+
+    println!();
+    println!(
+        "{BASE_ROWS} rows, one projected column, direct scan = {:.1} ms",
+        baseline * 1e3
+    );
+    println!("{:>12}  {:>10}  {:>8}", "changed", "overlay ms", "ratio");
+    for changed in [1_u64, 10, 100, 1_000, 10_000, 20_000] {
+        let dir = tempfile::tempdir().expect("directory");
+        let mut store =
+            TableStore::open(dir.path(), schema(), StoreOptions::default()).expect("store");
+        store
+            .bulk_ingest_snapshot((1..=BASE_ROWS).map(|id| row(id, 1)).collect())
+            .expect("base");
+        let stride = BASE_ROWS / changed;
+        store
+            .ingest_cdc((0..changed).map(|n| row(n * stride + 1, 2)).collect())
+            .expect("live");
+        let snapshot = store.snapshot();
+        let _ = timed_projection(&snapshot, &[1]);
+        let mut best = f64::MAX;
+        for _ in 0..3 {
+            best = best.min(timed_projection(&snapshot, &[1]).0);
+        }
+        println!(
+            "{changed:>12}  {:>10.1}  {:>7.1}x",
+            best * 1e3,
+            best / baseline
+        );
+    }
 }

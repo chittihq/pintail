@@ -3651,3 +3651,70 @@ is seen compacting without being queried.
 
 The merge path itself is untouched and still costs what e81 says. This
 narrows how long a table sits on it; it does not make it cheaper.
+
+## e92 — What a table pays while it is being written to
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows,
+one stamped segment plus a memtable. Ignored measurements.
+
+e81 timed two overlapping SEGMENTS and e91 shortened how long a table
+sits in that state. Neither describes the state a mirror is actually in
+most of the time: changed rows are in the MEMTABLE, so the scan takes the
+overlay path - decode the segment, mask what the memtable supersedes -
+and never merges two segments at all.
+
+| projection | overlay | direct | ratio |
+|---|---:|---:|---:|
+| `id`, the `UInt64` key | 395.6 | 6.3 | 62.4x |
+| a five-value text column | 566.8 | 6.8 | 83.0x |
+| a unique text column | 599.3 | 35.4 | 16.9x |
+| an `Int64` column | 420.9 | 6.2 | 67.4x |
+| all four | 1126.2 | 13.4 | 83.8x |
+
+**The cost does not depend on how much changed.** One projected column,
+varying only the number of rows in the memtable:
+
+| rows changed | overlay ms | against a direct scan |
+|---:|---:|---:|
+| 1 | 388.1 | 62.9x |
+| 10 | 390.0 | 63.2x |
+| 100 | 390.7 | 63.3x |
+| 1,000 | 391.0 | 63.3x |
+| 10,000 | 400.2 | 64.8x |
+| 20,000 | 399.3 | 64.7x |
+
+Flat from one changed row to twenty thousand. **A single row in the
+memtable costs a table sixty-three times its read speed**, and under
+continuous replication the memtable is never empty, so this is the
+ordinary state rather than an edge of it. It is a larger and more
+persistent penalty than e81's merge cliff, which compaction can at least
+retire.
+
+Three explanations were measured and refused, each of which looked
+convincing first:
+
+**Not materialization.** `DecodedColumn::interleave` converts a whole
+packed column to one `Value` per row for every representation except
+`Int64` and `UInt64` - a `String` allocation per row for a text column.
+Giving text, float and dictionary columns their own typed interleave
+moved the number by nothing. The `id`-only projection is `UInt64`, which
+already had the typed path, and still costs 62x.
+
+**Not mask fragmentation.** Twenty thousand excluded rows split the range
+into twenty thousand pieces, and one excluded row splits it into two. Both
+cost the same.
+
+**Not slicing.** The overlay decodes in `DIRECT_SLICE_ROWS` slices where a
+direct scan takes the segment whole. Raising the constant until the
+overlay used a single slice changed nothing.
+
+What is left, and what the next attempt should start from: the overlay
+always supplies a selector, so its slice decodes through the
+predicate-read path (`read_projected_columns`, the selector, then either
+`retain_predicate_fetch` or a ranged re-read) rather than
+`decode_column_chunk`. That machinery is the remaining difference between
+6 ms and 390 ms, and it is the same area as G2, where a second predicate
+on a scan measured five times the first. A profiler would name the
+function in one run; `perf_event_paranoid` blocks it on this host, and
+guessing has now been wrong three times, so the next step is instrumented
+timings inside that path rather than another hypothesis.
