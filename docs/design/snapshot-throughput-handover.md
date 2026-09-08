@@ -30,16 +30,16 @@ new work.
 
 ## Merge resolution
 
-The explicit `--no-ff` merge reconciles the two original commits with `dev`.
+Merge `cc165c3` (`--no-ff`) reconciles the two original commits with `dev`.
 Both `crates/pintail-snapshot/src/lib.rs` and the independently added
-`crates/pintail-snapshot/examples/throughput.rs` conflict.
+`crates/pintail-snapshot/examples/throughput.rs` had conflicts.
 
-Keep the current `dev` version of both files byte-for-byte. Restoring the
-prototype would undo task cancellation, return the default to serial
+The resolution keeps the pre-merge `dev` version of both files byte-for-byte.
+Restoring the prototype would undo task cancellation, return the default to serial
 polling, reintroduce tuple pagination, and discard newer snapshot repairs.
 It would also revert the example to a current-thread runtime.
 
-Do not resurrect `benchmark/snapshot-throughput.py`, the old
+The merge does not resurrect `benchmark/snapshot-throughput.py`, the old
 `benchmark/snapshot-throughput/` evidence directory, or
 `docs/experiments/snapshot-throughput.md`. The current harness and writeup
 already live at the paths below. All five incoming evidence files,
@@ -89,7 +89,18 @@ rows. The historical development report alone is not an RC gate.
 
 ## Verification for this reconciliation
 
-Run touched-crate clippy and the six snapshot unit tests on the build
-server, followed by `bun run scripts/validate.ts --profile rc` from the
-merge commit. Keep `PINTAIL_DASHBOARD_PREBUILT=1`, Node on `PATH`, and
-`TMPDIR` on the root filesystem. Bank the RC evidence after it passes.
+Completed on merge commit `cc165c3`:
+
+- `cargo clippy -p pintail-snapshot --all-targets -- -D warnings`: PASS.
+- `cargo test -p pintail-snapshot --lib`: all six tests PASS.
+- `bun run scripts/validate.ts --profile rc`: complete PASS, all nine stages,
+  including both MySQL e2e legs, browser, compose, and external clients.
+
+Builds and tests ran on the build server, with the prebuilt dashboard,
+Node on `PATH`, and `TMPDIR` on the root filesystem. No benchmark was rerun,
+and this reconciliation makes no new performance claim.
+
+The [merge validation report](../../experiments/snapshot-throughput/evidence/merge-validation.md)
+banks run `2026-09-08T19-19-12-740Z-rc`. Updated e2e and oracle ledgers are
+banked in `tests/e2e/` and `tests/sqllogic/results-oracle.json`. The historical
+experiment evidence remains unchanged.
