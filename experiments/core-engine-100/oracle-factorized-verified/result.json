@@ -1,0 +1,152 @@
+{
+  "mysql_version": "8.4.11",
+  "image_id": "sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+  "checks": [
+    {
+      "scenario": 0,
+      "phase": 0,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "case": 5,
+      "exact_tsv": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "case": 5,
+      "exact_tsv": true
+    }
+  ],
+  "count": 24,
+  "scope": "transactional MySQL oracle vs engine anchors; direct decoded CDC ingestion, not native binlog transport"
+}

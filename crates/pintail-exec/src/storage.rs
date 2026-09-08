@@ -335,6 +335,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 remaining: None,
                 settled: None,
                 sma: None,
+                grouped: None,
                 delta: None,
             }));
         };
@@ -353,6 +354,32 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 column_ids: scan.projected_column_ids.clone(),
                 segments: smas.into_iter().cloned().collect(),
                 rows: rows
+                    .iter()
+                    .map(|row| {
+                        output_positions
+                            .iter()
+                            .map(|position| row.values()[*position].clone())
+                            .collect()
+                    })
+                    .collect(),
+            });
+        // The grouped fold wants the same quiet scan the SMA fold does -
+        // no predicates, no limit, no unique-key visibility - but tolerates
+        // a memtable that supersedes segment rows, because it re-reads the
+        // spans those rows fall in rather than trusting a statistic.
+        let grouped = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
+            .then(|| snapshot.grouped_fold_spans())
+            .flatten()
+            .map(|(spans, outside)| crate::execution::GroupedFoldInput {
+                snapshot: (*snapshot).clone(),
+                directory: snapshot.directory().to_path_buf(),
+                spans,
+                column_ids: scan.projected_column_ids.clone(),
+                key_column_ids: scan.table.key_column_ids.clone(),
+                types: types.clone(),
+                enum_labels: enum_labels.clone(),
+                set_members: set_members.clone(),
+                outside: outside
                     .iter()
                     .map(|row| {
                         output_positions
@@ -462,6 +489,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 }),
                 delta,
                 sma,
+                grouped,
             }));
         }
         let projected = snapshot
@@ -537,6 +565,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             settled: None,
             delta: None,
             sma,
+            grouped,
         }))
     }
 }
@@ -848,6 +877,7 @@ struct SnapshotStream {
     /// Per-segment SMAs + residual memtable rows when the bare-aggregate
     /// fold is provably exact (WS3-B); `None` otherwise.
     sma: Option<crate::execution::SmaFoldInput>,
+    grouped: Option<crate::execution::GroupedFoldInput>,
 }
 
 /// Direct-segment slices a prefetch round asks for per scan thread.
@@ -892,6 +922,10 @@ impl BatchStream for SnapshotStream {
 
     fn sma_fold_input(&self) -> Option<crate::execution::SmaFoldInput> {
         self.sma.clone()
+    }
+
+    fn grouped_fold_input(&self) -> Option<crate::execution::GroupedFoldInput> {
+        self.grouped.clone()
     }
 
     fn insert_only_delta(&self) -> Option<crate::execution::InsertOnlyDelta> {
@@ -949,8 +983,10 @@ impl BatchStream for SnapshotStream {
                 let chunk_budget = (available_memory / 2).saturating_sub(batch_overhead);
                 let (chunks, abandon_prewhere) = if let Some(spec) = &self.prewhere {
                     let unproductive = AtomicUsize::new(0);
+                    let exact_ranges =
+                        spec.predicate_ids.len() > 1 && spec.predicate_ids == stream.column_ids();
                     let select = |columns: &[DecodedColumn], row_count: usize| {
-                        let ranges = prewhere_ranges(spec, columns, row_count);
+                        let ranges = prewhere_ranges(spec, columns, row_count, exact_ranges);
                         if matches!(ranges, Ok(None)) {
                             unproductive.fetch_add(1, Ordering::Relaxed);
                         }
@@ -1424,10 +1460,8 @@ fn build_prewhere_spec(
         || !predicate_ids
             .iter()
             .all(|id| scan.projected_column_ids.contains(id))
-        || predicate_ids.len() >= scan.projected_column_ids.len()
     {
-        // Nothing beyond the predicate columns to skip: two-phase decode
-        // could only add work.
+        // The predicate layout must be available in the projection.
         return None;
     }
     let mut layout = Vec::with_capacity(predicate_ids.len());
@@ -1463,6 +1497,20 @@ fn build_prewhere_spec(
                 .map(|members| Arc::new(members.to_vec())),
         );
     }
+    // Fuse a multi-column conjunction when its projection consists entirely
+    // of integer predicate inputs. The single-column scan keeps its existing
+    // packed path; the extra column no longer expands the retained round.
+    let exact_ranges = predicate_ids.len() > 1
+        && predicate_ids == scan.projected_column_ids
+        && data_types.iter().all(|kind| {
+            matches!(
+                kind,
+                pintail_types::DataType::Int64 | pintail_types::DataType::UInt64
+            )
+        });
+    if predicate_ids.len() >= scan.projected_column_ids.len() && !exact_ranges {
+        return None;
+    }
     let predicates = scan
         .predicates
         .iter()
@@ -1481,7 +1529,9 @@ fn build_prewhere_spec(
 fn collect_predicate_columns(expr: &BoundExpr, ids: &mut Vec<u32>) {
     match &expr.kind {
         BoundExprKind::Column(column) => ids.push(column.column_id),
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             collect_predicate_columns(expr, ids);
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -1498,6 +1548,82 @@ fn collect_predicate_columns(expr: &BoundExpr, ids: &mut Vec<u32>) {
     }
 }
 
+/// Borrow integer buffers for an exact all-predicate projection. This
+/// avoids cloning both columns merely to wrap them in executor vectors.
+fn prewhere_integer_mask(
+    predicate: &crate::expression::CompiledExpr,
+    columns: &[DecodedColumn],
+    rows: usize,
+) -> Option<crate::SelectionMask> {
+    use crate::expression::CompiledExpr;
+    use pintail_sql::BinaryOp;
+    use pintail_types::Value;
+    let CompiledExpr::Binary {
+        op, left, right, ..
+    } = predicate
+    else {
+        return None;
+    };
+    if *op == BinaryOp::And {
+        let mut mask = prewhere_integer_mask(left, columns, rows)?;
+        mask.intersect(&prewhere_integer_mask(right, columns, rows)?)
+            .ok()?;
+        return Some(mask);
+    }
+    let (column, literal, reversed) = match (left.as_ref(), right.as_ref()) {
+        (CompiledExpr::Column(column), CompiledExpr::Literal(value)) => (*column, value, false),
+        (CompiledExpr::Literal(value), CompiledExpr::Column(column)) => (*column, value, true),
+        _ => return None,
+    };
+    let literal = match literal {
+        Value::Int64(value) => i128::from(*value),
+        Value::UInt64(value) => i128::from(*value),
+        _ => return None,
+    };
+    if !matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) {
+        return None;
+    }
+    let compare = |value: i128| {
+        let (left, right) = if reversed {
+            (literal, value)
+        } else {
+            (value, literal)
+        };
+        match op {
+            BinaryOp::Equal => left == right,
+            BinaryOp::NotEqual => left != right,
+            BinaryOp::Less => left < right,
+            BinaryOp::LessOrEqual => left <= right,
+            BinaryOp::Greater => left > right,
+            _ => left >= right,
+        }
+    };
+    let mut mask = crate::SelectionMask::none(rows);
+    macro_rules! fill {
+        ($values:expr, $validity:expr) => {
+            for (row, value) in $values.iter().enumerate() {
+                if $validity.is_valid(row) && compare(i128::from(*value)) {
+                    mask.set(row, true).ok()?;
+                }
+            }
+        };
+    }
+    match columns.get(column)? {
+        DecodedColumn::Int64 { values, validity } => fill!(values, validity),
+        DecodedColumn::UInt64 { values, validity } => fill!(values, validity),
+        _ => return None,
+    }
+    Some(mask)
+}
+
 /// Evaluates the compiled predicates over one chunk's predicate columns and
 /// returns the surviving row ranges (coalesced), or `None` when the chunk
 /// cannot or need not be restricted.
@@ -1505,41 +1631,61 @@ fn prewhere_ranges(
     spec: &PrewhereSpec,
     columns: &[DecodedColumn],
     row_count: usize,
+    exact_ranges: bool,
 ) -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
     /// Runs separated by fewer than this many rows merge, so near-adjacent
     /// survivors decode as one block-friendly region.
     const COALESCE_GAP: usize = 1024;
-    let vectors = spec
-        .data_types
-        .iter()
-        .zip(columns)
-        .zip(spec.enum_labels.iter().zip(spec.set_members.iter()))
-        .map(|((data_type, column), (labels, members))| {
-            column_vector_from_decoded(
-                *data_type,
-                column.clone(),
-                labels.as_ref(),
-                members.as_ref(),
-            )
+    let packed = exact_ranges
+        .then(|| {
+            spec.predicates
+                .iter()
+                .map(|predicate| prewhere_integer_mask(predicate, columns, row_count))
+                .collect::<Option<Vec<_>>>()
         })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let batch = RecordBatch::new(row_count, vectors).map_err(|error| error.to_string())?;
+        .flatten();
     let mut combined: Option<crate::batch::SelectionMask> = None;
-    for predicate in &spec.predicates {
-        let Some(mask) = predicate
-            .evaluate_filter_mask(&batch)
-            .map_err(|error| error.to_string())?
-        else {
-            // A predicate outside the typed kernels: keep every row; the
-            // Filter operator above applies the exact mask.
-            return Ok(None);
-        };
-        match &mut combined {
-            None => combined = Some(mask),
-            Some(existing) => existing
-                .intersect(&mask)
-                .map_err(|error| error.to_string())?,
+    if let Some(masks) = packed {
+        for mask in masks {
+            match &mut combined {
+                None => combined = Some(mask),
+                Some(existing) => existing
+                    .intersect(&mask)
+                    .map_err(|error| error.to_string())?,
+            }
+        }
+    } else {
+        let vectors = spec
+            .data_types
+            .iter()
+            .zip(columns)
+            .zip(spec.enum_labels.iter().zip(spec.set_members.iter()))
+            .map(|((data_type, column), (labels, members))| {
+                column_vector_from_decoded(
+                    *data_type,
+                    column.clone(),
+                    labels.as_ref(),
+                    members.as_ref(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?;
+        let batch = RecordBatch::new(row_count, vectors).map_err(|error| error.to_string())?;
+        for predicate in &spec.predicates {
+            let Some(mask) = predicate
+                .evaluate_filter_mask(&batch)
+                .map_err(|error| error.to_string())?
+            else {
+                // A predicate outside the typed kernels: keep every row; the
+                // Filter operator above applies the exact mask.
+                return Ok(None);
+            };
+            match &mut combined {
+                None => combined = Some(mask),
+                Some(existing) => existing
+                    .intersect(&mask)
+                    .map_err(|error| error.to_string())?,
+            }
         }
     }
     let Some(mask) = combined else {
@@ -1557,7 +1703,9 @@ fn prewhere_ranges(
             row += 1;
         }
         match ranges.last_mut() {
-            Some(last) if start.saturating_sub(last.end) < COALESCE_GAP => last.end = row,
+            Some(last) if !exact_ranges && start.saturating_sub(last.end) < COALESCE_GAP => {
+                last.end = row;
+            }
             _ => ranges.push(start..row),
         }
     }
@@ -1632,7 +1780,7 @@ fn adopt_chunk(
 /// Promotes a text value to an ENUM value carrying its declaration index.
 /// A label absent from the declaration stays text: it has no index, and
 /// inventing one would order it confidently and wrongly.
-fn ordinal_value(
+pub(crate) fn ordinal_value(
     value: pintail_types::Value,
     enum_labels: Option<&Arc<Vec<String>>>,
     set_members: Option<&Arc<Vec<String>>>,
@@ -1684,7 +1832,7 @@ fn ordinal_value(
 /// encoding the segment happened to use, which is worse than not ordering
 /// at all.
 #[allow(clippy::too_many_lines)]
-fn column_vector_from_decoded(
+pub(crate) fn column_vector_from_decoded(
     data_type: pintail_types::DataType,
     decoded: DecodedColumn,
     enum_labels: Option<&Arc<Vec<String>>>,

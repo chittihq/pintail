@@ -467,7 +467,7 @@ fn materialize_with_spill(
 
 /// Writes sorted rows as one closed run: length-framed binary rows in a
 /// self-deleting temp file, read back in write order.
-fn write_sorted_run(
+pub(super) fn write_sorted_run(
     rows: &[Vec<Value>],
     memory: &MemoryTracker,
 ) -> Result<spill::ClosedRun, ExecError> {
@@ -505,7 +505,7 @@ pub(super) struct SpilledMerge {
 impl SpilledMerge {
     /// Closes the resident rows as the final run, reduces to the fan-in
     /// and opens the merge.
-    fn new(
+    pub(super) fn new(
         mut runs: Vec<spill::ClosedRun>,
         resident: &[Vec<Value>],
         keys: Vec<BoundOrderKey>,
@@ -538,7 +538,7 @@ impl SpilledMerge {
         })
     }
 
-    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+    pub(super) fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
         let less = |left: &Vec<Value>, right: &Vec<Value>| {
             compare_sort_rows(left, right, &self.keys, self.collation) == Ordering::Less
         };
@@ -674,7 +674,7 @@ fn materialize_top_k(
     Ok(rows)
 }
 
-fn compare_sort_rows(
+pub(super) fn compare_sort_rows(
     left: &[Value],
     right: &[Value],
     keys: &[BoundOrderKey],

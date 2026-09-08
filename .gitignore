@@ -41,3 +41,4 @@ REVIEW.md
 /tests/integration/wire-clients/.cache/
 /tests/integration/bi-clients/node_modules/
 /tests/integration/bi-clients/results.json
+*.pyc

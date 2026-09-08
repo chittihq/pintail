@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 2,
+      "variant": 3,
+      "name": "sorted-two-way",
+      "processes": 3,
+      "changing_query_speedup": 1.1163966939075398,
+      "changing_cycle_speedup": 1.038804885158821,
+      "operator_only_speedup": 1.7340105634263605,
+      "min_process_speedup": 1.081263829052651,
+      "max_process_speedup": 1.1772597984294675,
+      "scenario_medians": {
+        "0": 1.081263829052651,
+        "1": 1.1772597984294675,
+        "2": 1.1163966939075398
+      },
+      "phase_medians": {
+        "settled": 1.4754503238308654,
+        "sparse-memtable": 1.1496001070545518,
+        "sparse-flushed-overlap": 1.1339908722190863,
+        "dense-hot-memtable": 1.1527282798699292,
+        "dense-flushed-overlap": 1.119972000820064,
+        "mixed-overlap": 1.0909445350567424,
+        "stale-replay": 1.1073037143857773,
+        "compacted": 1.5863247763744113
+      }
+    }
+  ]
+}

@@ -140,6 +140,7 @@ pub(crate) async fn patch(
     metadata
         .set_api_key_enabled(&key_id, request.enabled)
         .map_err(ApiError::internal)?;
+    state.invalidate_api_key(&key_id);
     let key = metadata
         .api_keys(&database_id)
         .map_err(ApiError::internal)?
@@ -169,6 +170,7 @@ pub(crate) async fn delete(
     metadata
         .delete_api_key(&key_id)
         .map_err(ApiError::internal)?;
+    state.invalidate_api_key(&key_id);
     audit::record(
         &state,
         &principal,

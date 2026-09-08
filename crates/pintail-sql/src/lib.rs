@@ -19,6 +19,9 @@ use sqlparser::parser::{Parser, ParserError};
 mod admission;
 pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 
+mod repeatable;
+pub use repeatable::is_repeatable_statement;
+
 pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};
@@ -27,8 +30,9 @@ pub use bound::{
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
     BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
-    IntervalUnit, JSON_TEXT_COLLATION, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp,
-    WindowFunction, session_default_collation, set_session_default_collation,
+    IntervalUnit, JSON_TEXT_COLLATION, MembershipError, MembershipLookup, PreparedMembership,
+    SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction, session_default_collation,
+    set_session_default_collation,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

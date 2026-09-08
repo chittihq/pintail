@@ -45,12 +45,25 @@ pub(super) const BUILD_PARTITIONS: usize = 64;
 /// each small enough to stay in cache while it is written.
 pub(super) struct PartitionedBuild {
     partitions: Vec<HashMap<JoinHashKey, Vec<Vec<Value>>>>,
+    /// Set once, after every build row was inserted, when the keys are a
+    /// plain integer set spanning fewer than [`MAX_DENSE_SPAN`] values:
+    /// (minimum key, per-offset index into `dense_buckets`). `get` and the
+    /// other read accessors consult this first, trading a probe row's
+    /// hash-and-compare for one bounds-checked array index. `partitions`
+    /// is left as an emptied skeleton rather than cleared away, since
+    /// nothing reads it again once this is `Some` - only the build phase
+    /// (`entry_or_default`, `reserve_for_key`, `slot`, `drain`, `clear`)
+    /// touches it, and that phase is over by the time this is set.
+    dense_index: Option<(i128, Vec<Option<usize>>)>,
+    dense_buckets: Vec<Vec<Vec<Value>>>,
 }
 
 impl PartitionedBuild {
     fn with_partitions(count: usize) -> Self {
         Self {
             partitions: (0..count.max(1)).map(|_| HashMap::new()).collect(),
+            dense_index: None,
+            dense_buckets: Vec::new(),
         }
     }
 
@@ -67,8 +80,93 @@ impl PartitionedBuild {
         }
     }
 
+    /// The dense slot a key resolves to, when this build finalized to a
+    /// dense table and the key is the plain integer variant that mode
+    /// requires. `Some` only while dense; the general (hashed) path never
+    /// calls this directly - `get` already dispatches to it.
+    fn dense_offset(&self, key: &JoinHashKey) -> Option<usize> {
+        let (min, index) = self.dense_index.as_ref()?;
+        let value = match key {
+            JoinHashKey::NegativeInteger(value) => i128::from(*value),
+            JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
+            _ => return None,
+        };
+        *index.get(usize::try_from(value.checked_sub(*min)?).ok()?)?
+    }
+
     pub(super) fn get(&self, key: &JoinHashKey) -> Option<&Vec<Vec<Value>>> {
+        if self.dense_index.is_some() {
+            return self
+                .dense_offset(key)
+                .map(|offset| &self.dense_buckets[offset]);
+        }
         self.partitions[self.slot(key)].get(key)
+    }
+
+    /// Like [`Self::get`], but also returns the flat index into
+    /// [`Self::dense_buckets`] a caller can use to keep its own array (one
+    /// entry per distinct key, built once) aligned to this bucket - the
+    /// fused join-aggregate's precomputed group indexes, in particular.
+    /// `None` whenever `get` would return through the hashed path instead.
+    pub(super) fn dense_get(&self, key: &JoinHashKey) -> Option<(usize, &Vec<Vec<Value>>)> {
+        let offset = self.dense_offset(key)?;
+        Some((offset, &self.dense_buckets[offset]))
+    }
+
+    pub(super) const fn is_dense(&self) -> bool {
+        self.dense_index.is_some()
+    }
+
+    /// Every distinct bucket, in the order [`Self::dense_get`]'s flat index
+    /// addresses - only meaningful once [`Self::is_dense`].
+    pub(super) fn dense_buckets(&self) -> &[Vec<Vec<Value>>] {
+        &self.dense_buckets
+    }
+
+    /// Moves every bucket into a flat, densely-addressable array when the
+    /// build key is a plain integer whose span fits [`MAX_DENSE_SPAN`] -
+    /// `MySQL` auto-increment keys make this the common case, not the
+    /// exception. Idempotent; a no-op once already dense. Must run only
+    /// after every insert for this build is done: nothing re-populates
+    /// `partitions` afterward.
+    pub(super) fn finalize_dense(&mut self) {
+        if self.dense_index.is_some() || self.is_empty() {
+            return;
+        }
+        let mut min = i128::MAX;
+        let mut max = i128::MIN;
+        for key in self.keys() {
+            match key {
+                JoinHashKey::NegativeInteger(value) => {
+                    min = min.min(i128::from(*value));
+                    max = max.max(i128::from(*value));
+                }
+                JoinHashKey::NonNegativeInteger(value) => {
+                    min = min.min(i128::from(*value));
+                    max = max.max(i128::from(*value));
+                }
+                _ => return,
+            }
+        }
+        if max - min >= MAX_DENSE_SPAN {
+            return;
+        }
+        let span = usize::try_from(max - min).expect("bounded span") + 1;
+        let mut index: Vec<Option<usize>> = vec![None; span];
+        let mut buckets = Vec::with_capacity(self.len());
+        for partition in &mut self.partitions {
+            for (key, bucket) in partition.drain() {
+                let value = match key {
+                    JoinHashKey::NegativeInteger(value) => i128::from(value),
+                    JoinHashKey::NonNegativeInteger(value) => i128::from(value),
+                    _ => unreachable!("verified integer keys above"),
+                };
+                index[usize::try_from(value - min).expect("within span")] = Some(buckets.len());
+                buckets.push(bucket);
+            }
+        }
+        self.dense_index = Some((min, index));
+        self.dense_buckets = buckets;
     }
 
     pub(super) fn partitions(&self) -> usize {
@@ -85,24 +183,30 @@ impl PartitionedBuild {
     }
 
     pub(super) fn is_empty(&self) -> bool {
+        if self.dense_index.is_some() {
+            return self.dense_buckets.is_empty();
+        }
         self.partitions.iter().all(HashMap::is_empty)
     }
 
     /// Distinct keys across every partition.
     pub(super) fn len(&self) -> usize {
+        if self.dense_index.is_some() {
+            return self.dense_buckets.len();
+        }
         self.partitions.iter().map(HashMap::len).sum()
     }
 
-    pub(super) fn keys(&self) -> impl Iterator<Item = &JoinHashKey> {
+    pub(super) fn values(&self) -> Box<dyn Iterator<Item = &Vec<Vec<Value>>> + '_> {
+        if self.dense_index.is_some() {
+            Box::new(self.dense_buckets.iter())
+        } else {
+            Box::new(self.partitions.iter().flat_map(HashMap::values))
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &JoinHashKey> {
         self.partitions.iter().flat_map(HashMap::keys)
-    }
-
-    pub(super) fn values(&self) -> impl Iterator<Item = &Vec<Vec<Value>>> {
-        self.partitions.iter().flat_map(HashMap::values)
-    }
-
-    pub(super) fn iter(&self) -> impl Iterator<Item = (&JoinHashKey, &Vec<Vec<Value>>)> {
-        self.partitions.iter().flat_map(HashMap::iter)
     }
 
     fn drain(&mut self) -> impl Iterator<Item = (JoinHashKey, Vec<Vec<Value>>)> + '_ {
@@ -512,123 +616,151 @@ pub(super) fn build_hash_join_state(
         collation: None,
     };
     while let Some(batch) = right.next_batch(memory)? {
-        let mut used_before_batch = memory.used();
         let batch_bytes = batch.estimated_bytes();
-        // Keys first, binned by the partition each will land in; the inserts
-        // follow one partition at a time.
-        let mut binned: Vec<Vec<(JoinHashKey, usize)>> = vec![Vec::new(); build.partitions()];
-        // Keys are held for the whole batch before any of them are inserted, so
-        // they are charged as they accumulate. Without this a batch of long
-        // text keys allocates every normalized key at once and passes the
-        // query's ceiling before a single per-row check runs.
-        let mut binned_bytes = 0_usize;
-        for row in batch.selection().selected_rows() {
-            let value = right_key.evaluate(&batch, row)?;
-            if !matches!(value, Value::Null) {
-                match &mut key_bounds {
-                    None => {
-                        memory.reserve(value.heap_bytes().saturating_mul(2))?;
-                        key_bounds = Some((value.clone(), value.clone()));
-                    }
-                    Some((minimum, maximum)) => {
-                        if compare_sort_values(&value, minimum, bound_order, collation)
-                            == Ordering::Less
-                        {
-                            *minimum = value.clone();
+        // A wide upstream join can return more than a scan-sized batch.
+        // Bin it in bounded pieces when it occupies most of the headroom,
+        // so resident insertion reaches its spill valve before keys alone
+        // exhaust the ceiling. Ordinary batches retain their partition walk.
+        let bin_rows = if batch_bytes > memory.remaining() / 2 {
+            1024
+        } else {
+            batch.row_count().max(1)
+        };
+        let mut rows = batch.selection().selected_rows().peekable();
+        while rows.peek().is_some() {
+            let mut used_before_batch = memory.used();
+            // Keys first, binned by the partition each will land in; the inserts
+            // follow one partition at a time.
+            let mut binned: Vec<Vec<(JoinHashKey, usize)>> = vec![Vec::new(); build.partitions()];
+            // Keys are held for the whole batch before any of them are inserted, so
+            // they are charged as they accumulate. Without this a batch of long
+            // text keys allocates every normalized key at once and passes the
+            // query's ceiling before a single per-row check runs.
+            let mut binned_bytes = 0_usize;
+            for row in rows.by_ref().take(bin_rows) {
+                let value = right_key.evaluate(&batch, row)?;
+                if !matches!(value, Value::Null) {
+                    match &mut key_bounds {
+                        None => {
+                            memory.reserve(value.heap_bytes().saturating_mul(2))?;
+                            key_bounds = Some((value.clone(), value.clone()));
                         }
-                        if compare_sort_values(&value, maximum, bound_order, collation)
-                            == Ordering::Greater
-                        {
-                            *maximum = value.clone();
+                        Some((minimum, maximum)) => {
+                            if compare_sort_values(&value, minimum, bound_order, collation)
+                                == Ordering::Less
+                            {
+                                *minimum = value.clone();
+                            }
+                            if compare_sort_values(&value, maximum, bound_order, collation)
+                                == Ordering::Greater
+                            {
+                                *maximum = value.clone();
+                            }
                         }
                     }
                 }
+                let Some(key) = normalized_join_key(value, key_mode)? else {
+                    continue;
+                };
+                let Some(key) = composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)?
+                else {
+                    continue;
+                };
+                let retained = key
+                    .heap_bytes()
+                    .saturating_add(size_of::<(JoinHashKey, usize)>());
+                // Previously binned keys are already reserved. Only the incoming
+                // key and the live batch are additional to the tracker here.
+                memory.ensure_transient(batch_bytes.saturating_add(retained))?;
+                memory.reserve(retained)?;
+                binned_bytes = binned_bytes.saturating_add(retained);
+                binned[build.slot(&key)].push((key, row));
             }
-            let Some(key) = normalized_join_key(value, key_mode)? else {
-                continue;
-            };
-            let Some(key) = composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)?
-            else {
-                continue;
-            };
-            let retained = key
-                .heap_bytes()
-                .saturating_add(size_of::<(JoinHashKey, usize)>());
-            memory.ensure_transient(batch_bytes.saturating_add(binned_bytes))?;
-            memory.reserve(retained)?;
-            binned_bytes = binned_bytes.saturating_add(retained);
-            binned[build.slot(&key)].push((key, row));
-        }
-        for (key, row) in binned.into_iter().flatten() {
-            if let Some(grace) = grace.as_mut() {
-                let values = batch_row(&batch, row)?;
-                grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
-                continue;
-            }
-            match insert_resident_row(&mut build, key, &batch, row, batch_bytes, right_key, memory)
-            {
-                Ok(()) => {}
-                Err(ExecError::MemoryLimitExceeded { .. }) if !build.is_empty() => {
-                    // Out of memory with rows to spill: either the query's
-                    // own ceiling landed inside one batch, past the
-                    // proactive half-ceiling valve below, or the process
-                    // budget refused what the query ceiling allowed. Both
-                    // used to fail the query, and under load the second was
-                    // the common one: every admitted query is entitled to
-                    // its own ceiling, but their sum is not, so the budget
-                    // is a spill signal here, not a verdict. Drain the map
-                    // to partitions and route this row there.
-                    let mut partitions = GraceJoin::create();
-                    for (key, bucket) in build.drain() {
-                        let target = grace_partition(&key, 0);
-                        for values in bucket {
-                            partitions.build_files[target].append(&key, &values, memory)?;
-                        }
-                    }
-                    // Everything this batch reserved beyond its binned keys,
-                    // plus the map from earlier batches; a partial insert's
-                    // reservations are included because the map is empty now.
-                    let this_batch = memory
-                        .used()
-                        .saturating_sub(used_before_batch)
-                        .saturating_sub(binned_bytes);
-                    memory.release(build_reserved.saturating_add(this_batch));
-                    build_reserved = 0;
-                    used_before_batch = memory.used().saturating_sub(binned_bytes);
-                    let value = right_key.evaluate(&batch, row)?;
-                    let key = normalized_join_key(value, key_mode)?
-                        .and_then(|key| {
-                            composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)
-                                .transpose()
-                        })
-                        .transpose()?
-                        .expect("the key was binned, so it normalizes");
+            for (key, row) in binned.into_iter().flatten() {
+                if let Some(grace) = grace.as_mut() {
                     let values = batch_row(&batch, row)?;
-                    partitions.build_files[grace_partition(&key, 0)]
-                        .append(&key, &values, memory)?;
-                    grace = Some(partitions);
+                    grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
+                    continue;
                 }
-                Err(error) => return Err(error),
+                match insert_resident_row(
+                    &mut build,
+                    key,
+                    &batch,
+                    row,
+                    batch_bytes,
+                    right_key,
+                    memory,
+                ) {
+                    Ok(()) => {}
+                    Err(ExecError::MemoryLimitExceeded { .. }) if !build.is_empty() => {
+                        // Out of memory with rows to spill: either the query's
+                        // own ceiling landed inside one batch, past the
+                        // proactive half-ceiling valve below, or the process
+                        // budget refused what the query ceiling allowed. Both
+                        // used to fail the query, and under load the second was
+                        // the common one: every admitted query is entitled to
+                        // its own ceiling, but their sum is not, so the budget
+                        // is a spill signal here, not a verdict. Drain the map
+                        // to partitions and route this row there.
+                        let mut partitions = GraceJoin::create();
+                        for (key, bucket) in build.drain() {
+                            let target = grace_partition(&key, 0);
+                            for values in bucket {
+                                partitions.build_files[target].append(&key, &values, memory)?;
+                            }
+                        }
+                        // Everything this batch reserved beyond its binned keys,
+                        // plus the map from earlier batches; a partial insert's
+                        // reservations are included because the map is empty now.
+                        let this_batch = memory
+                            .used()
+                            .saturating_sub(used_before_batch)
+                            .saturating_sub(binned_bytes);
+                        memory.release(build_reserved.saturating_add(this_batch));
+                        build_reserved = 0;
+                        used_before_batch = memory.used().saturating_sub(binned_bytes);
+                        let value = right_key.evaluate(&batch, row)?;
+                        let key = normalized_join_key(value, key_mode)?
+                            .and_then(|key| {
+                                composite_join_key(key, &batch, row, extra_keys, JoinSide::Build)
+                                    .transpose()
+                            })
+                            .transpose()?
+                            .expect("the key was binned, so it normalizes");
+                        let values = batch_row(&batch, row)?;
+                        partitions.build_files[grace_partition(&key, 0)]
+                            .append(&key, &values, memory)?;
+                        grace = Some(partitions);
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            memory.release(binned_bytes);
+            build_reserved =
+                build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
+            // Proactive spill at half the ceiling, like sort and aggregation:
+            // drain the resident map into partition files and route the rest
+            // of the build (and later the probe) through them.
+            if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
+                let mut partitions = GraceJoin::create();
+                for (key, bucket) in build.drain() {
+                    let target = grace_partition(&key, 0);
+                    for values in bucket {
+                        partitions.build_files[target].append(&key, &values, memory)?;
+                    }
+                }
+                memory.release(build_reserved);
+                build_reserved = 0;
+                grace = Some(partitions);
             }
         }
-        memory.release(binned_bytes);
-        build_reserved =
-            build_reserved.saturating_add(memory.used().saturating_sub(used_before_batch));
-        // Proactive spill at half the ceiling, like sort and aggregation:
-        // drain the resident map into partition files and route the rest
-        // of the build (and later the probe) through them.
-        if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
-            let mut partitions = GraceJoin::create();
-            for (key, bucket) in build.drain() {
-                let target = grace_partition(&key, 0);
-                for values in bucket {
-                    partitions.build_files[target].append(&key, &values, memory)?;
-                }
-            }
-            memory.release(build_reserved);
-            build_reserved = 0;
-            grace = Some(partitions);
-        }
+    }
+    // A build that stayed resident (no grace spill) is never mutated again:
+    // every remaining reader only probes it. Dense direct-address probe
+    // (experiments/RESULTS.md e04, 2.4-4.2x; e85 extends it to every reader
+    // of `get`, not only the fused join-aggregate).
+    if grace.is_none() {
+        build.finalize_dense();
     }
     Ok(HashJoinState {
         build,
@@ -1100,6 +1232,214 @@ fn grace_partition(key: &JoinHashKey, seed: u64) -> usize {
     }
 }
 
+/// A partition that hashing cannot shrink is replayed one build row at a
+/// time for each probe. Keeping the probe's match count across the replay
+/// preserves outer, scalar, semi, and anti semantics without duplicating
+/// unmatched output across sub-partitions.
+struct SkewReplay {
+    build: GraceRun,
+    probes: GraceRunReader,
+    current: Option<(JoinHashKey, Vec<Value>)>,
+    entries: Option<GraceRunReader>,
+    matches: usize,
+    reserved: usize,
+    scalar: Option<Vec<Value>>,
+    /// The build rows a budget lets this replay keep, in file order. Every
+    /// probe walks these from memory before the file continues where they
+    /// stop, so the rows that fit are read from disk once rather than once
+    /// per probe.
+    resident: Vec<(JoinHashKey, Vec<Value>)>,
+    resident_bytes: usize,
+    /// Build rows past the resident prefix, in file order.
+    tail: Option<GraceRun>,
+    prepared: bool,
+    /// Position of the current probe within the resident prefix.
+    cursor: usize,
+}
+
+impl SkewReplay {
+    fn new(build: GraceRun, probes: GraceRunReader) -> Self {
+        Self {
+            build,
+            probes,
+            current: None,
+            entries: None,
+            matches: 0,
+            reserved: 0,
+            scalar: None,
+            resident: Vec::new(),
+            resident_bytes: 0,
+            tail: None,
+            prepared: false,
+            cursor: 0,
+        }
+    }
+
+    /// Reads the partition once, keeping what a quarter of the ceiling
+    /// affords and writing the rest to its own run. A partition that fits
+    /// entirely leaves no tail and is never read from disk again.
+    fn prepare(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        if self.prepared {
+            return Ok(());
+        }
+        self.prepared = true;
+        let budget = (memory.limit() / 4).min(memory.remaining() / 2);
+        let mut source = self.build.reader(memory)?;
+        let mut tail = GraceRun::create();
+        let mut spilling = false;
+        while let Some((key, row)) = source.next_entry()? {
+            if !spilling {
+                let bytes = estimated_row_payload_bytes(&row)
+                    .saturating_add(key.heap_bytes())
+                    .saturating_add(size_of::<(JoinHashKey, Vec<Value>)>());
+                if self.resident_bytes.saturating_add(bytes) <= budget
+                    && memory.reserve(bytes).is_ok()
+                {
+                    self.resident_bytes = self.resident_bytes.saturating_add(bytes);
+                    self.resident.push((key, row));
+                    continue;
+                }
+                spilling = true;
+            }
+            tail.append(&key, &row, memory)?;
+        }
+        if tail.entries > 0 {
+            self.tail = Some(tail);
+        }
+        Ok(())
+    }
+
+    /// The next build row for the current probe: the resident prefix first,
+    /// then the tail file from where the prefix stops.
+    fn next_build(
+        &mut self,
+        memory: &MemoryTracker,
+    ) -> Result<Option<(JoinHashKey, Vec<Value>)>, ExecError> {
+        if self.cursor < self.resident.len() {
+            let entry = self.resident[self.cursor].clone();
+            self.cursor += 1;
+            return Ok(Some(entry));
+        }
+        if self.entries.is_none() {
+            let Some(tail) = self.tail.as_mut() else {
+                return Ok(None);
+            };
+            self.entries = Some(tail.reader(memory)?);
+        }
+        self.entries.as_mut().expect("tail opened").next_entry()
+    }
+
+    /// Hands back the resident prefix once the partition is served.
+    fn release(&mut self, memory: &MemoryTracker) {
+        self.clear_probe(memory);
+        memory.release(self.resident_bytes);
+        self.resident = Vec::new();
+        self.resident_bytes = 0;
+    }
+
+    fn clear_probe(&mut self, memory: &MemoryTracker) {
+        self.current = None;
+        self.scalar = None;
+        self.entries = None;
+        self.cursor = 0;
+        memory.release(self.reserved);
+        self.reserved = 0;
+        self.matches = 0;
+    }
+
+    fn next_row(
+        &mut self,
+        kind: BoundJoinKind,
+        right_width: usize,
+        residual: Option<&CompiledExpr>,
+        columns: &[BoundColumn],
+        memory: &MemoryTracker,
+    ) -> Result<Option<Vec<Value>>, ExecError> {
+        self.prepare(memory)?;
+        loop {
+            memory.check_interruption()?;
+            if self.current.is_none() {
+                let Some((key, row)) = self.probes.next_entry()? else {
+                    return Ok(None);
+                };
+                self.reserved = estimated_row_payload_bytes(&row).saturating_add(key.heap_bytes());
+                memory.reserve(self.reserved)?;
+                self.current = Some((key, row));
+                self.cursor = 0;
+                self.entries = None;
+            }
+            let next = self.next_build(memory)?;
+            let (probe_key, left) = self.current.as_ref().expect("probe loaded");
+            if let Some((key, right)) = next {
+                memory.ensure_transient(
+                    estimated_row_payload_bytes(&right).saturating_add(key.heap_bytes()),
+                )?;
+                if &key != probe_key {
+                    continue;
+                }
+                if residual.is_some() {
+                    let candidates = vec![right.clone()];
+                    if apply_join_residual(residual, columns, left, Some(&candidates))?
+                        .is_none_or(|rows| rows.is_empty())
+                    {
+                        continue;
+                    }
+                }
+                self.matches = self.matches.saturating_add(1);
+                match kind {
+                    BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar => {
+                        if kind == BoundJoinKind::Scalar && self.matches > 1 {
+                            return Err(ExecError::ScalarSubqueryRows { rows: self.matches });
+                        }
+                        let mut output = left.clone();
+                        output.extend(right);
+                        let bytes = estimated_row_payload_bytes(&output);
+                        memory.ensure_transient(bytes)?;
+                        if kind == BoundJoinKind::Scalar {
+                            memory.reserve(bytes)?;
+                            self.reserved += bytes;
+                            self.scalar = Some(output);
+                            continue;
+                        }
+                        return Ok(Some(output));
+                    }
+                    BoundJoinKind::Semi => {
+                        let output = left.clone();
+                        self.clear_probe(memory);
+                        return Ok(Some(output));
+                    }
+                    BoundJoinKind::Anti => {
+                        self.clear_probe(memory);
+                    }
+                    BoundJoinKind::Cross => {
+                        return Err(ExecError::InvalidPhysicalPlan(
+                            "cross join reached skew replay",
+                        ));
+                    }
+                }
+            } else {
+                let output = if self.matches == 0 {
+                    match kind {
+                        BoundJoinKind::Left | BoundJoinKind::Scalar => {
+                            let mut row = left.clone();
+                            row.extend(std::iter::repeat_n(Value::Null, right_width));
+                            Some(row)
+                        }
+                        BoundJoinKind::Anti => Some(left.clone()),
+                        _ => None,
+                    }
+                } else {
+                    self.scalar.take()
+                };
+                self.clear_probe(memory);
+                if output.is_some() {
+                    return Ok(output);
+                }
+            }
+        }
+    }
+}
+
 /// Partitioned join state once the build side overflowed the ceiling.
 pub(super) struct GraceJoin {
     build_files: Vec<GraceRun>,
@@ -1115,6 +1455,7 @@ pub(super) struct GraceJoin {
     replay: Option<GraceRunReader>,
     /// Bytes reserved for the loaded partition's build map.
     partition_reserved: usize,
+    skew: Option<SkewReplay>,
 }
 
 impl GraceJoin {
@@ -1133,6 +1474,7 @@ impl GraceJoin {
             current: 0,
             replay: None,
             partition_reserved: 0,
+            skew: None,
         }
     }
 }
@@ -1467,12 +1809,22 @@ pub(super) fn next_grace_join_batch(
         // Turning the buffered rows into a batch needs about as much again
         // for the columns, so under a tight ceiling the batch is cut where
         // that copy still fits rather than refused once it is buffered.
-        if !rows.is_empty() && buffered_bytes.saturating_mul(2) > memory.remaining() {
+        if !rows.is_empty() && buffered_bytes.saturating_mul(4) > memory.remaining() {
             break;
         }
         let grace = state.grace.as_mut().expect("grace state engaged");
         if !grace.probing_done {
             break;
+        }
+        if let Some(skew) = &mut grace.skew {
+            if let Some(output) =
+                skew.next_row(kind, right_width, residual, residual_columns, memory)?
+            {
+                push(&mut rows, &mut buffered_bytes, output)?;
+                continue;
+            }
+            skew.release(memory);
+            grace.skew = None;
         }
         if grace.replay.is_none() {
             if grace.current >= grace.build_files.len() {
@@ -1532,6 +1884,13 @@ pub(super) fn next_grace_join_batch(
                 drop(entries);
                 state.build.clear();
                 memory.release(memory.used().saturating_sub(used_before));
+                if grace.depths[index] >= MAX_GRACE_DEPTH {
+                    let build =
+                        std::mem::replace(&mut grace.build_files[index], GraceRun::create());
+                    let probes = grace.probe_files[index].reader(memory)?;
+                    grace.skew = Some(SkewReplay::new(build, probes));
+                    continue;
+                }
                 split_grace_partition(grace, index, memory)?;
                 continue;
             }
@@ -1805,10 +2164,129 @@ thread_local! {
     };
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A replayable nested-loop side or result. Its resident prefix is replaced
+/// by one append-only run as soon as its share of the query budget fills.
+struct LoopRows {
+    rows: Vec<Vec<Value>>,
+    writer: Option<spill::RunWriter>,
+    run: Option<spill::ClosedRun>,
+    reserved: usize,
+}
+
+impl LoopRows {
+    fn new() -> Self {
+        Self {
+            rows: Vec::new(),
+            writer: None,
+            run: None,
+            reserved: 0,
+        }
+    }
+
+    fn push(&mut self, row: Vec<Value>, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let bytes = estimated_row_payload_bytes(&row);
+        if self.writer.is_none()
+            && (self.reserved + bytes > memory.limit() / 8
+                || bytes.saturating_mul(2) > memory.remaining())
+        {
+            let mut writer = spill::RunWriter::create("pintail-loop-", memory.spill())
+                .map_err(|error| ExecError::Source(error.to_string()))?;
+            for row in &self.rows {
+                write_loop_row(&mut writer, row)?;
+            }
+            self.rows = Vec::new();
+            memory.release(self.reserved);
+            self.reserved = 0;
+            self.writer = Some(writer);
+        }
+        if let Some(writer) = &mut self.writer {
+            memory.ensure_transient(bytes)?;
+            write_loop_row(writer, &row)?;
+        } else {
+            self.reserved += reserve_vec_elements(&mut self.rows, 1, 0, memory)?;
+            memory.reserve(bytes)?;
+            self.reserved += bytes;
+            self.rows.push(row);
+        }
+        Ok(())
+    }
+
+    fn seal(&mut self) -> Result<(), ExecError> {
+        if let Some(writer) = self.writer.take() {
+            self.run = Some(
+                writer
+                    .finish()
+                    .map_err(|error| ExecError::Source(error.to_string()))?,
+            );
+        }
+        Ok(())
+    }
+
+    fn reader(&self) -> Result<LoopReader<'_>, ExecError> {
+        if let Some(run) = &self.run {
+            Ok(LoopReader::Disk(
+                run.open()
+                    .map_err(|error| ExecError::Source(error.to_string()))?,
+            ))
+        } else {
+            Ok(LoopReader::Memory(self.rows.iter()))
+        }
+    }
+
+    fn finish(
+        mut self,
+        memory: &MemoryTracker,
+        collation: Collation,
+    ) -> Result<super::SortedRows, ExecError> {
+        self.seal()?;
+        if let Some(run) = self.run {
+            super::sort::SpilledMerge::new(vec![run], &[], Vec::new(), None, collation, memory)
+                .map(super::SortedRows::Spilled)
+        } else {
+            Ok(super::SortedRows::Memory(super::MaterializedRows {
+                rows: self.rows,
+                position: 0,
+                spilled: None,
+            }))
+        }
+    }
+}
+
+fn write_loop_row(writer: &mut spill::RunWriter, row: &[Value]) -> Result<(), ExecError> {
+    let mut encoder = spill::Encoder::new();
+    encoder.values(row);
+    writer
+        .write(&encoder.finish())
+        .map_err(|error| ExecError::Source(error.to_string()))
+}
+
+enum LoopReader<'a> {
+    Memory(std::slice::Iter<'a, Vec<Value>>),
+    Disk(spill::RunReader),
+}
+
+impl LoopReader<'_> {
+    fn next_row(&mut self) -> Result<Option<Vec<Value>>, ExecError> {
+        match self {
+            Self::Memory(rows) => Ok(rows.next().cloned()),
+            Self::Disk(reader) => reader
+                .next()
+                .map_err(|error| ExecError::Source(error.to_string()))?
+                .map(|payload| {
+                    spill::Decoder::new(payload)
+                        .values()
+                        .map_err(ExecError::Source)
+                })
+                .transpose(),
+        }
+    }
+}
+
+// Keep the candidate ownership and each join kind in one evaluation loop.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) fn execute_nested_loop_join(
-    left_rows: &[Vec<Value>],
-    right_rows: &[Vec<Value>],
+    left_input: &mut PullOperator,
+    right_input: &mut PullOperator,
     left_columns: &[BoundColumn],
     right_columns: &[BoundColumn],
     kind: BoundJoinKind,
@@ -1816,103 +2294,160 @@ pub(super) fn execute_nested_loop_join(
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
     collation: Collation,
-) -> Result<Vec<Vec<Value>>, ExecError> {
+) -> Result<super::SortedRows, ExecError> {
     let mut columns = left_columns.to_vec();
     columns.extend_from_slice(right_columns);
     let column_types = columns
         .iter()
         .map(|column| column.data_type)
         .collect::<Vec<_>>();
-    let mut output = Vec::new();
+    let mut right_rows = LoopRows::new();
+    while let Some(batch) = right_input.next_batch(memory)? {
+        for row in batch.selection().selected_rows() {
+            right_rows.push(batch_row(&batch, row)?, memory)?;
+        }
+    }
+    right_rows.seal()?;
+    let mut output = LoopRows::new();
     // One memo for the whole join: the ON condition's subqueries are keyed
     // by the (left, right) values they substitute, and a nested loop
     // revisits the same right row once per left row.
     let mut memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
-    for left in left_rows {
-        memory.check_interruption()?;
-        let mut matches = 0_usize;
-        for right in right_rows {
-            memory.ensure_transient(
-                estimated_row_payload_bytes(left)
-                    .saturating_add(estimated_row_payload_bytes(right)),
-            )?;
-            let mut candidate = left.clone();
-            candidate.extend(right.iter().cloned());
-            let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
-            let batch = RecordBatch::new(1, vectors)?;
-            let mut predicate = condition.clone();
-            let context = super::DependentRow {
-                batch: &batch,
-                row: 0,
-                columns: &columns,
-                provider,
-                memory,
-                collation,
-            };
-            memo.begin_row();
-            resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
-            let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
-            if !predicate_truth(&predicate.evaluate(&batch, 0)?)? {
-                continue;
-            }
-            matches = matches.saturating_add(1);
-            match kind {
-                BoundJoinKind::Inner | BoundJoinKind::Left => {
-                    push_nested_join_row(&mut output, candidate, memory)?;
+    while let Some(left_batch) = left_input.next_batch(memory)? {
+        let batch_bytes = left_batch.estimated_bytes();
+        memory.reserve(batch_bytes)?;
+        for row in left_batch.selection().selected_rows() {
+            let left = batch_row(&left_batch, row)?;
+            let left_bytes = estimated_row_payload_bytes(&left);
+            memory.reserve(left_bytes)?;
+            memory.check_interruption()?;
+            let mut matches = 0_usize;
+            let mut replay = right_rows.reader()?;
+            while let Some(right) = replay.next_row()? {
+                memory.ensure_transient(
+                    estimated_row_payload_bytes(&left)
+                        .saturating_add(estimated_row_payload_bytes(&right)),
+                )?;
+                let right_bytes = estimated_row_payload_bytes(&right);
+                let candidate_bytes = left_bytes.saturating_add(right_bytes);
+                memory.reserve(right_bytes.saturating_add(candidate_bytes))?;
+                let mut candidate = left.clone();
+                candidate.extend(right.iter().cloned());
+                let candidate_batch_bytes = estimated_record_batch_bytes(
+                    std::slice::from_ref(&candidate),
+                    column_types.len(),
+                );
+                memory.reserve(candidate_batch_bytes)?;
+                let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
+                let batch = RecordBatch::new(1, vectors)?;
+                let mut predicate = condition.clone();
+                let context = super::DependentRow {
+                    batch: &batch,
+                    row: 0,
+                    columns: &columns,
+                    provider,
+                    memory,
+                    collation,
+                };
+                if memory.remaining() < memory.limit() / 2 {
+                    super::record_dependent_memo(memo.finish(memory));
+                    memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
                 }
-                BoundJoinKind::Scalar => {
-                    if matches > 1 {
-                        return Err(ExecError::ScalarSubqueryRows { rows: matches });
+                memo.begin_row();
+                resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
+                let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
+                let accepted = predicate_truth(&predicate.evaluate(&batch, 0)?)?;
+                drop(batch);
+                drop(right);
+                memory.release(
+                    right_bytes
+                        .saturating_add(candidate_bytes)
+                        .saturating_add(candidate_batch_bytes),
+                );
+                if !accepted {
+                    continue;
+                }
+                matches = matches.saturating_add(1);
+                match kind {
+                    BoundJoinKind::Inner | BoundJoinKind::Left => {
+                        output.push(candidate, memory)?;
                     }
-                    push_nested_join_row(&mut output, candidate, memory)?;
+                    BoundJoinKind::Scalar => {
+                        if matches > 1 {
+                            return Err(ExecError::ScalarSubqueryRows { rows: matches });
+                        }
+                        output.push(candidate, memory)?;
+                    }
+                    BoundJoinKind::Semi => break,
+                    BoundJoinKind::Anti => {}
+                    BoundJoinKind::Cross => {
+                        return Err(ExecError::InvalidPhysicalPlan(
+                            "nested-loop ON evaluation cannot represent a cross join",
+                        ));
+                    }
                 }
-                BoundJoinKind::Semi => break,
-                BoundJoinKind::Anti => {}
-                BoundJoinKind::Cross => {
-                    return Err(ExecError::InvalidPhysicalPlan(
-                        "nested-loop ON evaluation cannot represent a cross join",
-                    ));
+            }
+            match kind {
+                BoundJoinKind::Left | BoundJoinKind::Scalar if matches == 0 => {
+                    let mut row = left.clone();
+                    row.extend(std::iter::repeat_n(Value::Null, right_columns.len()));
+                    output.push(row, memory)?;
                 }
+                BoundJoinKind::Semi if matches > 0 => {
+                    output.push(left.clone(), memory)?;
+                }
+                BoundJoinKind::Anti if matches == 0 => {
+                    output.push(left.clone(), memory)?;
+                }
+                BoundJoinKind::Inner
+                | BoundJoinKind::Left
+                | BoundJoinKind::Scalar
+                | BoundJoinKind::Semi
+                | BoundJoinKind::Anti => {}
+                BoundJoinKind::Cross => unreachable!("cross joins return above"),
             }
+            drop(left);
+            memory.release(left_bytes);
         }
-        match kind {
-            BoundJoinKind::Left | BoundJoinKind::Scalar if matches == 0 => {
-                let mut row = left.clone();
-                row.extend(std::iter::repeat_n(Value::Null, right_columns.len()));
-                push_nested_join_row(&mut output, row, memory)?;
-            }
-            BoundJoinKind::Semi if matches > 0 => {
-                push_nested_join_row(&mut output, left.clone(), memory)?;
-            }
-            BoundJoinKind::Anti if matches == 0 => {
-                push_nested_join_row(&mut output, left.clone(), memory)?;
-            }
-            BoundJoinKind::Inner
-            | BoundJoinKind::Left
-            | BoundJoinKind::Scalar
-            | BoundJoinKind::Semi
-            | BoundJoinKind::Anti => {}
-            BoundJoinKind::Cross => unreachable!("cross joins return above"),
-        }
+        memory.release(batch_bytes);
     }
     super::record_dependent_memo(memo.finish(memory));
-    Ok(output)
-}
-
-fn push_nested_join_row(
-    output: &mut Vec<Vec<Value>>,
-    row: Vec<Value>,
-    memory: &MemoryTracker,
-) -> Result<(), ExecError> {
-    reserve_vec_elements(output, 1, 0, memory)?;
-    memory.reserve(estimated_row_payload_bytes(&row))?;
-    output.push(row);
-    Ok(())
+    let retained = right_rows.reserved;
+    drop(right_rows);
+    memory.release(retained);
+    output.finish(memory, collation)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::collation::Collation;
+
+    #[test]
+    fn skew_scalar_checks_every_match_before_returning_a_row() {
+        use super::{GraceRun, JoinHashKey, SkewReplay};
+        use crate::execution::{ExecError, MemoryTracker};
+        use pintail_sql::BoundJoinKind;
+        use pintail_types::Value;
+        let memory = MemoryTracker::new(2 * 1024 * 1024);
+        let key = JoinHashKey::NonNegativeInteger(1);
+        let mut build = GraceRun::create();
+        build
+            .append(&key, &[Value::UInt64(10)], &memory)
+            .expect("build");
+        build
+            .append(&key, &[Value::UInt64(20)], &memory)
+            .expect("build");
+        build.seal(&memory).expect("seal");
+        let mut probes = GraceRun::create();
+        probes
+            .append(&key, &[Value::UInt64(1)], &memory)
+            .expect("probe");
+        let mut replay = SkewReplay::new(build, probes.reader(&memory).expect("reader"));
+        assert!(matches!(
+            replay.next_row(BoundJoinKind::Scalar, 1, None, &[], &memory),
+            Err(ExecError::ScalarSubqueryRows { rows: 2 })
+        ));
+    }
 
     fn drain_partitions(runs: &mut [super::GraceRun], memory: &super::MemoryTracker) -> Vec<u64> {
         let mut ids = Vec::new();
@@ -2171,7 +2706,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_key_that_never_fits_reports_skew_at_the_depth_bound() {
+    fn hash_repartitioning_stops_at_its_depth_bound() {
         use super::{ExecError, MemoryTracker};
         use super::{GraceJoin, MAX_GRACE_DEPTH, split_grace_partition};
         let memory = MemoryTracker::new(usize::MAX);
@@ -2224,6 +2759,124 @@ mod tests {
         assert_ne!(
             super::normalized_collation_text("a", Collation::Utf8mb40900AiCi),
             super::normalized_collation_text("a ", Collation::Utf8mb40900AiCi)
+        );
+    }
+}
+
+#[cfg(test)]
+mod dense_join_table_tests {
+    use super::{JoinHashKey, PartitionedBuild};
+    use pintail_types::Value;
+
+    /// Inserts one row per `(key, payload)` pair without going through
+    /// `build_hash_join_state`'s batch/memory machinery - a bare
+    /// `PartitionedBuild` is enough to test `finalize_dense` and its
+    /// accessors directly. A key mentioned more than once produces a bucket
+    /// with more than one row, covering duplicates.
+    fn build(rows: &[(JoinHashKey, u64)]) -> PartitionedBuild {
+        let mut build = PartitionedBuild::with_partitions(4);
+        for (key, payload) in rows {
+            build
+                .entry_or_default(key.clone())
+                .push(vec![Value::UInt64(*payload)]);
+        }
+        build
+    }
+
+    fn payloads(bucket: &[Vec<Value>]) -> Vec<u64> {
+        let mut values: Vec<u64> = bucket
+            .iter()
+            .map(|row| match row.first() {
+                Some(Value::UInt64(value)) => *value,
+                other => panic!("unexpected row {other:?}"),
+            })
+            .collect();
+        values.sort_unstable();
+        values
+    }
+
+    #[test]
+    fn a_narrow_integer_span_with_duplicates_finalizes_dense_and_matches_the_hashed_result() {
+        let rows = [
+            (JoinHashKey::NonNegativeInteger(10), 1),
+            (JoinHashKey::NonNegativeInteger(10), 2), // duplicate key, second row
+            (JoinHashKey::NonNegativeInteger(11), 3),
+            (JoinHashKey::NegativeInteger(-5), 4),
+        ];
+        let mut hashed = build(&rows);
+        // Captured before finalizing: the answer the general (hashed) path
+        // gives, which the dense path below must reproduce exactly.
+        let expected: Vec<(JoinHashKey, Vec<u64>)> = rows
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .map(|key| {
+                let expected = payloads(hashed.get(&key).expect("row was inserted"));
+                (key, expected)
+            })
+            .collect();
+        assert!(!hashed.is_dense());
+
+        hashed.finalize_dense();
+        assert!(hashed.is_dense(), "a span of 16 fits MAX_DENSE_SPAN");
+        assert_eq!(hashed.len(), 3, "three distinct keys, one with two rows");
+        for (key, expected) in &expected {
+            let dense = payloads(hashed.get(key).expect("dense get finds the same key"));
+            assert_eq!(&dense, expected, "dense and hashed paths must agree");
+            let (flat_index, via_dense_get) = hashed
+                .dense_get(key)
+                .expect("dense_get mirrors get once dense");
+            assert_eq!(&payloads(via_dense_get), expected);
+            assert!(flat_index < hashed.dense_buckets().len());
+        }
+        assert!(
+            hashed.get(&JoinHashKey::NonNegativeInteger(999)).is_none(),
+            "a key never inserted must miss on the dense path too"
+        );
+    }
+
+    #[test]
+    fn a_span_past_max_dense_span_never_finalizes() {
+        let mut build = build(&[
+            (JoinHashKey::NonNegativeInteger(0), 1),
+            // MAX_DENSE_SPAN is 1 << 22; this key alone puts the span past it.
+            (JoinHashKey::NonNegativeInteger(1 << 23), 2),
+        ]);
+        build.finalize_dense();
+        assert!(
+            !build.is_dense(),
+            "a span this wide must stay on the hashed path rather than allocate a huge table"
+        );
+        assert_eq!(
+            payloads(build.get(&JoinHashKey::NonNegativeInteger(0)).expect("row")),
+            vec![1]
+        );
+        assert_eq!(
+            payloads(
+                build
+                    .get(&JoinHashKey::NonNegativeInteger(1 << 23))
+                    .expect("row")
+            ),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn a_non_integer_key_never_finalizes() {
+        let mut build = build(&[]);
+        build
+            .entry_or_default(JoinHashKey::Scalar(Value::Utf8("a".to_owned())))
+            .push(vec![Value::UInt64(1)]);
+        build.finalize_dense();
+        assert!(!build.is_dense());
+        assert_eq!(
+            payloads(
+                build
+                    .get(&JoinHashKey::Scalar(Value::Utf8("a".to_owned())))
+                    .expect("row")
+            ),
+            vec![1]
         );
     }
 }

@@ -17,7 +17,7 @@ use crate::collation::Collation;
 use rayon::prelude::*;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, MAX_DENSE_SPAN, PartitionedBuild, build_hash_join_state,
+    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
     normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
@@ -25,10 +25,10 @@ use super::two_pass::{
     TwoPassKeySource, TwoPassLane, build_streaming_two_pass_aggregate, two_pass_lanes,
 };
 use super::{
-    DenseJoinTable, ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker,
-    OneShotStream, PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS,
-    compare_sort_values, estimated_row_payload_bytes, reserve_hash_map_entries,
-    reserve_hash_set_entries, reserve_vec_elements, scalar_string_memory_upper_bound,
+    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MaterializedRows, MemoryTracker, OneShotStream,
+    PullOperator, SESSION_GROUP_CONCAT_MAX_LEN, SESSION_GROUP_CONCAT_WARNINGS, compare_sort_values,
+    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_hash_set_entries,
+    reserve_vec_elements, scalar_string_memory_upper_bound,
 };
 use crate::{
     ColumnVector, RecordBatch,
@@ -117,14 +117,72 @@ pub(super) struct AggregateGroup {
     pub(super) states: Vec<AggregateState>,
 }
 
+/// Widest span (in distinct values) a bitmap will cover. `COUNT(DISTINCT)`
+/// keeps one of these per GROUP, not one per query like a join's build
+/// side, so this is kept well under a join's own dense-table cap - a query
+/// with many groups must not each pin down a multi-megabyte array.
+const DISTINCT_BITMAP_MAX_SPAN: i128 = 1 << 20;
+
+/// Distinct integer keys seen before a bitmap is tried. Below this a
+/// `HashSet`'s overhead already beats any bitmap wide enough to be exact,
+/// so there is nothing to gain from converting yet.
+const DISTINCT_BITMAP_MIN_COUNT: usize = 64;
+
+#[derive(Clone)]
+/// Boxed so the `min`/`max` tracking added for the bitmap (e86) does not
+/// grow every `DistinctSeen` (and so every `AggregateState`) by the size
+/// of two `i128`s: one lives per GROUP, of which a query can have
+/// hundreds of thousands, so that growth alone regressed a two-pass
+/// aggregate's tight memory ceiling past a spill it used to make cleanly
+/// (`tests/sqllogic/tests/two_pass_spill.rs`) even though the group's own
+/// distinct count never got near the bitmap threshold.
+struct IntsSeen {
+    set: HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>,
+    min: i128,
+    max: i128,
+}
+
+#[derive(Clone)]
+/// Boxed for the same reason as [`IntsSeen`]: an `i128` field inline in
+/// an enum variant forces the WHOLE enum to 16-byte alignment, padding
+/// `DistinctSeen` up even when this variant is never the active one -
+/// boxing both `i128`-carrying variants keeps every enum field a plain
+/// pointer-sized value, so `DistinctSeen` costs no more per group than it
+/// did before the bitmap existed.
+struct BitmapSeen {
+    min: i128,
+    bits: Vec<u64>,
+    count: usize,
+}
+
 #[derive(Clone)]
 /// DISTINCT key set. Integer-keyed values dedup through a plain i128 set
-/// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); the
-/// first non-integer key migrates the set to normalized Values.
+/// (no Value allocation, no enum-cell hashing — e16 measured 2.6x); once
+/// enough of them span fewer than `DISTINCT_BITMAP_MAX_SPAN` values, they
+/// move again into a bitmap (e86), which trades the hash-and-probe per key
+/// for one bit test/set. A key that later widens the span past the cap
+/// demotes back to `Ints` - `Ints`'s own running span only ever grows, so
+/// this happens at most once per group. The first non-integer key
+/// migrates whichever of the two is active to normalized Values.
 enum DistinctSeen {
-    Ints(HashSet<i128, std::hash::BuildHasherDefault<IntKeyHasher>>),
+    Ints(Box<IntsSeen>),
+    /// Exact membership over `min..min + bits.len() * 64`.
+    Bitmap(Box<BitmapSeen>),
     Values(HashSet<Value>),
 }
+
+/// The boxing above is a memory decision, and it is invisible: adding an
+/// `i128` field to a variant costs nothing at the call sites, compiles
+/// clean, and silently pads this enum - and with it every group's state -
+/// for a query holding hundreds of thousands of groups. It regressed a
+/// two-pass aggregate past a spill ceiling once already. A `HashSet` is
+/// the widest variant, so that is the bound; a change that pushes past it
+/// fails here rather than in whichever memory-ceiling test happens to sit
+/// closest to the edge.
+const _: () = assert!(
+    size_of::<DistinctSeen>() <= size_of::<HashSet<Value>>() + size_of::<usize>(),
+    "DistinctSeen grew past its widest variant: box the field that widened it"
+);
 
 /// splitmix-style hasher for raw integer distinct keys: `SipHash` cost is
 /// pure overhead here — the keys are column data in a per-query set, not
@@ -203,9 +261,7 @@ impl DistinctSeen {
         if let Some(key) = int_distinct_key(value) {
             return self.insert_int(key, memory, collation);
         }
-        if let Self::Ints(_) = self {
-            self.migrate_to_values(memory, collation)?;
-        }
+        self.migrate_to_values(memory, collation)?;
         let Self::Values(set) = self else {
             unreachable!()
         };
@@ -232,7 +288,8 @@ impl DistinctSeen {
         collation: Collation,
     ) -> Result<bool, ExecError> {
         match self {
-            Self::Ints(set) => {
+            Self::Ints(ints) => {
+                let IntsSeen { set, min, max } = ints.as_mut();
                 reserve_hash_set_entries(
                     set,
                     1,
@@ -240,10 +297,162 @@ impl DistinctSeen {
                     0,
                     memory,
                 )?;
-                Ok(set.insert(key))
+                let inserted = set.insert(key);
+                if inserted {
+                    *min = (*min).min(key);
+                    *max = (*max).max(key);
+                }
+                if set.len() >= DISTINCT_BITMAP_MIN_COUNT && *max - *min < DISTINCT_BITMAP_MAX_SPAN
+                {
+                    self.promote_to_bitmap(memory)?;
+                }
+                Ok(inserted)
+            }
+            Self::Bitmap(bitmap) => {
+                let BitmapSeen { min, bits, count } = bitmap.as_mut();
+                let span = bits.len().saturating_mul(64);
+                if let Some(offset) = key
+                    .checked_sub(*min)
+                    .and_then(|delta| usize::try_from(delta).ok())
+                    .filter(|offset| *offset < span)
+                {
+                    let word = offset / 64;
+                    let bit = 1_u64 << (offset % 64);
+                    if bits[word] & bit != 0 {
+                        return Ok(false);
+                    }
+                    bits[word] |= bit;
+                    *count += 1;
+                    return Ok(true);
+                }
+                // Past the window the bitmap was sized to when it was
+                // built. A column's true range often only becomes apparent
+                // after many rows (id % 100_000 seen in roughly ascending
+                // order widens its observed span one value at a time for a
+                // long stretch before covering it), so growing to exactly
+                // the newly needed bound thrashed on nearly every insert
+                // just as badly as demote-then-repromote did (e86: 10M
+                // rows regressed 1.5-30x before this was caught). Doubling
+                // the needed span and biasing the extra room toward
+                // whichever side just grew amortizes the reallocation the
+                // same way `Vec`'s own growth does - a handful of
+                // reallocations total instead of one per insert. Only
+                // demotes for good when even the minimum needed span would
+                // not fit the cap.
+                let old_span = i128::try_from(span).unwrap_or(i128::MAX);
+                let needed_min = (*min).min(key);
+                let needed_max = (*min + old_span - 1).max(key);
+                if needed_max - needed_min >= DISTINCT_BITMAP_MAX_SPAN {
+                    self.demote_bitmap_to_ints(key);
+                    return self.insert_int(key, memory, collation);
+                }
+                let needed_span = needed_max - needed_min + 1;
+                let headroom_span = needed_span
+                    .saturating_mul(2)
+                    .min(DISTINCT_BITMAP_MAX_SPAN)
+                    .max(needed_span);
+                let extra = headroom_span - needed_span;
+                let (grow_min, grow_max) = if key > *min + old_span - 1 {
+                    (needed_min, needed_max + extra)
+                } else {
+                    (needed_min - extra, needed_max)
+                };
+                self.grow_bitmap(grow_min, grow_max, memory)?;
+                self.insert_int(key, memory, collation)
             }
             Self::Values(_) => self.insert_value(&int_key_value(key), memory, collation),
         }
+    }
+
+    /// Builds the bitmap over the integer set's current `[min, max]` and
+    /// switches to it (experiments/RESULTS.md e86). Only called once that
+    /// span already passed [`DISTINCT_BITMAP_MAX_SPAN`]'s check.
+    fn promote_to_bitmap(&mut self, memory: &MemoryTracker) -> Result<(), ExecError> {
+        let Self::Ints(ints) = self else {
+            return Ok(());
+        };
+        let IntsSeen { set, min, max } = ints.as_mut();
+        let span =
+            usize::try_from(*max - *min).expect("checked under DISTINCT_BITMAP_MAX_SPAN") + 1;
+        let words = span.div_ceil(64);
+        memory.reserve(words.saturating_mul(size_of::<u64>()))?;
+        let mut bits = vec![0_u64; words];
+        let count = set.len();
+        for key in set.iter() {
+            let offset = usize::try_from(key - *min).expect("within the span just computed");
+            bits[offset / 64] |= 1_u64 << (offset % 64);
+        }
+        *self = Self::Bitmap(Box::new(BitmapSeen {
+            min: *min,
+            bits,
+            count,
+        }));
+        Ok(())
+    }
+
+    /// Reallocates the bitmap to cover `[new_min, new_max]` (already
+    /// checked against [`DISTINCT_BITMAP_MAX_SPAN`]) and copies its
+    /// existing members across, without inserting anything new - the
+    /// caller's own `insert_int` retry does that.
+    fn grow_bitmap(
+        &mut self,
+        new_min: i128,
+        new_max: i128,
+        memory: &MemoryTracker,
+    ) -> Result<(), ExecError> {
+        let Self::Bitmap(bitmap) = self else {
+            return Ok(());
+        };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
+        let new_words = usize::try_from(new_max - new_min + 1)
+            .expect("checked span")
+            .div_ceil(64);
+        memory.reserve(
+            new_words
+                .saturating_sub(bits.len())
+                .saturating_mul(size_of::<u64>()),
+        )?;
+        let mut new_bits = vec![0_u64; new_words];
+        for key in bitmap_members(*min, bits) {
+            let offset = usize::try_from(key - new_min).expect("within the new span");
+            new_bits[offset / 64] |= 1_u64 << (offset % 64);
+        }
+        *self = Self::Bitmap(Box::new(BitmapSeen {
+            min: new_min,
+            bits: new_bits,
+            count: *count,
+        }));
+        Ok(())
+    }
+
+    /// Converts an existing bitmap's members back into the general integer
+    /// set, widened to also cover `incoming`. Does not insert `incoming`
+    /// itself - the caller's own `insert_int` retry does that.
+    fn demote_bitmap_to_ints(&mut self, incoming: i128) {
+        let Self::Bitmap(bitmap) = self else {
+            return;
+        };
+        let BitmapSeen { min, bits, count } = bitmap.as_mut();
+        let mut set = HashSet::with_capacity_and_hasher(
+            count.saturating_add(1),
+            std::hash::BuildHasherDefault::default(),
+        );
+        let mut max = *min + i128::try_from(bits.len().saturating_mul(64)).unwrap_or(i128::MAX) - 1;
+        for (word_index, word) in bits.iter().enumerate() {
+            let mut remaining = *word;
+            while remaining != 0 {
+                let bit = remaining.trailing_zeros();
+                remaining &= remaining - 1;
+                let offset = word_index.saturating_mul(64) + usize::try_from(bit).expect("< 64");
+                set.insert(*min + i128::try_from(offset).expect("within the bitmap's own span"));
+            }
+        }
+        let min = (*min).min(incoming);
+        max = max.max(incoming);
+        // Memory already charged when the bitmap and the set it grew from
+        // were built; this conversion is not itself charged again, matching
+        // `migrate_to_values` below.
+        *self = Self::Ints(Box::new(IntsSeen { set, min, max }));
     }
 
     /// Inserts a key that another distinct set already normalized. Text
@@ -259,9 +468,7 @@ impl DistinctSeen {
         if let Some(int) = int_distinct_key(&key) {
             return self.insert_int(int, memory, collation);
         }
-        if let Self::Ints(_) = self {
-            self.migrate_to_values(memory, collation)?;
-        }
+        self.migrate_to_values(memory, collation)?;
         let Self::Values(set) = self else {
             unreachable!()
         };
@@ -285,29 +492,60 @@ impl DistinctSeen {
         memory: &MemoryTracker,
         collation: Collation,
     ) -> Result<(), ExecError> {
-        if let Self::Ints(ints) = self {
-            let ints = std::mem::take(ints);
-            let mut set = HashSet::with_capacity(ints.len());
-            memory.reserve(
-                ints.len()
-                    .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
-            )?;
-            for key in ints {
-                if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
-                    set.insert(key);
-                }
+        let ints: Vec<i128> = match self {
+            Self::Ints(ints) => std::mem::take(&mut ints.set).into_iter().collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits).collect(),
+            Self::Values(_) => return Ok(()),
+        };
+        let mut set = HashSet::with_capacity(ints.len());
+        memory.reserve(
+            ints.len()
+                .saturating_mul(size_of::<Value>().saturating_add(HASH_ENTRY_OVERHEAD)),
+        )?;
+        for key in ints {
+            if let Some(key) = normalized_hash_key(int_key_value(key), collation) {
+                set.insert(key);
             }
-            *self = Self::Values(set);
         }
+        *self = Self::Values(set);
         Ok(())
     }
 
     fn drain_values(self) -> Vec<Value> {
         match self {
-            Self::Ints(set) => set.into_iter().map(int_key_value).collect(),
+            Self::Ints(ints) => ints.set.into_iter().map(int_key_value).collect(),
+            Self::Bitmap(bitmap) => bitmap_members(bitmap.min, &bitmap.bits)
+                .map(int_key_value)
+                .collect(),
             Self::Values(set) => set.into_iter().collect(),
         }
     }
+}
+
+/// Every member a distinct bitmap holds, as the raw integer keys it packs.
+///
+/// Visits only the set bits (`trailing_zeros` plus clearing the lowest set
+/// bit each step), not all 64 positions of every word: a bitmap sized to a
+/// column's full range but holding a sparse subset - the common case for
+/// one parallel morsel's own partial distinct set before it merges into the
+/// group's - must not pay for the positions that are not there.
+fn bitmap_members(min: i128, bits: &[u64]) -> impl Iterator<Item = i128> + '_ {
+    bits.iter().enumerate().flat_map(move |(word_index, word)| {
+        let mut remaining = *word;
+        std::iter::from_fn(move || {
+            if remaining == 0 {
+                return None;
+            }
+            let bit = remaining.trailing_zeros();
+            remaining &= remaining - 1;
+            Some(
+                min + i128::try_from(
+                    word_index.saturating_mul(64) + usize::try_from(bit).expect("< 64"),
+                )
+                .expect("within the bitmap's own span"),
+            )
+        })
+    })
 }
 
 #[derive(Clone)]
@@ -388,8 +626,9 @@ enum AggregateValue {
         seen: bool,
     },
     GroupConcat {
-        /// Collected `(order keys, rendered value)` rows.
-        items: Vec<(Vec<Value>, String)>,
+        /// Collected `(order keys, rendered value, original value)` rows.
+        /// The original value preserves DISTINCT identity when runs merge.
+        items: Vec<(Vec<Value>, String, Value)>,
         /// Join separator resolved at state creation.
         separator: String,
         /// Per-key `(ascending, decimal)` sort spec.
@@ -456,9 +695,13 @@ impl AggregateState {
         Self {
             collation: aggregate.collation,
             value,
-            seen: aggregate
-                .distinct
-                .then(|| DistinctSeen::Ints(HashSet::default())),
+            seen: aggregate.distinct.then(|| {
+                DistinctSeen::Ints(Box::new(IntsSeen {
+                    set: HashSet::default(),
+                    min: i128::MAX,
+                    max: i128::MIN,
+                }))
+            }),
             extreme_number: None,
             extreme_units: None,
         }
@@ -710,9 +953,8 @@ impl AggregateState {
             AggregateValue::GroupConcat { items, .. } => {
                 let value_bytes = scalar_string_memory_upper_bound(value);
                 reserve_vec_elements(items, 1, 64, memory)?;
-                memory.reserve(value_bytes)?;
-                let value = aggregate_string(value)?;
-                items.push((Vec::new(), value));
+                memory.reserve(value_bytes.saturating_add(value.heap_bytes()))?;
+                items.push((Vec::new(), aggregate_string(value)?, value.clone()));
             }
             // Handled by the intercept above the NULL skip.
             AggregateValue::JsonArrayAgg { .. } => {
@@ -734,6 +976,12 @@ impl AggregateState {
         // Merging may replace the extreme through the Value path; the cached
         // f64 guide is conservative-invalidated rather than tracked.
         self.extreme_number = None;
+        if let AggregateValue::GroupConcat { items, .. } = other.value {
+            for (keys, _, value) in items {
+                self.update_group_concat(&value, keys, memory)?;
+            }
+            return Ok(());
+        }
         if aggregate.distinct {
             if let Some(seen) = other.seen.take() {
                 for key in seen.drain_values() {
@@ -743,6 +991,14 @@ impl AggregateState {
             return Ok(());
         }
         match (&mut self.value, other.value) {
+            (
+                AggregateValue::JsonArrayAgg { items: left },
+                AggregateValue::JsonArrayAgg { items: right },
+            ) => {
+                reserve_vec_elements(left, right.len(), 0, memory)?;
+                left.extend(right);
+            }
+
             (AggregateValue::Count(left), AggregateValue::Count(right)) => {
                 *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
             }
@@ -941,6 +1197,59 @@ impl AggregateState {
         Ok(())
     }
 
+    /// The dense count lane already resolved its aggregate once per batch.
+    pub(super) fn add_dense_count(&mut self, amount: u64) -> Result<(), ExecError> {
+        let AggregateValue::Count(count) = &mut self.value else {
+            return Err(ExecError::InvalidPhysicalPlan(
+                "dense count requires a count state",
+            ));
+        };
+        *count = count
+            .checked_add(amount)
+            .ok_or(ExecError::NumericOverflow)?;
+        Ok(())
+    }
+
+    /// Packed signed SUM keeps the same checked arithmetic and NULL state.
+    pub(super) fn add_dense_signed(&mut self, amount: i64) -> Result<(), ExecError> {
+        match &mut self.value {
+            AggregateValue::Sum(Some(Value::Int64(total))) => {
+                *total = total
+                    .checked_add(amount)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            value @ AggregateValue::Sum(None) => {
+                *value = AggregateValue::Sum(Some(Value::Int64(amount)));
+            }
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "dense sum requires a matching integer state",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Packed unsigned SUM keeps the same checked arithmetic and NULL state.
+    pub(super) fn add_dense_unsigned(&mut self, amount: u64) -> Result<(), ExecError> {
+        match &mut self.value {
+            AggregateValue::Sum(Some(Value::UInt64(total))) => {
+                *total = total
+                    .checked_add(amount)
+                    .ok_or(ExecError::NumericOverflow)?;
+            }
+            value @ AggregateValue::Sum(None) => {
+                *value = AggregateValue::Sum(Some(Value::UInt64(amount)));
+            }
+            _ => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "dense sum requires a matching integer state",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Exact decimal SUM on scaled integer units: no text parse, no text
     /// format until `finish`. The state lazily morphs from `Sum(None)` on
     /// the first unit-borne update.
@@ -994,10 +1303,10 @@ impl AggregateState {
                 "group-concat update applied to an incompatible aggregate state",
             ));
         };
-        let key_bytes = keys.iter().map(Value::heap_bytes).sum::<usize>();
+        let key_bytes = estimated_row_payload_bytes(&keys).saturating_add(value.heap_bytes());
         reserve_vec_elements(items, 1, 64, memory)?;
         memory.reserve(scalar_string_memory_upper_bound(value).saturating_add(key_bytes))?;
-        items.push((keys, aggregate_string(value)?));
+        items.push((keys, aggregate_string(value)?, value.clone()));
         Ok(())
     }
 
@@ -1214,7 +1523,7 @@ impl AggregateState {
                         Ordering::Equal
                     });
                 }
-                let joined_bytes = items.iter().map(|(_, text)| text.len()).fold(
+                let joined_bytes = items.iter().map(|(_, text, _)| text.len()).fold(
                     items
                         .len()
                         .saturating_sub(1)
@@ -1224,7 +1533,7 @@ impl AggregateState {
                 memory.reserve(joined_bytes)?;
                 let mut joined = items
                     .iter()
-                    .map(|(_, text)| text.as_str())
+                    .map(|(_, text, _)| text.as_str())
                     .collect::<Vec<_>>()
                     .join(&separator);
                 // MySQL truncates at the session's byte ceiling and raises
@@ -1306,6 +1615,374 @@ fn settled_signature(
 /// Merges finished aggregate values of a memoized result with a freshly
 /// aggregated insert-only delta, group by group. Only called for shapes
 /// whose finished values merge exactly (COUNT/int-float SUM/MIN/MAX).
+/// Grouped folds kept per segment file. A segment is never rewritten, so
+/// an entry is stale only when its file leaves the manifest, and the file
+/// name identifies the bytes it was taken over.
+type GroupedFoldKey = (std::path::PathBuf, String, String);
+static GROUPED_SEGMENT_FOLDS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<GroupedFoldKey, Vec<Vec<Value>>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Segment folds kept at once. Cleared wholesale past this, as the settled
+/// memo does: a fold is an optimization, and a bounded map that sometimes
+/// forgets everything is cheaper to reason about than an eviction policy.
+const GROUPED_FOLD_MAX_ENTRIES: usize = 512;
+
+/// Whether an aggregate's finished value can be merged with another
+/// computed over a disjoint set of rows.
+///
+/// The same rule the insert-only delta uses. An average cannot: merging
+/// two finished averages needs their counts, which the finished value has
+/// thrown away. A decimal sum carries its scale in its text and is left
+/// out for the same reason the delta leaves it out.
+fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
+    !aggregate.distinct
+        && match aggregate.function {
+            AggregateFunction::Count
+            | AggregateFunction::Minimum
+            | AggregateFunction::Maximum
+            | AggregateFunction::AnyValue
+            | AggregateFunction::BitAnd
+            | AggregateFunction::BitOr
+            | AggregateFunction::BitXor => true,
+            AggregateFunction::Sum => matches!(
+                aggregate.data_type,
+                Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
+            ),
+            AggregateFunction::Average
+            | AggregateFunction::GroupConcat
+            | AggregateFunction::JsonArrayAgg
+            | AggregateFunction::JsonObjectAgg
+            | AggregateFunction::StdDev { .. }
+            | AggregateFunction::Variance { .. } => false,
+        }
+}
+
+/// One segment span's rows, as batches, so the whole span goes through a
+/// single aggregate.
+///
+/// Aggregating each chunk on its own and merging the results cost four
+/// times what the general path spends per row: every chunk paid to set up
+/// its own group map and then to merge it away again, and the dense lanes
+/// never saw more than a chunk at a time. One stream over the span puts it
+/// back on the same footing as an ordinary scan.
+struct SpanStream {
+    inner: pintail_store::ProjectedScanStream,
+    chunks: std::collections::VecDeque<pintail_store::ProjectedColumnChunk>,
+    /// Columns the query asked for; any key columns read for the mask sit
+    /// after these and are dropped.
+    types: Vec<DataType>,
+    enum_labels: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    set_members: Vec<Option<std::sync::Arc<Vec<String>>>>,
+    read_width: usize,
+}
+
+impl crate::BatchStream for SpanStream {
+    fn next_batch(&mut self, _available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        loop {
+            if let Some(chunk) = self.chunks.pop_front() {
+                let (decoded, row_count) = chunk.take_columns();
+                if row_count == 0 {
+                    continue;
+                }
+                let columns = self
+                    .types
+                    .iter()
+                    .copied()
+                    .zip(decoded.into_iter().take(self.types.len()))
+                    .zip(self.enum_labels.iter().zip(self.set_members.iter()))
+                    .map(|((data_type, column), (labels, members))| {
+                        crate::storage::column_vector_from_decoded(
+                            data_type,
+                            column,
+                            labels.as_ref(),
+                            members.as_ref(),
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Some(RecordBatch::new(row_count, columns).map_err(
+                    |_| ExecError::InvalidBatch("span chunk does not form a batch"),
+                )?));
+            }
+            let chunks = self
+                .inner
+                .next_column_chunks(self.read_width, 512 << 20)
+                .map_err(|error| ExecError::Source(error.to_string()))?;
+            if chunks.is_empty() {
+                return Ok(None);
+            }
+            self.chunks.extend(chunks);
+        }
+    }
+
+    fn retained_bytes(&self) -> usize {
+        0
+    }
+
+    fn next_batch_memory_upper_bound(&self, _budget: usize) -> usize {
+        0
+    }
+}
+
+/// Folds one span by reading it as packed columns rather than as rows.
+///
+/// The row-shaped read costs one `Value` per cell - thirty-two bytes to
+/// carry eight, with an allocation for every string - which made a fold
+/// slower than the scan it was replacing.
+#[allow(clippy::too_many_arguments)]
+fn fold_span(
+    fold: &crate::execution::GroupedFoldInput,
+    span: &pintail_store::GroupedFoldSpan,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    collation: Collation,
+    key_collations: &[Collation],
+) -> Result<Vec<Vec<Value>>, ExecError> {
+    // The overlay masks superseded rows BY the key columns, so they are
+    // read even when the query does not select them; without them a span
+    // the memtable touches falls onto the row-by-row merge. They are
+    // appended, so the query's own columns keep their positions.
+    let mut read_ids = fold.column_ids.clone();
+    for key in &fold.key_column_ids {
+        if !read_ids.contains(key) {
+            read_ids.push(*key);
+        }
+    }
+    let Some(mut inner) = fold
+        .snapshot
+        .scan_projected_range_stream(&span.min_key, &span.max_key, &read_ids)
+        .map_err(|error| ExecError::Source(error.to_string()))?
+    else {
+        return Ok(Vec::new());
+    };
+    inner.enable_memtable_overlay(&fold.key_column_ids);
+    let mut span_input = PullOperator::Scan {
+        stream: Box::new(SpanStream {
+            inner,
+            chunks: std::collections::VecDeque::new(),
+            types: fold.types.clone(),
+            enum_labels: fold.enum_labels.clone(),
+            set_members: fold.set_members.clone(),
+            read_width: read_ids.len(),
+        }),
+        expected_types: fold.types.clone(),
+    };
+    Ok(build_hash_aggregate_scan(
+        &mut span_input,
+        group_by,
+        aggregates,
+        memory,
+        collation,
+        key_collations,
+    )?
+    .rows)
+}
+
+/// `PINTAIL_DISABLE_GROUPED_FOLD` puts a grouped query back on the general
+/// path, which is how the measurement gets a control arm.
+fn grouped_fold_disabled() -> bool {
+    static DISABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISABLED.get_or_init(|| std::env::var_os("PINTAIL_DISABLE_GROUPED_FOLD").is_some())
+}
+
+/// Folds a grouped aggregate one segment at a time, keeping the folds of
+/// the segments the memtable has not touched.
+///
+/// The settled result memo answers a repeat of a query over an unchanged
+/// table, and one ingest throws the whole answer away. This throws away
+/// only the spans that changed. Under replication that is the newest
+/// segment and the memtable, so a dashboard's grouped query re-reads a
+/// fraction of the table instead of all of it.
+#[allow(clippy::too_many_lines)]
+fn try_grouped_segment_fold(
+    input: &mut PullOperator,
+    group_by: &[CompiledExpr],
+    aggregates: &[CompiledAggregate],
+    memory: &MemoryTracker,
+    collation: Collation,
+    key_collations: &[Collation],
+) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
+    if group_by.is_empty() || aggregates.is_empty() {
+        return Ok(None);
+    }
+    if grouped_fold_disabled() {
+        return Ok(None);
+    }
+    if !aggregates.iter().all(mergeable_across_disjoint_rows) {
+        return Ok(None);
+    }
+    let PullOperator::Scan { stream, .. } = super::unprofiled_ref(input) else {
+        return Ok(None);
+    };
+    let Some(fold) = stream.grouped_fold_input() else {
+        return Ok(None);
+    };
+    let Some(signature) = settled_signature(group_by, aggregates) else {
+        return Ok(None);
+    };
+    if fold.spans.is_empty() {
+        return Ok(None);
+    }
+    // Every span dirty means every span is re-read, and the fold is then
+    // the general path plus bookkeeping. Updates scattered over a whole
+    // table look like this; the clustered ones an ingesting mirror
+    // produces leave the older spans alone, which is where the win is.
+    if fold.spans.iter().all(|span| span.dirty) {
+        return Ok(None);
+    }
+    // A settled table is the memo's job, not this one. The memo keeps the
+    // whole answer and returns it outright, which no per-span fold can
+    // beat; folding here would read ten spans where the general path reads
+    // the table once in parallel, and measured three times slower for it.
+    // This fold earns its keep only while something is being written.
+    if !fold.spans.iter().any(|span| span.dirty) && fold.outside.is_empty() {
+        return Ok(None);
+    }
+
+    // A segment's rows are aggregated a batch at a time and the finished
+    // groups merged, because one batch of a whole segment is past the
+    // executor's row target. The merge is exact here for the same reason
+    // it is across segments: the chunks are disjoint sets of rows.
+    let aggregate_over = |rows: &[Vec<Value>]| -> Result<Vec<Vec<Value>>, ExecError> {
+        let mut folded: Option<Vec<Vec<Value>>> = None;
+        for chunk in rows.chunks(crate::batch::DEFAULT_BATCH_ROWS) {
+            let columns = (0..fold.types.len())
+                .map(|column| {
+                    // An ENUM or SET arrives here as its bare label; the
+                    // declaration index has to go back on, or a grouped
+                    // fold sorts by text where every other path sorts by
+                    // ordinal (the shape of #256).
+                    let labels = fold.enum_labels[column].as_ref();
+                    let members = fold.set_members[column].as_ref();
+                    let values = chunk
+                        .iter()
+                        .map(|row| {
+                            if labels.is_some() || members.is_some() {
+                                crate::storage::ordinal_value(row[column].clone(), labels, members)
+                            } else {
+                                row[column].clone()
+                            }
+                        })
+                        .collect();
+                    ColumnVector::new(fold.types[column], values)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| ExecError::InvalidBatch("fold rows do not match the scan types"))?;
+            let batch = RecordBatch::new(chunk.len(), columns)
+                .map_err(|_| ExecError::InvalidBatch("fold rows do not form a batch"))?;
+            let mut one_shot = PullOperator::Scan {
+                stream: Box::new(OneShotStream { batch: Some(batch) }),
+                expected_types: fold.types.clone(),
+            };
+            let rows = build_hash_aggregate_scan(
+                &mut one_shot,
+                group_by,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            )?
+            .rows;
+            folded = Some(match folded {
+                None => rows,
+                Some(base) => merge_finished_aggregate_rows(
+                    base,
+                    rows,
+                    group_by.len(),
+                    aggregates,
+                    collation,
+                )?,
+            });
+        }
+        Ok(folded.unwrap_or_default())
+    };
+
+    let mut merged: Option<Vec<Vec<Value>>> = None;
+    let mut reused = 0_usize;
+    for span in &fold.spans {
+        // Everything that decides the answer goes in the key. The span's
+        // bounds sit beside the file name, because a name alone would trust
+        // that it is never reused for different bytes. The PROJECTION sits
+        // beside the signature, because the signature names its columns by
+        // their position in the projection - `c0` is whichever column the
+        // query selected first - so `SELECT status, COUNT(*)` and `SELECT
+        // amount, COUNT(*)` sign identically over the same segment and
+        // would otherwise read each other's fold.
+        let key = (
+            fold.directory.clone(),
+            format!("{}|{:?}..{:?}", span.file_name, span.min_key, span.max_key),
+            format!("{:?}|{signature}", fold.column_ids),
+        );
+        let cached = (!span.dirty)
+            .then(|| {
+                GROUPED_SEGMENT_FOLDS
+                    .lock()
+                    .expect("grouped fold cache")
+                    .get(&key)
+                    .cloned()
+            })
+            .flatten();
+        let rows = if let Some(rows) = cached {
+            reused += 1;
+            rows
+        } else {
+            let folded = fold_span(
+                &fold,
+                span,
+                group_by,
+                aggregates,
+                memory,
+                collation,
+                key_collations,
+            )?;
+            // A span the memtable holds a key inside is correct now and
+            // wrong after the next write, so it is used and not kept.
+            if !span.dirty {
+                let mut cache = GROUPED_SEGMENT_FOLDS.lock().expect("grouped fold cache");
+                if cache.len() >= GROUPED_FOLD_MAX_ENTRIES {
+                    cache.clear();
+                }
+                cache.insert(key, folded.clone());
+            }
+            folded
+        };
+        merged = Some(match merged {
+            None => rows,
+            Some(base) => {
+                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
+            }
+        });
+    }
+    if !fold.outside.is_empty() {
+        let rows = aggregate_over(&fold.outside)?;
+        merged = Some(match merged {
+            None => rows,
+            Some(base) => {
+                merge_finished_aggregate_rows(base, rows, group_by.len(), aggregates, collation)?
+            }
+        });
+    }
+    let Some(rows) = merged else {
+        return Ok(None);
+    };
+    if std::env::var_os("PINTAIL_AGG_DEBUG").is_some() {
+        eprintln!(
+            "[agg] grouped fold: {} spans ({} dirty), {} reused, {} outside rows",
+            fold.spans.len(),
+            fold.spans.iter().filter(|span| span.dirty).count(),
+            reused,
+            fold.outside.len()
+        );
+    }
+    let payload: usize = rows
+        .iter()
+        .map(|row| estimated_row_payload_bytes(row))
+        .sum();
+    memory.reserve(payload)?;
+    Ok(Some(rows))
+}
+
 fn merge_finished_aggregate_rows(
     mut base: Vec<Vec<Value>>,
     delta: Vec<Vec<Value>>,
@@ -1601,6 +2278,30 @@ pub(super) fn build_hash_aggregate(
         && !aggregates.is_empty()
         && let Some(rows) = try_sma_fold(input, aggregates, memory)?
     {
+        if let Some(key) = &memo_key {
+            let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
+            if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
+                memo.clear();
+            }
+            memo.insert(key.clone(), rows.clone());
+        }
+        return Ok(MaterializedRows {
+            rows,
+            position: 0,
+            spilled: None,
+        });
+    }
+    // A grouped aggregate the segments can be folded one at a time. Tried
+    // after the settled memo, which answers an unchanged table outright,
+    // and before the general path, which reads every row.
+    if let Some(rows) = try_grouped_segment_fold(
+        input,
+        group_by,
+        aggregates,
+        memory,
+        collation,
+        key_collations,
+    )? {
         if let Some(key) = &memo_key {
             let mut memo = SETTLED_AGGREGATE_MEMO.lock().expect("settled memo lock");
             if memo.len() >= SETTLED_MEMO_MAX_ENTRIES {
@@ -2107,6 +2808,13 @@ fn build_hash_aggregate_scan(
         }
     }
 
+    // Bytes the group map itself holds. Measured as deltas around the work
+    // that touches it, not as the whole tracker's growth: the scan retains
+    // and charges its own prefetched batches to the same tracker, and
+    // refunding those on a spill would hand back memory the scan still owns
+    // and release a second time when it drops them.
+    let mut groups_reserved = 0_usize;
+    let mut spill_runs = Vec::new();
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     if group_by.is_empty() {
         reserve_hash_map_entries(
@@ -2130,6 +2838,9 @@ fn build_hash_aggregate_scan(
 
     while let Some(batch) = input.next_batch(memory)? {
         let batch_bytes = batch.estimated_bytes();
+        // The batch and everything the scan retained for it are already
+        // charged; what grows past here is the map's own.
+        let mut before_groups = memory.used();
         reserve_hash_map_entries(
             &mut groups,
             batch.visible_row_count().min(64),
@@ -2140,6 +2851,23 @@ fn build_hash_aggregate_scan(
             memory,
         )?;
         for row in batch.selection().selected_rows() {
+            let held = groups_reserved.saturating_add(memory.used().saturating_sub(before_groups));
+            // Spill on the map's own share, and also when anything else has
+            // filled the budget, which is what leaves the scan no room to
+            // pull the next batch.
+            if (held > memory.limit() / 4 || memory.used() > memory.limit().saturating_mul(3) / 4)
+                && !groups.is_empty()
+                && aggregates
+                    .iter()
+                    .all(|aggregate| aggregate.function != AggregateFunction::JsonObjectAgg)
+            {
+                spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+                groups = HashMap::new();
+                memory.release(held);
+                groups_reserved = 0;
+                before_groups = memory.used();
+            }
+
             let group_expression_memory = group_by
                 .iter()
                 .map(|expression| expression.allocation_upper_bound(&batch, row))
@@ -2205,6 +2933,14 @@ fn build_hash_aggregate_scan(
                 memory,
             )?;
         }
+        groups_reserved =
+            groups_reserved.saturating_add(memory.used().saturating_sub(before_groups));
+    }
+
+    if !spill_runs.is_empty() {
+        spill_runs.push(write_aggregate_spill_run(&mut groups, memory)?);
+        memory.release(groups_reserved);
+        return merge_spilled_aggregate_groups(spill_runs, HashMap::new(), memory);
     }
 
     memory.reserve(groups.len().saturating_mul(size_of::<Vec<Value>>()))?;
@@ -2738,6 +3474,9 @@ struct SpilledAggregateState {
 /// Spillable mirror of [`AggregateValue`]. `i128` units travel as decimal
 /// strings so the encoding stays independent of integer width.
 enum SpilledAggregateValue {
+    GroupConcat(Vec<(Vec<Value>, Value)>),
+    JsonArrayAgg(Vec<String>),
+
     Count(u64),
     Sum(Option<Value>),
     DecimalSum {
@@ -2813,9 +3552,14 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         AggregateValue::BitFold { accumulator, seen } => {
             SpilledAggregateValue::BitFold { accumulator, seen }
         }
-        AggregateValue::GroupConcat { .. }
-        | AggregateValue::JsonArrayAgg { .. }
-        | AggregateValue::JsonObjectAgg { .. } => {
+        AggregateValue::GroupConcat { items, .. } => SpilledAggregateValue::GroupConcat(
+            items
+                .into_iter()
+                .map(|(keys, _, value)| (keys, value))
+                .collect(),
+        ),
+        AggregateValue::JsonArrayAgg { items } => SpilledAggregateValue::JsonArrayAgg(items),
+        AggregateValue::JsonObjectAgg { .. } => {
             return Err(ExecError::InvalidPhysicalPlan(
                 "aggregation spill reached a non-spillable aggregate state",
             ));
@@ -2843,6 +3587,12 @@ fn revive_aggregate_state(
     memory: &MemoryTracker,
 ) -> Result<AggregateState, ExecError> {
     let mut state = AggregateState::new(aggregate);
+    if let SpilledAggregateValue::GroupConcat(items) = spilled.value {
+        for (keys, value) in items {
+            state.update_group_concat(&value, keys, memory)?;
+        }
+        return Ok(state);
+    }
     if let Some(keys) = spilled.seen {
         for key in keys {
             state.absorb_distinct(aggregate, &key, memory)?;
@@ -2850,6 +3600,17 @@ fn revive_aggregate_state(
         return Ok(state);
     }
     state.value = match spilled.value {
+        SpilledAggregateValue::GroupConcat(_) => unreachable!("restored above"),
+        SpilledAggregateValue::JsonArrayAgg(items) => {
+            memory.reserve(
+                items
+                    .len()
+                    .saturating_mul(size_of::<String>())
+                    .saturating_add(items.iter().map(String::len).sum::<usize>()),
+            )?;
+            AggregateValue::JsonArrayAgg { items }
+        }
+
         SpilledAggregateValue::Count(count) => AggregateValue::Count(count),
         SpilledAggregateValue::AnyValue(value) => AggregateValue::AnyValue(value),
         SpilledAggregateValue::Moments {
@@ -2971,9 +3732,27 @@ const AGGREGATE_MAXIMUM: u8 = 6;
 const AGGREGATE_ANY_VALUE: u8 = 7;
 const AGGREGATE_MOMENTS: u8 = 8;
 const AGGREGATE_BIT_FOLD: u8 = 9;
+const AGGREGATE_GROUP_CONCAT: u8 = 10;
+const AGGREGATE_JSON_ARRAY: u8 = 11;
 
 fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregateState) {
     match &state.value {
+        SpilledAggregateValue::GroupConcat(items) => {
+            encoder.u8(AGGREGATE_GROUP_CONCAT);
+            encoder.count(items.len());
+            for (keys, value) in items {
+                encoder.values(keys);
+                encoder.value(value);
+            }
+        }
+        SpilledAggregateValue::JsonArrayAgg(items) => {
+            encoder.u8(AGGREGATE_JSON_ARRAY);
+            encoder.count(items.len());
+            for item in items {
+                encoder.str(item);
+            }
+        }
+
         SpilledAggregateValue::AnyValue(value) => {
             encoder.u8(AGGREGATE_ANY_VALUE);
             encoder.optional_value(value.as_ref());
@@ -3052,6 +3831,22 @@ fn decode_aggregate_state(
     decoder: &mut spill::Decoder<'_>,
 ) -> Result<SpilledAggregateState, String> {
     let value = match decoder.u8()? {
+        AGGREGATE_GROUP_CONCAT => {
+            let count = decoder.count()?;
+            let items = (0..count)
+                .map(|_| Ok((decoder.values()?, decoder.value()?)))
+                .collect::<Result<Vec<_>, String>>()?;
+            SpilledAggregateValue::GroupConcat(items)
+        }
+        AGGREGATE_JSON_ARRAY => {
+            let count = decoder.count()?;
+            SpilledAggregateValue::JsonArrayAgg(
+                (0..count)
+                    .map(|_| decoder.string())
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        }
+
         AGGREGATE_COUNT => SpilledAggregateValue::Count(decoder.u64()?),
         AGGREGATE_ANY_VALUE => SpilledAggregateValue::AnyValue(decoder.optional_value()?),
         AGGREGATE_MOMENTS => SpilledAggregateValue::Moments {
@@ -3342,50 +4137,29 @@ fn build_fused_inner_join_aggregate(
         *state = Some(Box::new(join));
         return Ok(None);
     }
-    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x):
-    // Integer-mode build keys occupying a small dense range trade the
-    // per-probe evaluate+hash for one bounds-checked index lookup. MySQL
-    // auto-increment keys make this the common case, not the exception.
-    let dense: Option<DenseJoinTable<'_>> =
-        if matches!(key_mode, JoinKeyMode::Integer) && !join.build.is_empty() {
-            let mut min = i128::MAX;
-            let mut max = i128::MIN;
-            let mut integers = true;
-            for key in join.build.keys() {
-                match key {
-                    JoinHashKey::NegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    JoinHashKey::NonNegativeInteger(value) => {
-                        min = min.min(i128::from(*value));
-                        max = max.max(i128::from(*value));
-                    }
-                    _ => {
-                        integers = false;
-                        break;
-                    }
-                }
-            }
-            if integers && max - min < MAX_DENSE_SPAN {
-                let span = usize::try_from(max - min).expect("bounded span") + 1;
-                let mut table: Vec<Option<&Vec<Vec<Value>>>> = vec![None; span];
-                for (key, bucket) in join.build.iter() {
-                    let value = match key {
-                        JoinHashKey::NegativeInteger(value) => i128::from(*value),
-                        JoinHashKey::NonNegativeInteger(value) => i128::from(*value),
-                        _ => unreachable!("verified integer keys"),
-                    };
-                    table[usize::try_from(value - min).expect("within span")] = Some(bucket);
-                }
-                Some((min, table))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
     let plan = resolve_join_group_plan(&join.build, &right_group_columns, group_collation)?;
+    // Dense direct-address probe (experiments/RESULTS.md e04, 2.4-4.2x; e85):
+    // `build_hash_join_state` already finalized `join.build` to a dense,
+    // hash-free table when its keys are a plain integer set in a small
+    // range - MySQL auto-increment keys make this the common case, not the
+    // exception. What is fused-aggregate-specific is resolved here, once
+    // per distinct key: which group each bucket's rows fold into, so a
+    // probe row that hit the dense table needs no further lookup (the
+    // `plan.buckets` address map below stays for the non-dense fallback,
+    // and for grace-spilled builds, where nothing is finalized to dense).
+    let dense_group_indexes: Vec<Option<&[usize]>> = if join.build.is_dense() {
+        join.build
+            .dense_buckets()
+            .iter()
+            .map(|bucket| {
+                plan.buckets
+                    .get(&(std::ptr::from_ref(bucket) as usize))
+                    .map(Vec::as_slice)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut groups = HashMap::<Vec<Value>, AggregateGroup>::new();
     // What one morsel allocates: the plan's whole group set, cloned up
     // front, plus a state per aggregate per group. The groups are FIXED by
@@ -3471,7 +4245,7 @@ fn build_fused_inner_join_aggregate(
                     left_width,
                     aggregates,
                     &join.build,
-                    dense.as_ref(),
+                    &dense_group_indexes,
                     &plan,
                     memory,
                 )
@@ -3527,7 +4301,6 @@ fn build_fused_inner_join_aggregate(
             pull_us
         );
     }
-    drop(dense);
     drop(join);
     memory.release(build_reserved);
     Ok(Some(finish_aggregate_groups(groups.into_values(), memory)?))
@@ -3542,7 +4315,7 @@ fn build_local_fused_join_groups(
     left_width: usize,
     aggregates: &[CompiledAggregate],
     build: &PartitionedBuild,
-    dense: Option<&DenseJoinTable<'_>>,
+    dense_group_indexes: &[Option<&[usize]>],
     plan: &JoinGroupPlan,
     parent_memory: &MemoryTracker,
 ) -> Result<HashMap<Vec<Value>, AggregateGroup>, ExecError> {
@@ -3563,41 +4336,49 @@ fn build_local_fused_join_groups(
     // Probe through the dense table when the left key is a packed integer
     // column; Integer key mode guarantees those physical variants, and NULL
     // rows skip exactly as normalized_join_key's None does.
-    let left_typed = dense.and_then(|_| {
-        left_key
-            .column_index()
-            .and_then(|column| batch.column(column))
-            .and_then(ColumnVector::typed)
-            .filter(|(typed, _)| {
-                matches!(
-                    typed,
-                    crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
-                )
-            })
-    });
+    let left_typed = build
+        .is_dense()
+        .then(|| left_key.column_index())
+        .flatten()
+        .and_then(|column| batch.column(column))
+        .and_then(ColumnVector::typed)
+        .filter(|(typed, _)| {
+            matches!(
+                typed,
+                crate::batch::TypedValues::Int64(_) | crate::batch::TypedValues::UInt64(_)
+            )
+        });
     for (offset, row) in morsel.selected_rows().enumerate() {
         if offset % 1024 == 0 {
             memory.check_interruption()?;
         }
-        let matches = if let (Some((min, table)), Some((typed, validity))) = (dense, left_typed) {
+        let (matches, indexes) = if let Some((typed, validity)) = left_typed {
             if !validity.is_valid(row) {
                 continue;
             }
-            let candidate = match typed {
-                crate::batch::TypedValues::Int64(values) => i128::from(values[row]),
-                crate::batch::TypedValues::UInt64(values) => i128::from(values[row]),
+            let key = match typed {
+                crate::batch::TypedValues::Int64(values) => {
+                    let candidate = values[row];
+                    if candidate < 0 {
+                        JoinHashKey::NegativeInteger(candidate)
+                    } else {
+                        JoinHashKey::NonNegativeInteger(
+                            u64::try_from(candidate).expect("non-negative i64 fits u64"),
+                        )
+                    }
+                }
+                crate::batch::TypedValues::UInt64(values) => {
+                    JoinHashKey::NonNegativeInteger(values[row])
+                }
                 _ => unreachable!("filtered to integer projections"),
             };
-            let Some(offset) = candidate
-                .checked_sub(*min)
-                .and_then(|delta| usize::try_from(delta).ok())
-            else {
+            let Some((flat_index, matches)) = build.dense_get(&key) else {
                 continue;
             };
-            match table.get(offset) {
-                Some(Some(bucket)) => *bucket,
-                _ => continue,
-            }
+            let Some(indexes) = dense_group_indexes[flat_index] else {
+                continue;
+            };
+            (matches, indexes)
         } else {
             let Some(key) = normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? else {
                 continue;
@@ -3605,14 +4386,14 @@ fn build_local_fused_join_groups(
             let Some(matches) = build.get(&key) else {
                 continue;
             };
-            matches
+            let indexes = plan
+                .buckets
+                .get(&(std::ptr::from_ref(matches) as usize))
+                .ok_or(ExecError::InvalidPhysicalPlan(
+                    "probe matched a bucket outside the resolved group plan",
+                ))?;
+            (matches, indexes.as_slice())
         };
-        let indexes = plan
-            .buckets
-            .get(&(std::ptr::from_ref(matches) as usize))
-            .ok_or(ExecError::InvalidPhysicalPlan(
-                "probe matched a bucket outside the resolved group plan",
-            ))?;
         for (right_values, group_index) in matches.iter().zip(indexes) {
             let group_index = *group_index;
             touched[group_index] = true;
@@ -4249,20 +5030,16 @@ fn build_direct_column_aggregate(
     let mut scalar_index = HashMap::<Value, usize>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
     let mut index_reserved = 0_usize;
-    // Everything this loop reserves is the map and its indexes, so the
-    // difference from here is what a spill hands back.
-    let used_at_start = memory.used();
+    // Bytes the map and its indexes hold. Measured per batch around the
+    // work that touches them: the scan charges its own retained batches to
+    // this tracker too, and handing those back on a spill would refund
+    // memory the scan still owns and release it twice when it drops them.
+    let mut map_reserved = 0_usize;
     let mut spill_runs: Vec<spill::ClosedRun> = Vec::new();
-    // GROUP_CONCAT and the JSON aggregates have no spilled form, so a map
-    // holding one keeps growing to the ceiling as it always did.
-    let spillable = aggregates.iter().all(|aggregate| {
-        !matches!(
-            aggregate.function,
-            AggregateFunction::GroupConcat
-                | AggregateFunction::JsonArrayAgg
-                | AggregateFunction::JsonObjectAgg
-        )
-    });
+    // Object aggregation still has no spill encoding.
+    let spillable = aggregates
+        .iter()
+        .all(|aggregate| !matches!(aggregate.function, AggregateFunction::JsonObjectAgg));
     let per_row_upper = group_columns
         .len()
         .saturating_mul(size_of::<Value>())
@@ -4281,6 +5058,8 @@ fn build_direct_column_aggregate(
             break;
         };
         let batch_bytes = batch.estimated_bytes();
+        // Whatever the scan retained for this batch is already charged.
+        let mut before_map = memory.used();
         let indexed = group_columns.len() == 1
             && batch.column(group_columns[0]).is_some_and(|column| {
                 matches!(
@@ -4299,7 +5078,7 @@ fn build_direct_column_aggregate(
             // groups could not fit on top of the map, so the reservations
             // below never meet a full budget. A group split across a run
             // and the resident map merges at the end.
-            let map_bytes = memory.used().saturating_sub(used_at_start);
+            let map_bytes = map_reserved.saturating_add(memory.used().saturating_sub(before_map));
             let under_pressure = map_bytes > memory.limit() / 4
                 || (groups.len() >= 256
                     && memory
@@ -4315,7 +5094,9 @@ fn build_direct_column_aggregate(
                 )?);
                 scalar_index = HashMap::new();
                 raw_index = HashMap::new();
-                memory.release(memory.used().saturating_sub(used_at_start));
+                memory.release(map_bytes);
+                map_reserved = 0;
+                before_map = memory.used();
                 index_reserved = 0;
             }
             let raw_hash = (!indexed)
@@ -4405,13 +5186,14 @@ fn build_direct_column_aggregate(
                 memory,
             )?;
         }
+        map_reserved = map_reserved.saturating_add(memory.used().saturating_sub(before_map));
     }
 
     drop(scalar_index);
     drop(raw_index);
     if !spill_runs.is_empty() {
         let resident = direct_groups_map(groups, key_collations);
-        memory.release(memory.used().saturating_sub(used_at_start));
+        memory.release(map_reserved);
         return merge_spilled_aggregate_groups(spill_runs, resident, memory);
     }
     memory.release(index_reserved);
@@ -4876,5 +5658,151 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }
+    }
+}
+
+#[cfg(test)]
+mod distinct_bitmap_tests {
+    use super::{
+        DISTINCT_BITMAP_MAX_SPAN, DISTINCT_BITMAP_MIN_COUNT, DistinctSeen, IntsSeen, MemoryTracker,
+    };
+    use crate::collation::Collation;
+    use pintail_types::Value;
+    use std::collections::HashSet;
+
+    fn ints() -> DistinctSeen {
+        DistinctSeen::Ints(Box::new(IntsSeen {
+            set: HashSet::default(),
+            min: i128::MAX,
+            max: i128::MIN,
+        }))
+    }
+
+    /// The general (hashed) path's answer for a batch of keys, including
+    /// duplicates - what the bitmap path must reproduce exactly.
+    fn expected_count(keys: &[i128]) -> usize {
+        keys.iter().collect::<HashSet<_>>().len()
+    }
+
+    #[test]
+    fn a_narrow_span_promotes_to_a_bitmap_and_agrees_with_the_hashed_count() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        // Past DISTINCT_BITMAP_MIN_COUNT keys, all within a few hundred of
+        // each other, plus duplicates of the first few - the bitmap must
+        // count each distinct key once regardless of how many times it is
+        // seen again.
+        let mut keys: Vec<i128> = (0..(DISTINCT_BITMAP_MIN_COUNT as i128 + 50)).collect();
+        keys.extend([0, 1, 2, 2, 2]); // duplicates
+        let mut inserted_new = 0;
+        for &key in &keys {
+            if seen
+                .insert_int(key, &memory, Collation::default())
+                .expect("insert")
+            {
+                inserted_new += 1;
+            }
+        }
+        assert!(
+            matches!(seen, DistinctSeen::Bitmap(_)),
+            "a span this narrow, with more than DISTINCT_BITMAP_MIN_COUNT keys, must promote"
+        );
+        assert_eq!(inserted_new, expected_count(&keys));
+        // drain_values must recover exactly the distinct set, not the
+        // insertion count or anything bitmap-shaped.
+        let mut drained: Vec<i128> = seen
+            .drain_values()
+            .into_iter()
+            .map(|value| match value {
+                Value::Int64(value) => i128::from(value),
+                Value::UInt64(value) => i128::from(value),
+                other => panic!("unexpected value {other:?}"),
+            })
+            .collect();
+        drained.sort_unstable();
+        let mut expected: Vec<i128> = keys
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        expected.sort_unstable();
+        assert_eq!(drained, expected);
+    }
+
+    #[test]
+    fn a_span_past_the_cap_never_promotes() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        // One key far enough away that min..=max exceeds the cap.
+        seen.insert_int(
+            DISTINCT_BITMAP_MAX_SPAN + 100,
+            &memory,
+            Collation::default(),
+        )
+        .expect("insert");
+        assert!(
+            matches!(seen, DistinctSeen::Ints(_)),
+            "a span past DISTINCT_BITMAP_MAX_SPAN must stay hashed rather than allocate a huge table"
+        );
+    }
+
+    #[test]
+    fn a_bitmap_that_outgrows_its_window_demotes_and_keeps_every_member_exact() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        let mut keys: Vec<i128> = (0..(DISTINCT_BITMAP_MIN_COUNT as i128 + 10)).collect();
+        for &key in &keys {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)), "promotes first");
+        // Far outside the bitmap's window, and wide enough on its own to
+        // rule out ever re-promoting.
+        let far = DISTINCT_BITMAP_MAX_SPAN * 2;
+        keys.push(far);
+        let inserted = seen
+            .insert_int(far, &memory, Collation::default())
+            .expect("insert past the window");
+        assert!(inserted, "a genuinely new key must still count as new");
+        assert!(
+            matches!(seen, DistinctSeen::Ints(_)),
+            "outgrowing the bitmap's window demotes back to the general set"
+        );
+        let mut drained: Vec<i128> = seen
+            .drain_values()
+            .into_iter()
+            .map(|value| match value {
+                Value::Int64(value) => i128::from(value),
+                Value::UInt64(value) => i128::from(value),
+                other => panic!("unexpected value {other:?}"),
+            })
+            .collect();
+        drained.sort_unstable();
+        let mut expected = keys;
+        expected.sort_unstable();
+        expected.dedup();
+        assert_eq!(drained, expected);
+    }
+
+    #[test]
+    fn a_repeated_key_is_not_counted_twice_once_dense() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let mut seen = ints();
+        for key in 0..(DISTINCT_BITMAP_MIN_COUNT as i128) {
+            seen.insert_int(key, &memory, Collation::default())
+                .expect("insert");
+        }
+        assert!(matches!(seen, DistinctSeen::Bitmap(_)));
+        assert!(
+            !seen
+                .insert_int(0, &memory, Collation::default())
+                .expect("re-insert"),
+            "a key already in the bitmap must report itself as not new"
+        );
     }
 }

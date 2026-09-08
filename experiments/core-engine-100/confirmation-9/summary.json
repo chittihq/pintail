@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 9,
+      "variant": 3,
+      "name": "dense-membership-bitmap",
+      "processes": 3,
+      "changing_query_speedup": 1.002275250525794,
+      "changing_cycle_speedup": 0.954919470025643,
+      "operator_only_speedup": 3.087630725432857,
+      "min_process_speedup": 0.9909245923814339,
+      "max_process_speedup": 1.0081093239433576,
+      "scenario_medians": {
+        "0": 1.0081093239433576,
+        "1": 0.9909245923814339,
+        "2": 1.002275250525794
+      },
+      "phase_medians": {
+        "settled": 1.3833140691301014,
+        "sparse-memtable": 1.0115036125648813,
+        "sparse-flushed-overlap": 0.9988534298603569,
+        "dense-hot-memtable": 1.0195586913168928,
+        "dense-flushed-overlap": 1.010998101248962,
+        "mixed-overlap": 1.0082509457527764,
+        "stale-replay": 1.0001487794059352,
+        "compacted": 1.5565565160339063
+      }
+    }
+  ]
+}

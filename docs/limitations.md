@@ -204,30 +204,65 @@ stays readable as a list of things to fix.
   morsels to parallelize.
 - Views below 65,536 candidate rows use the simpler materialized merge path,
   which remains covered by the query memory ceiling.
-- `GROUP_CONCAT`/`JSON_ARRAYAGG` aggregation, the single-column direct-path
-  aggregation, and materialized query outputs do not spill and still fail at
-  the memory ceiling. A grace-partitioned join errors when one join key's own
-  rows exceed the ceiling. Spill is isolated per query and bounded by
-  `query.spill_limit_bytes` plus the process-wide `global_spill_limit_bytes`;
-  exhausting either limit fails the query before the write crosses the
-  ceiling.
-- Uncorrelated scalar and `EXISTS` subqueries stop after two and one rows,
-  respectively. Large `IN (subquery)` membership still materializes in memory
-  under the query ceiling rather than using an external membership index.
-- Dependent correlated execution reruns its bounded inner plan for each outer
-  row and does not cache repeated parameter tuples. A correlated subquery in a
-  join `ON` predicate uses a materialized nested loop under the query ceiling;
-  that fallback does not spill. Nullable correlated `NOT IN` shapes that cannot
-  be proven safe still reject rather than risk a different answer.
+- A window partition, including its frame state and computed values, must fit
+  within the per-query memory ceiling. A larger partition is refused.
+- A single merged `GROUP_CONCAT` or `JSON_ARRAYAGG` state and its finished
+  value must fit within the query ceiling. `JSON_OBJECTAGG` has no spilled
+  state encoding.
+- External `IN` membership probes scan one hash partition, held in memory
+  after its first probe while a budget allows; a partition too large for
+  that budget is re-read from its file for every probe. Highly skewed sets
+  can require quadratic comparisons across many probes; mixed-type and
+  exact-decimal comparisons use a common partition to preserve coercion
+  semantics. A correlated external set is rebuilt for each uncached outer
+  tuple. One value and its comparison scratch must fit in the query budget.
+- A grace join partition that cannot be reduced by hashing replays its
+  build rows for each probe row: what a quarter of the ceiling holds is
+  read from the file once, and the rest is re-read per probe. This can
+  require quadratic comparisons when many distinct keys collide through
+  every hash pass. One candidate pair, its normalized keys, and its
+  residual predicate must still fit.
+- The correlated join `ON` fallback replays the right side once per left
+  row; it has no cardinality-based side selection. Each candidate pair and
+  its dependent inner execution must fit within the remaining query budget.
+- Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
+  `global_spill_limit_bytes`; exhausting either limit fails the query before
+  the write crosses the ceiling.
+- Dependent correlated execution can rerun its inner plan for each outer
+  row when memoization is unavailable. Nullable correlated
+  `NOT IN` shapes that cannot be proven safe still reject rather than risk a
+  different answer.
 - Cross joins require catalog cardinalities and reject estimates above one
   million rows.
-- Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
-  with an exact catalog cardinality of one. Pintail has no relationship or
-  uniqueness statistics that would justify broader rewrites safely.
+- General aggregate pre-aggregation across equi-joins is not implemented.
+  Aggregate pushdown removes only unreferenced predicate-free cross-join inputs
+  with an exact catalog cardinality of one. The optimizer has no general rule
+  that proves aggregate decomposability and preservation of join comparison,
+  multiplicity and grouping semantics, then costs pre-aggregation against the
+  original plan. A declared storage key alone does not establish those conditions.
 - `EXPLAIN ANALYZE` scan counters accumulate work from all executions of a
   stable table in the statement, including uncorrelated subqueries.
 - Grouped sub-cubes and predicate-covered blocks are not covered by the
   persistent per-segment SMA fold.
+- `AVG` over a `DECIMAL` column has returned a value one unit in the last
+  place away from `MySQL`'s, rarely and not repeatably: twice in gate runs
+  over the same corpus, at a different row and a different value each
+  time, while `SUM(...) / COUNT(*)` over the same rows stayed exact. The
+  engine keeps an exact scaled-integer average and an `f64` one, and the
+  `f64` one is order-dependent, so partitioning and merge order can move
+  the last digit. The exact path is the one taken for every decimal shape
+  reproducible in process - ungrouped, grouped, grouped under `HAVING`,
+  ordered by the average under a `LIMIT`, and over a segment merged with
+  live rows - so what selects the inexact path is not yet known and the
+  defect has no reproduction. Tracked as G14.
+
+  One path that could produce exactly this has since been closed: the
+  two-pass lane for a column whose batch storage is `Float64` was chosen
+  without asking whether the planner had typed the average as an exact
+  decimal, so an exact average could accumulate through an `f64`. That
+  guard is now in place. It is not confirmed to be the cause - the defect
+  was never reproduced, before or after - so this entry stays until a gate
+  run that would have failed passes for a reason that can be pointed at.
 
 ## Snapshot engine
 
@@ -451,6 +486,12 @@ stays readable as a list of things to fix.
   clients believing a connection died that did not.
 - Desktop BI application UI flows are outside the automated driver and
   Metabase smoke matrix.
+- A request waiting on another request's identical execution keeps the
+  admission permit it took, so sharing removes executions rather than
+  freeing concurrency slots: sixteen simultaneous copies of one statement
+  still occupy sixteen slots while one of them runs. It is bounded at
+  sixty-four concurrent shared executions and sixty-four waiters each,
+  past which a request executes on its own.
 ## Operations and backup
 
 - A restored copy is not refreshed automatically and provides no failover or

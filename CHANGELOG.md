@@ -6,6 +6,121 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Two overlapping segments are now enough to plan a compaction. The
+  planner returned before overlap was ever considered unless the table
+  held at least the fan-in's worth of segments, four by default, so a
+  table that had flushed once - one base and one small tail covering the
+  rows that changed - stayed on the merging scan path until two more
+  flushes arrived, however often it was read. Measured on two million rows
+  with one percent changed: the scan went from 1430 ms to 19 ms, and the
+  rewrite that bought that repays after 1.1 scans. The size tier still
+  refuses to rewrite a base for a tail a hundredth its size when the only
+  prize is fewer files; overlap is admitted because the prize is the scan.
+
+### Fixed
+
+- An `AVG` the planner typed as an exact decimal could accumulate through
+  an `f64`. The two-pass lane is chosen from the batch column's storage
+  type, and the arm for a `Float64` column returned the float accumulator
+  without asking whether the aggregate required exactness - the arm beside
+  it, for a decimal column, does ask. Since `f64` addition is not
+  associative, an average that fell through could move with how the rows
+  were split across workers. This is the shape of the open `AVG`
+  correctness finding, though that one was never reproduced and is not
+  claimed fixed.
+
+## [0.1.2-rc11] - 2026-09-07
+
+### Known issues
+
+- `AVG` over a `DECIMAL` column can answer one unit in the last place away
+  from `MySQL`, rarely and not repeatably; `SUM(...) / COUNT(*)` over the
+  same rows stays exact. Seen twice in gate runs and not reproducible on
+  demand, so this release ships with it open rather than claiming a fix.
+  `docs/limitations.md` records what is and is not known about it.
+
+### Performance
+
+- The overlay picks its superseded-row mask by a threshold that now comes
+  from the algorithm the engine runs. The threshold had been read off a
+  measurement of a different mask - one built block by block rather than
+  by looking each changed key up against the whole key column - which put
+  the crossover four times further out than it is. Every table between one
+  and five percent changed was taking the slower of the two paths.
+- Several clients asking the same question at the same time now cost one
+  execution instead of one each. The first request executes and the rest
+  wait on it, then every one of them receives those rows; nothing is
+  retained afterwards, so the next request executes again. Only a `SELECT`
+  whose answer cannot move between two runs is offered, and it is offered
+  only to requests that match on the loaded replica, the statement text,
+  the row ceiling and every session setting an execution reads - so a
+  commit, a local write or a schema change puts the same text on a
+  different key rather than answering it from before the change. A failure
+  is never shared: an error, a cancellation or a panic sends everyone
+  waiting to execute for themselves. Measured on sixteen simultaneous
+  copies of one grouped aggregate: 1.7x faster on an idle host and 3.6x
+  on a host with four cores to share, sixteen executions becoming one in
+  both. `PINTAIL_DISABLE_SHARED_QUERIES` turns it off.
+
+- The benchmark's resource sampler now reads one long-lived `docker stats`
+  stream per container instead of a fresh `docker stats --no-stream` call
+  every 250 ms, which on the shared remote docker host regularly took
+  longer than the query it was sampling and reported 0% CPU. The README's
+  generated benchmark table now shows the memo-off "engine speed" table
+  first and the memo-hit table second, so the headline comparison is the
+  one where both engines execute.
+- The HTTP query path no longer builds a fresh query engine and looks up
+  the API key against metadata on every request: one engine is held for
+  the process's life and cloned per call, and a validated API key is
+  cached for 30 seconds (cleared immediately on disable or delete). Rows
+  serialize straight from the engine's values into the response instead
+  of through an intermediate JSON tree first. The benchmark can now time
+  Pintail over its MySQL wire protocol beside the HTTP call, so the engine
+  is measured the way a BI tool actually reaches it.
+- A join's build side now finalizes itself into a hash-free, direct-index
+  table in place when its keys are a plain integer set in a narrow range,
+  instead of that table existing only inside the fused join-aggregate:
+  every reader of the build side benefits, and the fused join-aggregate
+  additionally resolves which output group each build row folds into once
+  per distinct key rather than once per probe row.
+- `COUNT(DISTINCT)` over an integer column now dedups through a bitmap
+  once a group's distinct values pass a count threshold and fit a span
+  cap, instead of always hashing into a set; the bitmap grows with
+  headroom as the column's real range becomes apparent, the same way a
+  growing `Vec` or `HashSet` amortizes its own resizing.
+
+### Fixed
+
+- Resuming a paused table could leave it silently stale. A replication
+  cycle decides what to pass over from the paused set it read when it
+  began, so a table resumed part-way through still lost the changes that
+  followed, and the write that would have flagged it for a recopy found
+  the table already running and did nothing. The checkpoint then advanced
+  past the lost transaction and the table looked healthy. Every table a
+  cycle passed changes over for is re-checked when the cycle ends, and
+  one that resumed under a dropped change is flagged for the recopy.
+- Automatic recovery from a purged source position no longer lifts a
+  table's pause. It cleared every block to rebuild, which let the stream
+  apply changes to a table an operator was holding still and then flagged
+  that table for a second recopy.
+- A spilling aggregate handed back memory its input scan still owned. It
+  refunded everything charged since it started rather than what its own
+  group map held, so the scan's retained batches were released twice and
+  the query and process budgets undercounted live memory, admitting work
+  past their ceilings.
+- A query that spilled ordered `ENUM` values by their label instead of
+  their declared position, so it answered differently from the same query
+  that stayed in memory. `MySQL` orders the type by declaration, which is
+  what the in-memory comparison already did; the spill format wrote an
+  enum as plain text and dropped the ordinal it sorts by. Spilled records
+  now carry it. This reached every spilling operator, and the window and
+  collection-aggregate paths added in this release made it reachable from
+  more shapes.
+
+## [0.1.2-rc10] - 2026-09-07
+
 ### Fixed
 
 Result metadata retains declared decimal scale, temporal precision and
@@ -28,7 +143,6 @@ version for replicas.
 
 - The MySQL client dependency is updated to fix a race in its statement
   cache. The workspace and fuzz harness use the same client version.
-
 ### Added
 
 Restored databases report the installed backup timestamp and `data_age_seconds`
@@ -63,6 +177,52 @@ Session parsing honors `ANSI_QUOTES`, `PIPES_AS_CONCAT` and
   automatic resync carries out for keyed tables; a table nothing changed
   under simply moves again. A paused table is never auto-resynced,
   cascade-reconciled or polled while paused.
+
+### Performance
+
+- Multi-column integer scan predicates reuse their decoded columns and
+  retain only qualifying rows. Increasing integer columns decode packed
+  deltas directly, avoiding temporary cells and a second conversion pass;
+  adding a predicate no longer multiplies the scan's working set.
+
+- Low-cardinality text and bounded integer GROUP BY keys fold packed
+  integer sums and counts directly into worker-local dense slots. Column
+  lookup and lane dispatch move out of the row loop; larger key domains
+  return to the existing partitioned aggregate without changing results.
+
+- Large `IN` subquery sets spill into query-owned membership partitions
+  instead of becoming an oversized literal list. Probes preserve NULL and
+  `NOT IN` outcomes, comparison collation, and exact-decimal coercions;
+  sets that fit retain the memory path.
+
+- A grace join no longer rejects a key whose build rows exceed the memory
+  ceiling after repeated partitioning. It replays the build rows from disk
+  for each probe and serves matches in bounded chunks, keeping unmatched
+  and scalar-row decisions across the complete replay.
+
+- A correlated subquery in a join `ON` predicate no longer requires both
+  inputs and the complete output to fit in memory. The replayed side and
+  accumulated output spill independently, while the left input is read in
+  batches and the predicate memo yields space before starving inner queries.
+
+- Group maps containing `GROUP_CONCAT` and `JSON_ARRAYAGG` spill their
+  unfinished fragments instead of failing when the map fills the query
+  ceiling. Ordered concatenation retains its element keys across runs,
+  DISTINCT retains its original values, and truncation applies after merge.
+
+- Window output larger than the query memory ceiling is sorted on disk and
+  evaluated one partition at a time, then served in chunks. Independent
+  window expressions retain their input row identity through each sort; a
+  single partition still has to fit within the ceiling.
+
+### Fixed
+
+- The container image could link a stale workspace crate. Its build keeps
+  incremental state in a cache that outlives the tree it was built from,
+  and a source file older than that cache's artifacts read as unchanged,
+  so a build of one tree after a newer one compiled against the previous
+  crate. Workspace sources are stamped at build time; the dependency
+  cache is unaffected.
 
 ## [0.1.2-rc9] - 2026-09-07
 

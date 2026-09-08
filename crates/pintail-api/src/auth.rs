@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use argon2::{
     Algorithm, Argon2, Params, PasswordHash, PasswordHasher as _, PasswordVerifier as _, Version,
@@ -24,6 +24,12 @@ use crate::{ApiState, error::ApiError, state::random_identifier};
 
 const TOKEN_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
 const TOKEN_ISSUER: &str = "pintail";
+/// How long a validated API key stays in the in-process cache before a
+/// request re-checks it against metadata. Bounds how long a disabled or
+/// expired key can keep authenticating after the change lands, for the
+/// (rare) path that reaches this TTL instead of the immediate
+/// `invalidate_api_key` call `keys::patch`/`keys::delete` make.
+const API_KEY_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub(crate) struct AuthPrincipal {
@@ -381,10 +387,45 @@ fn authenticate_jwt(state: &ApiState, token: &str) -> Result<AuthPrincipal, ApiE
 }
 
 fn authenticate_api_key(state: &ApiState, secret: &str) -> Result<AuthPrincipal, ApiError> {
-    let digest = Sha256::digest(secret.as_bytes());
+    let started = Instant::now();
+    let digest: [u8; 32] = Sha256::digest(secret.as_bytes())
+        .as_slice()
+        .try_into()
+        .expect("SHA-256 digest is 32 bytes");
+    let (principal, cache_hit) = match state.cached_api_key(&digest, API_KEY_CACHE_TTL) {
+        Some(cached) => (
+            AuthPrincipal {
+                subject: cached.id,
+                role: "api_key".to_owned(),
+                database_id: Some(cached.database_id),
+                workspace_id: None,
+                scopes: cached.scopes,
+                client_ip: None,
+            },
+            true,
+        ),
+        None => (authenticate_api_key_uncached(state, &digest)?, false),
+    };
+    if std::env::var_os("PINTAIL_API_DEBUG").is_some() {
+        eprintln!(
+            "[api] auth: {:.2}ms (cache={})",
+            started.elapsed().as_secs_f64() * 1_000.0,
+            if cache_hit { "hit" } else { "miss" }
+        );
+    }
+    Ok(principal)
+}
+
+/// The cache-miss path: one metadata read validates the key and refreshes
+/// `last_used_at`, then the result is cached for `API_KEY_CACHE_TTL` so the
+/// next requests on this key skip metadata entirely.
+fn authenticate_api_key_uncached(
+    state: &ApiState,
+    digest: &[u8; 32],
+) -> Result<AuthPrincipal, ApiError> {
     let metadata = state.metadata()?;
     let key = metadata
-        .api_key_by_sha256(&digest)
+        .api_key_by_sha256(digest)
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::unauthorized("API key is invalid"))?;
     if !key.enabled || key.expires_at.as_deref().is_some_and(is_expired) {
@@ -394,6 +435,12 @@ fn authenticate_api_key(state: &ApiState, secret: &str) -> Result<AuthPrincipal,
         .touch_api_key(&key.id, &Utc::now().to_rfc3339())
         .map_err(ApiError::internal)?;
     let scopes: Vec<String> = serde_json::from_str(&key.scopes_json).map_err(ApiError::internal)?;
+    state.cache_api_key(
+        *digest,
+        key.id.clone(),
+        key.database_id.clone(),
+        scopes.clone(),
+    );
     Ok(AuthPrincipal {
         subject: key.id,
         role: "api_key".to_owned(),

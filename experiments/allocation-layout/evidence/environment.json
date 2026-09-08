@@ -1,0 +1,14 @@
+{
+  "base_commit": "1562ab5193d8bb9b35f634c7d8d1523467b683ea",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "machine": "x86_64",
+  "logical_cpus": 32,
+  "affinity_cpu_count": 4,
+  "allocator": "Rust default System allocator",
+  "seed": 8107,
+  "rows": 131072,
+  "probes_per_batch": 262144,
+  "process_repeats": 3,
+  "timed_batches_per_process": 7,
+  "source_sha256": "11305e663034ae83d880d6723ce43e23acc7d29139032cfd8533f7f9025a9479"
+}

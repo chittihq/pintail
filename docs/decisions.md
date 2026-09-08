@@ -1426,3 +1426,248 @@ no row names. Snapshots opened before the rename keep the old path and
 fail their next read; the replica reloads on the directory change. A
 rename into another schema leaves the mirror and is treated as a drop; a
 rename onto a name already tracked quarantines the table as before.
+
+
+### Dense group slots fold packed integer lanes directly
+
+A single dictionary text key uses its collation-normalized intern ID as a
+slot. Signed and unsigned integer keys also qualify when every selected,
+non-NULL value in the window is in 0..1024; slot zero represents NULL.
+Negative integers, larger integers, floats and booleans keep the existing
+scatter path. A window is checked before any integer partial is updated.
+Text keeps the existing 1024-distinct budget and dictionary translation.
+When either domain exceeds its budget, the accumulated slots merge into
+the partition maps and the complete pending window goes through scatter.
+
+COUNT(*) and SUM over a packed integer column with a matching integer
+result type resolve their column and lane once per batch. Workers update
+the existing dense aggregate states with checked arithmetic; an all-NULL
+SUM stays NULL. Other lanes use the existing state updates. Worker chunks
+bound the number of partial slabs by the pool width. The persistent slab
+reserves its slot and state bound, and temporary worker slabs reserve and
+release their own bound. A worker reservation refusal returns to scatter;
+map conversion releases the dense slab's reservation. The existing spill
+writer and merge remain the only spill machinery. The separate no-transient-
+floor streaming spill limitation (hardening G12) is not addressed here.
+
+### Window spill retains one partition and restores row identity
+
+Large window inputs use external sorts for each window's partition and order
+keys. An input ordinal breaks equal-key ties and follows the row through each
+window, then restores encounter order for the output. Small inputs keep the
+in-memory evaluator. The spill path reuses that evaluator on one partition
+at a time so RANGE peer groups, offsets, and whole-partition frames share the
+same semantics. Output is served from an external sort in bounded batches.
+
+A sliding-frame deque could retain less than a partition for bounded ROWS
+frames, but would require separate evaluation logic for offsets and peer
+groups. This implementation instead bounds the retained partition with the
+query tracker and refuses a partition whose keys, state, and computed values
+do not fit. It does not promise spilling within a single window partition.
+
+### Collection aggregates spill unfinished elements
+
+GROUP_CONCAT runs retain each element's original value and order keys.
+Revival rebuilds DISTINCT identity from the original value and merges
+fragments in run order; finish performs a stable element sort when the
+aggregate has ORDER BY. JSON_ARRAYAGG retains rendered JSON fragments in
+encounter order, including nulls.
+
+Spilling a joined string would lose ordering information and would apply
+group_concat_max_len to each partial result. Keeping elements instead
+applies that byte truncation once, after all fragments are merged. The
+merged state and finished value of one group must still fit in the query
+budget; external storage within one collection value is not implemented.
+
+### Correlated ON replays a bounded right side
+
+The nested-loop fallback stages the right side, retaining an eighth of the
+query ceiling before moving it to a replayable run. It reads the left side
+in batches and evaluates candidates individually. Output has its own
+resident prefix and spills to a run when necessary. The predicate memo is
+reclaimed when less than half the budget remains, leaving space for the
+next dependent inner execution.
+
+Choosing a side by cardinality could reduce rereads for inner joins. Keeping
+the left side as the probe instead preserves the existing encounter order
+and the left, semi, anti, and scalar matching rules with one evaluation
+loop. Side selection and multi-row probe tiles remain future optimizations.
+
+### Oversized grace keys use a row-bounded replay
+
+Hash repartitioning remains the first response when a grace partition does
+not fit. At its depth bound, the join replays one build row at a time for
+each probe, carrying the probe's match count through the complete file.
+Output returns in chunks instead of accumulating a whole key's matches.
+
+Splitting build rows by row-index hash and copying probes to every piece
+would shrink each build map, but outer and anti joins would also need a
+shared matched-probe ledger and scalar joins a shared cardinality check.
+A row-bounded replay keeps these decisions in one place and avoids copying
+probe files. For a single equal key its comparisons correspond to candidate
+output pairs; a partition containing many colliding distinct keys can incur
+quadratic comparison work. Each candidate pair and predicate must fit.
+
+Reading the whole file once per probe made that comparison work an equal
+amount of I/O, so the replay first reads the partition once and keeps what
+a quarter of the ceiling affords, writing the rest to its own run. Each
+probe then walks the resident rows in memory and continues into the tail
+file where they stop, which preserves the file order every join kind's
+match accounting depends on. A partition that fits entirely is never read
+from disk again; one far larger than the ceiling still re-reads its tail.
+
+### A spilled IN set holds the partitions it probes
+
+The external membership index answered each probe by reopening its
+partition file and streaming every value in it, under one process-wide
+lock, so a scan probing a spilled set did one file read per row with no
+parallelism. A partition is a 64th of a set that spilled at a quarter of
+the ceiling, so its decoded form is bounded by construction: the first
+probe on a partition keeps the values it read, and later probes on it
+scan memory. Each partition has its own lock, so probes on different
+partitions proceed together.
+
+A resident budget of a quarter of the ceiling bounds the promotions, and
+a partition that does not fit keeps answering from its file, so no answer
+depends on a promotion having happened. Reading each partition into a
+sorted vector and binary-searching it would cut the memory scan further,
+but the ordering would have to agree with every mixed-type equality
+coercion, which is the reason the file scan compares rather than seeks.
+
+### Prepared membership owns external IN storage
+
+Subquery resolution previously replaced every IN result with a literal
+argument list before expression compilation. Large sets now become a
+prepared membership node whose shared resource owns the temporary runs.
+Small sets retain the literal-list representation, and existing integer
+join-membership optimizations remain available. The runtime node is
+installed after physical planning; frontend visitors only traverse its
+operand, and persistent aggregate signatures decline to cache it.
+
+The set spills at a quarter of its allowance. Integer and text keys route
+set values and probes through the same hash partition; exact-decimal and
+mixed-type comparisons share one partition and use the existing comparison
+rules. Every probe scans one partition, retains one candidate, and checks
+interruption while reading. Shared expression clones serialize probes so
+they share the reserved comparison scratch. An explicitly collated operand
+uses the same coercibility result as the in-memory IN expression.
+
+A paged binary-search index could reduce repeated reads, but requires an
+ordering consistent with every mixed-type equality coercion. Hash routing
+with a conservative common partition closes the memory failure without
+introducing a second equality definition. It can still perform quadratic
+comparison work for skew or mixed types. Correlated sets use the same
+storage switch for the current outer tuple; large disk sets are not memoized.
+
+## Concurrent identical reads share one execution (2026-09-07)
+
+Several requests for the same statement at the same moment used to mean
+several executions producing identical rows. The first now executes and
+the rest wait on it.
+
+The design turns on refusing to be a cache. An entry lives only for the
+duration of its execution and is removed when it settles, so no answer
+outlives the moment it was produced and there is never stored data to
+disagree with the store. What that buys is that correctness stops being a
+question about schedules - when is an answer stale, what invalidates it,
+what happens if an update lands between the read and the write - and
+becomes a question about one struct: does the key name every input an
+execution has?
+
+The key names the loaded replica by a number taken fresh on each load,
+the statement text, the row ceiling, and the four session settings an
+execution reads. The alternative considered was finer invalidation:
+tracking which columns a result depends on so an update to an unrelated
+column does not disqualify a kept answer. That would keep answers across
+changes rather than only across simultaneity, and it was measured to be
+worth a great deal when nothing relevant changes. It was refused for two
+reasons. It needs full before-images to decide relevance, and a source
+running minimal row metadata does not supply them, so the tracking would
+fall back to invalidating on every change - which is what keying on the
+whole load already does, at none of the cost. And under continuous
+ingest, membership changes disqualify even a `COUNT(*)`, so the case it
+optimizes is a table nobody is writing to.
+
+Failures are not shared. An execution that errors, is cancelled by its
+own client, or panics wakes its waiters to execute independently, which
+is exactly what they would have done without this mechanism. Sharing
+errors would have saved repeated failing work and required deciding
+whether a follower deserved a leader's interruption; the answer is that
+it does not, and refusing to share failure removes the question.
+
+A waiter never sleeps past its own deadline, so a client with a tight
+`max_execution_time` is not held to a looser one. It keeps its admission
+permit while waiting: releasing it would free a slot, but a request that
+then had to execute for itself could be refused after already waiting,
+which trades a latency win for a new way to fail.
+
+Eligibility is a syntax gate over the parsed statement rather than the
+bound plan, and it matches names rather than reasoning about position: a
+column called `version` is refused sharing. Over-refusal costs an
+opportunity; under-refusal would cost an answer.
+
+### The dense join table lives inside `PartitionedBuild`, not beside it
+
+The fused join-aggregate already built a throwaway direct-address table
+for an integer build key in a narrow span: a local `(minimum, Vec<Option<&
+bucket>>)` borrowing from the hash-partitioned build side, read for one
+query and dropped. Extending that to the general hash-join probe
+(`next_hash_join_batch`) meant holding the same kind of borrow alongside
+the `PartitionedBuild` it borrows from, across calls - a self-referential
+struct. The workspace forbids `unsafe_code` outright, and pulling in a
+crate for self-referential types is not the one dependency exception this
+repo carries, so neither of the usual ways to express that shape was
+available.
+
+The alternative taken: `PartitionedBuild` finalizes itself into the dense
+form in place. Once every row is inserted and the build did not spill,
+`finalize_dense` drains its hashed partitions into one flat
+`Vec<Vec<Vec<Value>>>` plus a per-offset index into it, when the keys are
+a plain integer set under `MAX_DENSE_SPAN` (4M slots - wide enough for
+real key ranges, capped so a sparse int column with two far-apart values
+never allocates a table sized to their gap); `get` checks that index
+first. Every reader of `get` - the general hash-join probe included -
+gets the dense path for free, with no change to its own code, and no
+reference crosses a struct boundary: the flat array is owned data, not a
+borrow.
+
+The fused join-aggregate keeps one thing of its own: which output group
+each bucket's rows fold into, resolved once per distinct key right after
+the dense table exists (not stored in `PartitionedBuild`, since only this
+one caller needs it) so a probe row that hits the dense table needs no
+further lookup. A further idea - splitting the probe into a pass that
+resolves every row's dense offset before any of them fold into a group,
+so the fold reads a stream of already-known offsets instead of resolving
+one write at a time - measured slower on a 10M-row, 100K-key fixture
+(`experiments/RESULTS.md` e85): the second pass's own allocation and
+extra traversal cost more than the resolved offsets saved. Kept as a
+single pass.
+
+### A distinct bitmap grows with headroom rather than tracking its exact bound
+
+`COUNT(DISTINCT)`'s bitset (`DistinctSeen::Bitmap`) is sized once a
+group's integer keys pass a count threshold and their span fits a cap,
+the same shape as the join's dense table. Unlike a join's build side,
+though, this bitmap keeps receiving new keys after it exists - the
+column's real range is rarely known up front, and a value can arrive at
+any time that falls outside the window the bitmap was built with.
+
+The first two shapes tried both tracked that window exactly and paid for
+it on every out-of-window insert: demoting the bitmap back to a hash set
+and immediately re-promoting it at the barely-wider span the very next
+call, and (once that was replaced) reallocating the array to the exact
+new bound each time. Both are the same failure in different clothes -
+`experiments/RESULTS.md` e86 measured the first at 1.5-30x slower than
+never bitmapping at all, on a column whose values arrive in roughly
+ascending order and so keep exceeding the window by a small amount for a
+long stretch. `Vec` and `HashSet` solved exactly this problem for their
+own resizing decades ago: grow by more than what is needed right now, so
+the added capacity absorbs many future insertions before another
+reallocation is due. The bitmap now doubles the needed span (capped at
+the same limit that gates promotion) and biases the extra room toward
+whichever side just grew, turning a reallocation-per-insert into a
+handful of reallocations for the whole column. A span that still would
+not fit even at the minimum needed width demotes to the hash set for
+good, matching the join table's own "correctness never depends on the
+range guess" rule - the guess only ever costs performance, never an
+exact answer.

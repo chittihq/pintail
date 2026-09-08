@@ -429,6 +429,7 @@ async fn run_cdc_inner(
                         error,
                         &mut targets,
                         &mut blocked_targets,
+                        &paused_targets,
                         &mut resnapshot_attempted,
                     )
                     .await?;
@@ -455,6 +456,7 @@ async fn run_cdc_inner(
                                 error,
                                 &mut targets,
                                 &mut blocked_targets,
+                                &paused_targets,
                                 &mut resnapshot_attempted,
                             )
                             .await?
@@ -780,6 +782,7 @@ async fn run_cdc_inner(
                     position.file,
                     position.pos
                 );
+                settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
                 return finish_result(commits, mutations, &position, targets);
             }
         }
@@ -802,6 +805,7 @@ async fn run_cdc_inner(
                             error,
                             &mut targets,
                             &mut blocked_targets,
+                            &paused_targets,
                             &mut resnapshot_attempted,
                         )
                         .await?
@@ -845,6 +849,7 @@ async fn run_cdc_inner(
             position.file,
             position.pos
         );
+        settle_paused_skips(&metadata, database_id, &targets, &paused_skipped)?;
         return finish_result(commits, mutations, &position, targets);
     }
 }
@@ -864,6 +869,7 @@ impl AutoResnapshotContext<'_> {
         error: CdcError,
         targets: &mut Vec<CdcTarget>,
         blocked_targets: &mut BTreeSet<usize>,
+        paused_targets: &BTreeSet<usize>,
         attempted: &mut bool,
     ) -> Result<StreamPosition, CdcError> {
         if !self.enabled || *attempted {
@@ -896,7 +902,12 @@ impl AutoResnapshotContext<'_> {
                     "automatic resnapshot did not capture a source position".to_owned(),
                 )
             })?;
+        // The quarantines this recovery repaired are gone, but a pause is
+        // an operator's decision and the recopy did not lift it: without
+        // restoring it the stream would apply changes to a table the
+        // operator holds still, and then flag it for a second recopy.
         blocked_targets.clear();
+        blocked_targets.extend(paused_targets.iter().copied());
         *attempted = true;
         StreamPosition::from_checkpoint(checkpoint, self.report.server.flavor)
     }
@@ -2200,6 +2211,27 @@ fn emit_progress(
         mutations,
         checkpoint: position.checkpoint()?,
     });
+    Ok(())
+}
+
+/// Re-checks every paused table this run passed changes over. The run
+/// decides what to drop from the paused set it read when it started, so a
+/// table resumed part-way through has its later events dropped too, and the
+/// write that would have flagged it found the table already running and did
+/// nothing. Asking again at the end settles it: a table still paused keeps
+/// its flag, and one that resumed under a dropped change is quarantined for
+/// the recopy that is the only way to get those rows back.
+fn settle_paused_skips(
+    metadata: &MetaStore,
+    database_id: &str,
+    targets: &[CdcTarget],
+    paused_skipped: &BTreeSet<usize>,
+) -> Result<(), CdcError> {
+    for index in paused_skipped {
+        if let Some(target) = targets.get(*index) {
+            metadata.mark_table_paused_skipped(database_id, &target.source.name)?;
+        }
+    }
     Ok(())
 }
 

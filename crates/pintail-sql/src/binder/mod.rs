@@ -3530,7 +3530,9 @@ fn expr_tables(expr: &BoundExpr) -> Vec<(pintail_catalog::DatabaseId, pintail_ca
                     out.push(key);
                 }
             }
-            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => {
                 walk(expr, out);
             }
             BoundExprKind::Binary { left, right, .. } => {
@@ -3930,9 +3932,10 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
         return Ok(());
     }
     match &mut expr.kind {
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            inline_any_value(expr, inlined)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. }
+        | BoundExprKind::InSubquery { expr, .. } => inline_any_value(expr, inlined),
         BoundExprKind::Binary { left, right, .. } => {
             inline_any_value(left, inlined)?;
             inline_any_value(right, inlined)
@@ -3943,7 +3946,6 @@ fn inline_any_value(expr: &mut BoundExpr, inlined: &[Option<BoundExpr>]) -> Resu
             }
             Ok(())
         }
-        BoundExprKind::InSubquery { expr, .. } => inline_any_value(expr, inlined),
         BoundExprKind::Aggregate(_)
         | BoundExprKind::Column(_)
         | BoundExprKind::Window(_)
@@ -4337,7 +4339,8 @@ fn rewrite_group_references(
             "{}.{}",
             column.relation_name, column.name
         ))),
-        BoundExprKind::Unary { expr, .. }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
         | BoundExprKind::IsNull { expr, .. }
         | BoundExprKind::InSubquery { expr, .. } => {
             rewrite_group_references(expr, group_by, determined, aggregates)

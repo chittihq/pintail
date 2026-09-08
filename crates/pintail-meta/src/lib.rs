@@ -1288,7 +1288,8 @@ impl MetaStore {
     ///
     /// Returns an error when the flag cannot be persisted.
     pub fn mark_table_paused_skipped(&self, database_id: &str, table_name: &str) -> Result<()> {
-        self.connection
+        let recorded = self
+            .connection
             .execute(
                 "UPDATE tables SET paused_skipped = 1 \
                  WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE AND paused = 1",
@@ -1296,6 +1297,27 @@ impl MetaStore {
             )
             .with_context(|| {
                 format!("failed to record skipped changes for {database_id}.{table_name}")
+            })?;
+        if recorded > 0 {
+            return Ok(());
+        }
+        // The table is no longer paused, so the resume that cleared the flag
+        // could not have known this change was about to be passed over: the
+        // stream decided from the paused set it read when the cycle began.
+        // The row is gone and the checkpoint will advance past it, so the
+        // table is stale and only a recopy can settle it. Quarantining here
+        // is what stops a resume from reporting an ordinary resume over data
+        // that silently lost a transaction.
+        self.connection
+            .execute(
+                "UPDATE tables SET state = 'needs_resync', paused_skipped = 0, \
+                   last_error = 'a change was skipped as the table resumed; it is recopied' \
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE AND paused = 0 \
+                   AND state != 'needs_resync'",
+                (database_id, table_name),
+            )
+            .with_context(|| {
+                format!("failed to quarantine {database_id}.{table_name} after a skipped change")
             })?;
         Ok(())
     }

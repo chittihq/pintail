@@ -18,6 +18,7 @@ use crate::admission::{QueryAdmission, QueryClass, shared_admission};
 use crate::replica_cache::{
     self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp,
 };
+use crate::shared_query::{Join, SharedQueryKey, shared_queries};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
     Binder, BoundExprKind, BoundJoinKind, BoundQuery, ColumnFacts, DEFAULT_TEXT_COLLATION,
@@ -211,10 +212,19 @@ impl std::fmt::Debug for ReplicaEngine {
 
 struct LoadedReplica {
     server_version: String,
+    /// Identifies this load, and only this one. Taken fresh every time a
+    /// replica is built, so anything that reloads it - a CDC commit, a
+    /// local write, a schema change - gives the same statement a different
+    /// shared-execution key instead of the answer from before the change.
+    load_id: u64,
     database: DatabaseRecord,
     tables: Vec<TableRecord>,
     targets: Vec<ReaderTarget>,
 }
+
+/// Hands out [`LoadedReplica::load_id`]. Monotonic, so a number is never
+/// reused by a later load.
+static NEXT_REPLICA_LOAD_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 struct ReaderTarget {
     source: SourceTable,
@@ -630,19 +640,43 @@ impl ReplicaEngine {
             );
         }
         match statement {
-            Statement::Query(_) => self.execute_select(
-                &statement,
-                sql,
-                &catalog,
-                &provider,
-                &facts,
-                &replica.database.name,
-                provider_stats(&provider, table_count),
-                started,
-                max_rows,
-                deadline,
-                true,
-            ),
+            Statement::Query(_) => {
+                let run = || {
+                    self.execute_select(
+                        &statement,
+                        sql,
+                        &catalog,
+                        &provider,
+                        &facts,
+                        &replica.database.name,
+                        provider_stats(&provider, table_count),
+                        started,
+                        max_rows,
+                        deadline,
+                        true,
+                    )
+                };
+                // Several clients asking the same question of the same
+                // snapshot at the same time is one question. Only a
+                // statement whose answer cannot depend on the clock, the
+                // connection or a random source is offered; everything
+                // else executes as it always did.
+                if !pintail_sql::is_repeatable_statement(&statement) {
+                    return run();
+                }
+                let key = SharedQueryKey::for_current_session(replica.load_id, sql, max_rows);
+                match shared_queries().join(&key, deadline) {
+                    Join::Alone => run(),
+                    Join::Followed(output) => Ok(followed_output(&output, started)),
+                    Join::Lead(leader) => {
+                        let result = run();
+                        if let Ok(output) = &result {
+                            leader.succeeded(output);
+                        }
+                        result
+                    }
+                }
+            }
             Statement::Explain { .. } => self.execute_explain(
                 &statement,
                 &catalog,
@@ -988,6 +1022,7 @@ impl ReplicaEngine {
         Ok((
             LoadedReplica {
                 server_version: report.server.version,
+                load_id: NEXT_REPLICA_LOAD_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
                 database,
                 tables,
                 targets,
@@ -1483,6 +1518,18 @@ fn write_error(error: &pintail_write::WriteError) -> QueryError {
         _ => return QueryError::Invalid(message),
     };
     QueryError::Rejected { rejection, message }
+}
+
+/// One execution's answer, presented to a request that waited for it.
+///
+/// The physical counters stay as they were measured: they describe how
+/// these rows were produced, and they were produced once. The duration is
+/// this request's own, because what it waited is not what the leader
+/// spent, and a client reading its own query time should see its own.
+fn followed_output(shared: &QueryOutput, started: Instant) -> QueryOutput {
+    let mut output = shared.clone();
+    output.stats.duration_ms = elapsed_ms(started);
+    output
 }
 
 #[cfg(test)]

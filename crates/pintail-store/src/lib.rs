@@ -20,6 +20,7 @@ pub use error::StoreError;
 pub use segment::{
     BoundDomain, ColumnBounds, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum,
 };
+pub use store::GroupedFoldSpan;
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, ColumnValidity, CompactionOutcome,
     CompactionStatus, DecodedColumn, FlushOutcome, IngestOutcome, PrewhereSelect,

@@ -400,12 +400,116 @@ fn compare_row_key(key_columns: &[&DecodedColumn], row: usize, key: &[i128]) -> 
 /// row its position in the output that interleaves it with the surviving
 /// rows, which are the kept rows not superseded before it plus the memtable
 /// rows placed before it.
+/// Rows the memtable supersedes, found by looking up each of its keys
+/// rather than by walking the segment.
+///
+/// The walk below costs the segment whatever changed, so a table that took
+/// two updates pays what one that took two million pays. Both sides are
+/// sorted and the segment's keys are searchable, so the same answer can be
+/// had for the cost of the change instead: measured over ten million rows,
+/// twenty thousand changes cost 1.9 ms this way against 6.7 ms walking, and
+/// two changes cost microseconds. Past roughly a twentieth of the segment
+/// the walk is cheaper again, which is what `overlay_positions` decides.
+fn searched_overlay_positions(
+    key_columns: &[&DecodedColumn],
+    row_count: usize,
+    kept: Option<&[std::ops::Range<usize>]>,
+    memtable: &[(Vec<i128>, Option<&StoredRow>)],
+) -> (Vec<usize>, Vec<usize>) {
+    // Kept rows before a position, from the ranges rather than by counting:
+    // a prefix sum over the ranges answers it in a binary search.
+    let prefix: Vec<usize> = kept
+        .map(|ranges| {
+            let mut total = 0;
+            ranges
+                .iter()
+                .map(|range| {
+                    let before = total;
+                    total += range.len();
+                    before
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let kept_before = |position: usize| -> usize {
+        let Some(ranges) = kept else { return position };
+        // The last range starting at or before `position`.
+        let index = ranges.partition_point(|range| range.start < position);
+        let mut count = if index == 0 { 0 } else { prefix[index - 1] };
+        if index > 0 {
+            let range = &ranges[index - 1];
+            count += position.min(range.end).saturating_sub(range.start);
+        }
+        count
+    };
+    let is_kept = |row: usize| -> bool {
+        let Some(ranges) = kept else { return true };
+        let index = ranges.partition_point(|range| range.end <= row);
+        ranges
+            .get(index)
+            .is_some_and(|range| range.start <= row && row < range.end)
+    };
+    // Where a key sits in the segment, or where it would be inserted.
+    let search = |key: &[i128]| -> Result<usize, usize> {
+        let mut low = 0_usize;
+        let mut high = row_count;
+        while low < high {
+            let middle = low + (high - low) / 2;
+            match compare_row_key(key_columns, middle, key) {
+                std::cmp::Ordering::Less => low = middle + 1,
+                std::cmp::Ordering::Greater => high = middle,
+                std::cmp::Ordering::Equal => return Ok(middle),
+            }
+        }
+        Err(low)
+    };
+
+    let mut excluded = Vec::new();
+    let mut inserts = Vec::new();
+    // Excluded rows already passed that were kept: the walk never counts an
+    // excluded row as a survivor, so neither does this.
+    let mut excluded_kept = 0_usize;
+    for (key, row) in memtable {
+        // The walk counts survivors strictly before the row it is looking
+        // at, and never counts an excluded row, so this row's own exclusion
+        // is added only after its insert position is decided.
+        let (position, excludes_this_row) = match search(key) {
+            Ok(found) => {
+                excluded.push(found);
+                (found, usize::from(is_kept(found)))
+            }
+            Err(insertion) => (insertion, 0),
+        };
+        if row.is_some() {
+            let survivors_before = kept_before(position).saturating_sub(excluded_kept);
+            inserts.push(survivors_before + inserts.len());
+        }
+        excluded_kept += excludes_this_row;
+    }
+    (excluded, inserts)
+}
+
+/// One row in two hundred: past this share of the segment, looking each
+/// change up costs more than walking both sides once.
+///
+/// The first value here was one in twenty, taken from a measurement that
+/// timed a mask built block by block rather than the whole-column lookup
+/// this actually does. Timed against the real thing, a walk of ten million
+/// keys costs about four milliseconds whatever changed, while the lookups
+/// grow with the changes and pass it at one percent. Half of that is the
+/// threshold, so the search is chosen only where it clearly wins rather
+/// than where the two are level.
+const SEARCHED_OVERLAY_SHARE: usize = 200;
+
 fn overlay_positions(
     key_columns: &[&DecodedColumn],
     row_count: usize,
     kept: Option<&[std::ops::Range<usize>]>,
     memtable: &[(Vec<i128>, Option<&StoredRow>)],
 ) -> (Vec<usize>, Vec<usize>) {
+    if memtable.len().saturating_mul(SEARCHED_OVERLAY_SHARE) <= row_count {
+        return searched_overlay_positions(key_columns, row_count, kept, memtable);
+    }
     let mut excluded = Vec::new();
     let mut inserts = Vec::new();
     let mut survivors_before = 0_usize;
@@ -1191,6 +1295,13 @@ impl ProjectedColumnChunk {
 
     /// Materializes projected columns into per-row values.
     #[must_use]
+    /// The decoded columns and the row count, without turning packed
+    /// values into one `Value` per cell. A consumer with its own typed
+    /// representation wants these, not `into_columns`.
+    pub fn take_columns(self) -> (Vec<DecodedColumn>, usize) {
+        (self.columns, self.row_count)
+    }
+
     pub fn into_columns(self) -> Vec<Vec<pintail_types::Value>> {
         self.columns
             .into_iter()
@@ -2035,6 +2146,15 @@ impl ProjectedScanStream {
         let predicate_blocks_pruned = fetch.blocks_pruned;
         let predicate_blocks_decoded = fetch.blocks_decoded;
         let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+        if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+            return retain_predicate_fetch(
+                fetch,
+                ranges.as_deref(),
+                row_count,
+                usize::from(start_row == 0),
+                &scan_budget,
+            );
+        }
         let predicate_reserved = fetch.reserved_bytes;
         drop(fetch);
         scan_budget.release(predicate_reserved);
@@ -2135,6 +2255,15 @@ impl ProjectedScanStream {
             let predicate_blocks_pruned = fetch.blocks_pruned;
             let predicate_blocks_decoded = fetch.blocks_decoded;
             let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
+            if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+                return retain_predicate_fetch(
+                    fetch,
+                    ranges.as_deref(),
+                    row_count,
+                    1,
+                    &scan_budget,
+                );
+            }
             let predicate_reserved = fetch.reserved_bytes;
             drop(fetch);
             scan_budget.release(predicate_reserved);
@@ -2306,13 +2435,20 @@ impl ProjectedScanStream {
         }
         let first_chunk = !std::mem::replace(&mut merge.reported_segments, true);
         let report_pruned = first_chunk && !std::mem::replace(&mut self.reported_pruned, true);
-        let mut winner_values = vec![None; row_count];
+        // The winners are placed straight into the output columns. The
+        // fetch below is already column-major and so is the chunk, so
+        // turning it into rows and back cost two transposes and one vector
+        // allocation per row, for a representation nothing downstream
+        // wanted.
+        let mut columns = projection
+            .iter()
+            .map(|_| vec![pintail_types::Value::Null; row_count])
+            .collect::<Vec<_>>();
+        let mut placed = 0_usize;
         let mut segment_rows = BTreeMap::<usize, Vec<(usize, usize)>>::new();
         for (winner_index, source) in winner_sources.into_iter().enumerate() {
             match source {
-                MergedWinnerSource::Segment { .. } if projection.is_empty() => {
-                    winner_values[winner_index] = Some(Vec::new());
-                }
+                MergedWinnerSource::Segment { .. } if projection.is_empty() => placed += 1,
                 MergedWinnerSource::Segment {
                     segment_index,
                     row_index,
@@ -2321,7 +2457,16 @@ impl ProjectedScanStream {
                     .or_default()
                     .push((row_index, winner_index)),
                 MergedWinnerSource::Memtable(values) => {
-                    winner_values[winner_index] = Some(values);
+                    if values.len() != columns.len() {
+                        return Err(StoreError::FormatLimit(
+                            "a merged memtable winner has a different width from the projection"
+                                .into(),
+                        ));
+                    }
+                    for (column, value) in columns.iter_mut().zip(values) {
+                        column[winner_index] = value;
+                    }
+                    placed += 1;
                 }
             }
         }
@@ -2342,23 +2487,28 @@ impl ProjectedScanStream {
                 &scan_budget,
             )?;
             blocks_decoded += fetch.blocks_decoded;
-            let values = columns_to_rows(fetch.columns, selected.len())?;
+            if fetch.columns.len() != columns.len() {
+                return Err(StoreError::FormatLimit(
+                    "a merged segment fetch has a different width from the projection".into(),
+                ));
+            }
+            for (column, fetched) in columns.iter_mut().zip(fetch.columns) {
+                if fetched.len() != selected.len() {
+                    return Err(StoreError::FormatLimit(
+                        "projected column length differs from its selected row count".into(),
+                    ));
+                }
+                for ((_, winner_index), value) in selected.iter().zip(fetched) {
+                    column[*winner_index] = value;
+                }
+            }
             scan_budget.release(fetch.reserved_bytes);
-            for ((_, winner_index), values) in selected.into_iter().zip(values) {
-                winner_values[winner_index] = Some(values);
-            }
+            placed += selected.len();
         }
-        let mut columns = projection
-            .iter()
-            .map(|_| Vec::with_capacity(row_count))
-            .collect::<Vec<_>>();
-        for values in winner_values {
-            let values = values.ok_or_else(|| {
-                StoreError::FormatLimit("merged winner was not late-materialized".into())
-            })?;
-            for (column, value) in columns.iter_mut().zip(values) {
-                column.push(value);
-            }
+        if placed != row_count {
+            return Err(StoreError::FormatLimit(
+                "a merged winner was not materialized".into(),
+            ));
         }
         let retained_bytes = size_of::<ProjectedColumnChunk>()
             .saturating_add(
@@ -2732,6 +2882,87 @@ fn rows_to_columns(
         }
     }
     Ok(columns)
+}
+
+fn packed_integer_column(column: &DecodedColumn) -> bool {
+    matches!(
+        column,
+        DecodedColumn::Int64 { .. } | DecodedColumn::UInt64 { .. }
+    )
+}
+
+/// An all-predicate integer projection already decoded every output column.
+/// Compact those buffers before the prefetch round retains them; rereading
+/// identical blocks would add both decode work and a second working set.
+fn retain_predicate_fetch(
+    mut fetch: segment::ProjectedColumnFetch,
+    ranges: Option<&[std::ops::Range<usize>]>,
+    rows: usize,
+    segments_read: usize,
+    memory: &segment::ScanMemoryBudget<'_>,
+) -> Result<ProjectedColumnChunk, StoreError> {
+    fn compact<T: Copy>(values: &mut Vec<T>, ranges: &[std::ops::Range<usize>]) {
+        let mut written = 0;
+        for range in ranges {
+            values.copy_within(range.clone(), written);
+            written += range.len();
+        }
+        values.truncate(written);
+        values.shrink_to_fit();
+    }
+    let selected = ranges.map_or(rows, |ranges| {
+        ranges.iter().map(std::iter::ExactSizeIterator::len).sum()
+    });
+    if let Some(ranges) = ranges {
+        // A selector is an API callback; validate before indexing or copying.
+        if ranges
+            .iter()
+            .any(|range| range.start > range.end || range.end > rows)
+            || ranges.windows(2).any(|pair| pair[0].end > pair[1].start)
+        {
+            return Err(StoreError::FormatLimit(
+                "invalid predicate row ranges".to_owned(),
+            ));
+        }
+        for column in &mut fetch.columns {
+            let validity = match column {
+                DecodedColumn::Int64 { values, validity } => {
+                    compact(values, ranges);
+                    validity
+                }
+                DecodedColumn::UInt64 { values, validity } => {
+                    compact(values, ranges);
+                    validity
+                }
+                _ => unreachable!("checked integer projection"),
+            };
+            match validity {
+                ColumnValidity::AllValid(count) => *count = selected,
+                ColumnValidity::Bytes(bits) => compact(bits, ranges),
+            }
+        }
+    }
+    let retained_bytes = size_of::<ProjectedColumnChunk>()
+        + fetch.columns.capacity() * size_of::<DecodedColumn>()
+        + fetch
+            .columns
+            .iter()
+            .map(DecodedColumn::retained_bytes)
+            .sum::<usize>();
+    memory.release(fetch.reserved_bytes);
+    memory.reserve(retained_bytes)?;
+    Ok(ProjectedColumnChunk {
+        columns: fetch.columns,
+        row_count: selected,
+        stats: ScanStats {
+            segments_read,
+            blocks_read: fetch.blocks_read,
+            blocks_pruned: fetch.blocks_pruned,
+            blocks_decoded: fetch.blocks_decoded,
+            ..ScanStats::default()
+        },
+        retained_bytes,
+    })
 }
 
 #[cfg(test)]

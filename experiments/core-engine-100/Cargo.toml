@@ -1,0 +1,24 @@
+[package]
+name = "core-engine-100"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+rayon = "1.10"
+serde_json = "1"
+pintail-store = { path = "../../crates/pintail-store" }
+pintail-types = { path = "../../crates/pintail-types" }
+pintail-catalog = { path = "../../crates/pintail-catalog" }
+pintail-exec = { path = "../../crates/pintail-exec" }
+pintail-sql = { path = "../../crates/pintail-sql" }
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

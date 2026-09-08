@@ -1,0 +1,21 @@
+{
+  "base_commit": "73303d2",
+  "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+  "allocator": "tikv-jemallocator 0.6",
+  "logical_cpus": 32,
+  "affinity_cpus": 4,
+  "rayon_threads": 2,
+  "independent_repetitions": 5,
+  "seed": 9217,
+  "cpu_ticks_per_second": 100,
+  "overlapping_memtable": true,
+  "run_arguments": [
+    "--flights-only"
+  ],
+  "source_sha256": {
+    "src/main.rs": "eb4ccf272b8697c26589b47aecd6ffa67c6c98f9c31145e94f0d60a4a40235d5",
+    "src/lib.rs": "b858d0bd934efa047c2699601b8c8c0c30a2e6ea25162f884cd4b881b3bf8c98",
+    "Cargo.lock": "4a36a7367ccb6c788d58bd3d1aa70c20931a3dd79885968338032e7bfdb6c827",
+    "run.py": "6e3cde856c65a391a41fc3ee6af52272508d45beb898d875306c70c885830732"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 6,
+      "variant": 5,
+      "name": "parallel-local-bitmaps",
+      "processes": 3,
+      "changing_query_speedup": 1.0520884700291364,
+      "changing_cycle_speedup": 1.028706614157067,
+      "operator_only_speedup": 3.895344133450647,
+      "min_process_speedup": 0.9836157634608518,
+      "max_process_speedup": 1.1106480982682772,
+      "scenario_medians": {
+        "0": 1.1106480982682772,
+        "1": 1.0520884700291364,
+        "2": 0.9836157634608518
+      },
+      "phase_medians": {
+        "settled": 1.837101579149569,
+        "sparse-memtable": 1.092018489607385,
+        "sparse-flushed-overlap": 1.0824994834687198,
+        "dense-hot-memtable": 1.0291755357091172,
+        "dense-flushed-overlap": 1.0253590413376792,
+        "mixed-overlap": 1.0298523360515048,
+        "stale-replay": 1.0354873520293146,
+        "compacted": 1.7919651244531243
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ pub use scan::{
     ColumnValidity, DecodedColumn, PrewhereSelect, ProjectedColumnChunk, ProjectedRow,
     ProjectedScan, ProjectedScanStream, ProjectedValueChunk, ScanStats,
 };
-pub use snapshot::{BackupArtifacts, BackupSegment, TableSnapshot};
+pub use snapshot::{BackupArtifacts, BackupSegment, GroupedFoldSpan, TableSnapshot};
 
 use std::{
     collections::BTreeMap,
@@ -71,6 +71,21 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
             // scan. It is also a real tuning knob: two pools each sized to the
             // machine put twice the core count of runnable threads on it
             // whenever aggregation overlaps scanning.
+            //
+            // Stays at the CPU count by default. e65 measured a doubled pool
+            // winning under the CPU quota a typical container deployment
+            // runs under; e88 reproduced no such gain on bare metal, only
+            // added scheduling contention, so there is nothing here to
+            // weigh against leaving it alone (docs/design/
+            // production-hardening-todo.md, section H; experiments/
+            // RESULTS.md e88). Deployments that want the container quota's
+            // benefit can still opt in with the env var.
+            //
+            // A doubled pool did surface a wrong answer under `tests/e2e`
+            // while this was measured, but it is not this default's to
+            // avoid: the same check failed again with the pool back at the
+            // CPU count, at a different row and value, so the width is not
+            // the cause (G14, e90).
             let threads = std::env::var("PINTAIL_SCAN_THREADS")
                 .ok()
                 .and_then(|value| value.parse::<usize>().ok())
@@ -1520,7 +1535,18 @@ impl TableStore {
     }
 
     fn compaction_plan(&self) -> Result<Option<CompactionPlan>, StoreError> {
-        if self.manifest.segments.len() < self.options.compaction_fan_in {
+        // Two segments are enough to plan when they overlap. The fan-in is
+        // there to amortize a rewrite over several inputs, which is the
+        // right instinct when merging only saves file handles - but an
+        // overlap is not that. A key present in two segments puts every
+        // scan of the table on the merging path, and a merging scan of two
+        // million rows with one percent of them changed measured 1429 ms
+        // against 14 ms for the same rows in one segment. The rewrite that
+        // removes it measured 1552 ms, once. It repays after 1.1 scans
+        // (experiments/RESULTS.md e91), so waiting for a fourth segment
+        // before considering it is a hundredfold read penalty held open
+        // for a write cost the second query already covers.
+        if self.manifest.segments.len() < 2 {
             return Ok(None);
         }
         let mut candidates = Vec::with_capacity(self.manifest.segments.len());
@@ -1537,12 +1563,36 @@ impl TableStore {
             });
         }
         candidates.sort_by_key(|candidate| (candidate.size, candidate.index));
-        for window in candidates.windows(self.options.compaction_fan_in) {
+        if candidates.len() >= self.options.compaction_fan_in {
+            for window in candidates.windows(self.options.compaction_fan_in) {
+                let selected = window.iter().collect::<Vec<_>>();
+                if !self.admits_window(&selected) || !ranges_overlap(&selected) {
+                    continue;
+                }
+                return Ok(Some(plan_for(&selected)));
+            }
+        }
+        // No full-width window qualified. An overlapping pair still earns
+        // its rewrite, and it is the shape a table takes right after a
+        // flush: one large base and one small tail covering the rows that
+        // changed. The size tier deliberately refuses that pairing, since
+        // rewriting a base to absorb a tail a hundredth its size is poor
+        // value when the only prize is fewer files. Overlap is the case
+        // where the prize is the scan, so the tier does not apply - the
+        // per-pass row budget still does, so one pass stays bounded.
+        candidates.sort_by(|left, right| left.minimum.cmp(&right.minimum));
+        for window in candidates.windows(2) {
             let selected = window.iter().collect::<Vec<_>>();
-            if !self.admits_window(&selected) || !ranges_overlap(&selected) {
+            if !ranges_overlap(&selected) {
                 continue;
             }
-            return Ok(Some(plan_for(&selected)));
+            let rows = selected
+                .iter()
+                .map(|candidate| candidate.row_count)
+                .sum::<u64>();
+            if rows <= self.options.max_compaction_input_rows {
+                return Ok(Some(plan_for(&selected)));
+            }
         }
         // Nothing overlaps, so no merge would collapse a row version. Merging
         // still pays for itself once the manifest holds many files: every scan

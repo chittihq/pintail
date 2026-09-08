@@ -465,6 +465,19 @@ thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+/// The installed session zone's identity, or `None` for the host zone.
+///
+/// Two executions observe the same clock offset only when this matches, so
+/// a caller deciding whether one execution can answer another's request
+/// puts this in the comparison.
+#[must_use]
+pub fn session_time_zone_key() -> Option<String> {
+    SESSION_TIME_ZONE.get().map(|zone| match zone {
+        SessionZone::Fixed(offset) => format!("f{}", offset.local_minus_utc()),
+        SessionZone::Named(zone) => format!("n{}", zone.name()),
+    })
+}
+
 /// Installs the session time zone that `NOW`/`CURDATE`/`CURTIME` observe on
 /// this thread ("SYSTEM" or `None` restores the host zone). Numeric offsets
 /// use `MySQL`'s `[-13:59, +14:00]` range; names resolve case-insensitively
@@ -600,7 +613,8 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
         return expr;
     }
     let folded = match expr.kind {
-        BoundExprKind::Column(_)
+        BoundExprKind::PreparedIn { .. }
+        | BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_)
@@ -684,7 +698,8 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
-        BoundExprKind::Column(_)
+        BoundExprKind::PreparedIn { .. }
+        | BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
         | BoundExprKind::Aggregate(_)
         | BoundExprKind::Window(_)
@@ -1133,7 +1148,9 @@ pub(crate) fn is_volatile(expr: &BoundExpr) -> bool {
             matches!(function, ScalarFunction::Rand | ScalarFunction::Uuid)
                 || args.iter().any(is_volatile)
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => is_volatile(expr),
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => is_volatile(expr),
         BoundExprKind::Binary { left, right, .. } => is_volatile(left) || is_volatile(right),
         // Anything whose shape is not walked here is treated as volatile, so a
         // new expression kind fails closed rather than silently becoming a join
@@ -1456,7 +1473,9 @@ fn collect_expr_columns(expr: &BoundExpr, columns: &mut BTreeSet<ColumnKey>) {
         BoundExprKind::Column(column) => {
             columns.insert(column_key(column));
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             collect_expr_columns(expr, columns);
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -1487,9 +1506,9 @@ fn expression_contains_subquery(expr: &BoundExpr) -> bool {
         BoundExprKind::ScalarSubquery(_)
         | BoundExprKind::ExistsSubquery { .. }
         | BoundExprKind::InSubquery { .. } => true,
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            expression_contains_subquery(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => expression_contains_subquery(expr),
         BoundExprKind::Binary { left, right, .. } => {
             expression_contains_subquery(left) || expression_contains_subquery(right)
         }

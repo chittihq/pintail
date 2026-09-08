@@ -1,0 +1,2424 @@
+{
+  "mysql_version": "8.4.11",
+  "image": "sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+  "head": "84a5fa2480799637571f058a7c228e69e3ec8238",
+  "proof_binary_sha256": "cb2ca3465f75aa315d50bd679e55f756ca70e5ae549c460d40dd70c5e473dd44",
+  "checks": [
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 0,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 1,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 0,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 1,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 2,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 3,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 4,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 5,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 6,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": false,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 0,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 1,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 2,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 3,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 4,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 5,
+      "pk_join": true,
+      "exact": true
+    },
+    {
+      "scenario": 2,
+      "phase": 7,
+      "variant": 6,
+      "pk_join": true,
+      "exact": true
+    }
+  ],
+  "count": 336,
+  "witnesses": [
+    {
+      "label": "multiplicity-preserving factorization needs no dimension uniqueness",
+      "sql": "SELECT COUNT(*),COUNT(f.v),SUM(f.v) FROM f JOIN d ON f.k=d.k",
+      "result": "5\t3\t50\n",
+      "alternative_sql": "SELECT SUM(a.n),SUM(a.c),SUM(a.s) FROM (SELECT k,COUNT(*) n,COUNT(v) c,SUM(v) s FROM f GROUP BY k) a JOIN d ON a.k=d.k",
+      "alternative": "5\t3\t50\n"
+    },
+    {
+      "label": "compatible complete primary-key join is at most one match",
+      "sql": "SELECT MAX(n) FROM (SELECT f.id,COUNT(one_d.id) n FROM f JOIN one_d ON f.k=one_d.id GROUP BY f.id) q",
+      "result": "1\n"
+    },
+    {
+      "label": "numeric coercion breaks at-most-one despite full primary-key coverage",
+      "sql": "SELECT COUNT(*) FROM (SELECT 1 k) f JOIN pk_text d ON f.k=d.id",
+      "result": "2\n"
+    },
+    {
+      "label": "collation override breaks at-most-one despite full primary-key coverage",
+      "sql": "SELECT COUNT(*) FROM pk_case WHERE id COLLATE utf8mb4_general_ci = _utf8mb4'a' COLLATE utf8mb4_general_ci",
+      "result": "2\n"
+    },
+    {
+      "label": "partial composite-key coverage is not unique",
+      "sql": "SELECT COUNT(*) FROM cp WHERE k=1",
+      "result": "2\n"
+    },
+    {
+      "label": "nullable UNIQUE plus NULL-safe equality is not unique",
+      "sql": "SELECT COUNT(*) FROM uq WHERE k <=> NULL",
+      "result": "2\n"
+    },
+    {
+      "label": "average of averages changes weights",
+      "sql": "SELECT AVG(v) FROM av",
+      "result": "66.6667\n",
+      "alternative_sql": "SELECT AVG(a) FROM (SELECT k,AVG(v) a FROM av GROUP BY k) q",
+      "alternative": "75.00000000\n"
+    },
+    {
+      "label": "counting partial groups loses fact multiplicity",
+      "sql": "SELECT COUNT(*) FROM f",
+      "result": "3\n",
+      "alternative_sql": "SELECT COUNT(*) FROM (SELECT k,COUNT(*) n FROM f GROUP BY k) q",
+      "alternative": "2\n"
+    },
+    {
+      "label": "primary key does not license discarding a fact-dependent residual",
+      "sql": "SELECT COUNT(*),SUM(av.v) FROM av JOIN one_d d ON av.k=d.id AND av.v>d.t",
+      "result": "2\t200\n",
+      "alternative_sql": "SELECT SUM(a.n),SUM(a.s) FROM (SELECT k,COUNT(*) n,SUM(v) s FROM av GROUP BY k) a JOIN one_d d ON a.k=d.id AND a.s>d.t",
+      "alternative": "3\t200\n"
+    },
+    {
+      "label": "NULL partial sums cannot be replaced by zero",
+      "sql": "SELECT SUM(v) FROM f WHERE id=2",
+      "result": "NULL\n",
+      "alternative_sql": "SELECT SUM(COALESCE(s,0)) FROM (SELECT SUM(v) s FROM f WHERE id=2 GROUP BY k) q",
+      "alternative": "0\n"
+    }
+  ],
+  "scope": "336 decoded-update SQL comparisons; counterexamples are MySQL semantic guards, not a shipped optimizer rule"
+}

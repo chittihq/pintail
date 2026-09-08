@@ -49,12 +49,12 @@ fn dim_schema() -> TableSchema {
     .expect("schema")
 }
 
-fn fact_row(id: u64) -> StoredRow {
+fn fact_row(id: u64, dim_rows: u64) -> StoredRow {
     StoredRow::new(
         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
         vec![
             Value::UInt64(id),
-            Value::Int64(i64::try_from(id % 50).expect("small")),
+            Value::Int64(i64::try_from(id % dim_rows).expect("small")),
             Value::Utf8(STATUSES[usize::try_from(id % 5).expect("small")].to_owned()),
             Value::Int64(i64::try_from(id % 1000).expect("small")),
         ],
@@ -65,6 +65,15 @@ fn fact_row(id: u64) -> StoredRow {
 
 impl Fixture {
     fn new(rows: u64) -> Self {
+        Self::with_dims(rows, 50)
+    }
+
+    /// `dim_rows` is both the dimension table's row count and the fact
+    /// table's join-key cardinality: the fused join-aggregate's dense
+    /// build-side table and its pre-resolved group index are sized to it,
+    /// so a case that wants to measure that path at Q8's scale (~100K
+    /// distinct users, not 50) needs this rather than `new`.
+    fn with_dims(rows: u64, dim_rows: u64) -> Self {
         let directory = tempfile::tempdir().expect("directory");
         let mut facts = TableStore::open(
             directory.path().join("facts"),
@@ -76,7 +85,7 @@ impl Fixture {
         while next <= rows {
             let end = (next + CHUNK - 1).min(rows);
             facts
-                .bulk_ingest_snapshot((next..=end).map(fact_row).collect())
+                .bulk_ingest_snapshot((next..=end).map(|id| fact_row(id, dim_rows)).collect())
                 .expect("ingest");
             next = end + 1;
         }
@@ -87,7 +96,7 @@ impl Fixture {
         )
         .expect("dims");
         dims.bulk_ingest_snapshot(
-            (0..50)
+            (0..i64::try_from(dim_rows).expect("dim_rows fits i64"))
                 .map(|id| {
                     StoredRow::new(
                         PrimaryKey::new(vec![KeyPart::Int64(id)]).expect("key"),
@@ -112,7 +121,7 @@ impl Fixture {
             TableId::new(2),
             "dims",
             dim_schema(),
-            TableStatistics::with_row_count(50),
+            TableStatistics::with_row_count(dim_rows),
         )
         .expect("entry")
         .with_key_columns([1])
@@ -144,8 +153,12 @@ impl Fixture {
         )
         .expect("plan");
         let clock = Instant::now();
-        let mut execution = Execution::start(physical, &provider, limit, Collation::default())
-            .map_err(|error| error.to_string())?;
+        let mut execution = if std::env::var_os("PINTAIL_BENCH_PROFILE").is_some() {
+            Execution::start_profiled(physical, &provider, limit, None, Collation::default())
+        } else {
+            Execution::start(physical, &provider, limit, Collation::default())
+        }
+        .map_err(|error| error.to_string())?;
         let mut rows = 0;
         loop {
             match execution.next_batch() {
@@ -154,7 +167,11 @@ impl Fixture {
                 Err(error) => return Err(error.to_string()),
             }
         }
-        Ok((rows, clock.elapsed()))
+        let elapsed = clock.elapsed();
+        if let Some(profile) = execution.profile() {
+            eprintln!("{}", profile.render());
+        }
+        Ok((rows, elapsed))
     }
 }
 
@@ -165,6 +182,34 @@ struct Case {
 }
 
 const CASES: &[Case] = &[
+    Case {
+        label: "predicate count single",
+        sql: "SELECT COUNT(*) FROM facts WHERE grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate count conjunction",
+        sql: "SELECT COUNT(*) FROM facts WHERE id >= 1 AND grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate single",
+        sql: "SELECT id, grp FROM facts WHERE grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "predicate conjunction",
+        sql: "SELECT id, grp FROM facts WHERE id >= 1 AND grp = 2",
+        limit: 512 << 20,
+    },
+    Case {
+        label: "scan: filtered count",
+        // Q2's shape (benchmark/queries.ts): almost pure scan - the
+        // aggregate itself is one counter - so its time is the scan pool's
+        // own width and I/O overlap, not anything downstream.
+        sql: "SELECT COUNT(*) FROM facts WHERE status = 'open'",
+        limit: 512 << 20,
+    },
     Case {
         label: "two-pass int key",
         sql: "SELECT grp, COUNT(*), SUM(amount) FROM facts GROUP BY grp",
@@ -201,7 +246,40 @@ const CASES: &[Case] = &[
               GROUP BY d.name",
         limit: 512 << 20,
     },
+    Case {
+        label: "count distinct, 100K-value column",
+        // Q7's shape (benchmark/queries.ts): a handful of groups, each
+        // counting distinct values of a column whose real cardinality
+        // (100K) is far higher than the group count.
+        sql: "SELECT status, COUNT(*), COUNT(DISTINCT id % 100000) FROM facts GROUP BY status",
+        limit: 512 << 20,
+    },
 ];
+
+/// Q8's own shape: a dense integer build key with real-world cardinality
+/// (100K users, like `benchmark/queries.ts`), grouped by a build-side
+/// column that folds to a handful of groups (8 regions). The 50-row `dims`
+/// case above shares the query text but not the scale that makes the
+/// per-probe-row bucket-address lookup worth precomputing once per key.
+const WIDE_JOIN_CASE: Case = Case {
+    label: "fused join + group, 100K-key dim",
+    sql: "SELECT d.name, COUNT(*), SUM(f.amount) FROM facts f JOIN dims d ON f.grp = d.id \
+          GROUP BY d.name",
+    limit: 512 << 20,
+};
+
+/// Q6's own shape (benchmark/queries.ts): `GROUP BY` a bare high-cardinality
+/// int COLUMN (not an expression - `grp` is stored, not computed here) with
+/// `COUNT(*)`/`SUM`, `ORDER BY` the sum, `LIMIT 10`. The "general high
+/// cardinality" case above groups by an EXPRESSION (`id % 200000`), which
+/// `column_index()` cannot resolve to a plain column and so never reaches
+/// the direct/two-pass paths at all - it is not what Q6 runs.
+const TOP_K_CASE: Case = Case {
+    label: "top 10 by sum, 200K-value column",
+    sql: "SELECT grp, COUNT(*) AS order_count, SUM(amount) AS total_spent FROM facts \
+          GROUP BY grp ORDER BY total_spent DESC, grp LIMIT 10",
+    limit: 512 << 20,
+};
 
 fn measure(fixture: &Fixture, case: &Case, runs: usize) -> String {
     let mut times = Vec::with_capacity(runs);
@@ -265,5 +343,13 @@ fn aggregate_paths_over_a_large_table() {
         .filter(|case| case.limit == 512 << 20)
     {
         eprintln!("[150K rows] {}", measure(&small, case, runs));
+    }
+    if wanted(&&WIDE_JOIN_CASE) {
+        let wide = Fixture::with_dims(rows, 100_000);
+        eprintln!("{}", measure(&wide, &WIDE_JOIN_CASE, runs));
+    }
+    if wanted(&&TOP_K_CASE) {
+        let wide = Fixture::with_dims(rows, 200_000);
+        eprintln!("{}", measure(&wide, &TOP_K_CASE, runs));
     }
 }

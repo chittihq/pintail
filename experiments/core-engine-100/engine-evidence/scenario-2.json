@@ -1,0 +1,612 @@
+{
+  "correct": false,
+  "filtered_join": false,
+  "phases": [
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 7.628153,
+          "rows": 2403,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 36.206914,
+          "rows": 100000,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 4.37403,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 11.37065,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 231.676605,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 3.863407,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 12.898592,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 217.375279,
+          "rows": 100000,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 28605.844289,
+          "resource_error": "query memory limit exceeded: 8001609 bytes used, 523911427728 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 131.596284,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 0
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 31.184877,
+          "rows": 2399,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 55.74668,
+          "rows": 100047,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 27.93373,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 31.106073000000002,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 289.895721,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 27.34659,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 27.091141,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 231.73395299999999,
+          "rows": 100047,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2410.5917130000003,
+          "resource_error": "query memory limit exceeded: 8005449 bytes used, 42948645536 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 227.903758,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 1
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 31.956152000000003,
+          "rows": 2399,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 56.191790999999995,
+          "rows": 100047,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 28.610101,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 31.568462999999998,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 290.704512,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 27.861183,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 27.594846,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 232.27295900000001,
+          "rows": 100047,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2415.869779,
+          "resource_error": "query memory limit exceeded: 8005449 bytes used, 42948645536 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 233.010373,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 2
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 33.018778,
+          "rows": 2265,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 59.005178,
+          "rows": 99105,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 29.984995,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 32.991019,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 290.892194,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 29.742877,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 30.068994,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 233.03082899999998,
+          "rows": 99105,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2414.871681,
+          "resource_error": "query memory limit exceeded: 7929849 bytes used, 41864942240 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 240.71976,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 3
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 33.862689,
+          "rows": 2265,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 59.117347,
+          "rows": 99105,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 30.292147,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 32.59675,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 293.656529,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 29.876,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 29.695902999999998,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 231.396356,
+          "rows": 99105,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2418.1389700000004,
+          "resource_error": "query memory limit exceeded: 7929849 bytes used, 41864942240 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 238.671256,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 4
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 35.083971,
+          "rows": 2255,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 60.392869000000005,
+          "rows": 99163,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 31.211879,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 34.119263,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 297.172455,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 30.651874999999997,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 30.455568999999997,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 233.717578,
+          "rows": 99163,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2399.460728,
+          "resource_error": "query memory limit exceeded: 7934649 bytes used, 41904919200 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 241.690867,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 5
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 34.839158000000005,
+          "rows": 2255,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 60.356794,
+          "rows": 99163,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 31.143733,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 33.937746999999995,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 297.243193,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 30.763637,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 30.403883999999998,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 232.221428,
+          "rows": 99163,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 2397.873488,
+          "resource_error": "query memory limit exceeded: 7934649 bytes used, 41904919200 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 243.113255,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 6
+    },
+    {
+      "cases": [
+        {
+          "case": 1,
+          "correct": true,
+          "ms": 4.902876,
+          "rows": 2255,
+          "sql": "SELECT id,v FROM facts WHERE g < 4 AND v >= 8000 ORDER BY id"
+        },
+        {
+          "case": 2,
+          "correct": true,
+          "ms": 26.897647,
+          "rows": 99163,
+          "sql": "SELECT id,k,g,v FROM facts ORDER BY id"
+        },
+        {
+          "case": 3,
+          "correct": true,
+          "ms": 4.314818,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(*),COUNT(v),SUM(v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 4,
+          "correct": true,
+          "ms": 7.783787,
+          "rows": 32,
+          "sql": "SELECT k,COUNT(*),COUNT(v),SUM(v) AS s FROM facts GROUP BY k ORDER BY s DESC,k LIMIT 32"
+        },
+        {
+          "case": 5,
+          "correct": true,
+          "ms": 227.98763599999998,
+          "rows": 16,
+          "sql": "SELECT d.g,COUNT(*),COUNT(f.v),SUM(f.v) FROM facts f JOIN facts d ON f.k=d.k WHERE d.id < 512 AND MOD(d.id,7) <> 0 GROUP BY d.g ORDER BY d.g"
+        },
+        {
+          "case": 6,
+          "correct": true,
+          "ms": 3.079623,
+          "rows": 16,
+          "sql": "SELECT g,COUNT(DISTINCT v) FROM facts GROUP BY g ORDER BY g"
+        },
+        {
+          "case": 7,
+          "correct": true,
+          "ms": 11.212185,
+          "rows": 32,
+          "sql": "SELECT id,v FROM facts ORDER BY v DESC,id LIMIT 32"
+        },
+        {
+          "case": 8,
+          "correct": true,
+          "ms": 207.050283,
+          "rows": 99163,
+          "sql": "SELECT id,SUM(v) OVER (ORDER BY id ROWS 63 PRECEDING),COUNT(v) OVER (ORDER BY id ROWS 63 PRECEDING),MIN(v) OVER (ORDER BY id ROWS 63 PRECEDING) FROM facts ORDER BY id"
+        },
+        {
+          "case": 9,
+          "correct": false,
+          "ms": 28141.51438,
+          "resource_error": "query memory limit exceeded: 7934649 bytes used, 507245943182 requested, 268435456 limit",
+          "sql": "SELECT id,(CASE WHEN v IS NULL THEN NULL ELSE k END) IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0), (CASE WHEN v IS NULL THEN NULL ELSE k END) NOT IN (SELECT CASE WHEN v IS NULL THEN NULL ELSE k END FROM facts WHERE MOD(id,3)=0) FROM facts ORDER BY id"
+        },
+        {
+          "case": 10,
+          "correct": true,
+          "ms": 127.289034,
+          "rows": 128,
+          "sql": "SELECT o.id,o.k,(SELECT COUNT(*) FROM facts i WHERE i.k=o.k),(SELECT COUNT(v) FROM facts i WHERE i.k=o.k),(SELECT SUM(v) FROM facts i WHERE i.k=o.k) FROM facts o ORDER BY o.id LIMIT 128"
+        }
+      ],
+      "phase": 7
+    }
+  ],
+  "query_memory_limit_bytes": 268435456,
+  "record_resource_errors": true,
+  "rows": 100000,
+  "scenario": 2,
+  "seed": 9901,
+  "settled_memo_disabled": true
+}

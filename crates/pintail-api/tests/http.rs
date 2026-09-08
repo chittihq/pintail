@@ -1025,11 +1025,15 @@ async fn query_and_table_routes_read_the_same_mirrored_snapshot() {
 
 #[tokio::test]
 async fn storage_reports_both_volumes_and_refuses_an_anonymous_caller() {
-    // Under the crate, not the system temporary directory: the check below
-    // expects the data directory on the system volume, and a host whose
-    // /tmp is its own filesystem (tmpfs on a server) would otherwise read
-    // as a second disk.
-    let data = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR")).expect("API data directory");
+    // Under the target directory, not the system temporary one: the check
+    // below expects the data directory on the system volume, and a host
+    // whose /tmp is its own filesystem (tmpfs on a server) would otherwise
+    // read as a second disk. `CARGO_TARGET_TMPDIR` is on that volume and
+    // outside the checkout - the crate directory satisfied the first half
+    // and not the second, and a scratch directory appearing in the tree
+    // raced the oracle's provenance check, which requires the checkout to
+    // stay unchanged for the length of its run.
+    let data = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).expect("API data directory");
     let app = pintail_api::router_with_state(configured_state(data.path()));
     let authorization = format!("Bearer {}", setup_admin(&app).await);
 

@@ -217,7 +217,9 @@ fn classify_subqueries(expression: &BoundExpr, memoizable: &mut Vec<bool>) {
             classify_subqueries(expr, memoizable);
             memoizable.push(!query_is_volatile(query));
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             classify_subqueries(expr, memoizable);
         }
         BoundExprKind::Binary { left, right, .. } => {
@@ -306,9 +308,9 @@ fn expr_is_volatile(expression: &BoundExpr) -> bool {
         BoundExprKind::InSubquery { expr, query, .. } => {
             expr_is_volatile(expr) || query_is_volatile(query)
         }
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            expr_is_volatile(expr)
-        }
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => expr_is_volatile(expr),
         BoundExprKind::Binary { left, right, .. } => {
             expr_is_volatile(left) || expr_is_volatile(right)
         }

@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 4,
+      "variant": 2,
+      "name": "dense-heap",
+      "processes": 3,
+      "changing_query_speedup": 1.0461964804220374,
+      "changing_cycle_speedup": 0.9824340934386978,
+      "operator_only_speedup": 4.420211561903601,
+      "min_process_speedup": 0.9973554660872667,
+      "max_process_speedup": 1.1751006239589519,
+      "scenario_medians": {
+        "0": 0.9973554660872667,
+        "1": 1.0461964804220374,
+        "2": 1.1751006239589519
+      },
+      "phase_medians": {
+        "settled": 1.7111631522623343,
+        "sparse-memtable": 1.0150776800233055,
+        "sparse-flushed-overlap": 1.0946531312037027,
+        "dense-hot-memtable": 1.069188152507547,
+        "dense-flushed-overlap": 1.0653510044508636,
+        "mixed-overlap": 1.0185422426586963,
+        "stale-replay": 1.0153765397896928,
+        "compacted": 1.7706251343162198
+      }
+    }
+  ]
+}

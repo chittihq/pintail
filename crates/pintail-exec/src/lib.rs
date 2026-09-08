@@ -27,7 +27,8 @@ pub use execution::{
     with_execution_cancellation,
 };
 pub use execution::{
-    MemoryBudget, MemoryScope, init_shared_memory_budget, set_session_cte_max_recursion_depth,
+    MemoryBudget, MemoryScope, init_shared_memory_budget, session_cte_max_recursion_depth,
+    session_group_concat_max_len, set_session_cte_max_recursion_depth,
     set_session_group_concat_max_len, shared_memory_budget, take_session_group_concat_warnings,
 };
 pub use execution::{
@@ -39,7 +40,7 @@ pub use explain::{
     explain_statement, format_physical_plan, format_physical_plan_with_stats,
 };
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
-pub use optimizer::{Optimizer, set_session_time_zone};
+pub use optimizer::{Optimizer, session_time_zone_key, set_session_time_zone};
 pub use storage::{PhysicalScanStats, SnapshotScanProvider};
 
 pub use execution::cancel_query_under_memory_pressure;

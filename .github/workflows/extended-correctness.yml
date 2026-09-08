@@ -1,0 +1,148 @@
+name: Extended release correctness
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: extended-correctness-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TARGET_DIR: target
+  PINTAIL_DASHBOARD_PREBUILT: '1'
+
+jobs:
+  sql:
+    name: SQL MySQL ${{ matrix.mysql }} shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        mysql: ['8.0', '8.4']
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extended-sql
+      - name: Runner regression tests
+        run: python3 -m unittest discover -s tests/extended -p 'test_*.py'
+      - name: Seeded differential and equivalent-query comparisons
+        env:
+          MYSQL_VERSION: ${{ matrix.mysql }}
+          SHARD: ${{ matrix.shard }}
+        run: python3 tests/extended/run.py --layer sql --mysql "$MYSQL_VERSION" --shard "$SHARD"
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f tests/extended/output/summary.md ]; then
+            cat tests/extended/output/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-sql-${{ matrix.mysql }}-${{ matrix.shard }}-${{ github.run_attempt }}
+          path: tests/extended/output/
+          retention-days: 14
+          if-no-files-found: warn
+
+  core:
+    name: Storage faults and execution regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extended-core
+      - name: SQL, spill, storage fault and reuse prototype checks
+        run: python3 tests/extended/run.py --layer core
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f tests/extended/output/summary.md ]; then
+            cat tests/extended/output/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-core-${{ github.run_attempt }}
+          path: tests/extended/output/
+          retention-days: 14
+          if-no-files-found: warn
+
+  cdc:
+    name: Live CDC MySQL ${{ matrix.mysql }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        mysql: ['8.0', '8.4']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove checked-in evidence from the fresh runner
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          for pattern in ('results*.json', 'results*.md'):
+              for path in Path('tests/e2e').glob(pattern):
+                  path.unlink()
+          PYCODE
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: extended-cdc
+      - name: Dashboard assets
+        working-directory: packages/dashboard
+        run: |
+          bun install --frozen-lockfile
+          bun run generate
+      - run: bun install --frozen-lockfile
+        working-directory: tests/e2e
+      - name: Snapshot, updates, schema changes and restart through the real server
+        working-directory: tests/e2e
+        env:
+          PINTAIL_E2E_MYSQL_IMAGE: mysql:${{ matrix.mysql }}
+        run: |
+          set -o pipefail
+          mkdir -p ../extended/output
+          git rev-parse HEAD > ../extended/output/commit.txt
+          bun run e2e 2>&1 | tee ../extended/output/e2e.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: extended-cdc-${{ matrix.mysql }}-${{ github.run_attempt }}
+          path: |
+            tests/extended/output/
+            tests/e2e/results*.json
+            tests/e2e/results*.md
+          retention-days: 14
+          if-no-files-found: warn
+
+  result:
+    name: Extended correctness result
+    if: always()
+    needs: [sql, core, cdc]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all layers
+        env:
+          SQL_RESULT: ${{ needs.sql.result }}
+          CORE_RESULT: ${{ needs.core.result }}
+          CDC_RESULT: ${{ needs.cdc.result }}
+        run: |
+          printf 'SQL: %s\nCore: %s\nCDC: %s\n' "$SQL_RESULT" "$CORE_RESULT" "$CDC_RESULT" >> "$GITHUB_STEP_SUMMARY"
+          test "$SQL_RESULT" = success && test "$CORE_RESULT" = success && test "$CDC_RESULT" = success

@@ -2685,3 +2685,1145 @@ merge; after = the overlay masks the superseded rows from a direct decode.
 speed plus one packed key column; the merge remains for the shapes the
 overlay declines (stale versions, composite keys, partial segments,
 version-retaining segments, key-ordered consumers).
+
+
+## e74 — Dense packed aggregate lanes (synthetic table, in-process, memo off)
+
+Ten million generated rows in 1M-row segments, 32 execution threads,
+release build, five runs per case on the build host. Milliseconds below
+are minimum / median, with operator profiling enabled through
+`PINTAIL_BENCH_PROFILE=1` in `morsel_bench`. The settled memo is disabled.
+Before is the development baseline; after includes bounded integer slots,
+packed count/SUM lanes, and explicit persistent and worker slab bounds.
+
+| case | before min / median | after min / median |
+|---|---:|---:|
+| two-pass text key, five groups | 86.8 / 90.7 | 22.3 / 25.4 |
+| two-pass int key, fifty groups | 105.3 / 131.2 | 32.6 / 39.0 |
+| general int+text keys | 505.5 / 508.5 | 519.2 / 543.0 |
+| general int+text keys, 64 MiB | 784.5 / 801.7 | 764.9 / 927.9 |
+
+The text path already had a dense table. Its remaining cost was repeated
+column access and generic lane/state dispatch per row. Packed count and
+integer SUM kernels resolve those choices once per batch; the integer
+key path also avoids scattering and hashing for a bounded domain. The
+mixed-key control keeps the general path and does not establish a speedup.
+Its median varies more than its minimum on the shared machine.
+
+For the five text-key profiles, aggregate self time changed from
+78.2/83.0 ms minimum/median to 15.2/18.1 ms; scan self time from 7.7/7.8
+to 7.1/7.3 ms. Scan peak reservation changed from 133.0 to 133.4 MiB,
+including the newly reserved dense state bound. The aggregate still costs
+more than the scan in this profile; the total-time target is met, rather
+than a claim that their self times are equal.
+
+The generated NULL/duplicate/domain-overflow comparisons pass for text,
+signed and unsigned keys. One concurrent test run exposed a split group
+in the general CONCAT-keyed reference (two rows with the same key whose
+counts sum to the dense result); twenty isolated repeats and the subsequent
+complete crate run passed. This intermittent reference-path observation
+is not claimed fixed by the dense kernels. The final slice checks passed:
+workspace clippy with warnings denied, formatting, and 464 executor/store
+tests (three ignored measurements). No spill implementation was added.
+
+**Verdict: keep.** Both single-key minima and medians improve materially;
+the text aggregate's total is below the original 120 ms target. The fused
+profile attributes later direct input pulls to the aggregate, so its self
+time is not an isolated CPU-kernel measurement.
+
+
+## e75 — Multi-column packed predicates and direct delta decode (synthetic, in-process)
+
+The morsel fixture's integer grouping column supplies the selective
+predicate; its increasing unsigned key supplies the range that excludes
+nothing. Ten million generated rows, 32 scan and execution threads, release
+build, memo disabled, five profiled runs per case. Values are milliseconds,
+minimum / median. The baseline includes the dense-fold slice, which does
+not change filtered COUNT execution.
+
+| case | before min / median | after min / median |
+|---|---:|---:|
+| count, one predicate | 9.6 / 10.4 | 7.9 / 9.4 |
+| count, two predicates | 37.5 / 38.4 | 9.7 / 10.5 |
+| two-column result, one predicate | 187.8 / 214.2 | 198.3 / 202.0 |
+| two-column result, two predicates | 175.4 / 187.3 | 17.6 / 18.2 |
+| 150K rows: count, one predicate | 0.4 / 0.5 | 0.3 / 0.4 |
+| 150K rows: count, two predicates | 2.8 / 2.9 | 0.9 / 0.9 |
+
+The increasing key used delta bit packing, which the direct integer
+reader declined. It decoded temporary normalized values and cells before
+copying into its packed destination. Streaming deltas directly into that
+destination first reduced the conjunction to 14.0/14.8 ms, but let prefetch
+retain more slices: peak reservation rose from 74.9 to 151.8 MiB.
+That intermediate result did not meet the memory target.
+
+The complete change fuses a multi-column integer conjunction when all
+projected columns are predicate inputs. It borrows the decoded columns
+for exact signed/unsigned comparisons and compacts their survivors before
+retaining the prefetch round, without decoding them again. Single-column
+scans retain their existing path; non-integer or unsupported predicates
+retain their existing evaluator. The outer filters still verify survivors.
+The eligibility flag is computed at use rather than enlarging every scan.
+The workspace report-shape gate also exposed a pre-existing join admission
+double count: binned keys were reserved individually and added again to
+the transient estimate. Direct decoding admitted larger inputs and exposed
+that overcount at a 24 MiB ceiling. The check now includes the live batch
+and incoming key, with previous keys counted once through the tracker.
+A batch occupying more than half the remaining headroom also bins at most
+1,024 rows before inserting, allowing the existing resident-map spill valve
+to run before the temporary key list fills the ceiling.
+The unchanged report-shape regression is checked with the full workspace build;
+crate-only builds had passed even before this correction. Slice and round
+sizing are unchanged, and G12's missing aggregate transient floor is untouched.
+The count-conjunction scan self time
+is now 9.7/10.4 ms, down from 37.3/38.2 ms; its peak reservation is 3.1 MiB.
+The single-predicate baseline reserves 76.5 MiB. Before the footprint-only
+correction, the same kernels measured 7.6/8.6 ms for the conjunction and
+8.5/9.0 ms for the single predicate. The controls varied between rounds;
+no speedup is claimed for either single-predicate control. Small-table conjunctions
+remain slower than a single predicate, while improving over their baseline.
+
+Tests compare signed and unsigned delta kernels against generic decoding
+with duplicates, NULLs and disjoint ranges, reject overflow even in an
+unselected suffix, and compare packed predicate scans with general
+expressions over nullable generated columns and values above i64::MAX.
+Final workspace clippy and formatting passed, followed by all 941 workspace
+tests (28 ignored tests, including measurements and external harnesses).
+
+**Verdict: keep.** The large-table conjunction costs less than 1.5 times
+the single predicate at both minimum and median, and peak reservation falls.
+
+
+## e76 — G2 and G3 on the benchmark replica (20M rows, 8 CPUs, memo off)
+
+The synthetic morsel table established both closures; this is the same
+pair of changes measured on the benchmark replica through
+`benchmark/profile.ts`, scan and execution pools at 8x8, five runs, the
+settled memo off. Milliseconds are the wall time of `EXPLAIN ANALYZE`
+through the HTTP API, minimum of five, with the profile's own operator
+self times beside them. Before is the rc9 tree; after is that tree plus
+the two kernels.
+
+| query | before min | after min | before aggregate self | after aggregate self |
+|---|---:|---:|---:|---:|
+| one predicate, filtered count | 48 | 46 | — | — |
+| two predicates, filtered count | 155 | 74 | — | — |
+| five-group aggregate | 131 | 118 | 86.9 | 73.7 |
+
+The two-predicate count is the shape G2 was opened on. Its replica gain
+matches the synthetic one in direction and lands inside the 1.5x target
+against the single-predicate control, which did not move.
+
+The five-group aggregate did not behave as the synthetic case predicted,
+and the reason is that the synthetic case was the wrong shape. It groups
+with COUNT and an integer SUM, which is exactly the packed fold; the
+replica's query averages a decimal, whose lane the fold declines. So the
+replica query never reached the new kernel, and it still got slower: 131
+ms before, 156 ms after, with aggregate self time rising from 86.9 to
+120.4 ms.
+
+The cause was the fold's window chunking, not the fold. It cut a window
+into exactly one chunk per pool thread, which bounds the partial slabs
+but leaves rayon nothing to steal, so a window ends when its slowest
+chunk does; batch cost varies with the groups a batch touches. Four
+chunks per thread restores the balance, keeps the slab bound (computed
+from the chunk count, and still declining the fold when it does not
+fit), and the query runs 118 ms with 73.7 ms of aggregate self time,
+ahead of the 131 ms and 86.9 ms it started at.
+
+**Verdict: keep, and measure closures on the replica.** A synthetic case
+that takes a different code path from the query it stands for can report
+a fourfold gain while the real query regresses by a fifth. Both figures
+above are now in the hardening todo's closure notes.
+
+
+## e77 — What a materialized row costs, and what sorting on keys first would save
+
+`crates/pintail-types/tests/layout.rs`, release, minimum of 200 runs on the
+build host. The row is the shape a paginated report returns: nineteen
+columns, mostly integers and short text, one wider text column. The counts
+are the ones the delivery-report list actually meets, three thousand two
+hundred candidates for fifty returned.
+
+Prompted by a published account of shrinking a DNS cache's per-entry
+footprint, which ranked its wins as: drop capacity fields from immutable
+data, consolidate separate allocations, box oversized enum variants, and
+stop building the structured representation at all in favour of raw bytes
+parsed on demand. The last of those was worth the most there, and the
+question here was which of the four transfers.
+
+| fact | bytes |
+|---|---:|
+| `Value` | 32 |
+| one row's `Value` structs | 608 |
+| its text on the heap | 104 |
+| its `Vec` header | 24 |
+| **total per row** | **736** |
+| what the row carries | 168 |
+
+So a row costs 4.4 times what it holds, and three thousand two hundred of
+them are 2.3 MiB. Two of the four techniques apply to that directly and
+neither is large: boxing the text variants takes `Value` from 32 bytes to
+24, a quarter of the inline cost, and `Box<[Value]>` in place of `Vec`
+saves the 8-byte capacity field once per row.
+
+The fourth technique is the one that transfers, in the form this engine
+needs it: do not build the structured representation for rows nobody will
+read.
+
+| shape | ms |
+|---|---:|
+| build every candidate row, then sort, then keep fifty | 0.691 |
+| sort the keys beside a row identity, keep fifty, build those | 0.007 |
+
+**Verdict: late materialization, not a smaller `Value`.** Ordering keys
+before building rows is worth about ninety-five times on this shape, and
+shrinking `Value` is worth a quarter of one of its terms. The engine
+currently takes the first shape: profiled against a 500,000-row mirror,
+the delivery-report list spends 13.1 ms of a 20.5 ms query in a join that
+materializes 3,200 rows so a top-50 sort can discard 3,150 of them, and
+carrying fifteen more columns through that costs 11 ms of the 17.5 ms the
+same query takes without its join.
+
+Two changes follow, and they compose: sort on the keys and a row identity
+and fetch the remaining columns only for the survivors, and push a top-K
+through a left join whose build key is unique, which is what makes the
+join's own output unnecessary for the rows that lose. Neither is a layout
+change, and the layout changes are not worth doing first.
+
+
+## e78 — A grouped aggregate served from per-segment partial states
+
+`crates/pintail-exec/tests/segment_subcube.rs`, release, ten million rows
+in ten one-million-row segments, five groups, minimum of five runs, memo
+disabled so every run executes.
+
+Prompted by reading how another engine keeps materialized views current:
+a view is a trigger that runs over the block being inserted, and it stores
+partial aggregate states rather than finished numbers so later inserts can
+merge into them. Its refreshable variant instead recomputes the whole
+query on a schedule and swaps the result atomically. Two things about that
+design matter here. The partial-state idea is the valuable half. And the
+incremental form is documented as not handling updates or deletes at all,
+which a mirror of a mutable source cannot assume.
+
+This engine already folds per-segment aggregates, but only when there is
+no GROUP BY (`try_sma_fold`); the grouped case is a recorded gap in
+`docs/limitations.md`. Segments are immutable, so a grouped sub-cube
+written beside one can never go stale. The measurement asks what that
+would be worth.
+
+| shape | ms |
+|---|---:|
+| scan and aggregate, as today | 28.455 |
+| merge ten segments' partials | 0.000 |
+| merge partials, then 50,000 live memtable rows | 0.391 |
+
+The settled ratio is not the interesting number; a whole-result memo
+already serves a settled repeat. The interesting one is the last row.
+Today an ingest invalidates the memo and the next query pays the full
+28 ms again. Merging immutable per-segment partials and walking only what
+is still in the memtable answers the same query in 0.391 ms, seventy-three
+times faster, and that number holds under continuous replication because
+a flush adds one more segment's partials rather than invalidating
+anything.
+
+**Verdict: worth building, in the grouped form, for additive aggregates
+only.** COUNT and SUM merge from partials, and AVG follows from the two.
+MIN and MAX cannot survive a delete, and COUNT(DISTINCT) cannot merge
+without a sketch, so those decline the fold as the ungrouped path already
+declines DISTINCT. Unlike the append-only design that prompted this, a
+mirror sees updates and deletes: the memtable pass already carries the
+tombstones and superseded versions, so correctness comes from the same
+merge-on-read rule the scan uses, not from assuming an append-only source.
+
+Where the state should live follows from what it costs to build. One
+segment's partials take 6.8 ms to compute from its rows, so a cache built
+lazily in memory pays that once per segment and nothing after:
+
+| strategy | first query after a flush | every query after |
+|---|---:|---:|
+| scan, as today | 22.5 ms | 22.5 ms |
+| build partials lazily, keep them in memory | 7.2 ms | 0.34 ms |
+| build them during the flush | 0.34 ms | 0.34 ms |
+
+The third row is not a faster algorithm; it is the same work moved to
+where the rows are already in hand. A flush reads every row it writes, so
+folding a sub-cube into that pass costs almost nothing, and the first
+query after a flush stops paying for it.
+
+That argues for both, in order. An in-memory cache keyed by segment needs
+no format change and no migration, is bounded by eviction, and can be
+dropped whole under memory pressure because it is only ever a cache of
+something the segment can recompute. Building at flush time is the second
+step and removes the remaining cost. Persisting it beside the segment is
+the third, and only that one survives a restart.
+
+The open question this does not answer is which group columns deserve a
+sub-cube. Writing one per column per segment is unbounded; the shapes
+worth it are low-cardinality columns that reports group by, which is what
+the dense-fold work already identified as the common grouping key. A
+bounded in-memory cache makes that question self-limiting in a way a
+persisted format does not, which is a further argument for starting
+there.
+
+
+## e79 — What the overlay's mask costs, by how much changed
+
+`crates/pintail-store/tests/mask_cost.rs`, release, ten million sorted
+keys, minimum of five runs. All three masks are compared for equality at
+every rate and every shape, so a faster one is not taking a shortcut the
+others refuse.
+
+**This entry replaces an earlier reading that was wrong in a way that
+reached the shipped code.** The first version of this measurement timed a
+mask built block by block - skip a block whose key range holds no change,
+binary-search inside the block otherwise - while `overlay_positions`
+actually does a plain lookup of each changed key against the whole key
+column. The blocked variant searches thirteen levels in a warm 64 KiB
+block; the real one searches twenty-three levels across eighty megabytes.
+Timing the wrong algorithm put the crossover at about one row in five,
+and `SEARCHED_OVERLAY_SHARE` was set from it, so every table between one
+and five percent changed took the slower path. Corrected below and in the
+constant.
+
+The first version also changed only keys the segment already held, so the
+insert path - a changed key that supersedes nothing and has to be placed
+after the survivors and the inserts below it - was never timed, and it
+scattered every change evenly, which is the shape the search does worst
+on.
+
+Three masks. **Linear** walks both sorted sides at once, visiting every
+segment row, so its cost follows the table. **Searched** looks each
+changed key up in the whole key column: what ships. **Narrowed** does the
+same but starts each lookup where the last one landed, since the changed
+keys are sorted.
+
+Times in milliseconds, minimum of five runs:
+
+| shape | changed | linear | searched | narrowed |
+|---|---:|---:|---:|---:|
+| scattered | 2 | 1.85 | 0.001 | 0.000 |
+| scattered | 2,000 | 4.01 | 0.14 | 0.62 |
+| scattered | 20,000 | 4.15 | 1.57 | 11.98 |
+| scattered | 50,000 | 4.28 | 3.15 | 18.80 |
+| scattered | 100,000 | 4.12 | 4.16 | 22.15 |
+| scattered | 200,000 | 4.09 | 4.91 | 20.06 |
+| scattered | 2,000,000 | 5.78 | 19.63 | 92.28 |
+| clustered | 20,000 | 3.84 | 0.19 | 0.40 |
+| clustered | 100,000 | 3.91 | 0.90 | 2.35 |
+| clustered | 200,000 | 3.97 | 1.78 | 5.03 |
+| clustered | 500,000 | 4.16 | 4.49 | 13.61 |
+| half inserts | 20,000 | 4.04 | 1.58 | 11.65 |
+| half inserts | 100,000 | 4.43 | 4.17 | 22.63 |
+| all inserts | 20,000 | 4.09 | 1.58 | 11.55 |
+| all inserts | 100,000 | 4.24 | 4.14 | 22.41 |
+
+Four readings.
+
+**The linear walk is flat at about four milliseconds whatever changed.**
+That is the property worth removing: a table that took two updates pays
+the same mask cost as one that took two million.
+
+**The real crossover is one percent, not five.** Scattered changes, which
+is the worst shape, break even at 100,000 of ten million rows. The
+constant is now one in two hundred rather than one in twenty, choosing
+the search only where it clearly wins rather than where the two are
+level.
+
+**Inserts cost what updates cost.** The half-insert and all-insert arms
+track the scattered arm to within a few percent at every rate, so the
+placement arithmetic is not a hidden cost - which also means the equality
+assertion, not the timing, is what those arms are worth.
+
+**Narrowing the search makes it far worse, and that is the useful
+surprise.** Resuming each lookup from the previous match looks like a
+strict improvement: a shorter search over a shrinking slice. It is three
+to seven times slower than searching the whole column. A binary search
+from a fixed base touches the same first ten levels every time and they
+stay in cache; moving the base makes every search start on a cold line.
+The obvious optimization is refuted, and the blocked variant that the
+first version of this measurement accidentally timed is the shape worth
+revisiting instead - it keeps a fixed base within each block.
+
+**Clustered changes are far cheaper than scattered ones** - 20,000
+changes cost 0.19 ms clustered against 1.57 ms scattered, and the
+crossover moves out past two percent. Updates in practice cluster towards
+recent rows. The threshold does not look at the shape, and could: the
+memtable keys are sorted, so the span between the first and the last,
+against the segment's, separates the two cases for the price of two
+comparisons. Not built; recorded as measured.
+
+**Verdict: pick the mask by how much changed, not by range overlap** -
+with the crossover taken from the algorithm that ships. A membership
+filter is the answer to a different question, one where the changed set
+is too large to hold and too large to sort, and this measurement says
+that is not the regime a replicated table sits in.
+
+
+## e80 — Maintaining the supersession mask instead of rebuilding it
+
+`crates/pintail-store/tests/supersession_bitmap.rs`, release, ten million
+rows, twenty thousand changed, minimum of five runs. Both masks are
+compared for equality, so the maintained one marks exactly the rows the
+rebuilt one does.
+
+e79 made the mask cost follow the change rather than the table. It left
+one thing untouched: every scan still rebuilds it. A row's position in a
+segment does not move, so the work of finding it can be done once when
+the row arrives instead of once per query.
+
+Two shapes of change, because the first version of this measurement had
+only the scattered one and read the pessimistic end as the answer.
+Scattered changes touch every part of the key column and no lookup reuses
+a line the last one warmed; clustered changes, which is what a burst of
+recent activity leaves, reuse the same lines repeatedly.
+
+| step | scattered, ms | clustered, ms |
+|---|---:|---:|
+| rebuild the mask, per scan | 1.572 | 0.169 |
+| mark all twenty thousand as they arrive | 0.718 | 0.184 |
+| the same, per changed row | 36 ns | 9 ns |
+| read a mask already built | 0.062 | 0.062 |
+
+At two thousand updates a second, work per second by query rate:
+
+| queries/s | rebuild, ms/s | maintain, ms/s | rebuild clustered | maintain clustered |
+|---:|---:|---:|---:|---:|
+| 1 | 1.6 | 0.1 | 0.2 | 0.1 |
+| 5 | 7.9 | 0.4 | 0.8 | 0.3 |
+| 10 | 15.7 | 0.7 | 1.7 | 0.6 |
+| 50 | 78.6 | 3.2 | 8.5 | 3.1 |
+
+**The clustered column is the one that changes the verdict's size.**
+Rebuilding a clustered mask costs 0.169 ms, nine times less than a
+scattered one, so maintaining it is worth 1.7x at ten queries a second
+rather than 22x. The scattered figures are the ceiling on the value here,
+not the expectation, and the earlier version of this entry quoted the
+ceiling.
+
+Rebuilding still scales with queries and maintaining with changes, so the
+lines cross either way; how far apart they run afterwards depends on a
+shape this measurement now reports instead of assuming.
+
+Two pieces of outside reading shaped this. A survey of incremental view
+maintenance in semiring terms gives the rule for which aggregates can be
+kept current under deletion: the payload must have an additive inverse,
+so the effect of a row can be undone. COUNT and SUM have one and MIN and
+MAX do not, which is the split e78 arrived at by argument and this
+supplies the reason for. Separately, lakehouse formats moved from
+rewriting files on delete to carrying a per-file bitmap of removed row
+positions, which is the same shape as this mask; the difference here is
+that a mirror supersedes rather than deletes, and the bitmap has to be
+rebuilt when a flush changes the segment set.
+
+**Verdict: maintain it, and derive it from what CDC already knows.** The
+apply path already has the key of every row it writes and already reads
+the segment key column to place it, so the position lookup is work that
+path can absorb. The scan then reads a bitmap. The open question is the
+lifetime: a bitmap belongs to a (segment, memtable generation) pair, so a
+flush retires it, and the cost of rebuilding one after a flush is the
+0.797 ms measured above, paid once.
+
+
+## e81 — What a merging scan costs against a direct one, on the same rows
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows of
+four columns, twenty thousand of them changed and flushed so the scan
+meets two overlapping segments. The comparison is the same rows and the
+same columns with nothing to merge.
+
+**Re-timed.** The first reading built and measured the merging store, then
+built and measured the direct one, so the two arms met different allocator
+and page-cache states and a hundredfold ratio rested on the order they ran
+in. Both stores are now built before either is measured, a warm-up round
+of each is discarded, and the arms alternate - swapping which goes first
+inside each round. The result is unchanged, which is what the re-timing
+was for.
+
+| scan | ms |
+|---|---:|
+| direct, one segment, packed columns | 13.6 |
+| merging, 1% of rows changed | 1445.4 |
+| the merge costs | 106x |
+
+One row in a hundred changing makes the scan a hundred times slower. Two
+things account for it and neither is the winner-selection logic, which is
+a cheap walk of already-sorted heads.
+
+The first is the gather. A merging chunk asks its segment for scattered
+row indices, so it decodes per row rather than per block, and gives up
+every advantage the block layout has. The direct path reads ranges.
+
+The second is the representation. The direct path hands back packed typed
+columns; the merging path hands back `Value` per cell, which e77 measured
+at 32 bytes to carry 8, with an allocation for every string.
+
+Removing the two transposes the merging path used to do between those
+steps, turning its fetch into rows and back into columns, was measured at
+1546.7 against 1433.7 ms on the earlier, ordering-sensitive setup: about
+6%. Worth keeping, since the work was
+pure waste, but it is not the cliff and this records that plainly.
+
+**The fix is to make a merging scan look like a direct one.** At one
+percent churn the winning rows form long contiguous runs, so the winner
+indices can be expressed as ranges and read with the same ranged, packed
+reader the direct path uses, with the few memtable winners placed into the
+resulting typed columns. That is a contained change with a clear target:
+this scan should cost nearer 14 ms than 1547.
+
+The number also reframes the compaction gap recorded as G10. An
+update-heavy table that has flushed once sits on a base and an overlapping
+tail and merges on every scan until two more flushes arrive; at these
+figures that is not a tidiness problem, it is a hundredfold slowdown
+persisting until compaction happens to run.
+
+## e82 — One execution answering a burst of identical reads
+
+`crates/pintail-wire/tests/shared_query_burst.rs`, ignored. A local
+database of 200,000 rows, sixteen threads released together on one
+grouped aggregate, five bursts, the best reported.
+`PINTAIL_DISABLE_SHARED_QUERIES=1` runs the arm where each request
+executes for itself; `PINTAIL_DISABLE_SETTLED_MEMO=1` crosses it with the
+settled aggregate memo, to show the two are independent.
+
+| host shape | each request executes | one execution answers all | ratio |
+|---|---:|---:|---:|
+| 32 cores | 71.4 ms | 42.7 ms | 1.67× |
+| 32 cores, settled memo off | 72.5 ms | 45.2 ms | 1.60× |
+| 4 cores (`taskset -c 0-3`) | 288.4 ms | 80.9 ms | 3.57× |
+
+Executions, in every shared run: sixteen requests, one execution. Across
+five bursts the counters read five led and seventy-five answered by
+another, with nothing falling back or refused.
+
+Two readings matter more than the ratio.
+
+The first is that the ratio is a function of how much spare CPU the host
+has. On 32 idle cores the sixteen executions mostly run at once, so
+deleting fifteen of them saves less than a third of the wall clock. On
+four cores they queue, and the same deletion is worth 3.6×. A server
+doing nothing else gains little; a server under load - the case a refresh
+storm creates, and the case that produced the 503s - gains most. Quoting
+a single speedup for this would be quoting the idle host.
+
+The second is that it composes with the settled aggregate memo rather
+than duplicating it. The memo answers a repeat of a settled query; this
+answers a *simultaneous* copy, settled or not, and the memo-off row shows
+the gain is the same size without it.
+
+What is not measured here: the admission permit. A waiting request keeps
+the permit it took, so this removes executions rather than freeing slots,
+and the throughput it buys is the queue draining faster rather than more
+queries being admitted at once.
+
+## e83 — The resource sampler was racing an SSH connection, not the query
+
+`benchmark/run.ts`'s CPU/memory sampler ran `docker stats --no-stream`
+once every 250 ms in a loop. Over the ssh:// docker context that call pays
+a fresh SSH round trip each time; on a sub-second query the sampler could
+start and stop without a single `--no-stream` call completing, which is
+why `benchmark/results.md`'s CPU column reads 0% on six of the eight
+queries in the "Engine speed (memo DISABLED)" row set despite one of them
+(Q6) also showing 39% from a run where a call happened to land.
+
+Fix: one `docker stats <container>` (streaming, not `--no-stream`) spawned
+per container the first time it is sampled and left running for the rest
+of the process; `sampled()` now marks a start/stop index into that
+stream's growing sample list instead of spawning a process per tick. The
+streaming format turned out to interleave cursor-home/clear-line/clear-
+screen escape codes with each refresh (a mode built for a redrawn
+terminal, not a pipe), so a data line opens with `\x1b[H` and closes with
+`\x1b[K`; the reader strips `\x1b\[[0-9;]*[A-Za-z]` before parsing.
+
+Verified locally (Docker Desktop, not the shared benchmark host — this
+checks the mechanism, not a query's real CPU%): a container running four
+CPU-bound loops under `--cpus=4`, sampled for 4 seconds. Before the fix,
+`--no-stream` in a loop over a local (non-SSH) daemon still occasionally
+returns zero samples within a short window because the loop's own 250 ms
+`Bun.sleep` plus process-spawn latency can outlast the window; after the
+fix, the same window reliably reads several samples with peak CPU near
+the container's 400% ceiling:
+
+| approach | window | samples seen | peak CPU read |
+|---|---:|---:|---:|
+| `--no-stream` loop (`benchmark/run.ts` before) | 4 s | 0 | 0% |
+| long-lived stream (after) | 4 s | 7 | 401% |
+
+The SSH round-trip cost that motivated this — and that produces the 0%
+rows in `benchmark/results.md` — only reproduces on the shared remote
+docker host; re-running the full benchmark to confirm the fixed column is
+the owner's call (`benchmark/run.ts` is the stable-release gate, not a
+mid-flow tool).
+
+**Verdict: keep.** No engine code changed; this only makes the evidence
+the harness already collects honest.
+
+## e84 — The HTTP path's fixed cost: one engine, one auth cache (loopback, release build, local database)
+
+`execute_query` (`crates/pintail-api/src/query.rs`) built a fresh
+`ReplicaEngine` per request and mapped every value through an intermediate
+`serde_json::Value` tree; `authenticate_api_key`
+(`crates/pintail-api/src/auth.rs`) hashed and looked the key up in
+metadata on every call. e65 measured this at 25-40 ms outside the engine
+per query on the 20M-row benchmark.
+
+Fixes: one `ReplicaEngine` held on `ApiState` and cloned per request
+(shares its metadata-signature memo and signature-reader connection,
+which a fresh instance loses); an in-process API-key cache keyed by the
+presented secret's SHA-256, TTL 30s, cleared immediately on
+disable/delete; rows serialize straight from `Value` into the response
+writer via a manual `Serialize` impl (`JsonRows`) instead of building a
+`Vec<Vec<serde_json::Value>>` first. Timings behind `PINTAIL_API_DEBUG`.
+
+Measured against a release build on loopback with a LOCAL database
+(`POST /api/databases/local` - no MySQL/CDC involved, so this isolates
+the HTTP/auth/engine path from scan or aggregate cost) running `SELECT
+1`, five calls:
+
+| call | engine ms | spawn_blocking ms | reshape ms |
+|---|---:|---:|---:|
+| 1st (cold) | 0.00 | 1.20 | 0.00 |
+| 2nd-5th | 0.00 | 0.08-0.16 | 0.00 |
+
+`engine=0.00ms` on every call: building the engine is now an `Arc` clone.
+`spawn_blocking` drops after the first call because the metadata-signature
+memo and signature-reader connection now survive between requests instead
+of being rebuilt every time. API-key auth: 0.43 ms on the first request
+(a real metadata hit), 0.00 ms on the next two (cache hit); disabling the
+key made the very next request 401 immediately (TTL invalidation is not
+what caught it - the explicit `invalidate_api_key` call on disable was).
+
+Not measured here: the JSON-tree-vs-direct-serialize difference on a real
+row set (`SELECT 1` is one row) and the full 20M-row benchmark's HTTP
+column, both of which need the containerized replica and are the owner's
+next full run to bank.
+
+**Verdict: keep.** `crates/pintail-api/src/query.rs` and `state.rs` gained
+unit tests for the new serialization shape and the cache's TTL/invalidation;
+the crate's existing HTTP integration suite (which exercises the full
+request path) passes unchanged.
+
+## e85 — Dense join table extended to every reader; batching the probe measured negative (10M rows, 100K-key build, 32 threads, memo off)
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "fused join + group,
+100K-key dim": a 100,000-row dimension table (8 distinct region names, like
+`benchmark/queries.ts`'s Q8) joined to the 10M-row fact table and grouped
+by region - the shape the fused join-aggregate's dense probe already had
+in reach, at Q8's real cardinality rather than the existing 50-row-dim
+case's. Minimum of 7-9 runs each; the host's spread across runs was real
+(medians moved more than the effect being measured), so the minimum is
+the number read, matching this file's convention elsewhere.
+
+| build | min | median |
+|---|---:|---:|
+| before (fused-only dense table, per-row `plan.buckets` address lookup) | 156.5 ms | 162.6 ms |
+| after (`PartitionedBuild` finalizes dense in place; group indexes resolved once per key) | 143.2-151.1 ms (three runs) | 148.6-170.1 ms |
+| after, plus batching the probe into two passes | 143.6-180.9 ms | 148.6-184.5 ms |
+
+The single-pass version is a real, modest win (~5-9% at the minimum,
+consistent across three separate runs never exceeding the before
+figure). The two-pass version - precompute every row's dense offset in
+one pass, fold in a second - was tried because the brief called for it
+directly; measured, it made the same case slower on one run (180.9 ms)
+and no better than the single-pass version on the others. At this
+build size (100K distinct keys, comfortably inside cache) the dense
+table gather was not the bottleneck the two-pass split was written to
+fix, and the extra `Vec` allocation plus a second full traversal per
+morsel cost more than it saved. Reverted; see "The dense join table
+lives inside `PartitionedBuild`, not beside it" in `docs/decisions.md`
+for what was kept.
+
+Full crate suite (350 existing + 3 new `dense_join_table_tests`) passes
+unchanged, including the fused-join-and-spill, mixed-collation-join, and
+join-accounting tests that already exercised this path.
+
+**Verdict: keep the single-pass dense extension; drop the two-pass
+batching.** `PartitionedBuild::get` is now dense-aware for every caller,
+not only the fused aggregate, closing that part of item 2 in
+`docs/design/production-hardening-todo.md` section H; the probe-batching
+half of that item did not survive measurement.
+
+## e86 — Bitset `COUNT(DISTINCT)`: a real 25% win, after a thrashing bug measured 1.5-30x slower
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "count distinct,
+100K-value column": Q7's shape (`benchmark/queries.ts`) - a handful of
+groups, each counting `COUNT(DISTINCT id % 100000)` over its share of
+10M rows, so the column's real cardinality (100,000) is far above the
+group count and comfortably inside the new bitmap's span cap. Minimum of
+7-9 runs.
+
+`DistinctSeen`'s existing `Ints` variant (a `HashSet<i128>`, already
+faster than the general `Value`-keyed path per e16) now promotes to a
+bitmap once a group's distinct integers pass 64 in count and span fewer
+than `DISTINCT_BITMAP_MAX_SPAN` (2^20) values - trading the hash-and-probe
+per key for one bit test/set.
+
+First attempt, measured: **slower**, not faster.
+
+| build | 10M rows, min | 150K rows, min |
+|---|---:|---:|
+| before (HashSet only) | 710.1 ms | 14.2 ms |
+| bitmap, demote-and-immediately-retry past the window | 1,102.6-1,262.2 ms | 440.8-458.8 ms |
+| bitmap, grow the window to the exact new bound | (not separately measured - same failure mode) | |
+| bitmap, grow with doubling headroom | **523.5-533.0 ms** | **11.8-12.7 ms** |
+
+Cause: `id % 100_000` seen in roughly ascending order widens a group's
+observed span by a handful of values at a time for a long stretch before
+it has covered the column's real range. The first design demoted a
+bitmap back to `Ints` the moment a new key fell outside the window it was
+built with, then immediately re-promoted at the (slightly) wider span on
+the very next `insert_int` call inside the same retry - converting the
+member set to a `HashSet` and back to a fresh array on nearly every new
+distinct value, for as long as the range kept widening. Growing the
+window in place to the exact new bound instead of demoting has the same
+failure shape one level down: reallocating and copying the whole bitmap
+on every insert that pushes the bound out by one. Growing with doubling
+headroom (in the direction that just grew, capped at the span limit) is
+what fixed it - the same amortized-growth trick `Vec` itself uses - and
+is what is banked here: a handful of reallocations total instead of one
+per insert. The 150K-row case is the sharper signal: fewer real rows
+means the per-insert reallocation overhead so dominated the first two
+attempts that they were 30-70x slower than doing nothing at all.
+
+Full crate suite (357 tests, four of them
+`distinct_bitmap_tests` new for this) passes, including the existing
+distinct-under-spill test.
+
+**Verdict: keep the doubling-headroom version.** ~25% faster at the
+minimum on the 10M-row case, consistent across three separate runs. Not
+banked here: `docs/decisions.md` records the alternative (demote vs.
+grow vs. grow-with-headroom) for section H item 3 in
+`docs/design/production-hardening-todo.md`.
+
+Addendum, caught by `--profile rc`: the `min`/`max` fields this entry's
+design added to `DistinctSeen::Ints`, and the `min` field on `Bitmap`,
+are each an `i128` sitting directly in an enum variant - which forces the
+WHOLE enum to 16-byte alignment and pads its size up, in every
+`AggregateState` a query holds, whether or not that group's distinct set
+ever touches the bitmap path. `tests/sqllogic/tests/two_pass_spill.rs`
+holds hundreds of thousands of `AggregateState`s live under a tight
+24 MiB ceiling specifically to exercise its spill path; the padding was
+enough to push it past a spill the unboxed version used to make cleanly,
+and the gate caught it (`unit` stage, `a_spilled_two_pass_aggregation_
+matches_the_in_memory_groups_exactly`). Boxing both payloads
+(`Ints(Box<IntsSeen>)`, `Bitmap(Box<BitmapSeen>)`) removes every inline
+`i128` from the enum and restored `size_of::<AggregateState>()` to
+exactly its pre-entry value (192 bytes, measured directly); the test
+passes again. The 25% figure above was measured before this fix and is
+unaffected by it - boxing only removes memory the design never needed to
+spend, and does not change the insert path's instruction count.
+
+## e87 — Q6's real shape is already on the two-pass streaming path; the naive-materialization premise was stale (10M rows, 32 threads, memo off)
+
+The brief for section H item 4 described Q6 as "the general partitioned
+aggregate, a full materialization, then sort.rs `materialize_top_k`" and
+asked for radix-partitioned parallel aggregation feeding a streaming
+top-K heap. Measured instead of assumed:
+
+`crates/pintail-exec/tests/morsel_bench.rs`, new case "top 10 by sum,
+200K-value column" - `GROUP BY grp` on a bare, stored integer column with
+200,000 distinct values (Q6's own cardinality), `COUNT(*)` and `SUM`,
+`ORDER BY total_spent DESC, grp LIMIT 10` - Q6's exact shape
+(`benchmark/queries.ts`), unlike the existing "general high cardinality"
+case, which groups by the EXPRESSION `id % 200000`: `column_index()`
+cannot resolve an expression to a plain column, so that case never
+reaches `build_direct_column_aggregate`'s direct/two-pass routing at all
+and measures a different, slower path (4.0-6.1 s in e85's matrix) that
+Q6 does not run.
+
+| case | shape | min |
+|---|---|---:|
+| "general high cardinality" (pre-existing) | `GROUP BY id % 200000` (expression) | 4,205 ms |
+| "top 10 by sum, 200K-value column" (this entry) | `GROUP BY grp` (bare column, Q6's shape) | 223.0 ms |
+
+`build_buffered_hash_aggregate`/`build_direct_column_aggregate` already
+route a single bare int-typed group column with `COUNT`/`SUM`-shaped
+aggregates to `build_streaming_two_pass_aggregate` (e13: banked
+4.2-8.9x), not the general `HashMap<Vec<Value>, AggregateGroup>` path.
+223 ms for 10M rows scales close to linearly to the 20M-row benchmark's
+banked 420 ms for real Q6 - the existing optimization already accounts
+for most of the gap the brief attributed to "full materialization."
+
+A comment already in `build_buffered_hash_aggregate` (above
+`build_direct_column_aggregate`'s call site) records that this exact
+question was tried before: routing the single-int-column case through
+the parallel morsel/merge path "regressed Q6 (2M groups over 20M rows)
+from seconds to minutes," because the dense-array parallel win that
+helps LOW-cardinality keys does not transfer to sparse high-cardinality
+ones, and closes with "Parallel high-cardinality aggregation needs a
+partitioned design and its own experiment first." Radix-partitioning the
+build key so each worker owns a disjoint range and can safely call its
+own groups finished - the precondition for streaming them into a top-K
+heap without a cross-worker merge - is a new execution-model capability
+(a hash-based shuffle/exchange stage), not a local change to
+`sort.rs::materialize_top_k` or to the two-pass aggregate: no query in
+the current planner or executor partitions its parallel work by key
+rather than by row range. Attempting it inside this brief's remaining
+scope, on top of the correctness surface a change like that touches
+(admission, memory tracking across N partition buffers, interaction with
+existing spill/two-pass paths) risked exactly the kind of regression the
+comment already describes, without the dedicated measurement budget the
+comment says it needs.
+
+**Verdict: not attempted.** The measured baseline for Q6's actual shape
+(223 ms at 10M rows, this entry) is the number future work on this item
+should compare against - not the 4,205 ms "general high cardinality"
+case, which is a different, already-slow path Q6 does not take.
+`docs/design/production-hardening-todo.md` section H keeps item 4 open
+with this finding attached, so it is not re-discovered from a stale
+premise.
+
+## e88 — Scan pool default doubled; no gain reproduced on bare metal, and why that is expected (10M rows, in-process, memo off)
+
+e65 measured Q2's shape 16 scan threads against 8 (66ms -> 57ms) on the
+`--cpus=8`-limited container the release benchmark and a typical
+deployment run under, and recommended defaulting the scan pool to twice
+the CPU count. Implemented: `projected_scan_pool` now defaults to
+`available_parallelism() * 2`, still overridable by
+`PINTAIL_SCAN_THREADS`.
+
+Measured on this machine (32 real, unthrottled CPUs, local NVMe) with a
+new `crates/pintail-exec/tests/morsel_bench.rs` case, "scan: filtered
+count" (Q2's shape, `WHERE status = 'open'`), minimum of 9 runs:
+
+| scan threads | min | median |
+|---|---:|---:|
+| 32 (= CPU count, old default) | 10.6 ms | 10.9 ms |
+| 64 (= 2x CPU count, new default) | 11.1 ms | 11.5 ms |
+
+No gain here - if anything, slightly worse at the median, from
+scheduling more runnable threads than there are cores with nothing to
+overlap. This is the expected result, not a contradiction of e65: e65's
+win comes from a scan thread parked by a CPU quota tick still having
+another one ready to run, which only exists under a CPU-limited
+container; a bare-metal host with a real core per thread has no quota
+stall to hide behind, so doubling the pool only adds contention on a
+purely CPU-bound decode. Reproducing e65's own container conditions to
+confirm the win still holds was not attempted here (would need a
+throttled container on the shared docker host, which this brief's
+protocol reserves for the release benchmark, not an ad hoc check).
+
+**Verdict: keep the default change**, on the strength of e65's original
+container measurement (the actual release/deployment shape), with this
+entry as the honest record that the bare-metal dev host shows no
+benefit - `PINTAIL_SCAN_THREADS` remains the escape hatch either way.
+
+## e89 — Overlapping the next scan round's decode: investigated, not attempted
+
+e70 measured the sliced scan's own regression (a two-round text-key
+query losing 95ms -> 106ms to idling between rounds) and named the
+follow-up: prefetch the next round's decode while the consumer works the
+current one. Investigated instead of implemented, because the shape of
+`ProjectedScanStream::next_column_chunks_inner`
+(`crates/pintail-store/src/store/scan.rs`) does not allow it without a
+larger change first:
+
+- The parallel decode call (`decode_slice` over the round's slices) is a
+  method on `&self`, called synchronously inside the same function that
+  will be called again with `&mut self` for the NEXT round. Starting that
+  decode on a background thread so it can run while the caller consumes
+  the current round's chunks means that background thread's borrow of
+  `self` would need to outlive the current call - the same class of
+  problem item 2's join dense table hit, and for the same reason
+  (`unsafe_code = "forbid"`) not solvable by holding a raw reference
+  across the boundary.
+- `decode_slice` also takes `prewhere: Option<(&[u32], PrewhereSelect<'_>)>`,
+  a borrowed predicate scoped to the CURRENT call by its caller in
+  `pintail-exec` - not a struct field, so even an `Arc`-based redesign of
+  the scan state would still need this cloned or restructured into
+  something `'static` and `Send` before a background task could hold it
+  across calls.
+
+Both are solvable - the general shape is "give the decode context to a
+background task instead of borrowing it," which likely means the slice
+decode's dependencies (segment, directory, schema, prewhere) need to be
+extracted into an owned, `Send` unit callable from a free function rather
+than a `&self` method - but that is a restructuring of the scan's
+internals, not a bounded follow-up to the change this brief's scan
+threading item already made. Deferred rather than attempted under time
+pressure on a path this exact test suite's oracle depends on for every
+predicate shape.
+
+**Verdict: not attempted.** `docs/design/production-hardening-todo.md`
+section H keeps this half of item 5 open with the specific blocker
+recorded, so a future attempt starts from the ownership question rather
+than rediscovering it.
+
+## e90 — A pre-existing, nondeterministic wrong answer in `AVG` on a decimal column, found chasing the scan-pool default
+
+First seen with the scan pool defaulted to twice the CPU count (e88's
+change): `--profile rc`'s `e2e` stage failed on `tests/e2e/queries.ts`'s
+"decimal column average beyond simple sum" -
+`SELECT customer_id, ROUND(AVG(total), 4), ROUND(SUM(total) / COUNT(*),
+4) FROM orders GROUP BY customer_id HAVING COUNT(*) >= 2 ORDER BY
+avg_total DESC, customer_id LIMIT 20` - returned `330.8824` at row 3
+where MySQL and this engine's own `SUM(total) / COUNT(*)` column both
+read `330.8823`, on a plain `GROUP BY` with no join. Reverting
+`PINTAIL_SCAN_THREADS` to the CPU count made that run pass, which read
+at the time as confirmation that the doubled pool was the cause.
+
+It was not, or not only: a later `--profile rc` run, on the same commit
+with the scan pool already reverted to the CPU count, failed the exact
+same check again - this time at a different row (11, not 3) and a
+different value (`324.2510` against MySQL's `324.2509`). Same query
+shape, same mismatch pattern (`AVG` wrong, `SUM(total)/COUNT(*)` on the
+same rows correct), different data point each time. That rules out the
+scan-pool width as the cause: this is a pre-existing, run-to-run
+nondeterministic defect that the wider pool very likely made MORE
+frequent (Rust's default hasher reseeds every process, so `HashMap`
+iteration order - and with it, morsel-to-worker assignment and merge
+order in anything built on rayon's work-stealing scheduler - differs
+between runs of the identical binary on the identical data regardless of
+thread count; a wider pool gives that nondeterminism more ways to land on
+whatever ordering triggers this), but did not introduce.
+
+The AVG lane itself is exact by construction: `TwoPassLane::DecimalUnits`
+rescales each row's decimal units by a fixed power of ten
+(`decimal_units_from_int`, an exact `checked_mul`) chosen once from the
+aggregate's planned output scale (`decimal_average_scale`, a property of
+the bound query, not of runtime data or thread count), and
+`update_decimal_average_units` accumulates the rescaled units with
+`checked_add` - exact integer addition, order-independent by definition.
+That `SUM(total) / COUNT(*)` came back byte-correct on the same rows
+both times points away from a data completeness problem (a dropped or
+duplicated row would move both columns) and toward `AVG` specifically
+taking a run-to-run-varying computation path - most plausibly the general
+aggregate's own average, which (unlike the two-pass exact-units lane) may
+accumulate through `f64`. Not confirmed by tracing an actual run with
+instrumentation, and not established whether this reproduces on `dev`
+before any of this brief's commits - time did not extend to a control run
+against a bisected base commit.
+
+**Verdict: the scan-pool default stays reverted** (back to the CPU count,
+`docs/design/production-hardening-todo.md` H5a) regardless - e88 already
+found no benefit from doubling it on bare metal, so there is no upside to
+weigh against even a possible (not confirmed) increase in how often this
+pre-existing defect surfaces. The defect itself is unrelated to anything
+else in this brief and is recorded as new work (section G, G14) rather
+than worked around here.
+
+## e91 — Compacting an overlap, against paying for it on every scan
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows of
+four columns with one percent changed and flushed, so the table holds one
+base segment and one small overlapping tail. That is the shape a table
+takes for as long as it takes two more flushes to arrive.
+
+e81 measured what the overlap costs a reader. This measures the other
+side: what removing it costs a writer, so the policy can be argued from
+both.
+
+| | ms |
+|---|---:|
+| scan while the two segments overlap | 1430.5 |
+| compacting them, once | 1780.5 |
+| scan afterwards | 18.9 |
+| **the rewrite repays after** | **1.1 scans** |
+
+**The policy declined to do it.** Before this entry's change,
+`compaction_status()` on exactly this store read `segment_count: 2,
+eligible_segments: 0, debt_bytes: 0`, and `compact()` returned
+`input_segments: 0` - a no-op. `compaction_plan` returned `None` before
+overlap was ever considered, because two segments is fewer than the
+default fan-in of four. A table in this state stays a hundredfold slow to
+read until two more flushes arrive, however often it is queried.
+
+The fan-in is the right instinct when merging only saves file handles:
+rewriting a base to absorb a tail a hundredth its size is poor value for
+fewer files, and `admits_window`'s size tier refuses that pairing for good
+reason. An overlap is a different prize. A key in two segments puts every
+scan on the merging path, so the rewrite buys back 1411 ms per scan and
+costs 1780 ms once.
+
+With overlap admitted below the fan-in and outside the size tier - the
+per-pass row budget still applies, so one pass stays bounded - the same
+store plans `eligible_segments: 2`, compacts in 1780.5 ms, and reads in
+18.9 ms. **A 76x improvement on the scan, from a policy change rather
+than a rewrite of the merge path.**
+
+What this does not settle: a table written far more often than it is read.
+Every flush creates a fresh overlap, so the trigger fires per flush, and
+1.1 scans of payback is only a bargain if those scans happen. The bound
+that exists is `max_compaction_input_rows` per pass; a read-rate-aware
+trigger is not built and is the thing to reach for if a write-heavy table
+is seen compacting without being queried.
+
+The merge path itself is untouched and still costs what e81 says. This
+narrows how long a table sits on it; it does not make it cheaper.
+
+## e92 — What a table pays while it is being written to
+
+`crates/pintail-store/tests/merge_output.rs`, release, two million rows,
+one stamped segment plus a memtable. Ignored measurements.
+
+**The overlay does its job.** One projected column, varying only how many
+rows sit in the memtable, against a direct scan of the same rows at
+6.6 ms:
+
+| rows changed | overlay ms | against a direct scan |
+|---:|---:|---:|
+| 1 | 6.9 | 1.0x |
+| 10 | 10.0 | 1.5x |
+| 100 | 11.8 | 1.8x |
+| 1,000 | 12.1 | 1.8x |
+| 10,000 | 14.8 | 2.2x |
+| 20,000 | 16.4 | 2.5x |
+
+Over all four columns at twenty thousand changed rows the overlay reads in
+162.5 ms against 23.1 ms direct, 7.0x - the wider projection carries more
+of the memtable's rows into the output, so the ratio grows with what is
+projected as well as with what changed.
+
+A mirrored table under continuous replication reads at close to its
+quiescent speed, and the cost grows with what actually changed rather than
+with the size of the table. That is what the overlay was built for and it
+is worth recording as confirmed rather than assumed.
+
+**The first version of this entry claimed the opposite** - a flat 63x
+whatever changed - and was wrong in a way worth writing down. The overlay
+is opt-in: `enable_memtable_overlay` must be called before the first
+chunk, and a scan that does not call it falls back to merging the segment
+with the memtable row by row. `pintail-exec/src/storage.rs` calls it; the
+measurement did not. So the flat 63x was real, but it was the merge
+fallback, measured against a path production never takes and reported as
+the path it always takes.
+
+**What survives is narrower and still worth having.**
+`enable_memtable_overlay` refuses unless EVERY key column is an integer
+type, and a scan it refuses gets no `ScanPart::Overlay` at all. So a table
+whose primary key has a text, decimal or temporal part pays the merge path
+on every scan for as long as its memtable is non-empty - which under
+replication is always. The accidental measurement quantifies that case:
+63x on one projected column, 84x on four, flat from one changed row to
+twenty thousand, because the fallback is a property of the key's type
+rather than of how much changed.
+
+That is worth confirming with a text-keyed fixture before it is acted on,
+which this entry does not do.
+
+Three explanations for the flat cost were measured and refused before the
+opt-in was found, and they stay refuted for the merge path they were
+actually describing: it is not the per-row `Value` materialization in
+`interleave` (giving text, float and dictionary columns typed paths moved
+nothing), not the fragmentation of the mask (one excluded row costs what
+twenty thousand do), and not the slice width (one slice costs what
+sixteen do).
+
+## e93 — When the per-segment fold can serve a query at all
+
+`crates/pintail-store/tests/fold_eligibility.rs`, release, one hundred
+thousand rows in one segment. Ignored: an eligibility measurement.
+
+e78 measured a grouped aggregate served from per-segment partials at
+seventy-three times the scan, and argued the number holds under continuous
+replication because a flush adds a segment's partials rather than
+invalidating a result. Before building that, this asks the prior question:
+on which tables does the fold engage?
+
+`Snapshot::sma_fold_state` is the gate, and it is stricter than "the
+segments are immutable". Every memtable row must be an insert ABOVE the
+segment key space; a row at or below the segments' maximum key returns
+`None` for the whole table.
+
+| what is in the memtable | fold eligible |
+|---|---|
+| nothing | yes |
+| one insert above the segment | yes |
+| fifty thousand inserts above the segment | yes |
+| **one update of a row the segment holds** | **no** |
+| **one delete of a row the segment holds** | **no** |
+
+**So the fold serves append-only tables, and one update anywhere in the
+table disqualifies it entirely.** e78's fixture inserts with increasing
+keys, which is why its seventy-three times looked general. A mirrored
+table whose rows are inserted and then updated in place - a record that
+gains timestamps as it progresses through states, which is an ordinary
+shape - is disqualified by its first update and stays disqualified.
+
+Building grouped partials on this eligibility would therefore buy nothing
+for an update-carrying mirror, which is the case that motivated it.
+
+**The segment half of the gate is already satisfied, and compaction is
+what satisfies it.** The same fixture, asking about segment disjointness
+rather than the memtable:
+
+| state | fold eligible |
+|---|---|
+| one segment, empty memtable | yes |
+| after flushing 1,000 scattered updates | no - the segments overlap |
+| after compaction merges them | **yes** |
+
+So a flush disqualifies a table and a compaction re-qualifies it, and e91
+made that compaction prompt rather than something that waits for a fourth
+segment. Only the memtable condition is left.
+
+**What a version that served updates would need**, recorded so the design
+is not re-derived: partials per segment, plus a correction per memtable
+row that supersedes a segment row - read the superseded row, subtract its
+contribution, add the new one. That bounds the work by the memtable rather
+than the table, and the residual cap already keeps it small. It restricts
+the aggregates to those whose payload has an additive inverse: COUNT and
+SUM can be corrected, MIN and MAX cannot, which is the same split e80
+arrived at. Not built.
+
+## e94 — A grouped aggregate folded one segment at a time
+
+`crates/pintail-exec/tests/grouped_fold.rs`, release, ten million rows in
+ten segments, grouped by a five-value column, `PINTAIL_DISABLE_GROUPED_FOLD`
+giving the control arm. Ignored: a measurement, not a gate.
+
+A segment file is never rewritten, so a grouped fold taken over its key
+span stays true while that file is in the manifest. The query keeps those
+folds and, on its next run, re-reads only the spans the memtable has since
+touched. The settled result memo cannot do this: one ingest invalidates
+the whole answer and the next query pays for the whole table.
+
+| | control | folded |
+|---|---:|---:|
+| settled table | 37.3 ms | 31.7 ms (declines) |
+| first run under ingest, populating | 84.9 ms | 122.3 ms |
+| **steady state under ingest** | **86.7 ms** | **49.6 ms** |
+
+Nine of ten spans reuse their fold on every run after the first; only the
+newest is re-read. **1.75x on the query a dashboard runs against a mirror**,
+after a one-off population that costs about half a scan extra.
+
+Unlike the fold e93 measured, this one serves tables that take UPDATES. A
+span the memtable touches is re-read rather than corrected, so no
+additive-inverse arithmetic is needed and a superseded row is simply seen
+at its new value.
+
+**Four guards, each earned by a measurement rather than assumed.** Decline
+when every span is dirty, because the fold is then the general path plus
+bookkeeping - scattered updates across a whole table look like that.
+Decline when no span is dirty, because a settled table is the memo's job
+and folding there read ten spans where the general path reads the table
+once in parallel, three times slower. Decline aggregates whose finished
+values cannot merge across disjoint rows. And read the key columns even
+when the query does not project them, or the overlay cannot mask and the
+span falls onto the row-by-row merge.
+
+**What the fixtures taught, which is most of what this entry is worth.**
+
+The overlay refuses to mask when a memtable row is OLDER than the
+segment's maximum version, because that is a possible stale replay and the
+comparing merge is the right answer for it. The first fixture used a row's
+key as its version, so an update to an old row looked stale and every span
+fell onto the merge. Real replication carries a newer version. Fixing the
+fixture alone took a ranged span read from 370 ms to 14.6 ms, and nothing
+about the engine changed.
+
+The cache key first held the table directory, the segment file name and
+the aggregate signature. That signature names its columns by their
+position in the PROJECTION, so `SELECT status, COUNT(*)` and `SELECT
+amount, COUNT(*)` sign identically over one segment and would have read
+each other's fold. It showed up as a test that failed in a suite run and
+passed alone. The projection is in the key now, with the span's bounds
+beside the file name.
+
+**Left on the table, measured and not taken:** the dirty span costs 48 ms
+where reading the same span costs 14.6 ms. Closing that gap is worth
+roughly four to five times rather than 1.75, and the obvious suspect - the
+packed-column to `ColumnVector` conversion - already has typed fast paths,
+so it needs a measurement rather than another guess.

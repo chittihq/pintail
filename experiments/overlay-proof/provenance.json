@@ -1,0 +1,8 @@
+{
+  "head": "84a5fa2480799637571f058a7c228e69e3ec8238",
+  "original_scan_sha256": "472c20f3af13669299b6551c038bc18263fccae265cc53347950601a5247391c",
+  "instrumented_scan_sha256": "d11b3a66cdc20350aa717b83f3d5f1d0cb34abb8eb5807fcd6fbbad999aca671",
+  "binary_sha256": "73532a40d69f98f2314794e96c42f31cd3ee98d8dc7b48371c62ef61f8ba6da2",
+  "fixture_sha256": "9cfd7266f0e94be72696b929ebc078369d416f410cb53b2709d3148bec6b5194",
+  "scope": "updates and deletes applied through decoded CDC, finite dirty snapshot; not continuous concurrency"
+}

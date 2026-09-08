@@ -261,18 +261,40 @@ prints.
   remaining ceiling (one slice under 64 MiB), and rows in flight are bounded
   by width times a slice whatever the segment size; see "The scan's work
   unit is a segment slice" in `docs/decisions.md`.
-- [ ] **G2. A second predicate on the same scan costs five times the
+- [x] **G2. A second predicate on the same scan costs five times the
   first.** `WHERE status = 2` scans in 25 ms; `WHERE id >= 1 AND
   status = 2` in 132 ms with twice the peak reservation, even though the
   extra predicate excludes nothing and now stays on the packed kernel.
   Establish which of the two-predicate paths (no prewhere, since every
   projected column is a predicate column) pays the difference.
-- [ ] **G3. Five-group aggregation spends 18 ns per row in the
+  Closed 2026-09-07: delta-packed integer columns decode directly into
+  their typed buffers. A multi-column all-integer predicate projection
+  evaluates borrowed buffers and retains exact survivors from that decode.
+  The synthetic count conjunction fell from 37.5/38.4 to 9.7/10.5 ms
+  minimum/median, versus 7.9/9.4 ms for the single predicate; peak
+  reservation fell from 74.9 to 3.1 MiB. See e75. Scan sizing is unchanged.
+  Confirmed on the benchmark replica 2026-09-07: the two-predicate count
+  over twenty million rows fell from 155 ms to 74 ms against 46 ms for the
+  single predicate, inside the 1.5x target. See e76.
+- [x] **G3. Five-group aggregation spends 18 ns per row in the
   aggregate.** `GROUP BY status` over ten million rows: 114 ms in the
   scan, 179 ms of aggregate self time for five groups. That is the
   direct-column path's per-row hash and index work on a key with five
   values; a dictionary or dense-array fold would make it a memory
   pass.
+  Closed 2026-09-07: the existing dense slots now fold packed integer SUM
+  and COUNT lanes with dispatch outside the row loop, and bounded integer
+  keys use the same table with whole-window fallback. The synthetic
+  text-key minimum/median fell from 86.8/90.7 to 22.3/25.4 ms; integer keys
+  from 105.3/131.2 to 32.6/39.0 ms. Reservations bound persistent and worker
+  arrays. See e74 and the dense group slots decision.
+  Confirmed on the benchmark replica 2026-09-07, after a correction: the
+  synthetic case measured the packed fold, while the replica's five-group
+  query averages a decimal and takes a lane the fold declines. That query
+  first went from 131 ms to 156 ms, because the fold cut its window into
+  one chunk per thread and left the pool nothing to steal. With four
+  chunks per thread it runs 118 ms with 74 ms of aggregate self time,
+  against 131 ms and 87 ms before the fold. See e76.
 
 - [x] **G4. A narrow read paid for the whole segment.** The block readers
   loaded and checksummed every block of every column before deciding
@@ -307,16 +329,34 @@ prints.
   segment row failing a predicate can be pruned while a lower-version
   memtable row for the same key passes it; the merge would have kept the
   segment's version. Found by inspection; not reproduced.
-- [ ] **G10. Two overlapping segments never compact.** `compaction_plan`
-  returns before the overlap check when the manifest holds fewer segments
-  than the fan-in (four), so an update-heavy table flushed once sits on a
-  base and an overlapping tail and merges on every scan until two more
-  flushes arrive.
+- [x] **G10. Two overlapping segments never compact.** `compaction_plan`
+  returned before the overlap check when the manifest held fewer segments
+  than the fan-in (four), so an update-heavy table flushed once sat on a
+  base and an overlapping tail and merged on every scan until two more
+  flushes arrived. Closed 2026-09-08: an overlapping pair is admitted
+  below the fan-in and outside the size tier, the per-pass row budget
+  still bounding one pass. On two million rows with one percent changed
+  the scan went from 1430 ms to 19 ms, against a one-off rewrite of
+  1780 ms that repays after 1.1 scans (e91). The size tier still refuses
+  a base-plus-tiny-tail rewrite whose only prize is fewer files. Left
+  open by this: a table written far more often than it is read now
+  compacts on every flush, and a read-rate-aware trigger is the answer
+  if that appears.
 - [ ] **G11. The `auto_resync` repair recopies the whole database.** The
   supervisor starts a forced snapshot for flagged keyless tables, so one
   flagged table resets every table's store; with the not-ready guard the
   whole database answers not ready for the copy. The per-table resync is
   the scoped path.
+- [ ] **G13. A grouped aggregate over an expression key split one group
+  across two output rows, once.** Observed during the dense-fold work
+  while several test binaries ran concurrently: the general
+  expression-keyed reference produced two rows for one key whose counts
+  summed to the correct total, on a 720,000-row two-segment table with a
+  text expression key. Sixty repeats at twelve concurrent binaries on a
+  32-core host did not reproduce it, nor did the crate suite. Unresolved
+  and unattributed: it was seen on the reference path, not on the dense
+  fold under test. If it returns, the partition merge in the general
+  aggregate is where two partials for one key could fail to combine.
 - [ ] **G12. The streaming two-pass aggregate fails instead of spilling
   over an input with no transient floor.** Its proactive relief keys off
   the scan's reported floor; an input that reports none (a join, a
@@ -325,6 +365,101 @@ prints.
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
   general path over the same input spills and completes.
+- [ ] **G14. `AVG` on a decimal column answers wrong, nondeterministically,
+  run to run.** `SELECT customer_id, AVG(total) FROM orders GROUP BY
+  customer_id HAVING COUNT(*) >= 2` (`tests/e2e/queries.ts`, "decimal
+  column average beyond simple sum") has returned a value one unit off
+  in the last decimal place against MySQL - `330.8824` vs `330.8823` on
+  one `--profile rc` run, `324.2510` vs `324.2509` at a different
+  customer on another, same binary, same data, same code, only the run
+  differs. `SUM(total) / COUNT(*)` on the same rows is correct every
+  time, which rules out a dropped or duplicated row and points at `AVG`
+  specifically taking a run-to-run-varying computation path - the
+  two-pass lane's own average is exact integer arithmetic top to bottom
+  (`decimal_units_from_int` then `checked_add`, both order-independent),
+  so the general aggregate's average (which is not known to be exact -
+  it may accumulate through `f64`) is the leading suspect. First noticed
+  chasing section H's scan-pool item (a wider pool seemed to make it more
+  frequent, most plausibly because Rust's per-process hash-seed
+  randomization changes `HashMap` iteration and rayon merge order between
+  runs regardless of thread count) but reproduced with the pool back at
+  its original default too, so the scan-pool width is not the cause
+  (e90 in `experiments/RESULTS.md`). Not traced past ruling out the exact
+  lane; not confirmed whether it predates this brief's other commits.
+
+## H. Closing the gap to ClickHouse with the settled memo off, 2026-09-07
+
+G2 and G3 above are their own brief; this section is everything else the
+"Engine speed (memo DISABLED)" table in `benchmark/results.md` and the
+`experiments/RESULTS.md` profiler entries (e65, e70) point at.
+
+- [x] **H0. The resource sampler raced an SSH connection, not the query.**
+  `docker stats --no-stream` in a loop over the ssh:// docker context
+  could start and stop without a single call completing on a sub-second
+  query, reading 0% CPU. Closed: one long-lived `docker stats` stream per
+  container; see e83 in `experiments/RESULTS.md`. The README's generated
+  benchmark table now shows the memo-off table first.
+- [x] **H1. The HTTP path's fixed cost.** `execute_query` built a fresh
+  `ReplicaEngine` per request, hashed the API key against metadata on
+  every call, and serialised rows through an intermediate
+  `serde_json::Value` tree — 25-40 ms outside the engine on every query
+  (e65). Closed: one `ReplicaEngine` held on `ApiState` and cloned per
+  request, a 30s API-key cache invalidated on disable/delete, and rows
+  serialize straight from column values into the response writer; see e84
+  in `experiments/RESULTS.md`. The wire-vs-HTTP timing this item asked
+  for is now in `benchmark/run.ts`, reported alongside HTTP rather than
+  replacing it — banking a number needs the containerized benchmark.
+- [x] **H2. Dense join build for a contiguous build key.** Q8's fused
+  join-aggregate probed a general hash table at about 20 ns a probe (e65).
+  Closed in part: `PartitionedBuild` now finalizes itself into a
+  hash-free direct-index table in place when eligible, so every reader
+  of `get` benefits, not only the fused aggregate, and the fused path
+  resolves each distinct key's output group once instead of once per
+  probe row; measured a 5-9% minimum-time improvement at Q8's real key
+  cardinality (e85). Batching the probe into two passes, also asked for
+  here, measured slower and was dropped (e85, `docs/decisions.md`). Q8's
+  gap to ClickHouse is not closed by this alone - the two scans plus this
+  probe still trail the target of 1.5x the scan cost.
+- [x] **H3. Bitset `COUNT(DISTINCT)`.** A hash set per group for an
+  integer column now promotes to a bitmap once past a count threshold and
+  a span cap, charged to the tracker; the hash-set form stays as the
+  fallback for a wide or unknown range. First shape shipped and measured
+  1.5-30x SLOWER (thrashed between representations as a column's real
+  range became apparent one value at a time); growing the bitmap with
+  doubling headroom instead fixed it, banking a real ~25% win (e86,
+  `docs/decisions.md`).
+- [ ] **H4. High-cardinality `GROUP BY` into a top-K.** Not attempted;
+  investigated and re-scoped. Q6's actual shape (a bare int column,
+  `COUNT`/`SUM`) already routes to the streaming two-pass aggregate
+  (e13), not the general full-materialization path this item assumed -
+  measured 223 ms at 10M rows against the general path's 4.2 s for an
+  unrelated (expression-keyed) shape (e87). Radix-partitioning the build
+  key so each worker's groups are disjoint and can stream into a top-K
+  heap is a new execution-model capability (a key-based shuffle, not a
+  row-range split), not a local change; `build_buffered_hash_aggregate`
+  already documents that naively parallelizing this exact shape
+  regressed Q6 from seconds to minutes and "needs a partitioned design
+  and its own experiment first" - unchanged by this brief. Next attempt
+  should start from the 223 ms baseline in e87, not the 4.2 s figure this
+  item was written against.
+- [ ] **H5a. Scan pool default width.** e65 measured sixteen scan
+  threads beating eight on an 8-CPU host; tried defaulting the scan pool
+  (not the execution pool) to `2 x` CPU count. Reverted: no gain
+  reproduced on bare metal with no CPU quota to hide behind (e88), so
+  there was nothing to weigh against `tests/e2e` catching G14's
+  pre-existing nondeterministic `AVG` defect (above) more often at the
+  wider pool (not confirmed as caused by it - G14 reproduced at the
+  CPU-count default too; e90). Stays at the CPU count, still overridable
+  by `PINTAIL_SCAN_THREADS` for a deployment that wants e65's container
+  benefit.
+- [ ] **H5b. Overlap the sliced scan's rounds.** e70 noted the sliced
+  scan idles between rounds. Investigated, not attempted: the round
+  decode is a `&self` method call inside the same function later called
+  with `&mut self`, and also takes a per-call borrowed `prewhere`
+  predicate - both need to become an owned, `Send`, cross-call unit
+  before a background prefetch is possible without `unsafe`, which the
+  workspace forbids. See e89 in `experiments/RESULTS.md` for the specific
+  blocker.
 
 ## F. Still open from earlier reviews
 

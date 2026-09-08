@@ -1,0 +1,29 @@
+{
+  "rule": "best per distribution with screen query ratio >=1.20 and cycle ratio >=1.05; fixed before independent confirmation",
+  "selection": [
+    {
+      "case": 5,
+      "scenario": 1,
+      "variant": 10,
+      "name": "factorized-fact-aggregate",
+      "screen_query_ratio": 1.9967337133561138,
+      "screen_cycle_ratio": 1.2961791847990458
+    },
+    {
+      "case": 8,
+      "scenario": 1,
+      "variant": 6,
+      "name": "block-min-prefix",
+      "screen_query_ratio": 1.2097907492083169,
+      "screen_cycle_ratio": 1.0668664874202765
+    },
+    {
+      "case": 10,
+      "scenario": 1,
+      "variant": 3,
+      "name": "dense-decorrelation",
+      "screen_query_ratio": 1.2359618697563581,
+      "screen_cycle_ratio": 1.1084586944394892
+    }
+  ]
+}

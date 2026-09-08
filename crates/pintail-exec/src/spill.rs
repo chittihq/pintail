@@ -25,6 +25,11 @@ const TAG_UINT64: u8 = 3;
 const TAG_FLOAT64: u8 = 4;
 const TAG_UTF8: u8 = 5;
 const TAG_BINARY: u8 = 6;
+/// An ENUM or SET keeps the ordinal it sorts by. Writing one as plain text
+/// made a spilled ORDER BY compare labels while an in-memory one compared
+/// declaration indexes, so the same query answered differently depending on
+/// whether it happened to spill.
+const TAG_ENUM: u8 = 7;
 
 /// Appends primitive fields to a spill payload.
 pub(crate) struct Encoder {
@@ -98,9 +103,14 @@ impl Encoder {
                 self.u8(TAG_FLOAT64);
                 self.f64(inner.get());
             }
-            Value::Utf8(inner) | Value::Enum { label: inner, .. } => {
+            Value::Utf8(inner) => {
                 self.u8(TAG_UTF8);
                 self.str(inner);
+            }
+            Value::Enum { index, label } => {
+                self.u8(TAG_ENUM);
+                self.u64(*index);
+                self.str(label);
             }
             Value::Binary(inner) => {
                 self.u8(TAG_BINARY);
@@ -212,6 +222,13 @@ impl<'a> Decoder<'a> {
             TAG_UINT64 => Ok(Value::UInt64(self.u64()?)),
             TAG_FLOAT64 => Ok(Value::Float64(Float64::new(self.f64()?))),
             TAG_UTF8 => Ok(Value::Utf8(self.string()?)),
+            TAG_ENUM => {
+                let index = self.u64()?;
+                Ok(Value::Enum {
+                    index,
+                    label: self.string()?,
+                })
+            }
             TAG_BINARY => Ok(Value::Binary(self.bytes()?.to_vec())),
             other => Err(format!("spill record holds unknown value tag {other}")),
         }

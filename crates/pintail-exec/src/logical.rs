@@ -370,7 +370,9 @@ fn rewrite_window_references(expr: &mut BoundExpr, outputs: &[BoundColumn]) {
         return;
     }
     match &mut expr.kind {
-        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+        BoundExprKind::PreparedIn { expr, .. }
+        | BoundExprKind::Unary { expr, .. }
+        | BoundExprKind::IsNull { expr, .. } => {
             rewrite_window_references(expr, outputs);
         }
         BoundExprKind::Binary { left, right, .. } => {

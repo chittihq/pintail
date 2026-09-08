@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 5,
+      "variant": 7,
+      "name": "parallel-dense-probe",
+      "processes": 3,
+      "changing_query_speedup": 1.0115007860608067,
+      "changing_cycle_speedup": 1.0712591588484202,
+      "operator_only_speedup": 5.727087731314742,
+      "min_process_speedup": 1.0050172459751878,
+      "max_process_speedup": 1.6724226776628783,
+      "scenario_medians": {
+        "0": 1.0050172459751878,
+        "1": 1.6724226776628783,
+        "2": 1.0115007860608067
+      },
+      "phase_medians": {
+        "settled": 2.0187812273895624,
+        "sparse-memtable": 0.9894303363002721,
+        "sparse-flushed-overlap": 0.987774731649811,
+        "dense-hot-memtable": 1.035704740482014,
+        "dense-flushed-overlap": 1.0148274840868434,
+        "mixed-overlap": 1.1385745955719562,
+        "stale-replay": 1.0228474752915542,
+        "compacted": 1.95796233154419
+      }
+    }
+  ]
+}

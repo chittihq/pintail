@@ -55,6 +55,10 @@ interface Artifact {
   rows: Record<string, number>
   queries: Row[]
   novelQueries: Row[]
+  /// The same canonical queries as `queries`, run with the settled memo off:
+  /// the like-for-like engine-speed comparison. Absent in artifacts banked
+  /// before this field existed.
+  engineQueries?: Row[]
   concurrency?: ConcurrencyRow[]
   methodology: { pintailPlacement: string; iterations: string }
 }
@@ -93,6 +97,30 @@ function concurrencySection(artifact: Artifact): string[] {
 /// harness and means nothing to a reader.
 const label = (name: string) => name.replace(/^[QN]\d+:\s*/, '')
 
+/// The like-for-like table: the canonical queries with the settled memo
+/// off, so both engines actually execute. Shown first because it is the
+/// number that answers "how fast is the engine", not "how fast is the
+/// cache" — see the memo table below it for the latter.
+function engineSpeedSection(artifact: Artifact): string[] {
+  if (!artifact.engineQueries || artifact.engineQueries.length === 0) return []
+  return [
+    '**Engine speed — memo off, both engines execute.** The same eight',
+    "queries against Pintail restarted with its settled aggregate memo off,",
+    'on the same replica as the memo table below. This is the honest',
+    'engine-speed comparison, and ClickHouse is still faster on the grouped',
+    'and joined shapes.',
+    '',
+    '| Query | MySQL | Pintail (no memo) | CH RMT+FINAL | vs CH |',
+    '|---|---:|---:|---:|---:|',
+    ...artifact.engineQueries.map(
+      (row) =>
+        `| ${label(row.name)} | ${ms(row.mysqlMs)} | ${ms(row.pintailMs)} | ` +
+        `${ms(row.clickhouseFinalMs)} | ${row.speedupVsClickhouse.toFixed(2)}× |`,
+    ),
+    '',
+  ]
+}
+
 function render(artifact: Artifact): string {
   const orders = artifact.rows.orders?.toLocaleString() ?? 'the'
   const lines: string[] = [
@@ -104,11 +132,13 @@ function render(artifact: Artifact): string {
     'different things, so they are reported separately rather than averaged into',
     'one headline.',
     '',
-    '**Repeated queries.** Pintail keeps an exact-result memo for aggregates over',
-    'a settled snapshot, invalidated by any ingest, so re-running the same query',
-    "on an unchanged replica is served from it. ClickHouse's query cache is off,",
-    "so this compares Pintail's cache against ClickHouse's execution — a fair",
-    'measure of what a dashboard refresh costs, and not a measure of engine speed.',
+    ...engineSpeedSection(artifact),
+    '**Repeated queries — memo hit vs execution.** Pintail keeps an exact-result',
+    'memo for aggregates over a settled snapshot, invalidated by any ingest, so',
+    "re-running the same query on an unchanged replica is served from it.",
+    "ClickHouse's query cache is off, so this compares Pintail's cache against",
+    "ClickHouse's execution — a fair measure of what a dashboard refresh costs,",
+    'and not a measure of engine speed.',
     '',
     '| Query | MySQL | Pintail (memo) | CH RMT+FINAL |',
     '|---|---:|---:|---:|',
@@ -117,10 +147,10 @@ function render(artifact: Artifact): string {
         `| ${label(row.name)} | ${ms(row.mysqlMs)} | ${ms(row.pintailMs)} | ${ms(row.clickhouseFinalMs)} |`,
     ),
     '',
-    '**Novel queries — raw engine speed.** The same shapes with constants the memo',
-    'has never seen, so both engines actually execute. **ClickHouse is faster here.**',
-    'This is the honest measure of execution performance, and Pintail does not yet',
-    'win it.',
+    '**Novel queries — memo-cold constants.** Distinct predicate variants the',
+    'memo has never seen, run once per engine with no warmup, so neither the',
+    'memo nor any plan cache is warm. A second, independent read on the same',
+    "engine-speed question above.",
     '',
     '| Query | MySQL | Pintail | CH RMT+FINAL | vs CH |',
     '|---|---:|---:|---:|---:|',

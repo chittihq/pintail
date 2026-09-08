@@ -1,0 +1,33 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 1,
+      "variant": 1,
+      "name": "selective-predicate-first",
+      "processes": 3,
+      "changing_query_speedup": 0.9994592058555278,
+      "changing_cycle_speedup": 1.0098596512796343,
+      "operator_only_speedup": 1.2127918131438074,
+      "min_process_speedup": 0.976194940151093,
+      "max_process_speedup": 1.0038624127519602,
+      "scenario_medians": {
+        "0": 0.9994592058555278,
+        "1": 0.976194940151093,
+        "2": 1.0038624127519602
+      },
+      "phase_medians": {
+        "settled": 0.9682741321151525,
+        "sparse-memtable": 1.0025303718689644,
+        "sparse-flushed-overlap": 0.9958583406163609,
+        "dense-hot-memtable": 0.9944761267840538,
+        "dense-flushed-overlap": 1.0029358738216934,
+        "mixed-overlap": 1.0003709409534387,
+        "stale-replay": 1.0004505380604527,
+        "compacted": 1.01400149189248
+      }
+    }
+  ]
+}

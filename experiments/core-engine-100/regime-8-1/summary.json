@@ -1,0 +1,31 @@
+{
+  "processes": 6,
+  "validated_snapshots": 48,
+  "alternatives": 1,
+  "results": [
+    {
+      "case": 8,
+      "variant": 6,
+      "name": "block-min-prefix",
+      "processes": 3,
+      "changing_query_speedup": 1.153029033047468,
+      "changing_cycle_speedup": 1.067080022859148,
+      "operator_only_speedup": 2.2001311869388935,
+      "min_process_speedup": 1.0581555884899123,
+      "max_process_speedup": 1.170716540116519,
+      "scenario_medians": {
+        "1": 1.153029033047468
+      },
+      "phase_medians": {
+        "settled": 1.641504519991774,
+        "sparse-memtable": 1.1797501912636774,
+        "sparse-flushed-overlap": 1.174833978855148,
+        "dense-hot-memtable": 1.126562695711963,
+        "dense-flushed-overlap": 1.1154903206623452,
+        "mixed-overlap": 1.1104924780844943,
+        "stale-replay": 1.1582160383521742,
+        "compacted": 1.8883193780126923
+      }
+    }
+  ]
+}

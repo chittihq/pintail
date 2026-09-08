@@ -14703,7 +14703,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150028 sync_runs rows for db_155b73d250634e9d0ea711af74a141ce"
+    "detail": "150028 sync_runs rows for db_f6a1974efeb9f83c659bef49ce432a61"
   },
   {
     "phase": "activity-history",
@@ -14715,7 +14715,7 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 1ms over 150000 rows"
+    "detail": "p50 1ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
@@ -14727,7 +14727,7 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 26ms p99 49ms"
+    "detail": "p50 26ms p99 38ms"
   },
   {
     "phase": "activity-history",
@@ -15707,7 +15707,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4925 requests: p50 1ms p99 8ms"
+    "detail": "4925 requests: p50 1ms p99 7ms"
   },
   {
     "phase": "poll-storm",
@@ -15719,7 +15719,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 6891 vs source 6891"
+    "detail": "orders replica 6997 vs source 6997"
   },
   {
     "phase": "poll-storm",
@@ -16751,6 +16751,11 @@
   {
     "phase": "control-plane",
     "check": "api:resync and reconcile are accepted",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "api:a paused table skips its changes and is recopied on resume",
     "status": "PASS"
   },
   {
@@ -20717,7 +20722,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_155b73d250634e9d0ea711af74a141ce\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-07T09:14:51.673578262+00:00\",\"updated_at\":\"2026-09-07T09:20:39.124736742+00:00\"},\"tables\":21,\"rows\":9615}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"id\":\"db_f6a1974efeb9f83c659bef49ce432a61\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-07T17:55:22.462671326+00:00\",\"updated_at\":\"2026-09-07T18:01:17.621784516+00:00\"},\"tables\":21,\"rows\":9722}"
   },
   {
     "phase": "drop-table-polling",
@@ -23688,7 +23693,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 93 ok, dashboards 156 ok; no errors"
+    "detail": "wire 240 ok, http 93 ok, dashboards 108 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -23706,25 +23711,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 280ms p99 1686ms over 240 queries"
+    "detail": "wire p50 200ms p99 780ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 16ms over 11 samples"
+    "detail": "health p99 18ms over 8 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 307MB with a 256MB budget"
+    "detail": "peak RSS 164MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201100 vs source 201100"
+    "detail": "big 200800 vs source 200800"
   },
   {
     "phase": "memory-pressure",
@@ -24727,7 +24732,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 56MB before, peak 207MB during (margin 768MB)"
+    "detail": "RSS 56MB before, peak 200MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",

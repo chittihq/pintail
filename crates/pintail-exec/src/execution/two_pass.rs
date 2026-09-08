@@ -102,7 +102,21 @@ pub(super) fn two_pass_lanes(
                             column,
                             data_type: storage,
                         }),
-                        DataType::Float64 => Some(TwoPassLane::Float { column }),
+                        // An average the planner typed as an exact decimal
+                        // must never accumulate through a float: f64
+                        // addition is not associative, so the answer would
+                        // move with however the rows were split across
+                        // workers and merged. The arm below already asks
+                        // this question before it picks an exact lane; this
+                        // one did not, so a decimal column whose batch
+                        // materialized as `Float64` took the inexact lane
+                        // while the plan said otherwise. `None` here is not
+                        // a fallback to something worse - it declines the
+                        // two-pass lane, and the general path's
+                        // `DecimalAverage` accumulates scaled integers.
+                        DataType::Float64 => decimal_average_scale(aggregate)
+                            .is_none()
+                            .then_some(TwoPassLane::Float { column }),
                         _ => match batch.column(column)?.data_type() {
                             // SUM and exact AVG both ride the packed-units
                             // lane; the per-row apply branches on the
@@ -525,11 +539,12 @@ pub(super) fn build_streaming_two_pass_aggregate(
             table
         });
     if let Some(slots) = &dense {
-        let slab = slots
-            .len()
-            .saturating_mul(size_of::<Option<Vec<AggregateState>>>());
-        memory.reserve(slab)?;
-        group_reserved = group_reserved.saturating_add(slab);
+        let slab = dense_reservation(keys, slots.len(), aggregates.len());
+        if memory.reserve(slab).is_ok() {
+            group_reserved = group_reserved.saturating_add(slab);
+        } else {
+            dense = None;
+        }
     }
 
     let mut window: Vec<(RecordBatch, Vec<Vec<u64>>)> = Vec::new();
@@ -1407,7 +1422,7 @@ fn drain_two_pass_window(
         return Ok(());
     }
     if let Some(slots) = dense.as_mut() {
-        if dense_in_bounds(keys, intern_len) {
+        if dense_in_bounds(keys, intern_len) && dense_integer_window_in_bounds(window, keys) {
             // A date-part key indexes its slots directly, and can discover
             // mid-fold that a value has no slot; the text keys cannot.
             if let TwoPassKeySource::DateParts { parts } = keys {
@@ -1419,8 +1434,7 @@ fn drain_two_pass_window(
                 }
                 // A year outside the table's window: fall through, unify what
                 // the slots hold and finish on the scatter path.
-            } else {
-                dense_text_window(window, keys, lanes, aggregates, slots, memory)?;
+            } else if dense_text_window(window, keys, lanes, aggregates, slots, memory)? {
                 window.clear();
                 memory.release(*window_reserved);
                 *window_reserved = 0;
@@ -1707,6 +1721,17 @@ enum DenseFold {
 
 type DenseGroupSlots = Vec<Option<Vec<AggregateState>>>;
 
+/// The persistent slab also bounds the states allocated lazily in its
+/// occupied slots. Worker slabs have their own temporary reservation.
+fn dense_reservation(keys: TwoPassKeySource, slots: usize, lanes: usize) -> usize {
+    let state_bytes = if matches!(keys, TwoPassKeySource::DateParts { .. }) {
+        0
+    } else {
+        lanes.saturating_mul(size_of::<AggregateState>())
+    };
+    slots.saturating_mul(size_of::<Option<Vec<AggregateState>>>() + state_bytes)
+}
+
 /// Single text column: intern ids 0..=1023 map to slots 1..=1024.
 const DENSE_TEXT_CAP: usize = 1024;
 /// Text pair: side ids are (intern id + 1) with 0 as NULL, kept < 65.
@@ -1714,9 +1739,13 @@ const DENSE_PAIR_SIDE: usize = 65;
 
 fn dense_slot_count(keys: TwoPassKeySource) -> Option<usize> {
     match keys {
-        TwoPassKeySource::Text { .. } => Some(DENSE_TEXT_CAP + 1),
         TwoPassKeySource::TextPair { .. } => Some(DENSE_PAIR_SIDE * DENSE_PAIR_SIDE),
         TwoPassKeySource::DateParts { parts } => dense_date_slot_count(parts),
+        TwoPassKeySource::Text { .. }
+        | TwoPassKeySource::Int {
+            group_type: DataType::Int64 | DataType::UInt64,
+            ..
+        } => Some(DENSE_TEXT_CAP + 1),
         TwoPassKeySource::Int { .. } => None,
     }
 }
@@ -1730,14 +1759,13 @@ fn dense_in_bounds(keys: TwoPassKeySource, intern_len: usize) -> bool {
         // Date-part domains are checked per row instead: the table covers a
         // bounded window of years and the fold abandons it when a value
         // falls outside, which no table-wide check can predict.
-        TwoPassKeySource::DateParts { .. } => true,
-        TwoPassKeySource::Int { .. } => false,
+        TwoPassKeySource::DateParts { .. } | TwoPassKeySource::Int { .. } => true,
     }
 }
 
 fn dense_slot_index(keys: TwoPassKeySource, key_bits: u64, key_null: bool) -> usize {
     match keys {
-        TwoPassKeySource::Text { .. } => {
+        TwoPassKeySource::Text { .. } | TwoPassKeySource::Int { .. } => {
             if key_null {
                 0
             } else {
@@ -1752,14 +1780,13 @@ fn dense_slot_index(keys: TwoPassKeySource, key_bits: u64, key_null: bool) -> us
         // The date-part fold indexes its own slots, because unlike text it
         // can fail: a year outside the table's window has no slot at all.
         TwoPassKeySource::DateParts { .. } => unreachable!("date parts index their own slots"),
-        TwoPassKeySource::Int { .. } => unreachable!("int keys have no dense table"),
     }
 }
 
 /// Inverse of [`dense_slot_index`]: the map key the classic path would use.
 fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
     match keys {
-        TwoPassKeySource::Text { .. } => {
+        TwoPassKeySource::Text { .. } | TwoPassKeySource::Int { .. } => {
             if index == 0 {
                 (0, true)
             } else {
@@ -1775,8 +1802,91 @@ fn dense_slot_sentinel(keys: TwoPassKeySource, index: usize) -> (u64, bool) {
             ((first << 32) | second, false)
         }
         TwoPassKeySource::DateParts { parts } => (dense_date_key(parts, index), false),
-        TwoPassKeySource::Int { .. } => unreachable!("int keys have no dense table"),
     }
+}
+
+/// Integer domains use slots 1..=1024 for nonnegative values and slot 0
+/// for NULL. Validate a window before updating any partial, so an outlier
+/// replays the entire window through scatter without duplicating its prefix.
+fn dense_integer_window_in_bounds(
+    window: &[(RecordBatch, Vec<Vec<u64>>)],
+    keys: TwoPassKeySource,
+) -> bool {
+    let TwoPassKeySource::Int { column, .. } = keys else {
+        return true;
+    };
+    window.iter().all(|(batch, _)| {
+        let Some((typed, validity)) = batch.column(column).and_then(crate::ColumnVector::typed)
+        else {
+            return false;
+        };
+        batch.selection().selected_rows().all(|row| {
+            !validity.is_valid(row)
+                || typed
+                    .int_key_at(row)
+                    .is_some_and(|key| (0..1024).contains(&key))
+        })
+    })
+}
+
+/// Packed count and exact integer SUM lanes resolve columns and dispatch
+/// once per batch. The same dense states are used by the generic lanes and
+/// by the map/spill merge; no parallel aggregate representation is retained.
+fn dense_packed_lanes(
+    batch: &RecordBatch,
+    slot_for: impl Fn(usize) -> usize,
+    lanes: &[TwoPassLane],
+    aggregates: &[CompiledAggregate],
+    slots: &mut DenseGroupSlots,
+) -> Result<bool, ExecError> {
+    use crate::batch::TypedValues;
+    if !lanes.iter().zip(aggregates).all(|(lane, aggregate)| {
+        matches!(lane, TwoPassLane::CountStar)
+            || matches!((lane, aggregate.function, aggregate.data_type),
+                (TwoPassLane::Int { column, data_type }, AggregateFunction::Sum, Some(output))
+                    if output == *data_type && batch.column(*column).and_then(crate::ColumnVector::typed)
+                        .is_some_and(|(typed, _)| matches!(typed, TypedValues::Int64(_) | TypedValues::UInt64(_))))
+    }) { return Ok(false); }
+    for row in batch.selection().selected_rows() {
+        slots[slot_for(row)]
+            .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+    }
+    for (lane_index, lane) in lanes.iter().enumerate() {
+        match lane {
+            TwoPassLane::CountStar => {
+                for row in batch.selection().selected_rows() {
+                    slots[slot_for(row)].as_mut().expect("initialized slot")[lane_index]
+                        .add_dense_count(1)?;
+                }
+            }
+            TwoPassLane::Int { column, .. } => {
+                let (typed, validity) = batch
+                    .column(*column)
+                    .and_then(crate::ColumnVector::typed)
+                    .expect("checked packed lane");
+                // Monomorphized reads keep the physical type dispatch outside
+                // the row loop and preserve unsigned values above i64::MAX.
+                macro_rules! fold {
+                    ($values:expr, $update:ident) => {
+                        for row in batch.selection().selected_rows() {
+                            if validity.is_valid(row) {
+                                slots[slot_for(row)].as_mut().expect("initialized slot")
+                                    [lane_index]
+                                    .$update($values[row])?;
+                            }
+                        }
+                    };
+                }
+                match typed {
+                    TypedValues::Int64(values) => fold!(values, add_dense_signed),
+                    TypedValues::UInt64(values) => fold!(values, add_dense_unsigned),
+                    _ => unreachable!("checked packed lane"),
+                }
+            }
+            _ => unreachable!("checked packed lanes"),
+        }
+    }
+    Ok(true)
 }
 
 /// Dense pass over one batch: same key readers as
@@ -1809,6 +1919,48 @@ fn two_pass_dense_batch(
             ));
         };
         readers.push((codes, validity, translation));
+    }
+    if let TwoPassKeySource::Int { column, .. } = keys {
+        let (typed, validity) = batch
+            .column(column)
+            .and_then(crate::ColumnVector::typed)
+            .ok_or(ExecError::InvalidBatch(
+                "dense integer key lost its packed projection",
+            ))?;
+        let slot_for = |row| {
+            if validity.is_valid(row) {
+                usize::try_from(typed.int_key_at(row).expect("checked integer key"))
+                    .expect("checked dense domain")
+                    + 1
+            } else {
+                0
+            }
+        };
+        if dense_packed_lanes(batch, slot_for, lanes, aggregates, slots)? {
+            return Ok(());
+        }
+        for row in batch.selection().selected_rows() {
+            let states = slots[slot_for(row)]
+                .get_or_insert_with(|| aggregates.iter().map(AggregateState::new).collect());
+            for (index, (lane, aggregate)) in lanes.iter().zip(aggregates).enumerate() {
+                if let Some(bits) = two_pass_lane_bits(batch, row, lane) {
+                    apply_two_pass_lane(&mut states[index], lane, aggregate, bits, memory)?;
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let [(codes, validity, translation)] = readers.as_slice() {
+        let slot_for = |row| {
+            if validity.is_valid(row) {
+                usize::try_from(translation[codes[row] as usize]).expect("intern id fits usize") + 1
+            } else {
+                0
+            }
+        };
+        if dense_packed_lanes(batch, slot_for, lanes, aggregates, slots)? {
+            return Ok(());
+        }
     }
     let pair = readers.len() == 2;
     for row in batch.selection().selected_rows() {
@@ -1853,37 +2005,56 @@ fn dense_text_window(
     aggregates: &[CompiledAggregate],
     slots: &mut DenseGroupSlots,
     memory: &MemoryTracker,
-) -> Result<(), ExecError> {
+) -> Result<bool, ExecError> {
     let columns: &[usize] = match keys {
         TwoPassKeySource::Text { column } => &[column],
+        TwoPassKeySource::Int { .. } => &[],
         TwoPassKeySource::TextPair { first, second } => &[first, second],
-        _ => unreachable!("dense slots are text-keyed"),
+        TwoPassKeySource::DateParts { .. } => unreachable!("dense slots are text or integer keyed"),
     };
     let slot_count = slots.len();
-    let folded = window
-        .par_iter()
-        .try_fold(
-            || vec![None; slot_count],
-            |mut acc, (batch, translations)| {
-                two_pass_dense_batch(
-                    batch,
-                    keys,
-                    columns,
-                    translations,
-                    lanes,
-                    aggregates,
-                    &mut acc,
-                    memory,
-                )?;
+    // Several chunks per thread, not one: a slab per chunk bounds the
+    // partials, but one chunk per thread leaves the pool with nothing to
+    // steal, so the window ends when its slowest chunk does. Measured on
+    // the benchmark replica, where a batch's cost varies with its groups.
+    let chunk_size = window
+        .len()
+        .div_ceil(rayon::current_num_threads().saturating_mul(4))
+        .max(1);
+    let workers = window.len().div_ceil(chunk_size);
+    let partial_bytes = workers.saturating_mul(slot_count).saturating_mul(
+        size_of::<Option<Vec<AggregateState>>>() + aggregates.len() * size_of::<AggregateState>(),
+    );
+    if memory.reserve(partial_bytes).is_err() {
+        return Ok(false);
+    }
+    let outcome = (|| {
+        let partials = window
+            .par_chunks(chunk_size)
+            .map(|chunk| {
+                let mut acc = vec![None; slot_count];
+                for (batch, translations) in chunk {
+                    two_pass_dense_batch(
+                        batch,
+                        keys,
+                        columns,
+                        translations,
+                        lanes,
+                        aggregates,
+                        &mut acc,
+                        memory,
+                    )?;
+                }
                 Ok(acc)
-            },
-        )
-        .try_reduce(
-            || vec![None; slot_count],
-            |left, right| merge_dense_slots(left, right, aggregates, memory),
-        )?;
-    *slots = merge_dense_slots(std::mem::take(slots), folded, aggregates, memory)?;
-    Ok(())
+            })
+            .collect::<Result<Vec<_>, ExecError>>()?;
+        for partial in partials {
+            *slots = merge_dense_slots(std::mem::take(slots), partial, aggregates, memory)?;
+        }
+        Ok(true)
+    })();
+    memory.release(partial_bytes);
+    outcome
 }
 
 /// Folds one window into the dense date-part slots, or reports that a value
@@ -2062,6 +2233,7 @@ fn fold_dense_into_maps(
     memory: &MemoryTracker,
     group_reserved: &mut usize,
 ) -> Result<(), ExecError> {
+    let slab = dense_reservation(keys, slots.len(), aggregates.len());
     let per_group_bytes = size_of::<(u64, bool)>()
         .saturating_add(aggregates.len().saturating_mul(size_of::<AggregateState>()))
         .saturating_add(32);
@@ -2086,6 +2258,8 @@ fn fold_dense_into_maps(
             }
         }
     }
+    memory.release(slab);
+    *group_reserved = group_reserved.saturating_sub(slab);
     Ok(())
 }
 
