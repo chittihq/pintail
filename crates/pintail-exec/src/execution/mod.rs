@@ -6307,6 +6307,10 @@ mod tests {
         assert!(spill.files > 0);
     }
 
+    /// The dependent path a correlated subquery in an OUTER join's ON still
+    /// takes. An INNER join's ON hoists to WHERE and decorrelates, so this
+    /// shape has to be an outer join to reach the replay it is testing; the
+    /// decorrelated form is covered by the test below.
     #[test]
     fn correlated_join_on_spills_its_replayed_side_and_output() {
         let batches = (0..64)
@@ -6327,7 +6331,7 @@ mod tests {
             let provider = StaticProvider {
                 batches: Mutex::new(batches.clone()),
             };
-            let mut execution = Execution::start(physical("SELECT l.name FROM events l JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = l.name)"), &provider, limit, Collation::default()).expect("execution");
+            let mut execution = Execution::start(physical("SELECT l.name FROM events l LEFT JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = l.name)"), &provider, limit, Collation::default()).expect("execution");
             let mut rows = Vec::new();
             while let Some(batch) = execution.next_batch().expect("pull") {
                 assert!(execution.memory().used() <= limit);
@@ -6349,6 +6353,73 @@ mod tests {
         assert_eq!(tight, wide);
         assert_eq!(tight.len(), 512);
         assert!(spill.files > 0);
+    }
+
+    /// The same question as the test above with an INNER join, which hoists
+    /// its correlated EXISTS to WHERE and becomes a semi-join. The point is
+    /// that the path it moves ONTO still answers under a budget and still
+    /// spills: a rewrite that traded a spilling plan for one that dies at a
+    /// memory ceiling would be a poor trade however much faster it is when
+    /// it fits.
+    #[test]
+    fn a_decorrelated_join_condition_still_spills_under_a_budget() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..8)
+                    .map(|row| {
+                        Value::Utf8(format!("key-{:04}-{}", batch * 8 + row, "x".repeat(1024)))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical(
+                    "SELECT l.name FROM events l JOIN events r ON l.name = r.name AND EXISTS \
+                     (SELECT 1 FROM events z WHERE z.name = l.name)",
+                ),
+                &provider,
+                limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .expect("column")
+                            .value(row)
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        // No ORDER BY, so row order is unspecified and the grace-partitioned
+        // build hands them back in partition order once it spills. The rows
+        // are the claim; their sequence is not.
+        let (mut wide, _) = execute(64 * 1024 * 1024);
+        let (mut tight, spill) = execute(4 * 1024 * 1024);
+        wide.sort();
+        tight.sort();
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 512);
+        assert!(
+            spill.files > 0,
+            "the decorrelated plan spills rather than failing",
+        );
     }
 
     #[test]
