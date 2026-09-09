@@ -27,6 +27,19 @@ stays readable as a list of things to fix.
   requires both membership sides to be provably non-nullable: with a possible
   NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
   shapes reject.
+- A correlated subquery in an OUTER join's ON condition resolves once per
+  distinct correlation value rather than becoming a join. An INNER join's
+  ON filters the rows WHERE filters, so a correlated `IN` or `EXISTS`
+  written there is moved to WHERE and decorrelates; an OUTER join's ON does
+  not - it decides which right rows match while the left row survives
+  either way - so the same predicate stays on the dependent path. The
+  rewrite that would fix it cannot plant a semi-join under the right input,
+  because the correlation reaches the LEFT side and a semi-join's inner
+  rows are not visible outside it; it has to widen the right side into a
+  derived input carrying the correlation column, distinct over that side's
+  columns. A report whose outer join scoped one side to a membership list
+  this way ran past a sixty-second client deadline while its siblings
+  answered in under two.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather
