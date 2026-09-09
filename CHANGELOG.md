@@ -4,6 +4,42 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.2] - 2026-09-09
+
+The release candidate's contents plus the entries below, gated with the
+full stable chain: the rc gates, the bench family, TPC-H and acceptance.
+
+### Added
+
+- `utf8mb4_unicode_ci` is compared, grouped, ordered and joined rather
+  than refused. A schema created before `MySQL` 8 names this collation
+  explicitly, and every collation-sensitive operation on a column
+  carrying it used to fail to bind, so a report reading one returned an
+  error instead of rows. The weights are generated from a real `MySQL`
+  rather than transcribed: a character weighs a sequence, an ignorable
+  mark weighs nothing, an expansion weighs several, and whole blocks
+  derive their weights from the code point by UCA's rule. `utf8mb3_
+  unicode_ci` resolves to the same profile; `utf8mb4_unicode_520_ci` is
+  UCA 5.2.0 and still rejects.
+
+### Fixed
+
+- Both PAD SPACE comparators padded where they had trimmed. Trailing
+  spaces are insignificant either way, but `MySQL` pads the shorter
+  operand, so `'a'` is GREATER than `'a<tab>'` - the pad puts a space
+  against the tab and a space outweighs it - where trimming made `'a'` a
+  prefix and smaller. Every string ending below the space weight ordered
+  wrongly under `utf8mb4_general_ci` and `utf8mb4_bin`.
+
+- A failed query records why it failed. The wire logged the word "error"
+  and a statement shape; the reason went to the client and nowhere else,
+  and telemetry forwards only error-level events, so a query failing
+  against a deployment raised nothing an operator could see. It now logs
+  at error level with the reason, without the elapsed time that would
+  file every repeat of one broken query as a new issue.
+
+- The fuzz lockfile is refreshed and the parser corpus is gated.
+
 ## [0.1.2-rc12] - 2026-09-09
 
 ### Performance
