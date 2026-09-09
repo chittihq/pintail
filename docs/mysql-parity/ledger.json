@@ -2,19 +2,19 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "02f47c57a14dbb37f42aa8c3737e19b215ec07b1",
-    "measuredAt": "2026-09-06T16:37:32.620Z",
+    "commit": "9c5b7559c2953513907ce75c89302d2439c4507b",
+    "measuredAt": "2026-09-09T12:37:28.772Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "46b4aa16f1efb2352d8c63062bf0e8edcf8cf0ec5f75f9a9e3be7d9c451e90a2",
-    "corpusSha256": "3d95cb3a24054b095dcc734c2e1ffe079d1467d50fa840b352c665996077d1ab",
+    "ledgerSha256": "e77338f813452d503872c76ceb93b33b66d6e995c1300233d71fcf28f6f8a027",
+    "corpusSha256": "74c762083e8519f3622444ece52986ac804044b53f0a6ddbcf21154b15745931",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "e81aa7147f117ae2a7db9fec9884e403d091a820",
-      "sourceCommit": "c31e2258e7d41cdcc20f5f023dbbef38ab176c30",
-      "measuredAt": "2026-09-06T16:18:39.180034+00:00",
+      "commit": "c0c1dcca67dd9b4c9fd267c03663f45bda7bce62",
+      "sourceCommit": "95723ec03a82fe1ea26f2e8a992e8f7d53d0afab",
+      "measuredAt": "2026-09-09T12:30:26.619586144+00:00",
       "source": "MySQL 8.4.11 (mysql:8.4)",
-      "ledgerSha256": "1709d05dcd4629ed0d614e649b7db32fe7ae72e6aaac3e6ea3951e66d392c9f7",
-      "corpusSha256": "6f76a58739b077165abe3370443673b9f2662148a8306cb34ea76fb2a3503d63"
+      "ledgerSha256": "133fb3faa074d30ebde9f7091bb10f17ff3cd5b0477a7dc73b9d0fbcb3901a5f",
+      "corpusSha256": "4984732a3681c6f89e8861520531a05a88d4926898cc36a77925a52524d01dae"
     }
   },
   "baseline": {
@@ -33,19 +33,19 @@
   "pintailImplementation": [
     {
       "path": "crates/pintail-sql/src/binder/mod.rs",
-      "sha256": "16598b53368381725a059ce3f8e3936ec30e3800449468738f577ec56bebb7e6"
+      "sha256": "f6ba6bb6f1726842db780f602c9317d5cf0993f7444b1858c4e71a4aaed9c4d2"
     },
     {
       "path": "crates/pintail-sql/src/binder/function.rs",
-      "sha256": "c725ab37502c227fa1cca5ab4d505c7ff4956e281e88e76c88d745f92fc7788e"
+      "sha256": "8a4694abd9a6095d940a6b0eed9940c7ba4dadc94ff68a906f0dbaa807d855fa"
     },
     {
       "path": "crates/pintail-sql/src/lib.rs",
-      "sha256": "18a6503e28df2f164f68e540dbf3bbe19af192424f372a96a7091e9003938cb2"
+      "sha256": "dc9b12847434eda56563c26934dd5d13a5b58571f904e4758d294a409712b21b"
     },
     {
       "path": "crates/pintail-wire/src/server.rs",
-      "sha256": "38338bbf730b9f0bc4a7c73cf3760590442ba770f3d82b86d9a4c16bebb20956"
+      "sha256": "6d0e96c0d43c435c8048c7570b46398aaf602e0a7dd740d85f21c18edeb95850"
     },
     {
       "path": "crates/pintail-write/src/engine.rs",
@@ -103,19 +103,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1090:numeric scalars"
+        "oracle:1160:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:375"
+        "crates/pintail-sql/src/binder/function.rs:376"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:447"
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:524",
+        "tests/sqllogic/tests/mysql_oracle.rs:452"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -217,7 +218,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:441"
+        "crates/pintail-sql/src/binder/function.rs:442"
       ],
       "binderGuards": [
         "if args.len() == 2"
@@ -314,11 +315,11 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi looker: any_value reads a functionally dependent column",
-        "oracle:0892:hand-written any_value",
-        "oracle:0893:hand-written any_value empty group",
-        "oracle:0894:hand-written any_value ungrouped",
-        "oracle:0895:hand-written any_value ungrouped expression",
-        "oracle:0938:reviewed grouped statistical aggregates"
+        "oracle:0962:hand-written any_value",
+        "oracle:0963:hand-written any_value empty group",
+        "oracle:0964:hand-written any_value ungrouped",
+        "oracle:0965:hand-written any_value ungrouped expression",
+        "oracle:1008:reviewed grouped statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -330,7 +331,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1790"
+        "tests/sqllogic/tests/mysql_oracle.rs:1951"
       ],
       "verification": "historical-differential-cases",
       "note": "Pintail models this through aggregate binding; MySQL uses it to suppress grouping checks. Verify both grouped and ungrouped expressions and row selection.",
@@ -358,19 +359,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1099:string scalars"
+        "oracle:1169:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:396"
+        "crates/pintail-sql/src/binder/function.rs:397"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2946"
+        "tests/sqllogic/tests/mysql_oracle.rs:3107"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -677,17 +678,17 @@
         "oracle:0509:hash aggregate",
         "oracle:0666:alias functions",
         "oracle:0673:window functions",
-        "oracle:0860:hand-written scalar subquery",
-        "oracle:0972:hand-written aggregate empty input",
-        "oracle:0984:window aggregate",
-        "oracle:0991:window nested in expression",
-        "oracle:1072:decimal round",
-        "oracle:1108:decimal average",
-        "oracle:1109:decimal average",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1120:diversify decimal column aggregates",
-        "oracle:1143:diversify decimal average by user",
-        "oracle:1153:diversify derived table on orders"
+        "oracle:0930:hand-written scalar subquery",
+        "oracle:1042:hand-written aggregate empty input",
+        "oracle:1054:window aggregate",
+        "oracle:1061:window nested in expression",
+        "oracle:1142:decimal round",
+        "oracle:1178:decimal average",
+        "oracle:1179:decimal average",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1190:diversify decimal column aggregates",
+        "oracle:1213:diversify decimal average by user",
+        "oracle:1223:diversify derived table on orders"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -701,9 +702,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:178",
+        "crates/pintail-exec/tests/settled_memo_identity.rs:125",
         "tests/sqllogic/tests/agg_spill.rs:92",
-        "tests/sqllogic/tests/mysql_oracle.rs:734",
-        "tests/sqllogic/tests/report_shapes.rs:377"
+        "tests/sqllogic/tests/mysql_oracle.rs:763"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -763,20 +765,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0828:hash and net scalars"
+        "oracle:0898:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:404"
+        "crates/pintail-sql/src/binder/function.rs:405"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:480",
-        "tests/sqllogic/tests/mysql_oracle.rs:1452"
+        "tests/sqllogic/tests/mysql_oracle.rs:1613"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -837,21 +839,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: bit aggregates over an unsigned flag column",
-        "oracle:0889:hand-written bit aggregates",
-        "oracle:0890:hand-written bit aggregates grouped",
-        "oracle:0891:hand-written bit aggregates empty group"
+        "oracle:0959:hand-written bit aggregates",
+        "oracle:0960:hand-written bit aggregates grouped",
+        "oracle:0961:hand-written bit aggregates empty group"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3802"
+        "crates/pintail-sql/src/binder/mod.rs:3824"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1774"
+        "tests/sqllogic/tests/mysql_oracle.rs:1935"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -944,22 +946,22 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: bit aggregates over an unsigned flag column",
-        "oracle:0889:hand-written bit aggregates",
-        "oracle:0890:hand-written bit aggregates grouped",
-        "oracle:0891:hand-written bit aggregates empty group",
-        "oracle:0938:reviewed grouped statistical aggregates"
+        "oracle:0959:hand-written bit aggregates",
+        "oracle:0960:hand-written bit aggregates grouped",
+        "oracle:0961:hand-written bit aggregates empty group",
+        "oracle:1008:reviewed grouped statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3803"
+        "crates/pintail-sql/src/binder/mod.rs:3825"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1774"
+        "tests/sqllogic/tests/mysql_oracle.rs:1935"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -988,21 +990,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: bit aggregates over an unsigned flag column",
-        "oracle:0889:hand-written bit aggregates",
-        "oracle:0890:hand-written bit aggregates grouped",
-        "oracle:0891:hand-written bit aggregates empty group"
+        "oracle:0959:hand-written bit aggregates",
+        "oracle:0960:hand-written bit aggregates grouped",
+        "oracle:0961:hand-written bit aggregates empty group"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3804"
+        "crates/pintail-sql/src/binder/mod.rs:3826"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1774"
+        "tests/sqllogic/tests/mysql_oracle.rs:1935"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -1337,35 +1339,38 @@
         "set op union distinct tiers and statuses",
         "window share of total over grouped output",
         "oracle:0709:temporal predicate rewrites",
-        "oracle:0794:rejected constructs",
-        "oracle:0814:unsigned wrap",
-        "oracle:0896:hand-written cast temporal",
-        "oracle:0897:hand-written cast temporal invalid",
-        "oracle:0898:hand-written cast targets",
-        "oracle:0921:hand-written window temporal range offsets",
-        "oracle:0939:repaired binary case sensitivity",
-        "oracle:0941:hand-written conditionals",
-        "oracle:0953:collation no-pad and binary",
-        "oracle:0975:hand-written exact mixed integers",
-        "oracle:0976:hand-written mixed scalar join",
-        "oracle:0977:hand-written large mixed scalar join",
-        "oracle:1033:union mixed numeric",
-        "oracle:1069:recursive cte",
-        "oracle:1070:decimal round",
-        "oracle:1071:decimal round",
-        "oracle:1073:decimal round",
-        "oracle:1074:decimal round",
-        "oracle:1090:numeric scalars",
-        "oracle:1102:decimal arithmetic",
-        "oracle:1103:decimal arithmetic",
-        "oracle:1104:decimal exact comparison",
-        "oracle:1105:decimal exact set and modulo",
-        "oracle:1110:decimal mixed precision boundaries",
-        "oracle:1111:decimal exact grouping distinct and extremes",
-        "oracle:1112:decimal exact distinct ordering",
-        "oracle:1113:decimal mixed comparison and join keys",
-        "oracle:1122:diversify decimal beyond float64",
-        "oracle:1123:diversify decimal join key"
+        "oracle:0833:exact integer rounding",
+        "oracle:0834:exact integer rounding",
+        "oracle:0835:exact integer rounding",
+        "oracle:0854:rejected constructs",
+        "oracle:0884:unsigned wrap",
+        "oracle:0966:hand-written cast temporal",
+        "oracle:0967:hand-written cast temporal invalid",
+        "oracle:0968:hand-written cast targets",
+        "oracle:0991:hand-written window temporal range offsets",
+        "oracle:1009:repaired binary case sensitivity",
+        "oracle:1011:hand-written conditionals",
+        "oracle:1023:collation no-pad and binary",
+        "oracle:1045:hand-written exact mixed integers",
+        "oracle:1046:hand-written mixed scalar join",
+        "oracle:1047:hand-written large mixed scalar join",
+        "oracle:1103:union mixed numeric",
+        "oracle:1139:recursive cte",
+        "oracle:1140:decimal round",
+        "oracle:1141:decimal round",
+        "oracle:1143:decimal round",
+        "oracle:1144:decimal round",
+        "oracle:1160:numeric scalars",
+        "oracle:1172:decimal arithmetic",
+        "oracle:1173:decimal arithmetic",
+        "oracle:1174:decimal exact comparison",
+        "oracle:1175:decimal exact set and modulo",
+        "oracle:1180:decimal mixed precision boundaries",
+        "oracle:1181:decimal exact grouping distinct and extremes",
+        "oracle:1182:decimal exact distinct ordering",
+        "oracle:1183:decimal mixed comparison and join keys",
+        "oracle:1192:diversify decimal beyond float64",
+        "oracle:1193:diversify decimal join key"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -1376,10 +1381,10 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:496",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:182",
         "crates/pintail-exec/tests/json_bin_collation.rs:186",
-        "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
-        "tests/sqllogic/tests/mysql_oracle.rs:988"
+        "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
@@ -1407,10 +1412,11 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0928:repaired exact literal rounding",
-        "oracle:1073:decimal round",
-        "oracle:1116:datetime helpers",
-        "oracle:1118:datetime helpers"
+        "oracle:0834:exact integer rounding",
+        "oracle:0998:repaired exact literal rounding",
+        "oracle:1143:decimal round",
+        "oracle:1186:datetime helpers",
+        "oracle:1188:datetime helpers"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -1425,7 +1431,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:666",
-        "tests/sqllogic/tests/mysql_oracle.rs:2045"
+        "tests/sqllogic/tests/mysql_oracle.rs:2206"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -1469,7 +1475,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/decimal_internal_digits.rs:173",
-        "tests/sqllogic/tests/mysql_oracle.rs:860"
+        "tests/sqllogic/tests/mysql_oracle.rs:898"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -1498,23 +1504,23 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "oracle:0661:alias functions",
-        "oracle:0866:hand-written char and rand",
-        "oracle:0915:repaired trim whitespace class",
-        "oracle:0916:repaired base64 wrapping",
-        "oracle:0927:repaired from_base64 whitespace set",
-        "oracle:1037:regexp match type"
+        "oracle:0936:hand-written char and rand",
+        "oracle:0985:repaired trim whitespace class",
+        "oracle:0986:repaired base64 wrapping",
+        "oracle:0997:repaired from_base64 whitespace set",
+        "oracle:1107:regexp match type"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:448"
+        "crates/pintail-sql/src/binder/function.rs:449"
       ],
       "binderGuards": [
         "if !args.is_empty()"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:861"
+        "tests/sqllogic/tests/mysql_oracle.rs:899"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -1543,20 +1549,20 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "string functions and like",
-        "oracle:0875:hand-written strings",
-        "oracle:0880:hand-written date and time"
+        "oracle:0945:hand-written strings",
+        "oracle:0950:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:357"
+        "crates/pintail-sql/src/binder/function.rs:358"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1690"
+        "tests/sqllogic/tests/mysql_oracle.rs:1851"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -1592,13 +1598,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:357"
+        "crates/pintail-sql/src/binder/function.rs:358"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:859"
+        "tests/sqllogic/tests/mysql_oracle.rs:897"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -1756,26 +1762,27 @@
         "oracle:0268:conditionals and nulls",
         "oracle:0269:conditionals and nulls",
         "oracle:0684:typed diversify",
-        "oracle:0937:reviewed named window in arguments",
-        "oracle:0941:hand-written conditionals",
-        "oracle:1065:dependent correlated subqueries",
-        "oracle:1124:diversify outer join nullability",
-        "oracle:1131:diversify json null rows",
-        "oracle:1133:diversify correlated scalar on orders",
-        "oracle:1150:diversify coalesce meta length"
+        "oracle:1007:reviewed named window in arguments",
+        "oracle:1011:hand-written conditionals",
+        "oracle:1135:dependent correlated subqueries",
+        "oracle:1194:diversify outer join nullability",
+        "oracle:1201:diversify json null rows",
+        "oracle:1203:diversify correlated scalar on orders",
+        "oracle:1220:diversify coalesce meta length"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:364"
+        "crates/pintail-sql/src/binder/function.rs:365"
       ],
       "binderGuards": [
         "if !args.is_empty()"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/enum_ordinal.rs:199",
-        "tests/sqllogic/tests/mysql_oracle.rs:649",
+        "crates/pintail-exec/tests/packed_predicate_kernels.rs:101",
+        "tests/sqllogic/tests/mysql_oracle.rs:672",
         "tests/sqllogic/tests/report_shapes.rs:399"
       ],
       "verification": "historical-differential-cases",
@@ -1991,31 +1998,32 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:0779:json bin collation",
-        "oracle:0780:json bin collation",
-        "oracle:0800:json bin collation",
-        "oracle:0817:json comparison",
-        "oracle:0818:json comparison",
-        "oracle:0819:json comparison",
-        "oracle:0820:json comparison",
-        "oracle:0915:repaired trim whitespace class",
-        "oracle:0921:hand-written window temporal range offsets",
-        "oracle:0927:repaired from_base64 whitespace set",
-        "oracle:1037:regexp match type",
-        "oracle:1069:recursive cte",
-        "oracle:1146:diversify multi-key style equality join"
+        "oracle:0839:json bin collation",
+        "oracle:0840:json bin collation",
+        "oracle:0870:json bin collation",
+        "oracle:0887:json comparison",
+        "oracle:0888:json comparison",
+        "oracle:0889:json comparison",
+        "oracle:0890:json comparison",
+        "oracle:0985:repaired trim whitespace class",
+        "oracle:0991:hand-written window temporal range offsets",
+        "oracle:0997:repaired from_base64 whitespace set",
+        "oracle:1107:regexp match type",
+        "oracle:1139:recursive cte",
+        "oracle:1216:diversify multi-key style equality join"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:351"
+        "crates/pintail-sql/src/binder/function.rs:352"
       ],
       "binderGuards": [
         "if !args.is_empty()"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:633"
+        "crates/pintail-exec/tests/dense_group_kernels.rs:128",
+        "tests/sqllogic/tests/mysql_oracle.rs:655"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2043,19 +2051,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1096:string scalars"
+        "oracle:1166:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:387"
+        "crates/pintail-sql/src/binder/function.rs:388"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2930"
+        "tests/sqllogic/tests/mysql_oracle.rs:3091"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2117,20 +2125,20 @@
       "differentialEvidence": [
         "bi looker: symmetric aggregate across a fanned-out join",
         "looker symmetric key helpers",
-        "oracle:0904:hand-written conv",
-        "oracle:0929:reviewed conv edges"
+        "oracle:0974:hand-written conv",
+        "oracle:0999:reviewed conv edges"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:461"
+        "crates/pintail-sql/src/binder/function.rs:462"
       ],
       "binderGuards": [
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1883"
+        "tests/sqllogic/tests/mysql_oracle.rs:2044"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2249,7 +2257,7 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:1037:regexp match type"
+        "oracle:1107:regexp match type"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -2260,7 +2268,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:637"
+        "tests/sqllogic/tests/mysql_oracle.rs:659"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated AST binding exists. Target types, charset conversion, composite temporal units and result metadata require separate checks.",
@@ -2353,11 +2361,11 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi metabase: month grain through convert_tz",
-        "oracle:0862:hand-written convert_tz",
-        "oracle:0863:hand-written convert_tz",
-        "oracle:0864:hand-written convert_tz",
-        "oracle:0865:hand-written convert_tz",
-        "oracle:1128:diversify convert_tz on column"
+        "oracle:0932:hand-written convert_tz",
+        "oracle:0933:hand-written convert_tz",
+        "oracle:0934:hand-written convert_tz",
+        "oracle:0935:hand-written convert_tz",
+        "oracle:1198:diversify convert_tz on column"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -2371,7 +2379,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1627"
+        "tests/sqllogic/tests/mysql_oracle.rs:1788"
       ],
       "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
@@ -2483,6 +2491,8 @@
         "collation: distinct counts fold per column collation",
         "collation: mixed grouping answers with per-key folds",
         "collation: regrouping a mixed grouping stays exact",
+        "composite: grouped by the first part",
+        "composite: text-led key grouped by its first part",
         "conditional decimal sum keeps the fraction",
         "conformance: case-variant code grouping",
         "conformance: date bucketing over the fact table",
@@ -2532,6 +2542,14 @@
         "temporal convert and date_format grain",
         "temporal: month-end bucketing via last_day",
         "temporal: year-month split grouping",
+        "unicode_ci: a combining mark weighs nothing",
+        "unicode_ci: equality expands the characters MySQL expands",
+        "unicode_ci: equality folds case and accents",
+        "unicode_ci: folds a different set than general_ci does",
+        "unicode_ci: grouping partitions by collated equality",
+        "unicode_ci: IN membership uses the collation",
+        "unicode_ci: joining on a collated column",
+        "unicode_ci: trailing spaces are insignificant (PAD SPACE)",
         "window share of total over grouped output",
         "oracle:0435:common table expressions",
         "oracle:0436:common table expressions",
@@ -2685,82 +2703,86 @@
         "oracle:0763:join constant propagation boundaries",
         "oracle:0768:join constant propagation boundaries",
         "oracle:0773:join constant propagation boundaries",
-        "oracle:0779:json bin collation",
-        "oracle:0781:json bin collation",
-        "oracle:0782:json bin collation",
-        "oracle:0786:json bin collation",
-        "oracle:0787:json bin collation",
-        "oracle:0790:binary operator",
-        "oracle:0791:binary operator",
-        "oracle:0792:null-only derived",
-        "oracle:0793:null-only derived",
-        "oracle:0797:rejected constructs",
-        "oracle:0799:rejected constructs",
-        "oracle:0800:json bin collation",
-        "oracle:0804:prefix precedence",
-        "oracle:0805:prefix precedence",
-        "oracle:0807:pad space matrix",
-        "oracle:0810:null-safe matrix",
-        "oracle:0811:collate positions",
-        "oracle:0817:json comparison",
-        "oracle:0819:json comparison",
-        "oracle:0820:json comparison",
-        "oracle:0831:theta joins",
-        "oracle:0832:theta joins",
-        "oracle:0833:theta joins",
-        "oracle:0834:theta joins",
-        "oracle:0835:correlated ranges",
-        "oracle:0836:correlated ranges",
-        "oracle:0837:correlated ranges",
-        "oracle:0838:correlated ranges",
-        "oracle:0841:chained right joins",
-        "oracle:0856:hand-written scalar subquery",
-        "oracle:0857:hand-written scalar subquery",
-        "oracle:0914:hand-written window rows frames unbounded",
-        "oracle:0920:hand-written window numeric range offsets",
-        "oracle:0921:hand-written window temporal range offsets",
-        "oracle:0942:hand-written derived table",
-        "oracle:0944:hand-written distinct aggregate",
-        "oracle:0948:hand-written grouping",
-        "oracle:0955:collation grouping",
-        "oracle:0956:collation distinct",
-        "oracle:0957:collation join",
-        "oracle:0962:hand-written left join aggregate",
-        "oracle:0972:hand-written aggregate empty input",
-        "oracle:0983:window aggregate",
-        "oracle:0988:window running frame",
-        "oracle:0993:window over grouped output",
-        "oracle:0994:window over grouped output",
-        "oracle:0995:window in cte",
-        "oracle:0996:window in cte",
-        "oracle:0999:decimal division",
-        "oracle:1060:dependent correlated subqueries",
-        "oracle:1109:decimal average",
-        "oracle:1111:decimal exact grouping distinct and extremes",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1120:diversify decimal column aggregates",
-        "oracle:1124:diversify outer join nullability",
-        "oracle:1127:diversify temporal bucketing",
-        "oracle:1133:diversify correlated scalar on orders",
-        "oracle:1139:diversify case on status and decimal",
-        "oracle:1140:diversify group_concat statuses",
-        "oracle:1143:diversify decimal average by user",
-        "oracle:1158:diversify min max datetime"
+        "oracle:0839:json bin collation",
+        "oracle:0841:json bin collation",
+        "oracle:0842:json bin collation",
+        "oracle:0846:json bin collation",
+        "oracle:0847:json bin collation",
+        "oracle:0850:binary operator",
+        "oracle:0851:binary operator",
+        "oracle:0852:null-only derived",
+        "oracle:0853:null-only derived",
+        "oracle:0857:rejected constructs",
+        "oracle:0860:unicode_ci collation",
+        "oracle:0861:unicode_ci collation",
+        "oracle:0862:unicode_ci collation",
+        "oracle:0863:unicode_ci collation",
+        "oracle:0869:rejected constructs",
+        "oracle:0870:json bin collation",
+        "oracle:0874:prefix precedence",
+        "oracle:0875:prefix precedence",
+        "oracle:0877:pad space matrix",
+        "oracle:0880:null-safe matrix",
+        "oracle:0881:collate positions",
+        "oracle:0887:json comparison",
+        "oracle:0889:json comparison",
+        "oracle:0890:json comparison",
+        "oracle:0901:theta joins",
+        "oracle:0902:theta joins",
+        "oracle:0903:theta joins",
+        "oracle:0904:theta joins",
+        "oracle:0905:correlated ranges",
+        "oracle:0906:correlated ranges",
+        "oracle:0907:correlated ranges",
+        "oracle:0908:correlated ranges",
+        "oracle:0911:chained right joins",
+        "oracle:0926:hand-written scalar subquery",
+        "oracle:0927:hand-written scalar subquery",
+        "oracle:0984:hand-written window rows frames unbounded",
+        "oracle:0990:hand-written window numeric range offsets",
+        "oracle:0991:hand-written window temporal range offsets",
+        "oracle:1012:hand-written derived table",
+        "oracle:1014:hand-written distinct aggregate",
+        "oracle:1018:hand-written grouping",
+        "oracle:1025:collation grouping",
+        "oracle:1026:collation distinct",
+        "oracle:1027:collation join",
+        "oracle:1032:hand-written left join aggregate",
+        "oracle:1042:hand-written aggregate empty input",
+        "oracle:1053:window aggregate",
+        "oracle:1058:window running frame",
+        "oracle:1063:window over grouped output",
+        "oracle:1064:window over grouped output",
+        "oracle:1065:window in cte",
+        "oracle:1066:window in cte",
+        "oracle:1069:decimal division",
+        "oracle:1130:dependent correlated subqueries",
+        "oracle:1179:decimal average",
+        "oracle:1181:decimal exact grouping distinct and extremes",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1190:diversify decimal column aggregates",
+        "oracle:1194:diversify outer join nullability",
+        "oracle:1197:diversify temporal bucketing",
+        "oracle:1203:diversify correlated scalar on orders",
+        "oracle:1209:diversify case on status and decimal",
+        "oracle:1210:diversify group_concat statuses",
+        "oracle:1213:diversify decimal average by user",
+        "oracle:1228:diversify min max datetime"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:1049"
+        "crates/pintail-sql/src/binder/mod.rs:1051"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/admission.rs:72",
         "crates/pintail-exec/tests/constant_predicate_folds.rs:124",
-        "crates/pintail-exec/tests/decimal_internal_digits.rs:7",
-        "crates/pintail-exec/tests/dependent_subquery_ratio.rs:176",
-        "crates/pintail-exec/tests/enum_empty_member.rs:128"
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:208",
+        "crates/pintail-exec/tests/decimal_internal_digits.rs:7"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2788,21 +2810,21 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0827:hash and net scalars",
-        "oracle:0829:hash and net scalars"
+        "oracle:0897:hash and net scalars",
+        "oracle:0899:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:402"
+        "crates/pintail-sql/src/binder/function.rs:403"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:479",
-        "tests/sqllogic/tests/mysql_oracle.rs:1448"
+        "tests/sqllogic/tests/mysql_oracle.rs:1609"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2864,19 +2886,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0880:hand-written date and time"
+        "oracle:0950:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:509"
+        "crates/pintail-sql/src/binder/function.rs:510"
       ],
       "binderGuards": [
         "if args.is_empty()"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1713"
+        "tests/sqllogic/tests/mysql_oracle.rs:1874"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -2986,7 +3008,7 @@
         "if args.is_empty()"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:862"
+        "tests/sqllogic/tests/mysql_oracle.rs:900"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -3096,7 +3118,7 @@
         "if args.is_empty()"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:862"
+        "tests/sqllogic/tests/mysql_oracle.rs:900"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -3191,24 +3213,24 @@
         "oracle:0729:temporal predicate rewrites",
         "oracle:0730:temporal predicate rewrites",
         "oracle:0769:join constant propagation boundaries",
-        "oracle:0802:coercion matrix",
-        "oracle:0809:null-safe matrix",
-        "oracle:0880:hand-written date and time",
-        "oracle:0881:hand-written date and time",
-        "oracle:1126:diversify temporal column"
+        "oracle:0872:coercion matrix",
+        "oracle:0879:null-safe matrix",
+        "oracle:0950:hand-written date and time",
+        "oracle:0951:hand-written date and time",
+        "oracle:1196:diversify temporal column"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:510"
+        "crates/pintail-sql/src/binder/function.rs:511"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
-        "tests/sqllogic/tests/mysql_oracle.rs:920",
+        "tests/sqllogic/tests/mysql_oracle.rs:960",
         "tests/sqllogic/tests/report_shapes.rs:390"
       ],
       "verification": "historical-differential-cases",
@@ -3238,6 +3260,7 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi metabase: previous-period revenue window",
+        "bi superset: compound interval grains",
         "bi superset: week-start grain with a rolling average",
         "oracle:0270:date and time",
         "oracle:0271:date and time",
@@ -3329,7 +3352,56 @@
         "oracle:0357:date and time",
         "oracle:0358:date and time",
         "oracle:0359:date and time",
-        "oracle:1144:diversify date_add on column"
+        "oracle:0776:compound interval literals",
+        "oracle:0777:compound interval literals",
+        "oracle:0778:compound interval literals",
+        "oracle:0779:compound interval literals",
+        "oracle:0780:compound interval literals",
+        "oracle:0781:compound interval literals",
+        "oracle:0782:compound interval literals",
+        "oracle:0783:compound interval literals",
+        "oracle:0784:compound interval literals",
+        "oracle:0785:compound interval literals",
+        "oracle:0786:compound interval literals",
+        "oracle:0787:compound interval literals",
+        "oracle:0788:compound interval literals",
+        "oracle:0789:compound interval literals",
+        "oracle:0790:compound interval literals",
+        "oracle:0791:compound interval literals",
+        "oracle:0792:compound interval literals",
+        "oracle:0793:compound interval literals",
+        "oracle:0794:compound interval literals",
+        "oracle:0795:compound interval literals",
+        "oracle:0796:compound interval literals",
+        "oracle:0797:compound interval literals",
+        "oracle:0798:compound interval literals",
+        "oracle:0799:compound interval literals",
+        "oracle:0800:compound interval literals",
+        "oracle:0801:compound interval literals",
+        "oracle:0802:compound interval literals",
+        "oracle:0803:compound interval literals",
+        "oracle:0804:compound interval literals",
+        "oracle:0805:compound interval literals",
+        "oracle:0806:compound interval literals",
+        "oracle:0807:compound interval literals",
+        "oracle:0808:compound interval literals",
+        "oracle:0809:compound interval literals",
+        "oracle:0810:compound interval literals",
+        "oracle:0811:compound interval literals",
+        "oracle:0812:compound interval literals",
+        "oracle:0813:compound interval literals",
+        "oracle:0814:compound interval literals",
+        "oracle:0815:compound interval literals",
+        "oracle:0816:compound interval literals",
+        "oracle:0817:compound interval literals",
+        "oracle:0818:compound interval literals",
+        "oracle:0819:compound interval literals",
+        "oracle:0820:compound interval literals",
+        "oracle:0821:compound interval literals",
+        "oracle:0822:compound interval literals",
+        "oracle:0823:compound interval literals",
+        "oracle:0824:compound interval literals",
+        "oracle:1214:diversify date_add on column"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -3343,7 +3415,7 @@
         "shared binder path"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:660"
+        "tests/sqllogic/tests/mysql_oracle.rs:684"
       ],
       "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
@@ -3465,23 +3537,23 @@
         "oracle:0357:date and time",
         "oracle:0358:date and time",
         "oracle:0359:date and time",
-        "oracle:0881:hand-written date and time",
-        "oracle:0882:hand-written date format directives",
-        "oracle:0883:hand-written date format week numbering",
-        "oracle:0884:hand-written date format edges",
-        "oracle:1126:diversify temporal column"
+        "oracle:0951:hand-written date and time",
+        "oracle:0952:hand-written date format directives",
+        "oracle:0953:hand-written date format week numbering",
+        "oracle:0954:hand-written date format edges",
+        "oracle:1196:diversify temporal column"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:518"
+        "crates/pintail-sql/src/binder/function.rs:519"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:664"
+        "tests/sqllogic/tests/mysql_oracle.rs:688"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3509,6 +3581,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
+        "bi superset: compound interval grains",
         "temporal: date_sub bound in the predicate",
         "oracle:0270:date and time",
         "oracle:0271:date and time",
@@ -3600,7 +3673,56 @@
         "oracle:0357:date and time",
         "oracle:0358:date and time",
         "oracle:0359:date and time",
-        "oracle:1144:diversify date_add on column"
+        "oracle:0776:compound interval literals",
+        "oracle:0777:compound interval literals",
+        "oracle:0778:compound interval literals",
+        "oracle:0779:compound interval literals",
+        "oracle:0780:compound interval literals",
+        "oracle:0781:compound interval literals",
+        "oracle:0782:compound interval literals",
+        "oracle:0783:compound interval literals",
+        "oracle:0784:compound interval literals",
+        "oracle:0785:compound interval literals",
+        "oracle:0786:compound interval literals",
+        "oracle:0787:compound interval literals",
+        "oracle:0788:compound interval literals",
+        "oracle:0789:compound interval literals",
+        "oracle:0790:compound interval literals",
+        "oracle:0791:compound interval literals",
+        "oracle:0792:compound interval literals",
+        "oracle:0793:compound interval literals",
+        "oracle:0794:compound interval literals",
+        "oracle:0795:compound interval literals",
+        "oracle:0796:compound interval literals",
+        "oracle:0797:compound interval literals",
+        "oracle:0798:compound interval literals",
+        "oracle:0799:compound interval literals",
+        "oracle:0800:compound interval literals",
+        "oracle:0801:compound interval literals",
+        "oracle:0802:compound interval literals",
+        "oracle:0803:compound interval literals",
+        "oracle:0804:compound interval literals",
+        "oracle:0805:compound interval literals",
+        "oracle:0806:compound interval literals",
+        "oracle:0807:compound interval literals",
+        "oracle:0808:compound interval literals",
+        "oracle:0809:compound interval literals",
+        "oracle:0810:compound interval literals",
+        "oracle:0811:compound interval literals",
+        "oracle:0812:compound interval literals",
+        "oracle:0813:compound interval literals",
+        "oracle:0814:compound interval literals",
+        "oracle:0815:compound interval literals",
+        "oracle:0816:compound interval literals",
+        "oracle:0817:compound interval literals",
+        "oracle:0818:compound interval literals",
+        "oracle:0819:compound interval literals",
+        "oracle:0820:compound interval literals",
+        "oracle:0821:compound interval literals",
+        "oracle:0822:compound interval literals",
+        "oracle:0823:compound interval literals",
+        "oracle:0824:compound interval literals",
+        "oracle:1214:diversify date_add on column"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -3614,7 +3736,7 @@
         "keyword argument"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:661"
+        "tests/sqllogic/tests/mysql_oracle.rs:685"
       ],
       "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
@@ -3737,13 +3859,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:519"
+        "crates/pintail-sql/src/binder/function.rs:520"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:662"
+        "tests/sqllogic/tests/mysql_oracle.rs:686"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3861,20 +3983,20 @@
         "oracle:0357:date and time",
         "oracle:0358:date and time",
         "oracle:0359:date and time",
-        "oracle:1126:diversify temporal column"
+        "oracle:1196:diversify temporal column"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:514"
+        "crates/pintail-sql/src/binder/function.rs:515"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:663"
+        "tests/sqllogic/tests/mysql_oracle.rs:687"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3903,19 +4025,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: quarter, weekday and name grains agree",
-        "oracle:1083:datetime calendar"
+        "oracle:1153:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:433"
+        "crates/pintail-sql/src/binder/function.rs:434"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2861"
+        "tests/sqllogic/tests/mysql_oracle.rs:3022"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3949,13 +4071,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:514"
+        "crates/pintail-sql/src/binder/function.rs:515"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:861"
+        "tests/sqllogic/tests/mysql_oracle.rs:899"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3984,19 +4106,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: quarter, weekday and name grains agree",
-        "oracle:1081:datetime calendar"
+        "oracle:1151:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:415"
+        "crates/pintail-sql/src/binder/function.rs:416"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2847"
+        "tests/sqllogic/tests/mysql_oracle.rs:3008"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4024,19 +4146,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1081:datetime calendar"
+        "oracle:1151:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:417"
+        "crates/pintail-sql/src/binder/function.rs:418"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2848"
+        "tests/sqllogic/tests/mysql_oracle.rs:3009"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4070,10 +4192,10 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/admission.rs:23",
         "crates/pintail-exec/tests/constant_predicate_folds.rs:53",
-        "crates/pintail-exec/tests/decimal_internal_digits.rs:37",
-        "crates/pintail-exec/tests/dependent_subquery_ratio.rs:89",
-        "crates/pintail-exec/tests/enum_empty_member.rs:50"
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:104",
+        "crates/pintail-exec/tests/decimal_internal_digits.rs:37"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -4136,7 +4258,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0979:window ranking"
+        "oracle:1049:window ranking"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
@@ -4148,7 +4270,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2321"
+        "tests/sqllogic/tests/mysql_oracle.rs:2482"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4176,19 +4298,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1100:string scalars"
+        "oracle:1170:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:409"
+        "crates/pintail-sql/src/binder/function.rs:410"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2951"
+        "tests/sqllogic/tests/mysql_oracle.rs:3112"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4216,19 +4338,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1091:numeric scalars"
+        "oracle:1161:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:381"
+        "crates/pintail-sql/src/binder/function.rs:382"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2905"
+        "tests/sqllogic/tests/mysql_oracle.rs:3066"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4289,8 +4411,8 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi shared: extract year_month grouping",
-        "oracle:0830:extract composite units",
-        "oracle:1085:datetime calendar"
+        "oracle:0900:extract composite units",
+        "oracle:1155:datetime calendar"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -4303,7 +4425,7 @@
       "binderGuards": [],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:194",
-        "tests/sqllogic/tests/mysql_oracle.rs:1464"
+        "tests/sqllogic/tests/mysql_oracle.rs:1625"
       ],
       "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
@@ -4363,19 +4485,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1100:string scalars"
+        "oracle:1170:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:410"
+        "crates/pintail-sql/src/binder/function.rs:411"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2951"
+        "tests/sqllogic/tests/mysql_oracle.rs:3112"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4404,19 +4526,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "set: find_in_set filters by membership",
-        "oracle:1098:string scalars"
+        "oracle:1168:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:395"
+        "crates/pintail-sql/src/binder/function.rs:396"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2940"
+        "tests/sqllogic/tests/mysql_oracle.rs:3101"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4445,10 +4567,10 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi superset: first and last value over an unbounded frame",
-        "oracle:0910:hand-written first last value unique order",
-        "oracle:0911:hand-written first last value peer groups",
-        "oracle:0912:hand-written first last value no order",
-        "oracle:0936:reviewed frame on extremes"
+        "oracle:0980:hand-written first last value unique order",
+        "oracle:0981:hand-written first last value peer groups",
+        "oracle:0982:hand-written first last value no order",
+        "oracle:1006:reviewed frame on extremes"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -4458,7 +4580,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1921"
+        "tests/sqllogic/tests/mysql_oracle.rs:2082"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
@@ -4486,10 +4608,11 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0928:repaired exact literal rounding",
-        "oracle:1073:decimal round",
-        "oracle:1116:datetime helpers",
-        "oracle:1118:datetime helpers"
+        "oracle:0835:exact integer rounding",
+        "oracle:0998:repaired exact literal rounding",
+        "oracle:1143:decimal round",
+        "oracle:1186:datetime helpers",
+        "oracle:1188:datetime helpers"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -4504,7 +4627,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/decimal_internal_digits.rs:172",
-        "tests/sqllogic/tests/mysql_oracle.rs:2045"
+        "tests/sqllogic/tests/mysql_oracle.rs:2206"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -4532,7 +4655,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1100:string scalars"
+        "oracle:1170:string scalars"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -4547,7 +4670,7 @@
       "testOccurrences": [
         "tests/sqllogic/tests/date_prune.rs:39",
         "tests/sqllogic/tests/datetime_prune_fires.rs:54",
-        "tests/sqllogic/tests/mysql_oracle.rs:2952"
+        "tests/sqllogic/tests/mysql_oracle.rs:3113"
       ],
       "verification": "historical-differential-cases",
       "note": "Only the two-argument, en_US formatting form is implemented; locale argument is absent.",
@@ -4671,20 +4794,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0927:repaired from_base64 whitespace set",
-        "oracle:1101:string scalars"
+        "oracle:0997:repaired from_base64 whitespace set",
+        "oracle:1171:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:413"
+        "crates/pintail-sql/src/binder/function.rs:414"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2039"
+        "tests/sqllogic/tests/mysql_oracle.rs:2200"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4712,19 +4835,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1084:datetime calendar"
+        "oracle:1154:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:437"
+        "crates/pintail-sql/src/binder/function.rs:438"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2866"
+        "tests/sqllogic/tests/mysql_oracle.rs:3027"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -4752,7 +4875,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0879:hand-written date and time"
+        "oracle:0949:hand-written date and time"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -4765,7 +4888,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1708"
+        "tests/sqllogic/tests/mysql_oracle.rs:1869"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -5159,19 +5282,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "counters: greatest and least across widths",
-        "oracle:1094:numeric scalars"
+        "oracle:1164:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:500"
+        "crates/pintail-sql/src/binder/function.rs:501"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2920"
+        "tests/sqllogic/tests/mysql_oracle.rs:3081"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -5225,11 +5348,11 @@
         "oracle:0507:hash aggregate",
         "oracle:0508:hash aggregate",
         "oracle:0509:hash aggregate",
-        "oracle:0944:hand-written distinct aggregate",
-        "oracle:1087:group concat",
-        "oracle:1088:group concat",
-        "oracle:1089:group concat",
-        "oracle:1140:diversify group_concat statuses"
+        "oracle:1014:hand-written distinct aggregate",
+        "oracle:1157:group concat",
+        "oracle:1158:group concat",
+        "oracle:1159:group concat",
+        "oracle:1210:diversify group_concat statuses"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -5243,7 +5366,8 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:735"
+        "crates/pintail-exec/tests/admission.rs:86",
+        "tests/sqllogic/tests/mysql_oracle.rs:764"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented with truncation warnings and session limit; derived/wrapped result metadata and JSON ORDER BY keys remain restricted.",
@@ -5644,21 +5768,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "geometry: hex round-trips the internal format",
-        "oracle:0915:repaired trim whitespace class",
-        "oracle:0927:repaired from_base64 whitespace set",
-        "oracle:1099:string scalars"
+        "oracle:0985:repaired trim whitespace class",
+        "oracle:0997:repaired from_base64 whitespace set",
+        "oracle:1169:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:398"
+        "crates/pintail-sql/src/binder/function.rs:399"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1955"
+        "tests/sqllogic/tests/mysql_oracle.rs:2116"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -5688,20 +5812,20 @@
       "differentialEvidence": [
         "bi shared: maketime from extracted parts",
         "temporal: sub-day grains on a microsecond timestamp",
-        "oracle:0878:hand-written date and time"
+        "oracle:0948:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:515"
+        "crates/pintail-sql/src/binder/function.rs:516"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1703"
+        "tests/sqllogic/tests/mysql_oracle.rs:1864"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -5851,8 +5975,8 @@
         "oracle:0267:conditionals and nulls",
         "oracle:0268:conditionals and nulls",
         "oracle:0269:conditionals and nulls",
-        "oracle:0941:hand-written conditionals",
-        "oracle:1064:dependent correlated subqueries"
+        "oracle:1011:hand-written conditionals",
+        "oracle:1134:dependent correlated subqueries"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -5865,7 +5989,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:646"
+        "tests/sqllogic/tests/mysql_oracle.rs:669"
       ],
       "verification": "historical-differential-cases",
       "note": "Conditional evaluation exists; a documented DECIMAL branch-scale rendering difference remains.",
@@ -5983,20 +6107,20 @@
         "oracle:0267:conditionals and nulls",
         "oracle:0268:conditionals and nulls",
         "oracle:0269:conditionals and nulls",
-        "oracle:0941:hand-written conditionals",
-        "oracle:1095:numeric scalars"
+        "oracle:1011:hand-written conditionals",
+        "oracle:1165:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:363"
+        "crates/pintail-sql/src/binder/function.rs:364"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:649"
+        "tests/sqllogic/tests/mysql_oracle.rs:672"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -6024,20 +6148,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0828:hash and net scalars"
+        "oracle:0898:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:406"
+        "crates/pintail-sql/src/binder/function.rs:407"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:481",
-        "tests/sqllogic/tests/mysql_oracle.rs:1453"
+        "tests/sqllogic/tests/mysql_oracle.rs:1614"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -6065,20 +6189,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0828:hash and net scalars"
+        "oracle:0898:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:407"
+        "crates/pintail-sql/src/binder/function.rs:408"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:482",
-        "tests/sqllogic/tests/mysql_oracle.rs:1455"
+        "tests/sqllogic/tests/mysql_oracle.rs:1616"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -6170,14 +6294,16 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:390"
+        "crates/pintail-sql/src/binder/function.rs:391"
       ],
       "binderGuards": [
         "if args.len() == 4"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/live_replication_queries.rs:204",
+        "crates/pintail-exec/tests/memtable_overlay.rs:87",
         "crates/pintail-exec/tests/runtime_join_filter.rs:189",
-        "tests/sqllogic/tests/mysql_oracle.rs:4859"
+        "tests/sqllogic/tests/mysql_oracle.rs:5036"
       ],
       "verification": "not-run",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -6205,20 +6331,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0939:repaired binary case sensitivity",
-        "oracle:1098:string scalars"
+        "oracle:1009:repaired binary case sensitivity",
+        "oracle:1168:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:394"
+        "crates/pintail-sql/src/binder/function.rs:395"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2114"
+        "tests/sqllogic/tests/mysql_oracle.rs:2275"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -7853,10 +7979,10 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json constructor preserves json versus text",
-        "oracle:1006:json",
-        "oracle:1007:json",
-        "oracle:1039:json typed constructor input",
-        "oracle:1041:json null distinction"
+        "oracle:1076:json",
+        "oracle:1077:json",
+        "oracle:1109:json typed constructor input",
+        "oracle:1111:json null distinction"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -7870,7 +7996,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2461"
+        "tests/sqllogic/tests/mysql_oracle.rs:2622"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -7967,12 +8093,12 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json aggregate embeds documents",
-        "oracle:0934:json objectagg grouped",
-        "oracle:1008:json aggregate",
-        "oracle:1009:json aggregate",
-        "oracle:1010:json aggregate",
-        "oracle:1011:json aggregate",
-        "oracle:1040:json typed aggregate input"
+        "oracle:1004:json objectagg grouped",
+        "oracle:1078:json aggregate",
+        "oracle:1079:json aggregate",
+        "oracle:1080:json aggregate",
+        "oracle:1081:json aggregate",
+        "oracle:1110:json typed aggregate input"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -7986,7 +8112,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2085"
+        "tests/sqllogic/tests/mysql_oracle.rs:2246"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -8015,20 +8141,20 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi shared: json validity and typed path filter",
-        "oracle:0899:hand-written json contains",
-        "oracle:1130:diversify json contains and length"
+        "oracle:0969:hand-written json contains",
+        "oracle:1200:diversify json contains and length"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:469"
+        "crates/pintail-sql/src/binder/function.rs:470"
       ],
       "binderGuards": [
         "if matches!(args.len(), 2 | 3)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1846"
+        "tests/sqllogic/tests/mysql_oracle.rs:2007"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8058,21 +8184,21 @@
       "differentialEvidence": [
         "bi shared: contains_path over several paths at once",
         "json: contains_path filters the documented rows",
-        "oracle:0823:json path wildcards",
-        "oracle:0900:hand-written json contains path"
+        "oracle:0893:json path wildcards",
+        "oracle:0970:hand-written json contains path"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:470"
+        "crates/pintail-sql/src/binder/function.rs:471"
       ],
       "binderGuards": [
         "if args.len() >= 3"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:387",
-        "tests/sqllogic/tests/mysql_oracle.rs:1408"
+        "tests/sqllogic/tests/mysql_oracle.rs:1569"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8100,20 +8226,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0826:json modification"
+        "oracle:0896:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:494"
+        "crates/pintail-sql/src/binder/function.rs:495"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:438",
-        "tests/sqllogic/tests/mysql_oracle.rs:1435"
+        "tests/sqllogic/tests/mysql_oracle.rs:1596"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8144,34 +8270,34 @@
         "bi shared: json validity and typed path filter",
         "json: merge_patch overlays and reads back",
         "oracle:0679:typed diversify",
-        "oracle:0776:json bin collation",
-        "oracle:0777:json bin collation",
-        "oracle:0778:json bin collation",
-        "oracle:0779:json bin collation",
-        "oracle:0780:json bin collation",
-        "oracle:0784:json bin collation",
-        "oracle:0786:json bin collation",
-        "oracle:0787:json bin collation",
-        "oracle:0800:json bin collation",
-        "oracle:0815:json comparison",
-        "oracle:0816:json comparison",
-        "oracle:0817:json comparison",
-        "oracle:0818:json comparison",
-        "oracle:0819:json comparison",
-        "oracle:0820:json comparison",
-        "oracle:0821:json path wildcards",
-        "oracle:0822:json path wildcards",
-        "oracle:0823:json path wildcards",
-        "oracle:0825:json modification",
-        "oracle:1003:json",
-        "oracle:1004:json",
-        "oracle:1012:json",
-        "oracle:1038:json extract multiple paths",
-        "oracle:1039:json typed constructor input",
-        "oracle:1040:json typed aggregate input",
-        "oracle:1041:json null distinction",
-        "oracle:1129:diversify json column extract",
-        "oracle:1130:diversify json contains and length"
+        "oracle:0836:json bin collation",
+        "oracle:0837:json bin collation",
+        "oracle:0838:json bin collation",
+        "oracle:0839:json bin collation",
+        "oracle:0840:json bin collation",
+        "oracle:0844:json bin collation",
+        "oracle:0846:json bin collation",
+        "oracle:0847:json bin collation",
+        "oracle:0870:json bin collation",
+        "oracle:0885:json comparison",
+        "oracle:0886:json comparison",
+        "oracle:0887:json comparison",
+        "oracle:0888:json comparison",
+        "oracle:0889:json comparison",
+        "oracle:0890:json comparison",
+        "oracle:0891:json path wildcards",
+        "oracle:0892:json path wildcards",
+        "oracle:0893:json path wildcards",
+        "oracle:0895:json modification",
+        "oracle:1073:json",
+        "oracle:1074:json",
+        "oracle:1082:json",
+        "oracle:1108:json extract multiple paths",
+        "oracle:1109:json typed constructor input",
+        "oracle:1110:json typed aggregate input",
+        "oracle:1111:json null distinction",
+        "oracle:1199:diversify json column extract",
+        "oracle:1200:diversify json contains and length"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -8186,7 +8312,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:138",
-        "tests/sqllogic/tests/mysql_oracle.rs:909"
+        "tests/sqllogic/tests/mysql_oracle.rs:949"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -8214,20 +8340,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0824:json modification"
+        "oracle:0894:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:478"
+        "crates/pintail-sql/src/binder/function.rs:479"
       ],
       "binderGuards": [
         "if args.len() >= 3 && args.len() % 2 == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:411",
-        "tests/sqllogic/tests/mysql_oracle.rs:1418"
+        "tests/sqllogic/tests/mysql_oracle.rs:1579"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8256,20 +8382,20 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: length and keys survive null documents",
-        "oracle:0901:hand-written json length keys type",
-        "oracle:0935:reviewed json keys ordering"
+        "oracle:0971:hand-written json length keys type",
+        "oracle:1005:reviewed json keys ordering"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:468"
+        "crates/pintail-sql/src/binder/function.rs:469"
       ],
       "binderGuards": [
         "if matches!(args.len(), 1 | 2)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1861"
+        "tests/sqllogic/tests/mysql_oracle.rs:2022"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8298,22 +8424,22 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: length and keys survive null documents",
-        "oracle:0901:hand-written json length keys type",
-        "oracle:1130:diversify json contains and length",
-        "oracle:1131:diversify json null rows",
-        "oracle:1150:diversify coalesce meta length"
+        "oracle:0971:hand-written json length keys type",
+        "oracle:1200:diversify json contains and length",
+        "oracle:1201:diversify json null rows",
+        "oracle:1220:diversify coalesce meta length"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:467"
+        "crates/pintail-sql/src/binder/function.rs:468"
       ],
       "binderGuards": [
         "if matches!(args.len(), 1 | 2)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1859"
+        "tests/sqllogic/tests/mysql_oracle.rs:2020"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8376,20 +8502,20 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: merge_patch overlays and reads back",
-        "oracle:0825:json modification"
+        "oracle:0895:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:493"
+        "crates/pintail-sql/src/binder/function.rs:494"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:435",
-        "tests/sqllogic/tests/mysql_oracle.rs:1427"
+        "tests/sqllogic/tests/mysql_oracle.rs:1588"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8453,10 +8579,10 @@
       "differentialEvidence": [
         "json constructor preserves json versus text",
         "json: object construction embeds an extracted scalar",
-        "oracle:1005:json",
-        "oracle:1007:json",
-        "oracle:1039:json typed constructor input",
-        "oracle:1156:diversify json object constructor with column"
+        "oracle:1075:json",
+        "oracle:1077:json",
+        "oracle:1109:json typed constructor input",
+        "oracle:1226:diversify json object constructor with column"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -8470,7 +8596,7 @@
         "if args.len() % 2 == 0"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2456"
+        "tests/sqllogic/tests/mysql_oracle.rs:2617"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -8498,8 +8624,8 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0933:json objectagg",
-        "oracle:0934:json objectagg grouped"
+        "oracle:1003:json objectagg",
+        "oracle:1004:json objectagg grouped"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -8513,7 +8639,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2081"
+        "tests/sqllogic/tests/mysql_oracle.rs:2242"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -8541,20 +8667,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0826:json modification"
+        "oracle:0896:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:497"
+        "crates/pintail-sql/src/binder/function.rs:498"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:440",
-        "tests/sqllogic/tests/mysql_oracle.rs:1437"
+        "tests/sqllogic/tests/mysql_oracle.rs:1598"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8582,20 +8708,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0826:json modification"
+        "oracle:0896:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:496"
+        "crates/pintail-sql/src/binder/function.rs:497"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:466",
-        "tests/sqllogic/tests/mysql_oracle.rs:1436"
+        "tests/sqllogic/tests/mysql_oracle.rs:1597"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8623,20 +8749,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0826:json modification"
+        "oracle:0896:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:495"
+        "crates/pintail-sql/src/binder/function.rs:496"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:439",
-        "tests/sqllogic/tests/mysql_oracle.rs:1436"
+        "tests/sqllogic/tests/mysql_oracle.rs:1597"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8664,20 +8790,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0824:json modification"
+        "oracle:0894:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:492"
+        "crates/pintail-sql/src/binder/function.rs:493"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:413",
-        "tests/sqllogic/tests/mysql_oracle.rs:1420"
+        "tests/sqllogic/tests/mysql_oracle.rs:1581"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8705,20 +8831,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0824:json modification"
+        "oracle:0894:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:485"
+        "crates/pintail-sql/src/binder/function.rs:486"
       ],
       "binderGuards": [
         "if args.len() >= 3 && args.len() % 2 == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:412",
-        "tests/sqllogic/tests/mysql_oracle.rs:1419"
+        "tests/sqllogic/tests/mysql_oracle.rs:1580"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8815,19 +8941,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: search locates a literal value",
-        "oracle:0931:json search"
+        "oracle:1001:json search"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:464"
+        "crates/pintail-sql/src/binder/function.rs:465"
       ],
       "binderGuards": [
         "if matches!(args.len(), 3 | 4)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2064"
+        "tests/sqllogic/tests/mysql_oracle.rs:2225"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8855,21 +8981,21 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0824:json modification",
-        "oracle:0825:json modification"
+        "oracle:0894:json modification",
+        "oracle:0895:json modification"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:471"
+        "crates/pintail-sql/src/binder/function.rs:472"
       ],
       "binderGuards": [
         "if args.len() >= 3 && args.len() % 2 == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:409",
-        "tests/sqllogic/tests/mysql_oracle.rs:1416"
+        "tests/sqllogic/tests/mysql_oracle.rs:1577"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -8973,7 +9099,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:3409"
+        "tests/sqllogic/tests/mysql_oracle.rs:3572"
       ],
       "verification": "not-run",
       "note": "Relational JSON expansion has no supported table-factor binding path.",
@@ -9004,10 +9130,10 @@
         "bi shared: json validity and typed path filter",
         "json extract filter on customer meta",
         "json: merge_patch overlays and reads back",
-        "oracle:0785:json bin collation",
-        "oracle:0898:hand-written cast targets",
-        "oracle:0901:hand-written json length keys type",
-        "oracle:1130:diversify json contains and length"
+        "oracle:0845:json bin collation",
+        "oracle:0968:hand-written cast targets",
+        "oracle:0971:hand-written json length keys type",
+        "oracle:1200:diversify json contains and length"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -9021,7 +9147,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1200"
+        "tests/sqllogic/tests/mysql_oracle.rs:1312"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -9050,18 +9176,18 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: merge_patch overlays and reads back",
-        "oracle:0776:json bin collation",
-        "oracle:0777:json bin collation",
-        "oracle:0778:json bin collation",
-        "oracle:0779:json bin collation",
-        "oracle:0780:json bin collation",
-        "oracle:0784:json bin collation",
-        "oracle:0786:json bin collation",
-        "oracle:0787:json bin collation",
-        "oracle:0800:json bin collation",
-        "oracle:1003:json",
-        "oracle:1004:json",
-        "oracle:1129:diversify json column extract"
+        "oracle:0836:json bin collation",
+        "oracle:0837:json bin collation",
+        "oracle:0838:json bin collation",
+        "oracle:0839:json bin collation",
+        "oracle:0840:json bin collation",
+        "oracle:0844:json bin collation",
+        "oracle:0846:json bin collation",
+        "oracle:0847:json bin collation",
+        "oracle:0870:json bin collation",
+        "oracle:1073:json",
+        "oracle:1074:json",
+        "oracle:1199:diversify json column extract"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -9076,7 +9202,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:138",
-        "tests/sqllogic/tests/mysql_oracle.rs:1161"
+        "tests/sqllogic/tests/mysql_oracle.rs:1273"
       ],
       "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
@@ -9105,19 +9231,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi shared: json validity and typed path filter",
-        "oracle:0902:hand-written json valid"
+        "oracle:0972:hand-written json valid"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:463"
+        "crates/pintail-sql/src/binder/function.rs:464"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1867"
+        "tests/sqllogic/tests/mysql_oracle.rs:2028"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9146,7 +9272,7 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "json: json_value reads a scalar with sql semantics",
-        "oracle:0932:json value"
+        "oracle:1002:json value"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -9161,7 +9287,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:403",
-        "tests/sqllogic/tests/mysql_oracle.rs:2073"
+        "tests/sqllogic/tests/mysql_oracle.rs:2234"
       ],
       "verification": "historical-differential-cases",
       "note": "JSON identity is implemented, but typed members, numeric scale, temporal formatting and some comparison contexts remain restricted. Reconcile conflicting older documentation using the code and oracle.",
@@ -9192,12 +9318,12 @@
         "bi superset: lag and lead against a named window",
         "event: lag over per-dimension timelines",
         "window lag payment-shaped totals",
-        "oracle:0906:hand-written lag lead",
-        "oracle:0907:hand-written lag lead offset default",
-        "oracle:0908:hand-written lag lead partitioned",
-        "oracle:0924:hand-written named windows partitioned",
-        "oracle:0937:reviewed named window in arguments",
-        "oracle:1155:diversify lag lead on totals"
+        "oracle:0976:hand-written lag lead",
+        "oracle:0977:hand-written lag lead offset default",
+        "oracle:0978:hand-written lag lead partitioned",
+        "oracle:0994:hand-written named windows partitioned",
+        "oracle:1007:reviewed named window in arguments",
+        "oracle:1225:diversify lag lead on totals"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -9207,7 +9333,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1899"
+        "tests/sqllogic/tests/mysql_oracle.rs:2060"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
@@ -9236,19 +9362,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: month-end bucketing via last_day",
-        "oracle:1083:datetime calendar"
+        "oracle:1153:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:435"
+        "crates/pintail-sql/src/binder/function.rs:436"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2861"
+        "tests/sqllogic/tests/mysql_oracle.rs:3022"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9309,10 +9435,10 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi superset: first and last value over an unbounded frame",
-        "oracle:0910:hand-written first last value unique order",
-        "oracle:0911:hand-written first last value peer groups",
-        "oracle:0912:hand-written first last value no order",
-        "oracle:0936:reviewed frame on extremes"
+        "oracle:0980:hand-written first last value unique order",
+        "oracle:0981:hand-written first last value peer groups",
+        "oracle:0982:hand-written first last value no order",
+        "oracle:1006:reviewed frame on extremes"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -9322,7 +9448,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1922"
+        "tests/sqllogic/tests/mysql_oracle.rs:2083"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
@@ -9357,13 +9483,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:353"
+        "crates/pintail-sql/src/binder/function.rs:354"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:859"
+        "tests/sqllogic/tests/mysql_oracle.rs:897"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9392,10 +9518,10 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi superset: lag and lead against a named window",
-        "oracle:0906:hand-written lag lead",
-        "oracle:0907:hand-written lag lead offset default",
-        "oracle:0908:hand-written lag lead partitioned",
-        "oracle:1155:diversify lag lead on totals"
+        "oracle:0976:hand-written lag lead",
+        "oracle:0977:hand-written lag lead offset default",
+        "oracle:0978:hand-written lag lead partitioned",
+        "oracle:1225:diversify lag lead on totals"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -9405,7 +9531,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1899"
+        "tests/sqllogic/tests/mysql_oracle.rs:2060"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
@@ -9435,19 +9561,19 @@
       "differentialEvidence": [
         "counters: greatest and least across widths",
         "order by a tree over several aggregates",
-        "oracle:1094:numeric scalars"
+        "oracle:1164:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:503"
+        "crates/pintail-sql/src/binder/function.rs:504"
       ],
       "binderGuards": [
         "if args.len() >= 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2920"
+        "tests/sqllogic/tests/mysql_oracle.rs:3081"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9573,13 +9699,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:359"
+        "crates/pintail-sql/src/binder/function.rs:360"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:635"
+        "tests/sqllogic/tests/mysql_oracle.rs:657"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9608,22 +9734,22 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "geometry: byte length includes the srid prefix",
-        "oracle:0875:hand-written strings",
-        "oracle:0880:hand-written date and time",
-        "oracle:0916:repaired base64 wrapping",
-        "oracle:1089:group concat"
+        "oracle:0945:hand-written strings",
+        "oracle:0950:hand-written date and time",
+        "oracle:0986:repaired base64 wrapping",
+        "oracle:1159:group concat"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:356"
+        "crates/pintail-sql/src/binder/function.rs:357"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1689"
+        "tests/sqllogic/tests/mysql_oracle.rs:1850"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9745,19 +9871,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1092:numeric scalars"
+        "oracle:1162:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:382"
+        "crates/pintail-sql/src/binder/function.rs:383"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2910"
+        "tests/sqllogic/tests/mysql_oracle.rs:3071"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -9979,20 +10105,20 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:0939:repaired binary case sensitivity",
-        "oracle:0959:collation pattern matching"
+        "oracle:1009:repaired binary case sensitivity",
+        "oracle:1029:collation pattern matching"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:361"
+        "crates/pintail-sql/src/binder/function.rs:362"
       ],
       "binderGuards": [
         "if matches!(args.len(), 2 | 3)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:636"
+        "tests/sqllogic/tests/mysql_oracle.rs:658"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10020,20 +10146,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1092:numeric scalars"
+        "oracle:1162:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:382"
+        "crates/pintail-sql/src/binder/function.rs:383"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2910"
+        "tests/sqllogic/tests/mysql_oracle.rs:3071"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10061,19 +10187,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1092:numeric scalars"
+        "oracle:1162:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:385"
+        "crates/pintail-sql/src/binder/function.rs:386"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2911"
+        "tests/sqllogic/tests/mysql_oracle.rs:3072"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10101,19 +10227,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1092:numeric scalars"
+        "oracle:1162:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:384"
+        "crates/pintail-sql/src/binder/function.rs:385"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2910"
+        "tests/sqllogic/tests/mysql_oracle.rs:3071"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10231,20 +10357,20 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:0875:hand-written strings",
-        "oracle:0939:repaired binary case sensitivity"
+        "oracle:0945:hand-written strings",
+        "oracle:1009:repaired binary case sensitivity"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:353"
+        "crates/pintail-sql/src/binder/function.rs:354"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:633"
+        "tests/sqllogic/tests/mysql_oracle.rs:655"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10272,8 +10398,8 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0921:hand-written window temporal range offsets",
-        "oracle:1097:string scalars"
+        "oracle:0991:hand-written window temporal range offsets",
+        "oracle:1167:string scalars"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -10286,7 +10412,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2001"
+        "tests/sqllogic/tests/mysql_oracle.rs:2162"
       ],
       "verification": "historical-differential-cases",
       "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
@@ -10378,19 +10504,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1085:datetime calendar"
+        "oracle:1155:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:444"
+        "crates/pintail-sql/src/binder/function.rs:445"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2872"
+        "tests/sqllogic/tests/mysql_oracle.rs:3033"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10419,8 +10545,8 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi shared: maketime from extracted parts",
-        "oracle:0905:hand-written maketime",
-        "oracle:0930:reviewed maketime fraction"
+        "oracle:0975:hand-written maketime",
+        "oracle:1000:reviewed maketime fraction"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -10434,7 +10560,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1889"
+        "tests/sqllogic/tests/mysql_oracle.rs:2050"
       ],
       "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
@@ -10494,10 +10620,12 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
+        "composite: grouped by the first part",
         "conformance: decimal aggregate spanning negatives and zero",
         "distinct count and min max",
         "enum: min and max compare as strings",
         "staff: active split with id extremes",
+        "unicode_ci: extremes follow the collation",
         "oracle:0410:relational subqueries",
         "oracle:0412:relational subqueries",
         "oracle:0414:relational subqueries",
@@ -10594,32 +10722,33 @@
         "oracle:0680:typed diversify",
         "oracle:0681:typed diversify",
         "oracle:0684:typed diversify",
-        "oracle:0914:hand-written window rows frames unbounded",
-        "oracle:0948:hand-written grouping",
-        "oracle:0949:hand-written collation",
-        "oracle:0960:collation extrema",
-        "oracle:0964:hand-written relational subquery",
-        "oracle:0972:hand-written aggregate empty input",
-        "oracle:0985:window aggregate",
-        "oracle:0994:window over grouped output",
-        "oracle:1111:decimal exact grouping distinct and extremes",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1158:diversify min max datetime"
+        "oracle:0864:unicode_ci collation",
+        "oracle:0984:hand-written window rows frames unbounded",
+        "oracle:1018:hand-written grouping",
+        "oracle:1019:hand-written collation",
+        "oracle:1030:collation extrema",
+        "oracle:1034:hand-written relational subquery",
+        "oracle:1042:hand-written aggregate empty input",
+        "oracle:1055:window aggregate",
+        "oracle:1064:window over grouped output",
+        "oracle:1181:decimal exact grouping distinct and extremes",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1228:diversify min max datetime"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:1049"
+        "crates/pintail-sql/src/binder/mod.rs:1051"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:531",
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:233",
         "crates/pintail-exec/tests/enum_ordinal.rs:216",
-        "crates/pintail-exec/tests/join_group_fold_oracle_shape.rs:213",
-        "crates/pintail-exec/tests/mixed_collation_grouping.rs:331"
+        "crates/pintail-exec/tests/join_group_fold_oracle_shape.rs:213"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10955,22 +11084,22 @@
       "differentialEvidence": [
         "bi looker: symmetric aggregate across a fanned-out join",
         "looker symmetric key helpers",
-        "oracle:0826:json modification",
-        "oracle:0827:hash and net scalars",
-        "oracle:0876:hand-written hashes"
+        "oracle:0896:json modification",
+        "oracle:0897:hash and net scalars",
+        "oracle:0946:hand-written hashes"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:399"
+        "crates/pintail-sql/src/binder/function.rs:400"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:479",
-        "tests/sqllogic/tests/mysql_oracle.rs:1436"
+        "tests/sqllogic/tests/mysql_oracle.rs:1597"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11069,6 +11198,7 @@
         "distinct count and min max",
         "enum: min and max compare as strings",
         "staff: active split with id extremes",
+        "unicode_ci: extremes follow the collation",
         "oracle:0435:common table expressions",
         "oracle:0436:common table expressions",
         "oracle:0437:common table expressions",
@@ -11152,31 +11282,32 @@
         "oracle:0674:window functions",
         "oracle:0680:typed diversify",
         "oracle:0681:typed diversify",
-        "oracle:0859:hand-written scalar subquery",
-        "oracle:0948:hand-written grouping",
-        "oracle:0949:hand-written collation",
-        "oracle:0960:collation extrema",
-        "oracle:0972:hand-written aggregate empty input",
-        "oracle:0985:window aggregate",
-        "oracle:0995:window in cte",
-        "oracle:1111:decimal exact grouping distinct and extremes",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1158:diversify min max datetime"
+        "oracle:0864:unicode_ci collation",
+        "oracle:0929:hand-written scalar subquery",
+        "oracle:1018:hand-written grouping",
+        "oracle:1019:hand-written collation",
+        "oracle:1030:collation extrema",
+        "oracle:1042:hand-written aggregate empty input",
+        "oracle:1055:window aggregate",
+        "oracle:1065:window in cte",
+        "oracle:1181:decimal exact grouping distinct and extremes",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1228:diversify min max datetime"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:1049"
+        "crates/pintail-sql/src/binder/mod.rs:1051"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:531",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:134",
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:233",
-        "crates/pintail-exec/tests/enum_ordinal.rs:216",
-        "crates/pintail-exec/tests/join_group_fold_oracle_shape.rs:213"
+        "crates/pintail-exec/tests/enum_ordinal.rs:216"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11206,20 +11337,20 @@
       "differentialEvidence": [
         "bi shared: maketime from extracted parts",
         "temporal: sub-day grains on a microsecond timestamp",
-        "oracle:0878:hand-written date and time"
+        "oracle:0948:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:516"
+        "crates/pintail-sql/src/binder/function.rs:517"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1704"
+        "tests/sqllogic/tests/mysql_oracle.rs:1865"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11247,19 +11378,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1093:numeric scalars"
+        "oracle:1163:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:507"
+        "crates/pintail-sql/src/binder/function.rs:508"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2915"
+        "tests/sqllogic/tests/mysql_oracle.rs:3076"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11379,21 +11510,21 @@
         "oracle:0357:date and time",
         "oracle:0358:date and time",
         "oracle:0359:date and time",
-        "oracle:1126:diversify temporal column",
-        "oracle:1127:diversify temporal bucketing"
+        "oracle:1196:diversify temporal column",
+        "oracle:1197:diversify temporal bucketing"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:513"
+        "crates/pintail-sql/src/binder/function.rs:514"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:663",
+        "tests/sqllogic/tests/mysql_oracle.rs:687",
         "tests/sqllogic/tests/report_shapes.rs:457",
         "tests/sqllogic/tests/two_pass_spill.rs:127"
       ],
@@ -11424,19 +11555,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: quarter, weekday and name grains agree",
-        "oracle:1083:datetime calendar"
+        "oracle:1153:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:434"
+        "crates/pintail-sql/src/binder/function.rs:435"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2862"
+        "tests/sqllogic/tests/mysql_oracle.rs:3023"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11598,7 +11729,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0880:hand-written date and time"
+        "oracle:0950:hand-written date and time"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -11612,8 +11743,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:170",
-        "crates/pintail-exec/tests/morsel_bench.rs:146",
-        "tests/sqllogic/tests/mysql_oracle.rs:104"
+        "crates/pintail-exec/tests/grouped_fold.rs:75",
+        "crates/pintail-exec/tests/morsel_bench.rs:155",
+        "crates/pintail-exec/tests/segment_subcube.rs:116"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -11676,7 +11808,7 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi superset: quartile counts from ntile",
-        "oracle:0909:hand-written ntile"
+        "oracle:0979:hand-written ntile"
       ],
       "status": "implemented-unverified",
       "scope": "analytics",
@@ -11686,7 +11818,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1915"
+        "tests/sqllogic/tests/mysql_oracle.rs:2076"
       ],
       "verification": "historical-differential-cases",
       "note": "Dedicated window dispatch exists and is missed by the older name extractor. Literal argument restrictions and explicit NULL treatment need MySQL comparison.",
@@ -11804,19 +11936,19 @@
         "oracle:0267:conditionals and nulls",
         "oracle:0268:conditionals and nulls",
         "oracle:0269:conditionals and nulls",
-        "oracle:0941:hand-written conditionals"
+        "oracle:1011:hand-written conditionals"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:365"
+        "crates/pintail-sql/src/binder/function.rs:366"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:650"
+        "tests/sqllogic/tests/mysql_oracle.rs:673"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11844,20 +11976,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0828:hash and net scalars"
+        "oracle:0898:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:405"
+        "crates/pintail-sql/src/binder/function.rs:406"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:480",
-        "tests/sqllogic/tests/mysql_oracle.rs:1452"
+        "tests/sqllogic/tests/mysql_oracle.rs:1613"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -11917,19 +12049,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1099:string scalars"
+        "oracle:1169:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:397"
+        "crates/pintail-sql/src/binder/function.rs:398"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2946"
+        "tests/sqllogic/tests/mysql_oracle.rs:3107"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12059,7 +12191,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:451"
+        "crates/pintail-sql/src/binder/function.rs:452"
       ],
       "binderGuards": [
         "if args.is_empty()"
@@ -12203,13 +12335,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:379"
+        "crates/pintail-sql/src/binder/function.rs:380"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:860"
+        "tests/sqllogic/tests/mysql_oracle.rs:898"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12237,19 +12369,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1091:numeric scalars"
+        "oracle:1161:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:379"
+        "crates/pintail-sql/src/binder/function.rs:380"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2905"
+        "tests/sqllogic/tests/mysql_oracle.rs:3066"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12342,19 +12474,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: quarter, weekday and name grains agree",
-        "oracle:1081:datetime calendar"
+        "oracle:1151:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:414"
+        "crates/pintail-sql/src/binder/function.rs:415"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2847"
+        "tests/sqllogic/tests/mysql_oracle.rs:3008"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12449,20 +12581,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0867:hand-written char and rand"
+        "oracle:0937:hand-written char and rand"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:449"
+        "crates/pintail-sql/src/binder/function.rs:450"
       ],
       "binderGuards": [
         "if args.is_empty()",
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1655"
+        "tests/sqllogic/tests/mysql_oracle.rs:1816"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12522,9 +12654,9 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0979:window ranking",
-        "oracle:0981:window ranking",
-        "oracle:0994:window over grouped output"
+        "oracle:1049:window ranking",
+        "oracle:1051:window ranking",
+        "oracle:1064:window over grouped output"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
@@ -12536,7 +12668,7 @@
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2321"
+        "tests/sqllogic/tests/mysql_oracle.rs:2482"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -12565,7 +12697,7 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "regular expression read transforms",
-        "oracle:1036:regexp"
+        "oracle:1106:regexp"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -12578,7 +12710,7 @@
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2595"
+        "tests/sqllogic/tests/mysql_oracle.rs:2756"
       ],
       "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
@@ -12607,9 +12739,9 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "regular expression read transforms",
-        "oracle:0940:repaired regexp unicode classes",
-        "oracle:1036:regexp",
-        "oracle:1037:regexp match type"
+        "oracle:1010:repaired regexp unicode classes",
+        "oracle:1106:regexp",
+        "oracle:1107:regexp match type"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -12622,7 +12754,7 @@
         "if matches!(args.len(), 2 | 3)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2119"
+        "tests/sqllogic/tests/mysql_oracle.rs:2280"
       ],
       "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
@@ -12652,7 +12784,7 @@
       "differentialEvidence": [
         "regex: replace folds suffix classes before grouping",
         "regular expression read transforms",
-        "oracle:1036:regexp"
+        "oracle:1106:regexp"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -12665,7 +12797,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2595"
+        "tests/sqllogic/tests/mysql_oracle.rs:2756"
       ],
       "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
@@ -12694,7 +12826,7 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "regex: substr extracts the mail domain",
-        "oracle:1036:regexp"
+        "oracle:1106:regexp"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -12707,7 +12839,7 @@
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2594"
+        "tests/sqllogic/tests/mysql_oracle.rs:2755"
       ],
       "verification": "historical-differential-cases",
       "note": "Rust regex subset differs from ICU; lookaround/backreferences and longer positional overloads are restricted. REGEXP_LIKE supports match_type.",
@@ -12837,9 +12969,9 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0916:repaired base64 wrapping",
-        "oracle:1089:group concat",
-        "oracle:1097:string scalars"
+        "oracle:0986:repaired base64 wrapping",
+        "oracle:1159:group concat",
+        "oracle:1167:string scalars"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -12852,7 +12984,7 @@
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1964"
+        "tests/sqllogic/tests/mysql_oracle.rs:2125"
       ],
       "verification": "historical-differential-cases",
       "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
@@ -12970,19 +13102,20 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:0916:repaired base64 wrapping"
+        "oracle:0986:repaired base64 wrapping"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:358"
+        "crates/pintail-sql/src/binder/function.rs:359"
       ],
       "binderGuards": [
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:635"
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:379",
+        "tests/sqllogic/tests/mysql_oracle.rs:657"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13010,19 +13143,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1097:string scalars"
+        "oracle:1167:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:388"
+        "crates/pintail-sql/src/binder/function.rs:389"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2935"
+        "tests/sqllogic/tests/mysql_oracle.rs:3096"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13147,13 +13280,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:360"
+        "crates/pintail-sql/src/binder/function.rs:361"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:636"
+        "tests/sqllogic/tests/mysql_oracle.rs:658"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13236,19 +13369,20 @@
         "three-way join through items",
         "window running total",
         "window share of total over grouped output",
-        "oracle:0928:repaired exact literal rounding",
-        "oracle:0989:window nested in expression",
-        "oracle:1070:decimal round",
-        "oracle:1071:decimal round",
-        "oracle:1072:decimal round",
-        "oracle:1091:numeric scalars",
-        "oracle:1092:numeric scalars",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1120:diversify decimal column aggregates",
-        "oracle:1121:diversify decimal column math",
-        "oracle:1132:diversify window on decimal",
-        "oracle:1142:diversify distinct status total pairs",
-        "oracle:1154:diversify cte spend"
+        "oracle:0833:exact integer rounding",
+        "oracle:0998:repaired exact literal rounding",
+        "oracle:1059:window nested in expression",
+        "oracle:1140:decimal round",
+        "oracle:1141:decimal round",
+        "oracle:1142:decimal round",
+        "oracle:1161:numeric scalars",
+        "oracle:1162:numeric scalars",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1190:diversify decimal column aggregates",
+        "oracle:1191:diversify decimal column math",
+        "oracle:1202:diversify window on decimal",
+        "oracle:1212:diversify distinct status total pairs",
+        "oracle:1224:diversify cte spend"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -13262,9 +13396,10 @@
         "if matches!(args.len(), 1 | 2)"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:201",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:4",
         "crates/pintail-exec/tests/json_bin_collation.rs:666",
-        "tests/sqllogic/tests/mysql_oracle.rs:2044"
+        "crates/pintail-exec/tests/settled_memo_identity.rs:125"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -13332,16 +13467,16 @@
         "oracle:0670:window functions",
         "oracle:0675:window functions",
         "oracle:0745:join constant propagation boundaries",
-        "oracle:0922:hand-written named windows",
-        "oracle:0978:window ranking",
-        "oracle:0980:window ranking",
-        "oracle:0990:window nested in expression",
-        "oracle:0992:window over grouped output",
-        "oracle:0995:window in cte",
-        "oracle:0996:window in cte",
-        "oracle:0997:window multiple in one query",
-        "oracle:1107:decimal ordering",
-        "oracle:1132:diversify window on decimal"
+        "oracle:0992:hand-written named windows",
+        "oracle:1048:window ranking",
+        "oracle:1050:window ranking",
+        "oracle:1060:window nested in expression",
+        "oracle:1062:window over grouped output",
+        "oracle:1065:window in cte",
+        "oracle:1066:window in cte",
+        "oracle:1067:window multiple in one query",
+        "oracle:1177:decimal ordering",
+        "oracle:1202:diversify window on decimal"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
@@ -13353,10 +13488,10 @@
         "any arity"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/admission.rs:84",
         "crates/pintail-exec/tests/enum_ordinal.rs:265",
         "crates/pintail-exec/tests/set_ordinal.rs:217",
-        "tests/sqllogic/tests/mysql_oracle.rs:879",
-        "tests/sqllogic/tests/report_shapes.rs:396"
+        "tests/sqllogic/tests/mysql_oracle.rs:918"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13384,7 +13519,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1097:string scalars"
+        "oracle:1167:string scalars"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -13397,7 +13532,7 @@
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2936"
+        "tests/sqllogic/tests/mysql_oracle.rs:3097"
       ],
       "verification": "historical-differential-cases",
       "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
@@ -13464,9 +13599,9 @@
       "binderGuards": [],
       "testOccurrences": [
         "crates/pintail-exec/tests/constant_predicate_folds.rs:20",
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:31",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:19",
-        "crates/pintail-exec/tests/enum_empty_member.rs:26",
-        "crates/pintail-exec/tests/enum_ordinal.rs:45"
+        "crates/pintail-exec/tests/enum_empty_member.rs:26"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -13494,8 +13629,8 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0917:repaired sec_to_time fraction",
-        "oracle:1084:datetime calendar"
+        "oracle:0987:repaired sec_to_time fraction",
+        "oracle:1154:datetime calendar"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -13509,7 +13644,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1970"
+        "tests/sqllogic/tests/mysql_oracle.rs:2131"
       ],
       "verification": "historical-differential-cases",
       "note": "Direct projections have specialized wire metadata; wrapping or deriving the expression can lose it.",
@@ -13537,20 +13672,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0878:hand-written date and time"
+        "oracle:0948:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:517"
+        "crates/pintail-sql/src/binder/function.rs:518"
       ],
       "binderGuards": [
         "if args.len() == 1",
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1704"
+        "tests/sqllogic/tests/mysql_oracle.rs:1865"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13615,7 +13750,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:400"
+        "crates/pintail-sql/src/binder/function.rs:401"
       ],
       "binderGuards": [
         "if args.len() == 1"
@@ -13648,21 +13783,21 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0827:hash and net scalars",
-        "oracle:0829:hash and net scalars"
+        "oracle:0897:hash and net scalars",
+        "oracle:0899:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:400"
+        "crates/pintail-sql/src/binder/function.rs:401"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:478",
-        "tests/sqllogic/tests/mysql_oracle.rs:1446"
+        "tests/sqllogic/tests/mysql_oracle.rs:1607"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13690,20 +13825,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0827:hash and net scalars"
+        "oracle:0897:hash and net scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:401"
+        "crates/pintail-sql/src/binder/function.rs:402"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:478",
-        "tests/sqllogic/tests/mysql_oracle.rs:1446"
+        "tests/sqllogic/tests/mysql_oracle.rs:1607"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13731,19 +13866,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1090:numeric scalars"
+        "oracle:1160:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:378"
+        "crates/pintail-sql/src/binder/function.rs:379"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2900"
+        "tests/sqllogic/tests/mysql_oracle.rs:3061"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -13780,7 +13915,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:3439"
+        "tests/sqllogic/tests/mysql_oracle.rs:3602"
       ],
       "verification": "not-run",
       "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
@@ -13814,7 +13949,7 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:166"
+        "tests/sqllogic/tests/mysql_oracle.rs:168"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -13851,7 +13986,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:3414"
+        "tests/sqllogic/tests/mysql_oracle.rs:3577"
       ],
       "verification": "not-run",
       "note": "No scalar dispatch; the documented missing trigonometric/SOUNDEX family confirms the gap.",
@@ -13911,7 +14046,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1097:string scalars"
+        "oracle:1167:string scalars"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -13924,7 +14059,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2935"
+        "tests/sqllogic/tests/mysql_oracle.rs:3096"
       ],
       "verification": "historical-differential-cases",
       "note": "Result is capped at 4096 bytes; MySQL uses its packet-size limit. Test multi-byte length, padding and oversize errors.",
@@ -13952,20 +14087,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1091:numeric scalars",
-        "oracle:1092:numeric scalars"
+        "oracle:1161:numeric scalars",
+        "oracle:1162:numeric scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:380"
+        "crates/pintail-sql/src/binder/function.rs:381"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2905"
+        "tests/sqllogic/tests/mysql_oracle.rs:3066"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17291,19 +17426,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0885:hand-written statistical aggregates"
+        "oracle:0955:hand-written statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3798"
+        "crates/pintail-sql/src/binder/mod.rs:3820"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1755"
+        "tests/sqllogic/tests/mysql_oracle.rs:1916"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17332,19 +17467,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates"
+        "oracle:0955:hand-written statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3798"
+        "crates/pintail-sql/src/binder/mod.rs:3820"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1754"
+        "tests/sqllogic/tests/mysql_oracle.rs:1915"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17373,23 +17508,23 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates",
-        "oracle:0886:hand-written statistical aggregates grouped",
-        "oracle:0887:hand-written statistical aggregate single row",
-        "oracle:0888:hand-written statistical aggregate empty group",
-        "oracle:0938:reviewed grouped statistical aggregates"
+        "oracle:0955:hand-written statistical aggregates",
+        "oracle:0956:hand-written statistical aggregates grouped",
+        "oracle:0957:hand-written statistical aggregate single row",
+        "oracle:0958:hand-written statistical aggregate empty group",
+        "oracle:1008:reviewed grouped statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3798"
+        "crates/pintail-sql/src/binder/mod.rs:3820"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1754"
+        "tests/sqllogic/tests/mysql_oracle.rs:1915"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17418,21 +17553,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates",
-        "oracle:0887:hand-written statistical aggregate single row",
-        "oracle:0888:hand-written statistical aggregate empty group"
+        "oracle:0955:hand-written statistical aggregates",
+        "oracle:0957:hand-written statistical aggregate single row",
+        "oracle:0958:hand-written statistical aggregate empty group"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3799"
+        "crates/pintail-sql/src/binder/mod.rs:3821"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1754"
+        "tests/sqllogic/tests/mysql_oracle.rs:1915"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17460,7 +17595,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1086:datetime calendar"
+        "oracle:1156:datetime calendar"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -17473,7 +17608,7 @@
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2878"
+        "tests/sqllogic/tests/mysql_oracle.rs:3039"
       ],
       "verification": "historical-differential-cases",
       "note": "Literal/dynamic formats have different rejection and metadata behavior. Time-only formats and week/year reconstruction remain documented gaps.",
@@ -17577,13 +17712,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:352"
+        "crates/pintail-sql/src/binder/function.rs:353"
       ],
       "binderGuards": [
         "if matches!(args.len(), 2 | 3)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:858"
+        "tests/sqllogic/tests/mysql_oracle.rs:896"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17707,13 +17842,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:352"
+        "crates/pintail-sql/src/binder/function.rs:353"
       ],
       "binderGuards": [
         "if matches!(args.len(), 2 | 3)"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:634"
+        "tests/sqllogic/tests/mysql_oracle.rs:656"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17743,19 +17878,19 @@
       "differentialEvidence": [
         "bi shared: substring_index dimension cleanup",
         "looker symmetric key helpers",
-        "oracle:0903:hand-written substring_index"
+        "oracle:0973:hand-written substring_index"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:460"
+        "crates/pintail-sql/src/binder/function.rs:461"
       ],
       "binderGuards": [
         "if args.len() == 3"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1875"
+        "tests/sqllogic/tests/mysql_oracle.rs:2036"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -17787,7 +17922,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:442"
+        "crates/pintail-sql/src/binder/function.rs:443"
       ],
       "binderGuards": [
         "if args.len() == 2"
@@ -17824,6 +17959,8 @@
         "bi metabase: previous-period revenue window",
         "bi superset: running total over grouped revenue",
         "bi superset: week-start grain with a rolling average",
+        "composite: grouped by the first part",
+        "composite: text-led key grouped by its first part",
         "conditional decimal sum keeps the fraction",
         "conformance: date bucketing over the fact table",
         "conformance: decimal aggregate spanning negatives and zero",
@@ -17870,38 +18007,38 @@
         "oracle:0678:typed diversify",
         "oracle:0683:typed diversify",
         "oracle:0713:temporal predicate rewrites",
-        "oracle:0858:hand-written scalar subquery",
-        "oracle:0913:hand-written window rows frames",
-        "oracle:0914:hand-written window rows frames unbounded",
-        "oracle:0918:hand-written window range frames",
-        "oracle:0919:hand-written window range peer groups",
-        "oracle:0920:hand-written window numeric range offsets",
-        "oracle:0922:hand-written named windows",
-        "oracle:0923:hand-written named windows with frame",
-        "oracle:0924:hand-written named windows partitioned",
-        "oracle:0925:hand-written named window extension",
-        "oracle:0926:hand-written chained named windows",
-        "oracle:0972:hand-written aggregate empty input",
-        "oracle:0982:window aggregate",
-        "oracle:0986:window running frame",
-        "oracle:0987:window running frame",
-        "oracle:0989:window nested in expression",
-        "oracle:0992:window over grouped output",
-        "oracle:0993:window over grouped output",
-        "oracle:0995:window in cte",
-        "oracle:0997:window multiple in one query",
-        "oracle:0999:decimal division",
-        "oracle:1000:decimal division",
-        "oracle:1107:decimal ordering",
-        "oracle:1119:diversify decimal column aggregates",
-        "oracle:1120:diversify decimal column aggregates",
-        "oracle:1124:diversify outer join nullability",
-        "oracle:1127:diversify temporal bucketing",
-        "oracle:1132:diversify window on decimal",
-        "oracle:1133:diversify correlated scalar on orders",
-        "oracle:1139:diversify case on status and decimal",
-        "oracle:1148:diversify having on decimal sum",
-        "oracle:1154:diversify cte spend"
+        "oracle:0928:hand-written scalar subquery",
+        "oracle:0983:hand-written window rows frames",
+        "oracle:0984:hand-written window rows frames unbounded",
+        "oracle:0988:hand-written window range frames",
+        "oracle:0989:hand-written window range peer groups",
+        "oracle:0990:hand-written window numeric range offsets",
+        "oracle:0992:hand-written named windows",
+        "oracle:0993:hand-written named windows with frame",
+        "oracle:0994:hand-written named windows partitioned",
+        "oracle:0995:hand-written named window extension",
+        "oracle:0996:hand-written chained named windows",
+        "oracle:1042:hand-written aggregate empty input",
+        "oracle:1052:window aggregate",
+        "oracle:1056:window running frame",
+        "oracle:1057:window running frame",
+        "oracle:1059:window nested in expression",
+        "oracle:1062:window over grouped output",
+        "oracle:1063:window over grouped output",
+        "oracle:1065:window in cte",
+        "oracle:1067:window multiple in one query",
+        "oracle:1069:decimal division",
+        "oracle:1070:decimal division",
+        "oracle:1177:decimal ordering",
+        "oracle:1189:diversify decimal column aggregates",
+        "oracle:1190:diversify decimal column aggregates",
+        "oracle:1194:diversify outer join nullability",
+        "oracle:1197:diversify temporal bucketing",
+        "oracle:1202:diversify window on decimal",
+        "oracle:1203:diversify correlated scalar on orders",
+        "oracle:1209:diversify case on status and decimal",
+        "oracle:1218:diversify having on decimal sum",
+        "oracle:1224:diversify cte spend"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -17916,9 +18053,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/constant_predicate_folds.rs:124",
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:282",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:7",
-        "crates/pintail-exec/tests/mixed_collation_grouping.rs:225",
-        "crates/pintail-exec/tests/morsel_bench.rs:170"
+        "crates/pintail-exec/tests/dense_group_kernels.rs:87"
       ],
       "verification": "historical-differential-cases",
       "note": "Implemented numeric paths retain exact-decimal behavior, with documented result-metadata differences and precision/scale limits. A value-only comparison is insufficient.",
@@ -18049,13 +18186,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:511"
+        "crates/pintail-sql/src/binder/function.rs:512"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1818"
+        "tests/sqllogic/tests/mysql_oracle.rs:1979"
       ],
       "verification": "not-run",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18115,19 +18252,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1084:datetime calendar"
+        "oracle:1154:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:439"
+        "crates/pintail-sql/src/binder/function.rs:440"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2867"
+        "tests/sqllogic/tests/mysql_oracle.rs:3028"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18159,7 +18296,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:443"
+        "crates/pintail-sql/src/binder/function.rs:444"
       ],
       "binderGuards": [
         "if args.len() == 2"
@@ -18223,7 +18360,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1085:datetime calendar"
+        "oracle:1155:datetime calendar"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -18237,7 +18374,7 @@
         "keyword argument"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2874"
+        "tests/sqllogic/tests/mysql_oracle.rs:3035"
       ],
       "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
@@ -18266,8 +18403,8 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "temporal: timestampdiff spans date and datetime operands",
-        "oracle:1114:datetime helpers",
-        "oracle:1115:datetime helpers"
+        "oracle:1184:datetime helpers",
+        "oracle:1185:datetime helpers"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -18281,7 +18418,7 @@
         "keyword argument"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:3047"
+        "tests/sqllogic/tests/mysql_oracle.rs:3208"
       ],
       "verification": "historical-differential-cases",
       "note": "Simple units have binding paths. Composite units/parser reachability and microseconds need explicit tests; documentation disagrees about composite EXTRACT support.",
@@ -18309,20 +18446,20 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0916:repaired base64 wrapping",
-        "oracle:1101:string scalars"
+        "oracle:0986:repaired base64 wrapping",
+        "oracle:1171:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:412"
+        "crates/pintail-sql/src/binder/function.rs:413"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1964"
+        "tests/sqllogic/tests/mysql_oracle.rs:2125"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18350,19 +18487,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1084:datetime calendar"
+        "oracle:1154:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:436"
+        "crates/pintail-sql/src/binder/function.rs:437"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2866"
+        "tests/sqllogic/tests/mysql_oracle.rs:3027"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18513,21 +18650,21 @@
         "oracle:0177:strings",
         "oracle:0178:strings",
         "oracle:0179:strings",
-        "oracle:0795:rejected constructs",
-        "oracle:0915:repaired trim whitespace class"
+        "oracle:0855:rejected constructs",
+        "oracle:0985:repaired trim whitespace class"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:355"
+        "crates/pintail-sql/src/binder/function.rs:356"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/json_bin_collation.rs:190",
-        "tests/sqllogic/tests/mysql_oracle.rs:355"
+        "tests/sqllogic/tests/mysql_oracle.rs:360"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18556,23 +18693,24 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "computed decimal rounds negative digits half away from zero",
-        "oracle:0928:repaired exact literal rounding",
-        "oracle:1074:decimal round",
-        "oracle:1093:numeric scalars",
-        "oracle:1121:diversify decimal column math"
+        "oracle:0998:repaired exact literal rounding",
+        "oracle:1144:decimal round",
+        "oracle:1163:numeric scalars",
+        "oracle:1191:diversify decimal column math"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:386"
+        "crates/pintail-sql/src/binder/function.rs:387"
       ],
       "binderGuards": [
         "if args.len() == 2"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:497",
         "crates/pintail-exec/tests/decimal_internal_digits.rs:150",
-        "tests/sqllogic/tests/mysql_oracle.rs:2046"
+        "tests/sqllogic/tests/mysql_oracle.rs:2207"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18607,13 +18745,13 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:354"
+        "crates/pintail-sql/src/binder/function.rs:355"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:859"
+        "tests/sqllogic/tests/mysql_oracle.rs:897"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18705,19 +18843,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1099:string scalars"
+        "oracle:1169:string scalars"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:408"
+        "crates/pintail-sql/src/binder/function.rs:409"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2946"
+        "tests/sqllogic/tests/mysql_oracle.rs:3107"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18745,19 +18883,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:0879:hand-written date and time"
+        "oracle:0949:hand-written date and time"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:520"
+        "crates/pintail-sql/src/binder/function.rs:521"
       ],
       "binderGuards": [
         "if args.len() <= 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1708"
+        "tests/sqllogic/tests/mysql_oracle.rs:1869"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18821,23 +18959,23 @@
         "conformance: mixed-collation double grouping",
         "star: grouped rollup counts facts and events per dimension",
         "string functions and like",
-        "oracle:0784:json bin collation",
-        "oracle:0875:hand-written strings",
-        "oracle:0939:repaired binary case sensitivity",
-        "oracle:1019:set operations",
-        "oracle:1145:diversify like and string on status"
+        "oracle:0844:json bin collation",
+        "oracle:0945:hand-written strings",
+        "oracle:1009:repaired binary case sensitivity",
+        "oracle:1089:set operations",
+        "oracle:1215:diversify like and string on status"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:354"
+        "crates/pintail-sql/src/binder/function.rs:355"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1196"
+        "tests/sqllogic/tests/mysql_oracle.rs:1308"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -18997,7 +19135,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:403"
+        "crates/pintail-sql/src/binder/function.rs:404"
       ],
       "binderGuards": [
         "if args.is_empty()"
@@ -19132,7 +19270,10 @@
       "priority": "P2",
       "pintailEvidence": [],
       "binderGuards": [],
-      "testOccurrences": [],
+      "testOccurrences": [
+        "crates/pintail-exec/tests/live_replication_queries.rs:79",
+        "crates/pintail-exec/tests/memtable_overlay.rs:157"
+      ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
@@ -19160,21 +19301,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates",
-        "oracle:0887:hand-written statistical aggregate single row",
-        "oracle:0938:reviewed grouped statistical aggregates"
+        "oracle:0955:hand-written statistical aggregates",
+        "oracle:0957:hand-written statistical aggregate single row",
+        "oracle:1008:reviewed grouped statistical aggregates"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3800"
+        "crates/pintail-sql/src/binder/mod.rs:3822"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1755"
+        "tests/sqllogic/tests/mysql_oracle.rs:1916"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -19203,21 +19344,21 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates",
-        "oracle:0886:hand-written statistical aggregates grouped",
-        "oracle:0887:hand-written statistical aggregate single row"
+        "oracle:0955:hand-written statistical aggregates",
+        "oracle:0956:hand-written statistical aggregates grouped",
+        "oracle:0957:hand-written statistical aggregate single row"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3801"
+        "crates/pintail-sql/src/binder/mod.rs:3823"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1755"
+        "tests/sqllogic/tests/mysql_oracle.rs:1916"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -19246,20 +19387,20 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi tableau: the stddev and variance family",
-        "oracle:0885:hand-written statistical aggregates",
-        "oracle:0888:hand-written statistical aggregate empty group"
+        "oracle:0955:hand-written statistical aggregates",
+        "oracle:0958:hand-written statistical aggregate empty group"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:3800"
+        "crates/pintail-sql/src/binder/mod.rs:3822"
       ],
       "binderGuards": [
         "any arity"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:1755"
+        "tests/sqllogic/tests/mysql_oracle.rs:1916"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -19295,7 +19436,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:433"
+        "tests/sqllogic/tests/mysql_oracle.rs:438"
       ],
       "verification": "not-run",
       "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
@@ -19355,8 +19496,8 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1081:datetime calendar",
-        "oracle:1082:datetime week modes"
+        "oracle:1151:datetime calendar",
+        "oracle:1152:datetime week modes"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -19369,7 +19510,7 @@
         "if args.len() == 2"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2848"
+        "tests/sqllogic/tests/mysql_oracle.rs:3009"
       ],
       "verification": "historical-differential-cases",
       "note": "WEEK mode is a literal 0..7; YEARWEEK has only one-argument dispatch. Check default_week_format and dynamic/explicit mode overloads.",
@@ -19398,19 +19539,19 @@
       "coverage": "differential-tested",
       "differentialEvidence": [
         "bi superset: week-start grain with a rolling average",
-        "oracle:1081:datetime calendar"
+        "oracle:1151:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:416"
+        "crates/pintail-sql/src/binder/function.rs:417"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2847"
+        "tests/sqllogic/tests/mysql_oracle.rs:3008"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -19438,19 +19579,19 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1081:datetime calendar"
+        "oracle:1151:datetime calendar"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:432"
+        "crates/pintail-sql/src/binder/function.rs:433"
       ],
       "binderGuards": [
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2849"
+        "tests/sqllogic/tests/mysql_oracle.rs:3010"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -19605,14 +19746,14 @@
         "oracle:0710:temporal predicate rewrites",
         "oracle:0711:temporal predicate rewrites",
         "oracle:0712:temporal predicate rewrites",
-        "oracle:1126:diversify temporal column",
-        "oracle:1127:diversify temporal bucketing"
+        "oracle:1196:diversify temporal column",
+        "oracle:1197:diversify temporal bucketing"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/function.rs:512"
+        "crates/pintail-sql/src/binder/function.rs:513"
       ],
       "binderGuards": [
         "if args.len() == 1",
@@ -19620,7 +19761,7 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
-        "tests/sqllogic/tests/mysql_oracle.rs:663",
+        "tests/sqllogic/tests/mysql_oracle.rs:687",
         "tests/sqllogic/tests/two_pass_spill.rs:127"
       ],
       "verification": "historical-differential-cases",
@@ -19649,7 +19790,7 @@
       ],
       "coverage": "differential-tested",
       "differentialEvidence": [
-        "oracle:1083:datetime calendar"
+        "oracle:1153:datetime calendar"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -19661,7 +19802,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:2860"
+        "tests/sqllogic/tests/mysql_oracle.rs:3021"
       ],
       "verification": "historical-differential-cases",
       "note": "WEEK mode is a literal 0..7; YEARWEEK has only one-argument dispatch. Check default_week_format and dynamic/explicit mode overloads.",
@@ -19838,7 +19979,7 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "tests/sqllogic/tests/mysql_oracle.rs:612"
+        "tests/sqllogic/tests/mysql_oracle.rs:632"
       ],
       "verification": "not-run",
       "note": "The manual marks this syntax deprecated; verify parser reachability separately from CAST AS BINARY.",
