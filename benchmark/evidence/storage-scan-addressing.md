@@ -99,6 +99,9 @@ This is a complete development-profile validation plus a targeted live
 replication check. It is not an rc/stable release gate or the full analytical
 benchmark, and makes no claim about cold-cache I/O or unrelated query shapes.
 
+The [20-million-row follow-up](storage-scan-20m.md) records the same comparison
+at larger row counts, including its shared-server timing limitations.
+
 ## Reproduce
 
 Build both examples at each revision, retaining the resulting binaries under
