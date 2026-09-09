@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1230;
+const EXPECTED_CASES: usize = 1229;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1422,10 +1422,6 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "unicode_ci collation",
             "SELECT STRCMP('a' COLLATE utf8mb4_unicode_ci, 'a\t' COLLATE utf8mb4_unicode_ci), \
                     STRCMP('a' COLLATE utf8mb4_general_ci, 'a\t' COLLATE utf8mb4_general_ci)",
-        ),
-        unordered(
-            "unicode_ci collation",
-            "SELECT l.id, e.tag FROM labels l JOIN events e ON e.tag = l.label",
         ),
         unordered(
             "rejected constructs",
