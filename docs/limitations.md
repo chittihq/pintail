@@ -98,10 +98,12 @@ stays readable as a list of things to fix.
   so no program can outlive the row that requested it.
 - Byte-level transcoding among character sets other than UTF-8 and binary is
   unsupported and rejects explicitly.
-- Explicit `COLLATE` accepts the three replicated profiles
-  (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_bin`) and maps the
+- Explicit `COLLATE` accepts the four replicated profiles
+  (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_unicode_ci`,
+  `utf8mb4_bin`) and maps the
   legacy names onto them - every `*_bin` and `binary` to `utf8mb4_bin`,
-  `*_general_ci` and `*_swedish_ci` to `utf8mb4_general_ci` - which is exact
+  `*_general_ci` and `*_swedish_ci` to `utf8mb4_general_ci`, `*_unicode_ci`
+  to `utf8mb4_unicode_ci` - which is exact
   over ASCII and an approximation outside it; other names reject. Because replicated text is stored transcoded to UTF-8, a supported
   `COLLATE` override is accepted even where MySQL would raise a
   charset-mismatch error (e.g. over a latin1-sourced column). Cross-profile
@@ -120,6 +122,15 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles, full per-expression coercibility, and
   collation-sensitive execution over mixed source profiles remain unsupported
   (#10).
+- `GROUP BY` over a PAD SPACE collation puts two values in one group where
+  MySQL sometimes puts them in two. A string ending in a character that
+  WEIGHS a space without BEING one - a no-break space is the reachable case
+  - compares equal to the string without it, and MySQL agrees: `=` matches
+  and `COUNT(DISTINCT)` folds them. Its `GROUP BY` does not, because that
+  key trims trailing spaces by character where the comparison pads by
+  weight, so MySQL reports two groups for values it also reports as one
+  distinct value and as equal. Pintail folds consistently across all three,
+  which agrees with MySQL on the first two and differs on the third.
 
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 

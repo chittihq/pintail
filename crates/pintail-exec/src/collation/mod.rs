@@ -427,8 +427,9 @@ mod tests {
         assert_eq!(compare_unicode_ci("student", "student   "), Ordering::Equal);
         assert_eq!(unicode_ci_sort_key("a"), unicode_ci_sort_key("a  "));
         // A no-break space weighs a space, so a trailing one is as
-        // insignificant as a space. MySQL agrees; it falls out of comparing
-        // weights rather than characters.
+        // insignificant as a space. MySQL's `=` and COUNT(DISTINCT) agree;
+        // its GROUP BY does not, which is a MySQL inconsistency recorded in
+        // docs/limitations.md rather than one reproduced here.
         assert_eq!(compare_unicode_ci("a", "a\u{a0}"), Ordering::Equal);
         // Leading and interior spaces still count.
         assert_ne!(compare_unicode_ci(" a", "a"), Ordering::Equal);
