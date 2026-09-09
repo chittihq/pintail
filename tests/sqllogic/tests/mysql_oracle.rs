@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1293;
+const EXPECTED_CASES: usize = 1373;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -318,16 +318,19 @@ fn run_oracle() -> Result<(), String> {
         let actual = pintail_sql::with_parse_mode(
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
-        )
-        .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
-        if !oracle_rows_equal(&actual, expected, case.ordered) {
-            failures.push(format!(
-                "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
+        );
+        match actual {
+            Err(error) => failures.push(format!(
+                "case {index} ({})\nSQL: {}\nPintail execution error: {error}",
                 case.family, case.sql
-            ));
-            if failures.len() == 10 {
-                break;
+            )),
+            Ok(actual) if !oracle_rows_equal(&actual, expected, case.ordered) => {
+                failures.push(format!(
+                    "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
+                    case.family, case.sql
+                ));
             }
+            Ok(_) => {}
         }
     }
     if failures.is_empty() {
@@ -339,9 +342,9 @@ fn run_oracle() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} differential mismatch(es), showing at most 10:\n{}",
+            "{} of {EXPECTED_CASES} differential case(s) failed, showing at most 10:\n{}",
             failures.len(),
-            failures.join("\n\n")
+            failures[..failures.len().min(10)].join("\n\n")
         ))
     }
 }
@@ -3236,6 +3239,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     ]
     .into_iter()
     .chain(diversify_cases())
+    .chain(relational_edge_cases())
     .collect()
 }
 
@@ -3746,6 +3750,343 @@ fn diversify_cases() -> Vec<OracleCase> {
         ordered(
             "collation expression interactions",
             "SELECT id, CASE WHEN note = 'ALPHA' THEN LOWER(note) ELSE UPPER(note) END FROM events ORDER BY id",
+        ),
+    ]
+}
+
+/// Distinct query shapes covering interactions over the shared typed fixtures.
+#[allow(clippy::too_many_lines)]
+fn relational_edge_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    let unordered = |family, sql: &str| OracleCase {
+        ordered: false,
+        ..ordered(family, sql)
+    };
+    vec![
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_EXTRACT(meta, '$.missing'), JSON_TYPE(JSON_EXTRACT(meta, '$.missing')), JSON_LENGTH(meta, '$.missing') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, meta IS NULL, JSON_EXTRACT(meta, '$.tags') IS NULL, JSON_LENGTH(meta, '$.tags') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_CONTAINS_PATH(meta, 'one', '$.tags', '$.missing'), JSON_CONTAINS_PATH(meta, 'all', '$.tags', '$.missing') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_EXTRACT(meta, '$.items[0]'), JSON_EXTRACT(meta, '$.items[99]') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT user_id, COUNT(meta), COUNT(JSON_EXTRACT(meta, '$.missing')), SUM(JSON_LENGTH(meta, '$.items')) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') = 0 OR meta IS NULL ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta, '$.tags[0]')), 'empty') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT JSON_TYPE('null'), JSON_EXTRACT('null', '$') IS NULL, JSON_EXTRACT('{}', '$.x') IS NULL, JSON_UNQUOTE(JSON_EXTRACT('{\"x\":null}', '$.x'))",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 3 UNION SELECT note FROM events WHERE id >= 8",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 3 UNION ALL SELECT note FROM events WHERE id >= 8",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 6 INTERSECT ALL SELECT note FROM events WHERE id >= 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 6 EXCEPT ALL SELECT note FROM events WHERE id >= 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id < 0 UNION SELECT note FROM events WHERE note IS NULL",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE note IS NULL INTERSECT SELECT note FROM events WHERE id = 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE note IS NULL EXCEPT ALL SELECT note FROM events WHERE id = 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT COUNT(*), COUNT(d.note) FROM (SELECT note FROM events UNION ALL SELECT note FROM events WHERE note IS NULL) d",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id, note FROM events ORDER BY note IS NULL, note, id LIMIT 3 OFFSET 2",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id FROM events ORDER BY id LIMIT 0",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id FROM events ORDER BY id LIMIT 3 OFFSET 10",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT d.id FROM (SELECT id FROM events ORDER BY id DESC LIMIT 4) d ORDER BY d.id",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT d.id FROM (SELECT id FROM events ORDER BY id LIMIT 4 OFFSET 3) d WHERE d.id % 2 = 0 ORDER BY d.id",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT COUNT(*), SUM(d.total) FROM (SELECT total FROM orders ORDER BY total DESC, id LIMIT 3) d",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT user_id, COUNT(*) AS n FROM orders GROUP BY user_id ORDER BY n DESC, user_id LIMIT 3 OFFSET 1",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT DISTINCT active FROM events ORDER BY active DESC LIMIT 1 OFFSET 1",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH selected AS (SELECT id, active FROM events WHERE id <= 4) SELECT a.id, b.id FROM selected a JOIN selected b ON a.active = b.active ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH grouped AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id), selected AS (SELECT user_id FROM grouped WHERE amount > 100) SELECT u.id FROM users u JOIN selected s ON s.user_id = u.id ORDER BY u.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH empty_rows AS (SELECT id FROM events WHERE id < 0) SELECT COUNT(*) FROM empty_rows",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH empty_rows AS (SELECT id FROM events WHERE id < 0) SELECT u.id, e.id FROM users u LEFT JOIN empty_rows e ON e.id = u.id ORDER BY u.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH totals AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) SELECT MAX(amount), MIN(amount), COUNT(*) FROM totals",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH notes AS (SELECT id, note FROM events WHERE note IS NULL) SELECT id FROM notes UNION ALL SELECT id FROM notes ORDER BY id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH ranked AS (SELECT id, user_id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total DESC, id) AS rn FROM orders) SELECT id, user_id FROM ranked WHERE rn = 1 ORDER BY user_id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH subset AS (SELECT id, note FROM events ORDER BY id DESC LIMIT 3) SELECT COUNT(*), COUNT(note) FROM subset",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT active, GROUP_CONCAT(note ORDER BY id SEPARATOR '|') FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT user_id, GROUP_CONCAT(id, ':', status ORDER BY total DESC, id SEPARATOR '|') FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(note ORDER BY id), GROUP_CONCAT(COALESCE(note, 'missing') ORDER BY id) FROM events WHERE note IS NULL",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(name ORDER BY id) FROM events WHERE id < 0",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT user_id, GROUP_CONCAT(CASE WHEN total > 100 THEN id END ORDER BY id) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT u.id, GROUP_CONCAT(o.id ORDER BY o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT active, GROUP_CONCAT(DISTINCT score ORDER BY score DESC SEPARATOR ':') FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(name ORDER BY id DESC SEPARATOR '') FROM events WHERE id <= 3",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, RANK() OVER (ORDER BY active), DENSE_RANK() OVER (ORDER BY active) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, COUNT(*) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, SUM(score) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, NTILE(3) OVER (PARTITION BY active ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, LAG(total, 2, -1) OVER (PARTITION BY user_id ORDER BY id), LEAD(total, 2, -1) OVER (PARTITION BY user_id ORDER BY id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, COUNT(*) OVER (PARTITION BY user_id), MIN(total) OVER (PARTITION BY user_id), MAX(total) OVER (PARTITION BY user_id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, ROW_NUMBER() OVER (ORDER BY id) FROM orders WHERE total > 100 ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT user_id, COUNT(*) AS n, RANK() OVER (ORDER BY COUNT(*) DESC) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT status, COUNT(*), MIN(id), MAX(id) FROM orders GROUP BY status ORDER BY status DESC",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, status = 'shipped', status = 3, status IN ('pending', 'delivered', NULL) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, CAST(status AS CHAR), CAST(status AS UNSIGNED), status + 0 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT a.id, b.id FROM orders a JOIN orders b ON a.status = b.status WHERE a.id <= 4 AND b.id <= 4 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT u.id, o.status, o.status IS NULL FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id FROM orders WHERE status <> 'pending' AND status NOT IN ('cancelled', 'delivered') ORDER BY status, id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT COUNT(DISTINCT status), COUNT(DISTINCT CAST(status AS CHAR)) FROM orders",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY status ORDER BY id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note = b.note WHERE a.id <= 3 AND b.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a LEFT JOIN events b ON a.note = b.note AND b.id <= 3 WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a LEFT JOIN events b ON a.note <=> b.note AND b.id <= 3 WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, COUNT(b.id) FROM events a LEFT JOIN events b ON a.note <=> b.note GROUP BY a.id ORDER BY a.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id FROM events a WHERE EXISTS (SELECT 1 FROM events b WHERE b.note <=> a.note AND b.id <> a.id) ORDER BY a.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note <=> b.note AND a.active = b.active WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a CROSS JOIN events b WHERE a.id <= 2 AND b.id <= 3 AND NOT (a.note <=> b.note) ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id FROM events a WHERE NOT EXISTS (SELECT 1 FROM events b WHERE b.note = a.note) ORDER BY a.id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, SUBSTRING(note, -2), SUBSTRING(note, 0), SUBSTRING(note, 2, 0) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LOCATE('a', note), INSTR(note, 'a'), REPLACE(note, 'a', 'X') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LEFT(note, 2), RIGHT(note, 2), REVERSE(note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LPAD(note, 3, 'xy'), RPAD(note, 7, 'xy') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, CONCAT(note, ':', tag), CONCAT_WS(':', note, NULL, tag) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, CHAR_LENGTH(label), LENGTH(label), HEX(label) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, TRIM(tag), LENGTH(tag), LENGTH(TRIM(tag)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT SUBSTRING('abc', -9), SUBSTRING('abc', 9), LPAD('abc', 5, ''), RPAD('abc', 0, 'x')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT ABS(NULL), ROUND(NULL, 2), TRUNCATE(NULL, 2), MOD(NULL, 3), POWER(NULL, 2)",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT DATE(NULL), YEAR(NULL), MONTH(NULL), LAST_DAY(NULL), DATEDIFF(NULL, '2024-01-01')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT DATE_ADD(NULL, INTERVAL 1 DAY), DATE_SUB('2024-01-01', INTERVAL NULL DAY), TIMESTAMPDIFF(DAY, NULL, '2024-01-01')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, ABS(-total), SIGN(total), NULLIF(total, 0) IS NULL FROM orders ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, MOD(score, 30), MOD(-score, 30), MOD(score, -30) FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, IF(note IS NULL, score, NULL), COALESCE(NULL, note, name), NULLIF(note, note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, DATE_FORMAT(placed_at, '%Y-%m-%d'), EXTRACT(HOUR FROM placed_at), EXTRACT(MINUTE FROM placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, TIMESTAMPDIFF(SECOND, placed_at, DATE_ADD(placed_at, INTERVAL 1 DAY)), DATEDIFF(DATE_ADD(placed_at, INTERVAL 1 DAY), placed_at) FROM orders ORDER BY id",
         ),
     ]
 }

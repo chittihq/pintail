@@ -1,6 +1,6 @@
 # SQL logic corpus
 
-The ignored `mysql_oracle` integration test runs 1,293 deterministic queries
+The ignored `mysql_oracle` integration test runs 1,373 deterministic queries
 against MySQL 8.4 and Pintail over pinned storage snapshots. It compares
 normalized rows in query order when ordering is specified, and as multisets
 otherwise. Exact values compare byte-for-byte; floating-point results use the
@@ -14,13 +14,25 @@ Coverage layers:
 3. **Typed tables and interactions** — decimal, datetime, enum, and JSON
    columns, plus joins against nullable text fixtures.
 
-The latest expansion adds 64 distinct query shapes across eight families:
+The first interaction expansion adds 64 distinct query shapes across eight families:
 NULL truth tables, outer joins with NULLs, empty/all-NULL aggregates,
 conditional decimal aggregates, nullable window frames, aggregate subqueries,
 calendar boundaries, and collation-sensitive expressions. Outer-join cases
 exercise predicate placement in both `ON` and `WHERE`; window cases include
 empty frames and NULL values beside out-of-partition defaults. Every multirow
 case has a deterministic ordering or uses multiset comparison.
+
+A second expansion adds 80 distinct shapes across ten more families: JSON
+missing values versus JSON/SQL NULL, set multiplicities, derived-table limits,
+CTE reuse, ordered concatenation, window peers and partitions, enum operations,
+NULL-safe joins, string boundaries, and numeric/temporal NULL propagation.
+Set-operation cases compare multisets so duplicate counts matter without
+assuming an unspecified row order.
+
+The oracle evaluates every case even after a Pintail execution error or a
+mismatch. Its failure summary counts all failed cases and prints the first ten;
+passing evidence is exported only when the entire corpus passes. MySQL must
+successfully execute the queries before Pintail results are compared.
 
 This corpus tests planner/executor semantics over snapshots. It does not by
 itself prove snapshot ingestion, CDC, schema-change, or wire-protocol parity;
