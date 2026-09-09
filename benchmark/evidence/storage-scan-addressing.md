@@ -76,6 +76,29 @@ booleans and binary values, with whole and sliced scans. It checks exact
 values for all/empty/disjoint selections and asserts one decode per block.
 The directory regression checks reuse and invalidation on file changes.
 
+## Final validation
+
+The complete `development` profile passed on clean commit `46a9780c`:
+`bun run scripts/validate.ts --profile development` (run
+`2026-09-09T16-41-44-526Z-development`). This includes workspace clippy with
+warnings denied, formatting and README checks, dashboard typechecking,
+workspace unit/integration tests (1,033 passed, 43 skipped), and the parser
+corpus. The build used
+rustc/cargo 1.97.0 and bun 1.3.14. The full Pintail executable also built
+successfully under the recovery profile.
+
+A dedicated disposable MySQL 8.4 source and a fresh Pintail process passed
+14 additional differential queries through the real HTTP query and replica
+loading path: six after snapshot and eight after ADD COLUMN, INSERT, UPDATE
+and DELETE. The invented source had 100,000 rows with nullable text, decimal
+and datetime values. Checks included counts, filtered aggregates, grouped
+counts and exact selected rows, including the newly added column. The source
+container, Pintail process and tunnel were cleaned up afterwards.
+
+This is a complete development-profile validation plus a targeted live
+replication check. It is not an rc/stable release gate or the full analytical
+benchmark, and makes no claim about cold-cache I/O or unrelated query shapes.
+
 ## Reproduce
 
 Build both examples at each revision, retaining the resulting binaries under
