@@ -16,6 +16,7 @@ mod suite {
     mod native_units;
     mod partitioned_scan;
     mod polling_noop;
+    mod predicate_reuse;
     mod reader;
     mod recovery;
     mod schema_evolution;
