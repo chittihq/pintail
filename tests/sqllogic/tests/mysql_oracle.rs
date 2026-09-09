@@ -1412,8 +1412,9 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT STRCMP('a' COLLATE utf8mb4_unicode_ci, 'a\t' COLLATE utf8mb4_unicode_ci), \
-                    STRCMP('a' COLLATE utf8mb4_general_ci, 'a\t' COLLATE utf8mb4_general_ci)",
+            "SELECT 'a' > 'a\t' COLLATE utf8mb4_unicode_ci, \
+                    'a' > 'a\t' COLLATE utf8mb4_general_ci, \
+                    'a' = 'a ' COLLATE utf8mb4_unicode_ci",
         ),
         unordered(
             "rejected constructs",
