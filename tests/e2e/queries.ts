@@ -711,7 +711,9 @@ export const differentialQueries: DifferentialQuery[] = [
   // was two extra minutes of gate; eight cover the same shapes. Reading a
   // documented-gap table here would report the whole database not ready and
   // fail the rest of the corpus with it, which says nothing about these
-  // shapes.
+  // shapes. Each carries a real equality join key: without one the join is
+  // a filtered cross product, which cost twelve minutes of gate for shapes
+  // an indexed join covers just as well.
   //
   // An INNER join's ON decorrelates, an OUTER join's does not, and these pin
   // the ANSWERS across any rewrite that changes which path they take. The
@@ -724,8 +726,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: correlated IN in a LEFT JOIN ON',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS n FROM customers c ' +
-      'LEFT JOIN orders o ON o.total > 100 ' +
-      'AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'LEFT JOIN orders o ON o.customer_id = c.id ' +
+      'AND o.status IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
@@ -735,8 +737,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: a LEFT JOIN keeps rows its ON matched nothing for',
     sql:
       'SELECT COUNT(*) AS rows_out, COUNT(o.id) AS matched FROM customers c ' +
-      'LEFT JOIN orders o ON o.total > 100 ' +
-      'AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'LEFT JOIN orders o ON o.customer_id = c.id ' +
+      'AND o.status IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'WHERE c.id <= 8',
     tables: ['customers', 'orders'],
   },
@@ -744,8 +746,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: correlated IN in an INNER JOIN ON',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS n FROM customers c ' +
-      'JOIN orders o ON o.total > 100 ' +
-      'AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'JOIN orders o ON o.customer_id = c.id ' +
+      'AND o.status IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
@@ -756,8 +758,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: the same predicate in WHERE agrees',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS n FROM customers c ' +
-      'JOIN orders o ON o.total > 100 ' +
-      'WHERE c.id <= 8 AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'JOIN orders o ON o.customer_id = c.id ' +
+      'WHERE c.id <= 8 AND o.status IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
@@ -767,8 +769,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: correlated EXISTS spanning both join sides',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS n FROM customers c ' +
-      'LEFT JOIN orders o ON o.total > 100 ' +
-      'AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.id = o.id AND o2.customer_id = c.id) ' +
+      'LEFT JOIN orders o ON o.customer_id = c.id ' +
+      'AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.status = o.status AND o2.customer_id = c.id) ' +
       'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
@@ -778,8 +780,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: correlated NOT IN in a LEFT JOIN ON',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS n FROM customers c ' +
-      'LEFT JOIN orders o ON o.total > 900 ' +
-      'AND o.id NOT IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'LEFT JOIN orders o ON o.customer_id = c.id ' +
+      'AND o.status NOT IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
@@ -790,8 +792,8 @@ export const differentialQueries: DifferentialQuery[] = [
     name: 'join-condition subquery: a duplicating rewrite shows up in a plain SUM',
     sql:
       'SELECT c.id, COUNT(DISTINCT o.id) AS orders_seen, SUM(o.total) AS total ' +
-      'FROM customers c LEFT JOIN orders o ON o.total > 100 ' +
-      'AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.customer_id = c.id) ' +
+      'FROM customers c LEFT JOIN orders o ON o.customer_id = c.id ' +
+      'AND o.status IN (SELECT o2.status FROM orders o2 WHERE o2.customer_id = c.id AND o2.total > 500) ' +
       'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders'],
   },
