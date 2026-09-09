@@ -379,19 +379,28 @@ async fn run_cdc_inner(
     let mut position = StreamPosition::from_checkpoint(checkpoint, report.server.flavor)?;
     // The resumed position is the single most useful line in a replication
     // log: a mirror that looks stalled is usually one that resumed from an
-    // older checkpoint than the operator assumed.
-    pintail_log::log_info!(
-        "cdc start db={database_id} targets={} blocked={} paused={} file={} pos={} gtid={}",
+    // older checkpoint than the operator assumed. It earns that only when
+    // something about it CHANGED, though - a supervised pass is not
+    // blocking, so one runs every few seconds and an unconditional line here
+    // prints hundreds of times an hour per database and buries the log it
+    // was meant to clarify. The position itself advances on every pass by
+    // definition and is left out of the comparison for that reason.
+    let summary = format!(
+        "targets={} blocked={} paused={} file={} gtid={}",
         targets.len(),
         blocked_targets.len(),
         paused_targets.len(),
         position.file,
-        position.pos,
         // Presence only. A GTID set names every transaction the replica has
         // seen and grows without bound on a busy source, so printing it would
         // swamp the log it is meant to clarify.
         position.gtid_set.as_ref().map_or("none", |_| "present")
     );
+    if start_summary_changed(database_id, &summary) {
+        pintail_log::log_info!("cdc start db={database_id} {summary} pos={}", position.pos);
+    } else {
+        pintail_log::log_debug!("cdc start db={database_id} {summary} pos={}", position.pos);
+    }
     let server_id = if options.server_id == 0 {
         generated_server_id(database_id)
     } else {
@@ -2480,6 +2489,33 @@ impl StreamPosition {
             binlog_pos: self.pos,
         })
     }
+}
+
+/// Whether this database's start line says anything its last one did not.
+///
+/// A process that has just started has no previous line for any database, so
+/// the first pass after a restart always reports - which is the pass an
+/// operator most wants to see.
+fn start_summary_changed(database_id: &str, summary: &str) -> bool {
+    static SUMMARIES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, String>>,
+    > = std::sync::OnceLock::new();
+    let summaries =
+        SUMMARIES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    // A poisoned lock means a thread panicked mid-update; reporting the line
+    // is the safe direction, because the alternative is a silent replication
+    // log.
+    let Ok(mut summaries) = summaries.lock() else {
+        return true;
+    };
+    if summaries
+        .get(database_id)
+        .is_some_and(|last| last == summary)
+    {
+        return false;
+    }
+    summaries.insert(database_id.to_owned(), summary.to_owned());
+    true
 }
 
 fn generated_server_id(database_id: &str) -> u32 {
