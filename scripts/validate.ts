@@ -183,6 +183,14 @@ const STAGES: Stage[] = [
     ],
   },
   {
+    // This is a separate Cargo workspace, so the workspace unit stage
+    // cannot detect a stale fuzz lockfile or run its parser regressions.
+    name: 'parser-corpus',
+    remote: false,
+    timeoutMinutes: 20,
+    command: ['cargo', 'test', '--manifest-path', 'fuzz/Cargo.toml', '--locked'],
+  },
+  {
     name: 'oracle',
     remote: true,
     timeoutMinutes: 20,
@@ -349,7 +357,7 @@ const PROFILES: Record<string, Profile> = {
   /// The end-of-todo local gate: everything that needs no Docker host, so
   /// it can run beside other work and on a laptop with no link up.
   development: {
-    stages: ['fmt', 'typecheck', 'unit'],
+    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus'],
     claim: 'the code compiles, lints, typechecks and passes its unit tests',
     caveats: [
       'No differential gate: nothing here compares Pintail against MySQL.',
@@ -360,7 +368,7 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose', 'bi-clients'],
+    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose', 'bi-clients'],
     claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
@@ -375,7 +383,7 @@ const PROFILES: Record<string, Profile> = {
   /// gate can pass.
   stable: {
     stages: [
-      'fmt', 'typecheck', 'unit', 'oracle', 'e2e', 'e2e-mysql80',
+      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80',
       'recovery', 'browser', 'compose', 'bi-clients', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',

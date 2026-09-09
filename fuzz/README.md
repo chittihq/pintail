@@ -4,6 +4,8 @@ These targets use the same wire/storage code and MySQL decoder version as
 Pintail. They need no server, credentials, network connection or Docker.
 The separate lockfile is tracked. Keep its MySQL decoder version aligned with
 `Cargo.lock`; the pinned mysql_async 0.37.1 uses the same decoder as the workspace.
+After changing path dependencies or dependency patches, refresh this lockfile too.
+All validation profiles run the locked deterministic corpus as `parser-corpus`.
 
 Local deterministic smoke checks (stable Rust):
 
