@@ -705,7 +705,12 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'active'",
     tables: ['customers'],
   },
-  // A correlated subquery in a JOIN's ON condition. The decorrelation
+  // A correlated subquery in a JOIN's ON condition, bounded to a few
+  // customers: an outer join's ON still resolves per correlation value, and
+  // eight of them across every phase is coverage where forty was two extra
+  // minutes of gate that pushed a later phase into a resync window.
+  //
+  // The decorrelation
   // rewrites are offered a correlated IN or EXISTS only from WHERE, so these
   // resolve per outer tuple today; they are here to pin the ANSWERS across
   // any rewrite that changes which path they take. The LEFT JOIN cases carry
@@ -720,7 +725,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
       'LEFT JOIN order_items oi ON oi.qty > 2 ' +
       'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
-      'GROUP BY c.id ORDER BY c.id',
+      'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
   {
@@ -730,7 +735,8 @@ export const differentialQueries: DifferentialQuery[] = [
     sql:
       'SELECT COUNT(*) AS rows_out, COUNT(oi.order_id) AS matched FROM customers c ' +
       'LEFT JOIN order_items oi ON oi.qty > 2 ' +
-      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id)',
+      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'WHERE c.id <= 8',
     tables: ['customers', 'orders', 'order_items'],
   },
   {
@@ -739,7 +745,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
       'JOIN order_items oi ON oi.qty > 2 ' +
       'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
-      'GROUP BY c.id ORDER BY c.id',
+      'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
   {
@@ -750,7 +756,7 @@ export const differentialQueries: DifferentialQuery[] = [
     sql:
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
       'JOIN order_items oi ON oi.qty > 2 ' +
-      'WHERE oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'WHERE c.id <= 8 AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
       'GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
@@ -762,7 +768,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
       'LEFT JOIN order_items oi ON oi.qty > 2 ' +
       'AND EXISTS (SELECT 1 FROM orders o WHERE o.id = oi.order_id AND o.customer_id = c.id) ' +
-      'GROUP BY c.id ORDER BY c.id',
+      'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
   {
@@ -773,7 +779,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
       'LEFT JOIN order_items oi ON oi.qty > 8 ' +
       'AND oi.order_id NOT IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
-      'GROUP BY c.id ORDER BY c.id',
+      'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
   {
@@ -785,7 +791,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'SELECT c.id, COUNT(DISTINCT oi.order_id) AS orders_seen, SUM(oi.qty) AS qty ' +
       'FROM customers c LEFT JOIN order_items oi ON oi.qty > 2 ' +
       'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
-      'GROUP BY c.id ORDER BY c.id',
+      'WHERE c.id <= 8 GROUP BY c.id ORDER BY c.id',
     tables: ['customers', 'orders', 'order_items'],
   },
   // utf8mb4_unicode_ci is UCA 4.0.0 - the collation a pre-8 schema names
