@@ -1,6 +1,7 @@
 //! Full parse/bind/plan/execute measurements on `storage_scan_probe`'s fixture.
 //! Set `PINTAIL_DISABLE_SETTLED_MEMO=1`; pass its data directory and row count.
 //! Both binaries use identical files. Every iteration must decode blocks.
+//! `PINTAIL_PROBE_ITERATIONS` sets measured iterations after two warmups.
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
@@ -22,6 +23,10 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let directory = PathBuf::from(args.next().expect("data directory"));
     let rows: u64 = args.next().map_or(524_288, |v| v.parse().expect("rows"));
+    assert!(rows > 0, "row count must be positive");
+    let iterations: usize = std::env::var("PINTAIL_PROBE_ITERATIONS")
+        .map_or(7, |value| value.parse().expect("iterations"));
+    assert!(iterations > 0, "at least one measured iteration");
     let schema = TableSchema::new(
         1,
         (1..=24)
@@ -51,6 +56,11 @@ fn main() {
     )
     .expect("table");
     let snapshot = table.snapshot();
+    assert_eq!(
+        snapshot.physical_row_upper_bound(),
+        rows,
+        "fixture row count"
+    );
     let db = DatabaseId::new(1);
     let id = TableId::new(1);
     let catalog = CatalogSnapshot::new([DatabaseEntry::new(
@@ -71,12 +81,12 @@ fn main() {
         (
             "numeric-filter",
             "SELECT COUNT(*) FROM sample WHERE field_23 > 1000000".to_owned(),
-            (rows - ((1_000_000 - 7) / 23 + 1)).to_string(),
+            (rows.saturating_sub((1_000_000 - 7) / 23 + 1)).to_string(),
         ),
         (
             "text-filter",
             "SELECT COUNT(*) FROM sample WHERE field_24 = 'label-0'".to_owned(),
-            (rows / 8).to_string(),
+            rows.div_ceil(8).to_string(),
         ),
         (
             "text-all",
@@ -91,7 +101,7 @@ fn main() {
     ];
     for (label, sql, expected) in queries {
         let mut timings = Vec::new();
-        for round in 0..9 {
+        for round in 0..iterations + 2 {
             let provider = SnapshotScanProvider::new([(db, id, &snapshot)]).expect("provider");
             let began = Instant::now();
             let statement = parse_statement(&sql).expect("parse");

@@ -1,5 +1,7 @@
 //! Reproducible projected and filter-first scans over invented immutable data.
 //! Run with a persistent directory and optional row count (default 524288).
+//! Add `--seed-only` to load without measuring. Seeding uses bounded batches.
+//! `PINTAIL_PROBE_ITERATIONS` sets measured iterations after two warmups.
 //! Reuse that directory with baseline and candidate binaries; timings are warm
 //! page-cache measurements, with output values checked outside the timed loop.
 #![allow(clippy::cast_precision_loss, clippy::too_many_lines)]
@@ -34,6 +36,11 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let directory = PathBuf::from(args.next().expect("data directory"));
     let rows: u64 = args.next().map_or(524_288, |v| v.parse().expect("rows"));
+    assert!(rows > 0, "row count must be positive");
+    let seed_only = args.any(|argument| argument == "--seed-only");
+    let iterations: usize = std::env::var("PINTAIL_PROBE_ITERATIONS")
+        .map_or(7, |value| value.parse().expect("iterations"));
+    assert!(iterations > 0, "at least one measured iteration");
     let mut table = TableStore::open(
         &directory,
         schema(),
@@ -45,27 +52,50 @@ fn main() {
     )
     .expect("open");
     if table.snapshot().key_bounds().is_none() {
-        let data = (0..rows)
-            .map(|id| {
-                StoredRow::new(
-                    key(id),
-                    (1_u32..=24)
-                        .map(|col| {
-                            if col == 24 {
-                                Value::Utf8(format!("label-{}", id % 8))
-                            } else {
-                                Value::UInt64(id * u64::from(col) + 7)
-                            }
-                        })
-                        .collect(),
-                    0,
-                    false,
-                )
-            })
-            .collect();
-        table.bulk_ingest_snapshot(data).expect("seed");
+        // Align segment boundaries with both scan slices and selector intervals.
+        // A 20M-row fixture must never materialize all its row values at once.
+        const SEED_BATCH_ROWS: usize = 1_048_576;
+        for start in (0..rows).step_by(SEED_BATCH_ROWS) {
+            let end = (start + SEED_BATCH_ROWS as u64).min(rows);
+            let data = (start..end)
+                .map(|id| {
+                    StoredRow::new(
+                        key(id),
+                        (1_u32..=24)
+                            .map(|col| {
+                                if col == 24 {
+                                    Value::Utf8(format!("label-{}", id % 8))
+                                } else {
+                                    Value::UInt64(id * u64::from(col) + 7)
+                                }
+                            })
+                            .collect(),
+                        0,
+                        false,
+                    )
+                })
+                .collect();
+            table.bulk_ingest_snapshot(data).expect("seed");
+        }
     }
     let snapshot = table.snapshot();
+    assert_eq!(
+        snapshot.physical_row_upper_bound(),
+        rows,
+        "fixture row count"
+    );
+    assert_eq!(
+        snapshot.key_bounds(),
+        Some((key(0), key(rows - 1))),
+        "fixture key bounds"
+    );
+    println!(
+        "fixture_rows={rows} segments={}",
+        table.metrics().expect("metrics").segment_count()
+    );
+    if seed_only {
+        return;
+    }
     let (first, last) = snapshot.key_bounds().expect("bounds");
     for (label, columns, predicate, selective) in [
         ("narrow-last", vec![23], vec![], false),
@@ -76,7 +106,7 @@ fn main() {
     ] {
         let mut timings = Vec::new();
         let mut decoded = 0;
-        for round in 0..9 {
+        for round in 0..iterations + 2 {
             let began = Instant::now();
             let mut stream = snapshot
                 .scan_projected_range_stream(&first, &last, &columns)
@@ -134,7 +164,14 @@ fn main() {
                 }
             }
             let elapsed = began.elapsed().as_secs_f64() * 1000.0;
-            assert_eq!(count as u64, if selective { rows / 16 } else { rows });
+            assert_eq!(
+                count as u64,
+                if selective {
+                    (rows / 4096) * 256 + (rows % 4096).min(256)
+                } else {
+                    rows
+                }
+            );
             decoded = blocks;
             if round > 1 {
                 timings.push(elapsed);
