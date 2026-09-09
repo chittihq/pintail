@@ -5,6 +5,9 @@
 //! sharing a process is safe again. `crash_fuzz` stays separate: it spawns
 //! and kill -9s real workers of its own binary by design.
 
+#[path = "../examples/storage_adversarial_probe.rs"]
+mod storage_adversarial_probe;
+
 mod suite {
     mod compaction;
     mod database;

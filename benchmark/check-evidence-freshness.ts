@@ -64,6 +64,12 @@ const ENGINE = [
 
 const ARTIFACTS: Artifact[] = [
   {
+    name: 'storage scan qualification',
+    evidence: ['benchmark/evidence/storage-scan-qualification.json'],
+    sources: [...ENGINE],
+    refresh: 'Run the adversarial storage probe against the recorded baseline and candidate, then bank the comparison',
+  },
+  {
     name: 'analytical benchmark',
     evidence: ['benchmark/results.json', 'benchmark/results.md'],
     sources: [...ENGINE, 'benchmark/run.ts', 'benchmark/queries.ts'],
