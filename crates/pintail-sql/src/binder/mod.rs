@@ -449,6 +449,17 @@ impl<'catalog> Binder<'catalog> {
     fn bind_select(&self, select: &Select, ctes: &[BoundCte]) -> Result<BoundQuery, BindError> {
         validate_select_shape(select)?;
 
+        // An INNER join's ON and the WHERE clause filter the same rows, so a
+        // correlated subquery written in one can be read in the other. Only
+        // WHERE is offered to the decorrelation rewrites below, so a
+        // predicate that would have become a semi-join resolves per outer
+        // tuple purely for sitting a few words to the left. Moving it lets
+        // the existing rewrites see it. An OUTER join's ON does NOT filter
+        // the same rows - it decides which right rows match, while the left
+        // row survives either way - so those are left exactly where they are.
+        let hoisted = hoist_inner_join_subqueries(select);
+        let select = hoisted.as_ref().unwrap_or(select);
+
         let BoundFromScope {
             mut from,
             mut tables,
@@ -3453,6 +3464,80 @@ fn bind_exact_decimal_comparison(
             args: vec![left, right],
         },
     }
+}
+
+/// Moves correlated `IN`/`EXISTS` conjuncts out of INNER join ON conditions
+/// and into the WHERE clause, returning `None` when there is nothing to move.
+///
+/// Only subquery conjuncts move, and only from an INNER join: the rewrite is
+/// there to reach the decorrelation rules, not to reorganise predicates in
+/// general. A conjunct is left alone when it is the ON condition's only one,
+/// because an ON that says nothing needs a literal this rewrite would have to
+/// invent, and a join whose whole condition is a membership test carries no
+/// join key to preserve anyway.
+fn hoist_inner_join_subqueries(select: &Select) -> Option<Select> {
+    let movable = |expr: &Expr| matches!(expr, Expr::Exists { .. } | Expr::InSubquery { .. });
+    let mut moved: Vec<Expr> = Vec::new();
+    let mut from = select.from.clone();
+    for item in &mut from {
+        for join in &mut item.joins {
+            let Ok((BoundJoinKind::Inner, JoinConstraint::On(condition))) =
+                bind_join_operator(&join.join_operator)
+            else {
+                continue;
+            };
+            let conjuncts = split_and_conjuncts(condition);
+            if conjuncts.len() < 2 || !conjuncts.iter().any(|conjunct| movable(conjunct)) {
+                continue;
+            }
+            let (move_out, keep): (Vec<&Expr>, Vec<&Expr>) = conjuncts
+                .into_iter()
+                .partition(|conjunct| movable(conjunct));
+            let Some(kept) = and_all(&keep) else {
+                continue;
+            };
+            moved.extend(move_out.into_iter().cloned());
+            let constraint = JoinConstraint::On(kept);
+            join.join_operator = match &join.join_operator {
+                JoinOperator::Join(_) => JoinOperator::Join(constraint),
+                JoinOperator::Inner(_) => JoinOperator::Inner(constraint),
+                JoinOperator::StraightJoin(_) => JoinOperator::StraightJoin(constraint),
+                // bind_join_operator returned Inner, so no other spelling reaches here.
+                other => other.clone(),
+            };
+        }
+    }
+    if moved.is_empty() {
+        return None;
+    }
+    let mut selection = select.selection.clone();
+    for conjunct in moved {
+        selection = Some(match selection {
+            None => conjunct,
+            Some(existing) => Expr::BinaryOp {
+                left: Box::new(existing),
+                op: BinaryOperator::And,
+                right: Box::new(conjunct),
+            },
+        });
+    }
+    let mut rewritten = select.clone();
+    rewritten.from = from;
+    rewritten.selection = selection;
+    Some(rewritten)
+}
+
+/// ANDs a non-empty conjunct list back into one expression.
+fn and_all(conjuncts: &[&Expr]) -> Option<Expr> {
+    let mut all = conjuncts.first().map(|first| (*first).clone())?;
+    for conjunct in &conjuncts[1..] {
+        all = Expr::BinaryOp {
+            left: Box::new(all),
+            op: BinaryOperator::And,
+            right: Box::new((*conjunct).clone()),
+        };
+    }
+    Some(all)
 }
 
 /// Top-level AND conjuncts of a predicate expression.
