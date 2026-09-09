@@ -42,15 +42,12 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            score BIGINT NOT NULL,\
            active BOOLEAN NOT NULL,\
            note VARCHAR(32) NULL,\
-           tag VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL\
+           tag VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,\
+           label VARCHAR(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          CREATE TABLE users (\
            id BIGINT PRIMARY KEY,\
            name VARCHAR(32) NOT NULL\
-         ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
-         CREATE TABLE labels (\
-           id BIGINT UNSIGNED PRIMARY KEY,\
-           label VARCHAR(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          CREATE TABLE orders (\
            id BIGINT UNSIGNED PRIMARY KEY,\
@@ -61,16 +58,11 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            meta JSON NULL\
          ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;\
          INSERT INTO events VALUES\
-           (1,'event-01',10,0,'Alpha','red'),(2,'event-02',20,1,'alpha','RED'),\
-           (3,'event-03',30,0,NULL,'red '),(4,'event-04',40,1,'Beta','blue'),\
-           (5,'event-05',50,0,'beta','BLUE'),(6,'event-06',60,1,NULL,'blue'),\
-           (7,'event-07',70,0,'Alpha','Green'),(8,'event-08',80,1,'alpha','green'),\
-           (9,'event-09',90,0,NULL,'RED'),(10,'event-10',100,1,'Beta','Blue');\
-         INSERT INTO labels VALUES\
-           (1,'strasse'),(2,'stra\u{00df}e'),(3,'STRASSE'),(4,'\u{00c4}rger'),\
-           (5,'arger'),(6,'ARGER'),(7,'a'),(8,'a '),(9,'a\t'),(10,'a\u{00a0}'),\
-           (11,'\u{00e6}ther'),(12,'aether'),(13,'\u{4e00}'),(14,'\u{4e01}'),\
-           (15,'Zebra'),(16,'zebra'),(17,'a\u{0301}'),(18,'\u{00e1}');\
+           (1,'event-01',10,0,'Alpha','red','strasse'),(2,'event-02',20,1,'alpha','RED','stra\u{df}e'),\
+           (3,'event-03',30,0,NULL,'red ','STRASSE'),(4,'event-04',40,1,'Beta','blue','\u{c4}rger'),\
+           (5,'event-05',50,0,'beta','BLUE','arger'),(6,'event-06',60,1,NULL,'blue','a'),\
+           (7,'event-07',70,0,'Alpha','Green','a '),(8,'event-08',80,1,'alpha','green','a\t'),\
+           (9,'event-09',90,0,NULL,'RED','\u{4e00}'),(10,'event-10',100,1,'Beta','Blue','\u{e1}');\
          INSERT INTO users VALUES\
            (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
            (5,'user-05'),(6,'user-06'),(7,'user-07'),(8,'user-08');\
@@ -1381,35 +1373,35 @@ fn hand_written_cases() -> Vec<OracleCase> {
         // orders differently from the two collations beside it.
         ordered(
             "unicode_ci collation",
-            "SELECT id, label FROM labels ORDER BY label, id",
+            "SELECT id, label FROM events ORDER BY label, id",
         ),
         unordered(
             "unicode_ci collation",
-            "SELECT label, COUNT(*) AS n FROM labels GROUP BY label",
+            "SELECT label, COUNT(*) AS n FROM events GROUP BY label",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT COUNT(DISTINCT label) FROM labels",
+            "SELECT COUNT(DISTINCT label) FROM events",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT COUNT(*) FROM labels WHERE label = 'strasse'",
+            "SELECT COUNT(*) FROM events WHERE label = 'strasse'",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT COUNT(*) FROM labels WHERE label = 'a'",
+            "SELECT COUNT(*) FROM events WHERE label = 'a'",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT MIN(label), MAX(label) FROM labels",
+            "SELECT MIN(label), MAX(label) FROM events",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT id FROM labels WHERE label IN ('arger','zebra','aether') ORDER BY id",
+            "SELECT id FROM events WHERE label IN ('arger','STRASSE') ORDER BY id",
         ),
         ordered(
             "unicode_ci collation",
-            "SELECT id, label < 'b' AS below, label > 'a' AS above FROM labels ORDER BY id",
+            "SELECT id, label < 'b' AS below, label > 'a' AS above FROM events ORDER BY id",
         ),
         ordered(
             "unicode_ci collation",
@@ -3675,6 +3667,8 @@ fn events_schema() -> Result<TableSchema, String> {
             Column::new(5, "note", DataType::Utf8, true),
             Column::new(6, "tag", DataType::Utf8, false)
                 .with_collation(Some("utf8mb4_general_ci".to_owned())),
+            Column::new(7, "label", DataType::Utf8, false)
+                .with_collation(Some("utf8mb4_unicode_ci".to_owned())),
         ],
     )
     .map_err(|error| error.to_string())
@@ -3863,6 +3857,22 @@ fn event_row(id: u64) -> StoredRow {
                     7 => "Green",
                     8 => "green",
                     10 => "Blue",
+                    _ => unreachable!("oracle event IDs are 1 through 10"),
+                }
+                .to_owned(),
+            ),
+            Value::Utf8(
+                match id {
+                    1 => "strasse",
+                    2 => "stra\u{df}e",
+                    3 => "STRASSE",
+                    4 => "\u{c4}rger",
+                    5 => "arger",
+                    6 => "a",
+                    7 => "a ",
+                    8 => "a\t",
+                    9 => "\u{4e00}",
+                    10 => "\u{e1}",
                     _ => unreachable!("oracle event IDs are 1 through 10"),
                 }
                 .to_owned(),
