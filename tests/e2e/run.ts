@@ -674,9 +674,11 @@ async function phaseSeed() {
         // where every character above the BMP weighs the same.
         `${['\'Active\'', '\'active\'', '\'ACTIVE\'', '\'Ärger\'', '\'arger\'', '\'pending  \'', '\'pending\'', '\'😀\'', '\'𠀀\'', 'NULL'][id % 10]}, ` +
         // Values chosen for what unicode_ci does that general_ci cannot: the
-        // ss expansion, a combining mark that weighs nothing, a no-break
-        // space that weighs a space, PAD SPACE against a character BELOW the
-        // space weight, and a CJK ideograph weighed from its code point.
+        // ss expansion, a combining mark that weighs nothing, PAD SPACE
+        // against a character BELOW the space weight, and a CJK ideograph
+        // weighed from its code point. No trailing no-break space: MySQL
+        // groups that apart from the value it also calls equal, which
+        // docs/limitations.md records rather than the gate asserting it.
         `${[
           "'strasse'",
           "'straße'",
@@ -686,14 +688,13 @@ async function phaseSeed() {
           "'a'",
           "'a '",
           "'a\t'",
-          "'a\u{a0}'",
           "'æther'",
           "'aether'",
           "'一'",
           "'á'",
           "'a\u{301}'",
           'NULL',
-        ][id % 15]})`,
+        ][id % 14]})`,
     )
   }
   const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
