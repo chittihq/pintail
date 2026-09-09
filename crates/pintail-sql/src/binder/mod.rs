@@ -1324,11 +1324,50 @@ impl<'catalog> Binder<'catalog> {
                         }
                     }
                 }
+                // Kept for the outer-join check below: a subquery that binds
+                // against the right side alone needs nothing from the left.
+                let right_tables = relation.tables.clone();
                 tables.extend(relation.tables);
                 let table = relation.table;
                 let condition = match constraint {
                     JoinConstraint::On(condition) => {
                         item_wildcard.extend(relation.wildcard_order.iter().cloned());
+                        // An INNER join's ON was hoisted to WHERE before
+                        // binding, so a correlated subquery still here belongs
+                        // to an OUTER join. Dependent resolution exists only
+                        // at Filter level, and this is a join condition, so a
+                        // subquery correlated to the join's LEFT side runs
+                        // without the outer context it needs and the join
+                        // silently matches too few rows - measured against
+                        // MySQL, three matches reported as one. Correlating
+                        // to the RIGHT side alone is a different question and
+                        // answers correctly, so the test is whether the
+                        // subquery binds against the right side by itself.
+                        //
+                        // Refusing is the honest answer until the rewrite
+                        // that widens the right input lands, because the
+                        // alternative is a wrong number nobody can see is
+                        // wrong (docs/limitations.md).
+                        if kind != BoundJoinKind::Inner {
+                            let right_scope =
+                                expression_scope(&right_tables, &self.outer_tables);
+                            for conjunct in split_and_conjuncts(condition) {
+                                let subquery = match conjunct {
+                                    Expr::Exists { subquery, .. }
+                                    | Expr::InSubquery { subquery, .. } => Some(subquery),
+                                    _ => None,
+                                };
+                                if let Some(subquery) = subquery
+                                    && self.bind_query(subquery, ctes).is_err()
+                                    && self.bind_subquery(subquery, ctes, &right_scope).is_err()
+                                {
+                                    return Err(BindError::UnsupportedSubquery(format!(
+                                        "a subquery in an outer join's ON condition correlated \
+                                         to the join's left side: {subquery}"
+                                    )));
+                                }
+                            }
+                        }
                         let join_scope = expression_scope(&tables, &self.outer_tables);
                         let resolve_subquery =
                             |query: &Query| self.bind_subquery(query, ctes, &join_scope);

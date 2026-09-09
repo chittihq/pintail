@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1236;
+const EXPECTED_CASES: usize = 1231;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1381,20 +1381,6 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered(
             "join-condition subquery",
             "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
-             LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
-             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
-        ),
-        ordered(
-            "join-condition subquery",
-            "SELECT COUNT(*) AS rows_out, COUNT(o.id) AS matched FROM users u \
-             LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
-             AND o2.total > 50)",
-        ),
-        ordered(
-            "join-condition subquery",
-            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
              JOIN orders o ON o.user_id = u.id \
              AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
              AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
@@ -1404,29 +1390,6 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
              JOIN orders o ON o.user_id = u.id \
              WHERE o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
-             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
-        ),
-        ordered(
-            "join-condition subquery",
-            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
-             LEFT JOIN orders o ON o.user_id = u.id \
-             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total \
-             AND o2.user_id = u.id) GROUP BY u.id ORDER BY u.id",
-        ),
-        ordered(
-            "join-condition subquery",
-            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
-             LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
-             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
-        ),
-        // COUNT(DISTINCT) hides a rewrite that duplicates rows; a plain SUM
-        // beside it does not.
-        ordered(
-            "join-condition subquery",
-            "SELECT u.id, COUNT(DISTINCT o.id) AS seen, SUM(o.total) AS total FROM users u \
-             LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
              AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
         ),
         ordered(
@@ -3649,6 +3612,23 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject json arithmetic",
             "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
             "json|\\+|binary|invalid",
+        ),
+        // Dependent resolution exists only at Filter level, so a correlated
+        // subquery in an OUTER join's ON runs without the outer context it
+        // needs and the join matches too few rows. Measured against MySQL
+        // before it was refused: three matches reported as one, two as none.
+        // Refusing beats a wrong number nobody can see is wrong.
+        (
+            "reject correlated in under an outer join condition",
+            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id)",
+            "correlated subquery|outer join|unsupported",
+        ),
+        (
+            "reject correlated exists under an outer join condition",
+            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total AND o2.user_id = u.id)",
+            "correlated subquery|outer join|unsupported",
         ),
         (
             "reject unknown collate",
