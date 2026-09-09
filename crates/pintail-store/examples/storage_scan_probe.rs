@@ -2,7 +2,7 @@
 //! Run with a persistent directory and optional row count (default 524288).
 //! Reuse that directory with baseline and candidate binaries; timings are warm
 //! page-cache measurements, with output values checked outside the timed loop.
-#![allow(clippy::cast_precision_loss)]
+#![allow(clippy::cast_precision_loss, clippy::too_many_lines)]
 use pintail_store::{DecodedColumn, StoreOptions, TableStore, WalSync};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 use std::{hint::black_box, path::PathBuf, time::Instant};
@@ -105,6 +105,29 @@ fn main() {
                     break;
                 }
                 for chunk in chunks {
+                    if round == 0 {
+                        for row in 0..chunk.row_count() {
+                            let ordinal = count + row;
+                            let id = u64::try_from(if selective {
+                                (ordinal / 256) * 4096 + ordinal % 256
+                            } else {
+                                ordinal
+                            })
+                            .expect("row id");
+                            for (column, column_id) in chunk.columns().iter().zip(&columns) {
+                                let expected = if *column_id == 24 {
+                                    Value::Utf8(format!("label-{}", id % 8))
+                                } else {
+                                    Value::UInt64(id * u64::from(*column_id) + 7)
+                                };
+                                assert_eq!(
+                                    column.value_at(row),
+                                    Some(expected),
+                                    "{label}, row {id}"
+                                );
+                            }
+                        }
+                    }
                     count += chunk.row_count();
                     blocks += chunk.stats().blocks_decoded();
                     black_box(chunk.columns());
