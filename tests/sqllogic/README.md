@@ -1,6 +1,6 @@
 # SQL logic corpus
 
-The ignored `mysql_oracle` integration test runs 1,373 deterministic queries
+The ignored `mysql_oracle` integration test runs 1,714 deterministic queries
 against MySQL 8.4 and Pintail over pinned storage snapshots. It compares
 normalized rows in query order when ordering is specified, and as multisets
 otherwise. Exact values compare byte-for-byte; floating-point results use the
@@ -43,12 +43,16 @@ A non-Docker unit test (`documented_rejects_stay_explicit`) pins limitation
 shapes that must fail closed. Inventory:
 
 ```sh
+PINTAIL_ORACLE_INVENTORY=validate-out/oracle-inventory.json CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test mysql_oracle oracle_case_inventory_matches_the_declared_gate
 bun run scripts/oracle-coverage.ts
 ```
 
-The harness starts a uniquely named MySQL container, batches the queries
-through one client process, and removes the container even when a comparison
-fails.
+The harness resolves the selected MySQL image to an immutable digest, starts a
+uniquely named container, and queries it through a typed MySQL connection. It
+removes the container even when a comparison fails. SQL NULL is separate from
+text and binary bytes are lossless. Float tolerance requires approximate types
+on both sides. Every run writes `validate-out/oracle-outcomes.json`, including
+all failures; passing evidence remains conditional on a complete PASS.
 
 Run these commands on the configured build host. Run the fixed-corpus
 Docker-backed gate with:
@@ -68,3 +72,9 @@ Run the physical pruning gate with:
 ```sh
 CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test plan_quality
 ```
+
+The boundary fixture adds signed/unsigned extremes, precision-38 and scaled
+decimals, approximate numbers, nullable Unicode and binary strings, CHAR, DATE,
+TIME, DATETIME precision 0/3/6, and UTC TIMESTAMP values. Its 341 query shapes
+exercise conversion contexts, quantified subqueries, storage-dependent string
+behavior, temporal precision, windows, and JSON identity.

@@ -142,12 +142,15 @@ function templateKey(sql: string): string {
 function extractOracle(source: string) {
   const path = process.argv.find((arg) => arg.startsWith('--inventory='))?.slice(12)
     ?? join(repository, 'validate-out/oracle-inventory.json')
-  let data: { expectedCases: number; sourceSha256: string; cases: { id: string; sql: string; family: string }[] }
+  let data: { expectedCases: number; sourceSha256: string; sourceFiles?: Record<string, string>; cases: { id: string; sql: string; family: string }[] }
   try { data = JSON.parse(readFileSync(path, 'utf8')) } catch {
     throw new Error(`Missing runtime inventory at ${path}. On the build host run PINTAIL_ORACLE_INVENTORY=validate-out/oracle-inventory.json cargo test -p pintail-sqllogic --test mysql_oracle oracle_case_inventory_matches_the_declared_gate, then copy the export here or pass --inventory=PATH.`)
   }
   if (data.sourceSha256 !== createHash('sha256').update(source).digest('hex')) {
     throw new Error('Oracle inventory is stale; regenerate it from the current source.')
+  }
+  for (const [file, hash] of Object.entries(data.sourceFiles ?? {})) {
+    if (createHash('sha256').update(readFileSync(join(repository, file))).digest('hex') !== hash) throw new Error(`Stale oracle inventory: ${file}`)
   }
   if (data.cases.length !== data.expectedCases) throw new Error('Incomplete oracle inventory')
   const families = new Map<string, number>()

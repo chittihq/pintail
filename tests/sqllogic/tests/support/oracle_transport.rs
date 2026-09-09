@@ -204,8 +204,10 @@ pub fn case_id(case: &OracleCase) -> String {
 fn inventory(cases: &[OracleCase]) -> serde_json::Value {
     serde_json::json!({
         "schemaVersion": 1, "expectedCases": cases.len(),
-        "fixtureSha256": hash(super::FIXTURE_SQL.as_bytes()),
+        "fixtureSha256": hash(format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL).as_bytes()),
         "sourceSha256": hash(include_bytes!("../mysql_oracle.rs")),
+        "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")) },
+        "fixtureSQL": format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL),
         "cases": cases.iter().map(|c| serde_json::json!({
             "id": case_id(c), "family": c.family, "sql": c.sql, "ordered": c.ordered,
             "fixture": "fixture-v1", "sqlMode": if c.sql_mode.is_empty() { DEFAULT_MODE } else { c.sql_mode },

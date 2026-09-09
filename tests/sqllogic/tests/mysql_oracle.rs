@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 
 #[path = "support/oracle_transport.rs"]
 mod oracle_transport;
+#[path = "support/oracle_boundaries.rs"]
+mod oracle_boundaries;
 
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
@@ -32,7 +34,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1373;
+const EXPECTED_CASES: usize = 1714;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -288,6 +290,7 @@ fn run_oracle() -> Result<(), String> {
         .transpose()?;
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
+    mysql.query_batch(oracle_boundaries::SQL)?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
@@ -324,6 +327,10 @@ fn run_oracle() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
+    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -332,6 +339,7 @@ fn run_oracle() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
@@ -1245,6 +1253,7 @@ fn oracle_cases() -> Vec<OracleCase> {
         cases.push(OracleCase { sql_mode: "", family: "exact integer rounding", sql: format!("SELECT {function}(CAST(9223372036854775807 AS SIGNED)), {function}(CAST(18446744073709551615 AS UNSIGNED))"), ordered: true });
     }
     cases.extend(hand_written_cases());
+    cases.extend(oracle_boundaries::cases());
     cases
 }
 
@@ -4119,6 +4128,10 @@ fn documented_rejects_stay_explicit() {
         .ingest((1..=8).map(user_row).collect())
         .expect("ingest users");
     orders.ingest(order_rows()).expect("ingest orders");
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
+    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -4127,6 +4140,7 @@ fn documented_rejects_stay_explicit() {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .expect("provider");
 
@@ -4244,7 +4258,9 @@ fn catalog(
     .map_err(|error| error.to_string())?
     .with_key_columns([1])
     .map_err(|error| error.to_string())?;
-    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders])
+    let bounds = TableEntry::new(TableId::new(4), "bounds", oracle_boundaries::schema(), TableStatistics::with_row_count(8)).map_err(|e| e.to_string())?
+        .with_key_columns([1]).map_err(|e| e.to_string())?;
+    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders, bounds])
         .map_err(|error| error.to_string())?;
     CatalogSnapshot::new([database]).map_err(|error| error.to_string())
 }
@@ -4544,6 +4560,7 @@ fn run_fuzz() -> Result<(), String> {
 
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
+    mysql.query_batch(oracle_boundaries::SQL)?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
@@ -4580,6 +4597,10 @@ fn run_fuzz() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
+    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -4588,6 +4609,7 @@ fn run_fuzz() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
@@ -5037,6 +5059,10 @@ fn run_metamorphic() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
+    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -5045,6 +5071,7 @@ fn run_metamorphic() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
