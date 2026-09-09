@@ -2447,10 +2447,12 @@ dependencies = [
  "pintail-sql",
  "pintail-store",
  "pintail-types",
+ "rand 0.9.5",
  "rustix",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "sqlparser",
  "tempfile",
  "tokio",
 ]

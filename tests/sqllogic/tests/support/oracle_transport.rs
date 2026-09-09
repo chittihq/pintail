@@ -81,10 +81,12 @@ fn endpoint(mysql: &MysqlContainer) -> Result<(String, u16), String> {
     Ok((host, port))
 }
 
-pub fn execute(
+type CaseResult = Result<Vec<Vec<OracleValue>>, String>;
+
+pub fn execute_all(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
-) -> Result<Vec<Vec<Vec<OracleValue>>>, String> {
+) -> Result<Vec<CaseResult>, String> {
     let (host, port) = endpoint(mysql)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -95,12 +97,13 @@ pub fn execute(
             .ip_or_hostname(host)
             .tcp_port(port)
             .user(Some("root"))
+            .pass(Some(mysql.password.clone()))
             .db_name(Some("app"));
         let mut conn = Conn::new(opts).await.map_err(|e| e.to_string())?;
         conn.query_drop("SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci")
             .await
             .map_err(|e| e.to_string())?;
-        conn.query_drop("SET time_zone='+00:00'")
+        conn.query_drop("SET time_zone='+00:00', SESSION max_execution_time=5000")
             .await
             .map_err(|e| e.to_string())?;
         let mut results = Vec::with_capacity(cases.len());
@@ -113,13 +116,13 @@ pub fn execute(
             conn.query_drop(format!("SET sql_mode='{mode}'"))
                 .await
                 .map_err(|e| e.to_string())?;
-            let rows: Vec<Row> = conn.query(&case.sql).await.map_err(|e| {
+            let rows: Result<Vec<Row>, String> = conn.query(&case.sql).await.map_err(|e| {
                 format!(
                     "MySQL rejected case {index} ({}) `{}`: {e}",
                     case.family, case.sql
                 )
-            })?;
-            results.push(rows.iter().map(row).collect::<Result<Vec<_>, _>>()?);
+            });
+            results.push(rows.and_then(|rows| rows.iter().map(row).collect::<Result<Vec<_>, _>>()));
         }
         conn.disconnect().await.map_err(|e| e.to_string())?;
         Ok(results)
@@ -206,7 +209,7 @@ fn inventory(cases: &[OracleCase]) -> serde_json::Value {
         "schemaVersion": 1, "expectedCases": cases.len(),
         "fixtureSha256": hash(format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL).as_bytes()),
         "sourceSha256": hash(include_bytes!("../mysql_oracle.rs")),
-        "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")) },
+        "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")), "tests/sqllogic/tests/support/oracle_llm_cases.json": hash(include_bytes!("oracle_llm_cases.json")), "tests/sqllogic/tests/support/oracle_seed_cases.json": hash(include_bytes!("oracle_seed_cases.json")) },
         "fixtureSQL": format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL),
         "cases": cases.iter().map(|c| serde_json::json!({
             "id": case_id(c), "family": c.family, "sql": c.sql, "ordered": c.ordered,
@@ -259,6 +262,7 @@ pub fn write_outcomes(
         families.entry(case.family).or_default()[usize::from(outcome["status"] != "PASS")] += 1;
     }
     let mut report = inventory(cases);
+    report["provenance"] = provenance(mysql)?;
     report["outcomes"] = serde_json::json!(outcomes);
     report["familiesPassFail"] = serde_json::json!(families);
     report["image"] = serde_json::json!(mysql.image);
@@ -276,4 +280,29 @@ pub fn write_outcomes(
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
     );
     write(Path::new(&path), &report)
+}
+
+pub fn provenance(mysql: &MysqlContainer) -> Result<serde_json::Value, String> {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+    };
+    Ok(serde_json::json!({
+        "image": mysql.image,
+        "version": mysql.query_batch("SELECT VERSION();")?.trim(),
+        "session": {"sqlMode": DEFAULT_MODE, "timeZone": "+00:00", "collation": "utf8mb4_0900_ai_ci"},
+        "fixtureSha256": hash(format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL).as_bytes()),
+        "commit": git(&["rev-parse", "HEAD"]), "dirty": git(&["status", "--porcelain"]),
+        "unixSeconds": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs()
+    }))
+}
+
+pub fn execute(
+    mysql: &MysqlContainer,
+    cases: &[OracleCase],
+) -> Result<Vec<Vec<Vec<OracleValue>>>, String> {
+    execute_all(mysql, cases)?.into_iter().collect()
 }

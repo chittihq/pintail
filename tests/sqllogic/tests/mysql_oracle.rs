@@ -9,10 +9,14 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
-#[path = "support/oracle_transport.rs"]
-mod oracle_transport;
 #[path = "support/oracle_boundaries.rs"]
 mod oracle_boundaries;
+#[path = "support/oracle_candidates.rs"]
+mod oracle_candidates;
+#[path = "support/oracle_physical.rs"]
+mod oracle_physical;
+#[path = "support/oracle_transport.rs"]
+mod oracle_transport;
 
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
@@ -34,7 +38,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1714;
+const EXPECTED_CASES: usize = 1736;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -86,6 +90,7 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}'),\
            (13,8,949.86,'2025-05-01 12:00:00','processing','{\"tags\":[\"rounding\"],\"score\":9.5,\"items\":[5]}');";
 
+#[derive(Clone)]
 struct OracleCase {
     sql_mode: &'static str,
     family: &'static str,
@@ -93,7 +98,7 @@ struct OracleCase {
     ordered: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum OracleValue {
     Null,
     Binary(Vec<u8>),
@@ -104,17 +109,19 @@ enum OracleValue {
 struct MysqlContainer {
     name: String,
     image: String,
+    password: String,
 }
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
-        let requested = std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE")
-            .unwrap_or_else(|_| "mysql:8.4".to_owned());
+        let requested =
+            std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE").unwrap_or_else(|_| "mysql:8.4".to_owned());
         let image = oracle_transport::pinned_image(&requested)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
+        let password = oracle_transport::hash(&rand::random::<[u8; 32]>());
         let name = format!("pintail-mysql-oracle-{}-{nonce}", std::process::id());
         checked_output(
             Command::new("docker").args([
@@ -129,7 +136,7 @@ impl MysqlContainer {
                 "--env",
                 "MYSQL_ROOT_HOST=%",
                 "--env",
-                "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
+                &format!("MYSQL_ROOT_PASSWORD={password}"),
                 "--env",
                 "MYSQL_DATABASE=app",
                 &image,
@@ -139,12 +146,18 @@ impl MysqlContainer {
             &format!("start {image} oracle"),
         )?;
 
-        let container = Self { name, image };
+        let container = Self {
+            name,
+            image,
+            password,
+        };
         let mut consecutive_connections = 0;
         for _ in 0..120 {
             let connected = Command::new("docker")
                 .args([
                     "exec",
+                    "--env",
+                    &format!("MYSQL_PWD={}", container.password),
                     &container.name,
                     "mysql",
                     "--user=root",
@@ -167,6 +180,8 @@ impl MysqlContainer {
                 checked_output(
                     Command::new("docker").args([
                         "exec",
+                        "--env",
+                        &format!("MYSQL_PWD={}", container.password),
                         &container.name,
                         "sh",
                         "-c",
@@ -191,6 +206,8 @@ impl MysqlContainer {
             .args([
                 "exec",
                 "--interactive",
+                "--env",
+                &format!("MYSQL_PWD={}", self.password),
                 &self.name,
                 "mysql",
                 "--user=root",
@@ -239,6 +256,55 @@ fn matches_configured_mysql_for_fixed_corpus() {
 }
 
 #[test]
+#[ignore = "requires Docker; compares storage layouts and spill execution against MySQL"]
+fn matches_mysql_across_storage_layouts() {
+    oracle_physical::run().unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied candidate file and Docker"]
+fn validates_generated_candidates() {
+    oracle_candidates::run().unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+#[ignore = "private bounded candidate subprocess"]
+fn validates_generated_candidates_worker() {
+    oracle_candidates::worker().unwrap();
+}
+
+#[test]
+fn generated_candidates_are_read_only_and_reducible() {
+    for sql in [
+        "SELECT id, COUNT(*) OVER (ORDER BY 1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM bounds",
+        "SELECT id FROM bounds LIMIT 1",
+        "DELETE FROM bounds",
+        "SELECT SLEEP(1)",
+        "SELECT LOAD_FILE('/etc/passwd')",
+        "SELECT * FROM mysql.user",
+        "SELECT * FROM bounds FOR UPDATE",
+        "SELECT 1; SELECT 2",
+        "SELECT 1 INTO OUTFILE '/tmp/a'",
+    ] {
+        assert!(oracle_candidates::validate(sql).is_err(), "{sql}");
+    }
+    assert!(
+        oracle_candidates::validate(
+            "WITH x AS (SELECT id FROM bounds) SELECT * FROM x ORDER BY id"
+        )
+        .is_ok()
+    );
+    let variants =
+        oracle_candidates::reductions("SELECT id, n, frac FROM bounds WHERE id > 0 ORDER BY id");
+    assert!(!variants.is_empty());
+    assert!(
+        variants
+            .iter()
+            .all(|s| oracle_candidates::validate(s).is_ok())
+    );
+}
+
+#[test]
 fn oracle_applies_tolerance_only_to_float_results() {
     assert!(!oracle_values_equal(
         &OracleValue::Exact("9007199254740993".to_owned()),
@@ -259,17 +325,40 @@ fn oracle_preserves_null_bytes_and_expected_numeric_types() {
     let text = OracleValue::Exact("NULL".into());
     assert!(!oracle_values_equal(&OracleValue::Null, &text));
     assert!(!oracle_values_equal(&text, &OracleValue::Null));
-    assert!(!oracle_values_equal(&OracleValue::Binary(vec![0xff]), &OracleValue::Binary(vec![0xfe])));
-    assert!(!oracle_values_equal(&OracleValue::Float("9007199254740992".into()), &OracleValue::Exact("9007199254740993".into())));
-    assert!(!oracle_values_equal(&OracleValue::Float("1".into()), &OracleValue::Exact("1".into())));
-    for bytes in [b"a\tb".as_slice(), b"a\nb", b"\0", b"", b"__PINTAIL_CASE_1__"] {
+    assert!(!oracle_values_equal(
+        &OracleValue::Binary(vec![0xff]),
+        &OracleValue::Binary(vec![0xfe])
+    ));
+    assert!(!oracle_values_equal(
+        &OracleValue::Float("9007199254740992".into()),
+        &OracleValue::Exact("9007199254740993".into())
+    ));
+    assert!(!oracle_values_equal(
+        &OracleValue::Float("1".into()),
+        &OracleValue::Exact("1".into())
+    ));
+    for bytes in [
+        b"a\tb".as_slice(),
+        b"a\nb",
+        b"\0",
+        b"",
+        b"__PINTAIL_CASE_1__",
+    ] {
         let value = OracleValue::Binary(bytes.to_vec());
         assert!(oracle_values_equal(&value, &value));
     }
     let one = vec![OracleValue::Null];
     let literal = vec![text];
-    assert!(!oracle_rows_equal(&[one.clone(), one.clone()], &[one.clone(), literal.clone()], false));
-    assert!(oracle_rows_equal(&[one.clone(), literal.clone()], &[literal, one], false));
+    assert!(!oracle_rows_equal(
+        &[one.clone(), one.clone()],
+        &[one.clone(), literal.clone()],
+        false
+    ));
+    assert!(oracle_rows_equal(
+        &[one.clone(), literal.clone()],
+        &[literal, one],
+        false
+    ));
 }
 
 #[test]
@@ -328,8 +417,15 @@ fn run_oracle() -> Result<(), String> {
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
     let bounds_directory = tempfile::tempdir().expect("boundary directory");
-    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
-    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
     let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
@@ -350,10 +446,18 @@ fn run_oracle() -> Result<(), String> {
             cases.len()
         ));
     }
-    let mysql_results = execute_mysql_cases(&mysql, &cases)?;
+    let mysql_results = oracle_transport::execute_all(&mysql, &cases)?;
     let mut failures = Vec::new();
     let mut outcomes = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
+        let expected = match expected {
+            Ok(rows) => rows,
+            Err(error) => {
+                failures.push(error.clone());
+                outcomes.push(serde_json::json!({"id":oracle_transport::case_id(case),"family":case.family,"sql":case.sql,"status":"MYSQL_REJECTED","error":error}));
+                continue;
+            }
+        };
         let actual = pintail_sql::with_parse_mode(
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
@@ -573,7 +677,11 @@ fn execute_pintail(
     Ok(rows)
 }
 
-fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[Vec<OracleValue>], ordered: bool) -> bool {
+fn oracle_rows_equal(
+    actual: &[Vec<OracleValue>],
+    expected: &[Vec<OracleValue>],
+    ordered: bool,
+) -> bool {
     if actual.len() != expected.len() {
         return false;
     }
@@ -600,7 +708,10 @@ fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[Vec<OracleValue>],
 
 fn oracle_row_equal(actual: &[OracleValue], expected: &[OracleValue]) -> bool {
     actual.len() == expected.len()
-        && actual.iter().zip(expected).all(|(a, e)| oracle_values_equal(a, e))
+        && actual
+            .iter()
+            .zip(expected)
+            .all(|(a, e)| oracle_values_equal(a, e))
 }
 
 fn oracle_values_equal(actual: &OracleValue, expected: &OracleValue) -> bool {
@@ -612,8 +723,12 @@ fn oracle_values_equal(actual: &OracleValue, expected: &OracleValue) -> bool {
         (OracleValue::Exact(a), OracleValue::Binary(e)) => a.as_bytes() == e,
         (OracleValue::Binary(a), OracleValue::Exact(e)) => a == e.as_bytes(),
         (OracleValue::Float(a), OracleValue::Float(e)) => {
-            if a == e { return true; }
-            let (Ok(a), Ok(e)) = (a.parse::<f64>(), e.parse::<f64>()) else { return false; };
+            if a == e {
+                return true;
+            }
+            let (Ok(a), Ok(e)) = (a.parse::<f64>(), e.parse::<f64>()) else {
+                return false;
+            };
             let scale = a.abs().max(e.abs()).max(1.0);
             (a - e).abs() <= f64::EPSILON * 16.0 * scale
         }
@@ -1254,6 +1369,32 @@ fn oracle_cases() -> Vec<OracleCase> {
     }
     cases.extend(hand_written_cases());
     cases.extend(oracle_boundaries::cases());
+    for corpus in [
+        include_str!("support/oracle_llm_cases.json"),
+        include_str!("support/oracle_seed_cases.json"),
+    ] {
+        let document: serde_json::Value =
+            serde_json::from_str(corpus).expect("reviewed corpus JSON");
+        for case in document["cases"].as_array().expect("case array") {
+            cases.push(OracleCase {
+                sql: case["sql"].as_str().expect("case SQL").into(),
+                sql_mode: match case["sqlMode"].as_str().expect("case mode") {
+                    "" => "",
+                    "NO_UNSIGNED_SUBTRACTION" => "NO_UNSIGNED_SUBTRACTION",
+                    _ => panic!("unknown reviewed SQL mode"),
+                },
+                family: match case["family"].as_str().expect("case family") {
+                    "llm-reviewed-nullable-decimal" => "llm-reviewed-nullable-decimal",
+                    "llm-reviewed-quantified-subquery" => "llm-reviewed-quantified-subquery",
+                    "llm-reviewed-collation-json" => "llm-reviewed-collation-json",
+                    "llm-reviewed-cte-window" => "llm-reviewed-cte-window",
+                    "seed-minimized" => "seed-minimized",
+                    _ => panic!("unknown reviewed family"),
+                },
+                ordered: case["ordered"].as_bool().expect("reviewed ordering"),
+            });
+        }
+    }
     cases
 }
 
@@ -4129,8 +4270,15 @@ fn documented_rejects_stay_explicit() {
         .expect("ingest users");
     orders.ingest(order_rows()).expect("ingest orders");
     let bounds_directory = tempfile::tempdir().expect("boundary directory");
-    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
-    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
     let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
@@ -4258,8 +4406,15 @@ fn catalog(
     .map_err(|error| error.to_string())?
     .with_key_columns([1])
     .map_err(|error| error.to_string())?;
-    let bounds = TableEntry::new(TableId::new(4), "bounds", oracle_boundaries::schema(), TableStatistics::with_row_count(8)).map_err(|e| e.to_string())?
-        .with_key_columns([1]).map_err(|e| e.to_string())?;
+    let bounds = TableEntry::new(
+        TableId::new(4),
+        "bounds",
+        oracle_boundaries::schema(),
+        TableStatistics::with_row_count(8),
+    )
+    .map_err(|e| e.to_string())?
+    .with_key_columns([1])
+    .map_err(|e| e.to_string())?;
     let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders, bounds])
         .map_err(|error| error.to_string())?;
     CatalogSnapshot::new([database]).map_err(|error| error.to_string())
@@ -4598,8 +4753,15 @@ fn run_fuzz() -> Result<(), String> {
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
     let bounds_directory = tempfile::tempdir().expect("boundary directory");
-    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
-    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
     let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
@@ -4616,7 +4778,11 @@ fn run_fuzz() -> Result<(), String> {
     let oracle_cases = generated
         .iter()
         .map(|case| OracleCase {
-            sql_mode: "",
+            sql_mode: if case.index % 2 == 0 {
+                ""
+            } else {
+                "NO_UNSIGNED_SUBTRACTION"
+            },
             family: case.family,
             sql: case.sql.clone(),
             ordered: true,
@@ -4626,18 +4792,43 @@ fn run_fuzz() -> Result<(), String> {
     // therefore a generator defect and fails the sweep; it is never counted
     // as a skipped compatibility case.
     let mut expected = Vec::with_capacity(oracle_cases.len());
-    for (chunk, cases) in oracle_cases.chunks(FUZZ_MYSQL_BATCH_CASES).enumerate() {
-        expected.extend(execute_mysql_cases(&mysql, cases).map_err(|error| {
-            let first = chunk * FUZZ_MYSQL_BATCH_CASES;
-            format!(
-                "generated corpus contains SQL MySQL rejected in cases {first}..{}; seeds={seeds:?}, cases/seed={cases_per_seed}: {error}",
-                first + cases.len(),
-            )
-        })?);
+    for cases in oracle_cases.chunks(FUZZ_MYSQL_BATCH_CASES) {
+        expected.extend(oracle_transport::execute_all(&mysql, cases)?);
     }
     let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     for (case, expected) in generated.iter().zip(&expected) {
-        match execute_pintail(&case.sql, &catalog, &provider) {
+        let expected = match expected {
+            Ok(rows) => rows,
+            Err(error) => {
+                failures.push(error.clone());
+                outcomes.push(serde_json::json!({"seed":case.seed,"index":case.index,"family":case.family,"sql":case.sql,"status":"MYSQL_REJECTED","error":error}));
+                continue;
+            }
+        };
+        let mode = if case.index % 2 == 0 {
+            ""
+        } else {
+            "NO_UNSIGNED_SUBTRACTION"
+        };
+        let actual =
+            pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+                execute_pintail(&case.sql, &catalog, &provider)
+            });
+        let minimized = if actual
+            .as_ref()
+            .is_ok_and(|r| oracle_rows_equal(r, expected, true))
+        {
+            None
+        } else {
+            Some(oracle_candidates::minimize(
+                &mysql, &case.sql, mode, &actual,
+            ))
+        };
+        outcomes.push(serde_json::json!({"seed":case.seed,"index":case.index,"family":case.family,"sql":case.sql,
+            "status":if actual.as_ref().is_ok_and(|r| oracle_rows_equal(r,expected,true)) {"PASS"} else {"FAIL"},
+            "sqlMode":mode,"minimizedSQL":minimized,"expected":expected,"actual":actual.as_ref().ok(),"error":actual.as_ref().err()}));
+        match actual {
             Ok(actual) => {
                 if !oracle_rows_equal(&actual, expected, true) {
                     failures.push(format!(
@@ -4653,19 +4844,24 @@ fn run_fuzz() -> Result<(), String> {
                 ));
             }
         }
-        if failures.len() >= 10 {
-            break;
-        }
+    }
+    let metamorphic = mysql_metamorphic(&mysql)?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../validate-out/oracle-fuzz.json");
+    std::fs::create_dir_all(path.parent().expect("report parent")).map_err(|e| e.to_string())?;
+    std::fs::write(path,serde_json::to_string_pretty(&serde_json::json!({"provenance":oracle_transport::provenance(&mysql)?,"seeds":seeds,"uniqueSQL":unique,"families":families,"metamorphic":metamorphic,"outcomes":outcomes})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    if metamorphic.iter().any(|o| o["status"] != "PASS") {
+        failures.push("MySQL rejected proposed metamorphic equivalence(s)".into());
     }
     if !failures.is_empty() {
         return Err(format!(
             "{} fuzz divergence(s), showing at most 10:\n{}",
             failures.len(),
-            failures.join("\n\n")
+            failures[..failures.len().min(10)].join("\n\n")
         ));
     }
     println!(
-        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched {} byte-for-byte; 0 skipped; families={families:?}",
+        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched {} with typed comparison; 0 skipped; families={families:?}",
         generated.len(),
         unique,
         seeds.len(),
@@ -4990,7 +5186,8 @@ fn metamorphic_variants(parts: &QueryParts) -> Vec<(&'static str, String)> {
             parts.render_tail()
         ),
     ));
-    if parts.from.is_some() {
+    // UNION converts ENUM to text, changing ordering even with an empty arm.
+    if parts.from.is_some() && parts.family != "enum" {
         // q UNION ALL (q WHERE FALSE) == q: the second arm contributes
         // nothing, whatever grouping or having the arms carry.
         variants.push((
@@ -5060,8 +5257,15 @@ fn run_metamorphic() -> Result<(), String> {
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
     let bounds_directory = tempfile::tempdir().expect("boundary directory");
-    let mut bounds = TableStore::open(bounds_directory.path(), oracle_boundaries::schema(), StoreOptions::default()).expect("boundary store");
-    bounds.ingest(oracle_boundaries::rows()).expect("boundary rows");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
     let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
@@ -5229,7 +5433,7 @@ impl QueryParts {
 
 #[allow(clippy::too_many_lines)]
 fn generate_parts(rng: &mut Xorshift) -> QueryParts {
-    match rng.below(16) {
+    match rng.below(20) {
         // Scalar-only: expressions with no FROM.
         0 => {
             let picks = 1 + rng.below(3);
@@ -5609,6 +5813,46 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 limit: Some(50),
             }
         }
+        16..=19 => {
+            let column = *rng.pick(&["n", "u", "frac", "approx"]);
+            let rhs = *rng.pick(&["0", "1", "NULL", "'1'", "-1.005"]);
+            let kind = rng.below(4);
+            let expression = match kind {
+                0 => format!(
+                    "{column} {} {rhs}",
+                    rng.pick(&["=", "<=>", "<", ">=", "<>"])
+                ),
+                1 => format!(
+                    "{column} IN (SELECT n FROM bounds WHERE id <= {})",
+                    rng.below(9)
+                ),
+                2 => format!(
+                    "SUBSTRING(txt, {}, {})",
+                    i64::try_from(rng.below(25)).expect("small offset") - 12,
+                    rng.below(12)
+                ),
+                _ => format!(
+                    "COUNT(txt) OVER (ORDER BY id ROWS BETWEEN {} PRECEDING AND CURRENT ROW)",
+                    rng.below(4)
+                ),
+            };
+            QueryParts {
+                family: [
+                    "boundary-scalar",
+                    "boundary-membership",
+                    "boundary-string",
+                    "boundary-window",
+                ][kind],
+                select: vec!["id".into(), expression],
+                from: Some("bounds".into()),
+                from_commuted: None,
+                where_clause: Some(format!("id >= {}", rng.below(8))),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(8),
+            }
+        }
         // Deterministic hashes and encodings used by BI symmetric-aggregate
         // SQL and application-generated identifiers.
         _ => {
@@ -5658,6 +5902,10 @@ fn generated_corpus_reaches_every_query_family() {
     assert_eq!(
         families,
         BTreeSet::from([
+            "boundary-scalar",
+            "boundary-membership",
+            "boundary-string",
+            "boundary-window",
             "decimal",
             "conditional-null",
             "correlated-subquery",
@@ -5680,5 +5928,43 @@ fn generated_corpus_reaches_every_query_family() {
         unique.len() >= 850,
         "only {} unique SQL strings",
         unique.len()
+    );
+}
+
+fn mysql_metamorphic(mysql: &MysqlContainer) -> Result<Vec<serde_json::Value>, String> {
+    let mut rng = Xorshift(0xA11C_E55E);
+    let mut outcomes = Vec::new();
+    for index in 0..40 {
+        let parts = generate_parts(&mut rng);
+        let base = OracleCase {
+            sql_mode: "",
+            family: parts.family,
+            sql: parts.render(),
+            ordered: true,
+        };
+        for (label, sql) in metamorphic_variants(&parts) {
+            let variant = OracleCase {
+                sql_mode: "",
+                family: label,
+                sql,
+                ordered: true,
+            };
+            let results = oracle_transport::execute_all(mysql, &[base.clone(), variant.clone()])?;
+            let pass = match (&results[0], &results[1]) {
+                (Ok(a), Ok(b)) => oracle_rows_equal(a, b, true),
+                _ => false,
+            };
+            outcomes.push(serde_json::json!({"index":index,"transformation":label,"baseSQL":base.sql,"variantSQL":variant.sql,"status":if pass {"PASS"} else {"REJECTED_EQUIVALENCE"},"results":results}));
+        }
+    }
+    Ok(outcomes)
+}
+
+#[test]
+fn candidate_worker_executes_aggregate_under_process_limits() {
+    assert_eq!(
+        oracle_candidates::bounded_execute("SELECT SUM(score) FROM events")
+            .expect("bounded aggregate"),
+        vec![vec![OracleValue::Exact("550".into())]]
     );
 }
