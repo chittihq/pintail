@@ -159,6 +159,49 @@ fn fixture() -> Fixture {
 /// measuring at once would each see the other's work. One at a time.
 static COUNTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// The catalog both paths bind against.
+fn catalog_of(_fixture: &Fixture) -> CatalogSnapshot {
+    let database = DatabaseEntry::new(
+        DatabaseId::new(4),
+        "app",
+        [
+            TableEntry::new(
+                TableId::new(41),
+                "classes",
+                class_schema(),
+                TableStatistics::with_row_count(CLASSES),
+            )
+            .expect("classes entry"),
+            TableEntry::new(
+                TableId::new(42),
+                "submissions",
+                submission_schema(),
+                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
+            )
+            .expect("submissions entry"),
+            TableEntry::new(
+                TableId::new(43),
+                "memberships",
+                membership_schema(),
+                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
+            )
+            .expect("memberships entry"),
+        ],
+    )
+    .expect("database");
+    CatalogSnapshot::new([database]).expect("catalog")
+}
+
+/// Binds one statement and returns the error text it is refused with.
+fn plan_error(fixture: &Fixture, sql: &str) -> String {
+    let statement = parse_statement(sql).expect("parse");
+    let catalog = catalog_of(fixture);
+    match Binder::new(&catalog, Some("app")).bind(&statement) {
+        Ok(_) => panic!("expected the statement to be refused"),
+        Err(error) => error.to_string(),
+    }
+}
+
 /// Runs one statement, returning its rows and the inner executions it took.
 fn measure(fixture: &Fixture, sql: &str) -> (usize, u64) {
     let _counter = COUNTER
@@ -170,35 +213,7 @@ fn measure(fixture: &Fixture, sql: &str) -> (usize, u64) {
     let database_id = DatabaseId::new(4);
     let (class_id, submission_id, membership_id) =
         (TableId::new(41), TableId::new(42), TableId::new(43));
-    let database = DatabaseEntry::new(
-        database_id,
-        "app",
-        [
-            TableEntry::new(
-                class_id,
-                "classes",
-                class_schema(),
-                TableStatistics::with_row_count(CLASSES),
-            )
-            .expect("classes entry"),
-            TableEntry::new(
-                submission_id,
-                "submissions",
-                submission_schema(),
-                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
-            )
-            .expect("submissions entry"),
-            TableEntry::new(
-                membership_id,
-                "memberships",
-                membership_schema(),
-                TableStatistics::with_row_count(SECTIONS * MEMBERS_PER_SECTION),
-            )
-            .expect("memberships entry"),
-        ],
-    )
-    .expect("database");
-    let catalog = CatalogSnapshot::new([database]).expect("catalog");
+    let catalog = catalog_of(fixture);
     let provider = SnapshotScanProvider::new([
         (database_id, class_id, &class_snapshot),
         (database_id, submission_id, &submission_snapshot),
@@ -266,12 +281,14 @@ fn a_correlated_in_decorrelates_from_where_and_from_an_inner_join_condition() {
     );
 }
 
-/// An OUTER join's ON is a different question, and the rewrite does not
-/// touch it: the predicate decides which right rows match, while the left
-/// row survives either way, so hoisting it to the outer scope would drop the
-/// null-extended rows a LEFT JOIN exists to keep.
+/// An OUTER join's ON is a different question. A subquery correlated to the
+/// join's LEFT side is refused there: dependent resolution exists only at
+/// Filter level, so it ran without the outer context it needs and the join
+/// matched too few rows - measured against `MySQL`, three matches reported as
+/// one. Correlating to the RIGHT side alone still answers, on the dependent
+/// path.
 #[test]
-fn a_correlated_in_stays_dependent_in_an_outer_join_condition() {
+fn an_outer_join_condition_refuses_a_subquery_correlated_to_its_left_side() {
     let fixture = fixture();
 
     let (rows, executions) = measure(
@@ -279,16 +296,25 @@ fn a_correlated_in_stays_dependent_in_an_outer_join_condition() {
         "SELECT COUNT(*) AS n FROM classes c \
          LEFT JOIN submissions s ON s.item_id = c.item_id \
          AND s.member_id IN ( \
+           SELECT m.member_id FROM memberships m WHERE m.section_id = s.item_id \
+         )",
+    );
+    assert!(rows > 0, "correlating to the right side still answers");
+    assert!(
+        executions > 0,
+        "and does so on the dependent path, one execution per correlation value",
+    );
+
+    let refused = plan_error(
+        &fixture,
+        "SELECT COUNT(*) AS n FROM classes c \
+         LEFT JOIN submissions s ON s.item_id = c.item_id \
+         AND s.member_id IN ( \
            SELECT m.member_id FROM memberships m WHERE m.section_id = c.section_id \
          )",
     );
-
-    assert!(rows > 0, "the outer join emits a row for every left row");
     assert!(
-        executions > 0,
-        "an outer join's ON is not hoistable, so this shape still resolves \
-         per distinct correlation value; when a rewrite plants the semi-join \
-         under the right input this becomes 0 and the assertion should flip",
+        refused.contains("left side"),
+        "correlating to the join's left side is refused, not answered: {refused}",
     );
-    println!("correlated IN under LEFT JOIN ON: {executions} inner executions");
 }

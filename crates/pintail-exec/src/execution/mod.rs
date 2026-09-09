@@ -6309,8 +6309,11 @@ mod tests {
 
     /// The dependent path a correlated subquery in an OUTER join's ON still
     /// takes. An INNER join's ON hoists to WHERE and decorrelates, so this
-    /// shape has to be an outer join to reach the replay it is testing; the
-    /// decorrelated form is covered by the test below.
+    /// shape has to be an outer join to reach the replay it is testing, and
+    /// it correlates to the join's RIGHT side, which is the side that still
+    /// answers: correlating to the left is refused, because there the
+    /// subquery ran without its outer context and the join matched too few
+    /// rows. The decorrelated form is covered by the test below.
     #[test]
     fn correlated_join_on_spills_its_replayed_side_and_output() {
         let batches = (0..64)
@@ -6331,7 +6334,7 @@ mod tests {
             let provider = StaticProvider {
                 batches: Mutex::new(batches.clone()),
             };
-            let mut execution = Execution::start(physical("SELECT l.name FROM events l LEFT JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = l.name)"), &provider, limit, Collation::default()).expect("execution");
+            let mut execution = Execution::start(physical("SELECT l.name FROM events l LEFT JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = r.name)"), &provider, limit, Collation::default()).expect("execution");
             let mut rows = Vec::new();
             while let Some(batch) = execution.next_batch().expect("pull") {
                 assert!(execution.memory().used() <= limit);
