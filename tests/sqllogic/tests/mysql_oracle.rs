@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1229;
+const EXPECTED_CASES: usize = 1293;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -3490,6 +3490,262 @@ fn diversify_cases() -> Vec<OracleCase> {
         ordered(
             "diversify min max datetime",
             "SELECT MIN(placed_at), MAX(placed_at), COUNT(*) FROM orders",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note = NULL, note <> NULL, note <=> NULL, NOT (note = NULL) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, (note = 'Alpha') AND NULL, (note = 'Alpha') OR NULL, NOT (note = 'Alpha') FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN ('Alpha', NULL), note NOT IN ('Alpha', NULL) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN (SELECT note FROM events WHERE id < 0), note NOT IN (SELECT note FROM events WHERE id < 0) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN (SELECT note FROM events WHERE id <= 3), note NOT IN (SELECT note FROM events WHERE id <= 3) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, CASE note WHEN NULL THEN 'null' WHEN 'Alpha' THEN 'match' ELSE 'other' END, CASE WHEN note IS NULL THEN 'null' ELSE note END FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id FROM events WHERE NOT (note = 'Alpha' OR note IS NULL) ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, COALESCE(NULLIF(note, 'Alpha'), 'missing'), IFNULL(NULLIF(score, 30), -1) FROM events ORDER BY id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COUNT(*), COUNT(o.id), SUM(o.total), MIN(o.total), MAX(o.total) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 WHERE o.id IS NULL ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COALESCE(SUM(o.total), 0), SUM(CASE WHEN o.id IS NULL THEN 1 ELSE 0 END) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id HAVING COUNT(o.id) = 0 ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT o.id, u.id, e.note FROM orders o LEFT JOIN users u ON u.id = o.user_id LEFT JOIN events e ON e.id = u.id AND e.note IS NOT NULL ORDER BY o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND 1 = 0 ORDER BY u.id",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*), COUNT(note), COUNT(DISTINCT note), SUM(score), AVG(score), MIN(score), MAX(score) FROM events WHERE id < 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*), SUM(total), AVG(total), MIN(placed_at), MAX(status) FROM orders WHERE total < 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT note, COUNT(*), SUM(score) FROM events WHERE id < 0 GROUP BY note",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*) FROM orders WHERE id < 0 HAVING COUNT(*) = 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*) FROM orders WHERE id < 0 HAVING SUM(total) > 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(note), SUM(LENGTH(note)), MIN(note), MAX(note) FROM events WHERE note IS NULL",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT active, COUNT(*), COUNT(note), COUNT(DISTINCT note) FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COALESCE(SUM(total), 0), IFNULL(AVG(total), -1) FROM orders WHERE id < 0",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(CASE WHEN status = 'shipped' THEN total ELSE 0 END), SUM(CASE WHEN status = 'pending' THEN total END) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(DISTINCT total), COUNT(DISTINCT total), MIN(NULLIF(total, 0)) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, ROUND(total, -1), TRUNCATE(total, 1), ROUND(-total, 1) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, total BETWEEN 0.01 AND 50.00, total IN (0.00, 0.01, 50.00, NULL) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id HAVING SUM(total) BETWEEN 25 AND 1000 ORDER BY amount, user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, CASE WHEN total = 0 THEN NULL ELSE total END, COALESCE(NULLIF(total, 0), 1.25) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, CAST(total AS DECIMAL(14,3)), CAST(-total AS DECIMAL(14,1)) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, ROUND(SUM(total), 1), SUM(ROUND(total, 1)) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(*) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING), COUNT(note) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, MIN(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), MAX(note) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, LAG(note, 1, 'edge') OVER (ORDER BY id), LEAD(note, 1, 'edge') OVER (ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, FIRST_VALUE(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), LAST_VALUE(note) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, SUM(total) OVER (PARTITION BY user_id ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, SUM(total) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(note) OVER (PARTITION BY active), ROW_NUMBER() OVER (PARTITION BY active ORDER BY id DESC) FROM events ORDER BY id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id, (SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 100) ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT o.id FROM orders o WHERE o.total > (SELECT AVG(p.total) FROM orders p WHERE p.user_id = o.user_id) ORDER BY o.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE total > 100) ORDER BY id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 0) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'cancelled') ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "WITH totals AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) SELECT u.id, t.amount FROM users u LEFT JOIN totals t ON t.user_id = u.id AND t.amount > 100 ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT d.user_id, d.amount FROM (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) d WHERE d.amount > 100 ORDER BY d.amount DESC, d.user_id LIMIT 3",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATE_ADD(placed_at, INTERVAL 1 MONTH), DATE_SUB(placed_at, INTERVAL 1 MONTH) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, LAST_DAY(placed_at), DAYOFMONTH(placed_at), DAYOFYEAR(placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATE(placed_at) = LAST_DAY(placed_at), YEAR(placed_at), QUARTER(placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT YEAR(placed_at), MONTH(placed_at), COUNT(*), SUM(total) FROM orders GROUP BY YEAR(placed_at), MONTH(placed_at) ORDER BY YEAR(placed_at), MONTH(placed_at)",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id FROM orders WHERE placed_at >= '2024-02-29' AND placed_at < DATE_ADD('2024-02-29', INTERVAL 1 DAY) ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, TIMESTAMPDIFF(DAY, placed_at, DATE_ADD(placed_at, INTERVAL 1 MONTH)) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATEDIFF(LAST_DAY(placed_at), placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT DATE_ADD('2000-02-29', INTERVAL 100 YEAR), DATE_ADD('2024-01-31', INTERVAL 1 MONTH), DATE_SUB('2024-03-31', INTERVAL 1 MONTH)",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT active, COUNT(DISTINCT LOWER(note)), COUNT(DISTINCT UPPER(tag)) FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, NULLIF(note, 'ALPHA'), note <=> 'ALPHA' FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id FROM events WHERE COALESCE(note, 'Alpha') = 'ALPHA' ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, tag = 'red', tag LIKE 'red', tag IN ('red') FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note <=> b.note WHERE a.id <= 3 AND b.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, label = 'STRASSE', label IN ('strasse', 'arger') FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, CONCAT_WS(':', note, tag), CHARACTER_LENGTH(note), LENGTH(note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, CASE WHEN note = 'ALPHA' THEN LOWER(note) ELSE UPPER(note) END FROM events ORDER BY id",
         ),
     ]
 }
