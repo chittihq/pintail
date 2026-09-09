@@ -66,8 +66,17 @@ const ARTIFACTS: Artifact[] = [
   {
     name: 'storage scan qualification',
     evidence: ['benchmark/evidence/storage-scan-qualification.json'],
-    sources: [...ENGINE],
-    refresh: 'Run the adversarial storage probe against the recorded baseline and candidate, then bank the comparison',
+    sources: [
+      ...ENGINE,
+      'benchmark/run.ts',
+      'benchmark/queries.ts',
+      'benchmark/run-tpch.ts',
+      'benchmark/workloads/tpch-v1/queries',
+      'benchmark/workloads/tpch-v1/schema.mysql.sql',
+      'benchmark/workloads/tpch-v1/seed.ts',
+      'benchmark/workloads/tpch-v1/workload.ts',
+    ],
+    refresh: 'Repeat benchmark/evidence/storage-scan-qualification.md and bank the baseline/candidate results',
   },
   {
     name: 'analytical benchmark',

@@ -9,10 +9,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Performance
 
 - Cache immutable block offsets and retain decoded predicate columns when the
-  output projection is identical. Text-predicate scans decode half as many
-  blocks. Earlier 20-million-row measurements found 1.2–1.8× SQL improvements
-  on scan-bound shapes, with no demonstrated gain for wide aggregates;
-  these are workload-specific results, not a general query speedup.
+  output projection is identical. Dense text-predicate scans with that
+  projection decode half as many blocks. Idle-host 20-million-row probes found
+  1.26–1.51× SQL improvements on scan-bound shapes, with no material gain for wide aggregates. The
+  benefit is workload-specific.
 
 ## [0.1.2] - 2026-09-09
 

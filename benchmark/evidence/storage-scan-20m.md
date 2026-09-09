@@ -1,5 +1,9 @@
 # Storage scan comparison: 20 million synthetic rows
 
+> Historical measurements before the qualification rebase. See
+> [the rebased qualification](storage-scan-qualification.md) for the adversarial
+> fixture, complete rc gate, and controlled performance comparison.
+
 The same block-directory and predicate-buffer changes tested in
 [the smaller experiment](storage-scan-addressing.md) retain their storage-work
 benefit at 20 million rows. Narrow scans and text-only filtered scans improve

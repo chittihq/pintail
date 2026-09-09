@@ -1,5 +1,9 @@
 # Projected block addressing and predicate reuse
 
+> Historical measurements before the qualification rebase. See
+> [the rebased qualification](storage-scan-qualification.md) for the adversarial
+> fixture, complete rc gate, and controlled performance comparison.
+
 This experiment compares baseline `40486955` against the storage changes in
 `2b8175a8` and `d421aba9`. The benchmark programs are identical in both
 binaries. All fixtures are invented.
