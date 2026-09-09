@@ -61,7 +61,7 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            (1,'event-01',10,0,'Alpha','red','strasse'),(2,'event-02',20,1,'alpha','RED','stra\u{df}e'),\
            (3,'event-03',30,0,NULL,'red ','STRASSE'),(4,'event-04',40,1,'Beta','blue','\u{c4}rger'),\
            (5,'event-05',50,0,'beta','BLUE','arger'),(6,'event-06',60,1,NULL,'blue','a'),\
-           (7,'event-07',70,0,'Alpha','Green','a '),(8,'event-08',80,1,'alpha','green','a\t'),\
+           (7,'event-07',70,0,'Alpha','Green','a '),(8,'event-08',80,1,'alpha','green','a\u{a0}'),\
            (9,'event-09',90,0,NULL,'RED','\u{4e00}'),(10,'event-10',100,1,'Beta','Blue','\u{e1}');\
          INSERT INTO users VALUES\
            (1,'user-01'),(2,'user-02'),(3,'user-03'),(4,'user-04'),\
@@ -3871,7 +3871,7 @@ fn event_row(id: u64) -> StoredRow {
                     5 => "arger",
                     6 => "a",
                     7 => "a ",
-                    8 => "a\t",
+                    8 => "a\u{a0}",
                     9 => "\u{4e00}",
                     10 => "\u{e1}",
                     _ => unreachable!("oracle event IDs are 1 through 10"),
