@@ -476,6 +476,61 @@
   },
   {
     "phase": "snapshot",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -1546,6 +1601,61 @@
   },
   {
     "phase": "orm-compat",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -2496,6 +2606,61 @@
   },
   {
     "phase": "crud",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -3446,6 +3611,61 @@
   },
   {
     "phase": "composite-keys",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -4392,6 +4612,61 @@
   {
     "phase": "type-edges",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -5371,6 +5646,61 @@
   },
   {
     "phase": "ddl",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -6332,6 +6662,61 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -7289,6 +7674,61 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -8284,6 +8724,61 @@
   },
   {
     "phase": "churn",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -9241,6 +9736,61 @@
   {
     "phase": "contention",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -10231,6 +10781,61 @@
   },
   {
     "phase": "execution-budget",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -11212,6 +11817,61 @@
   },
   {
     "phase": "spill",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -12189,6 +12849,61 @@
   {
     "phase": "pooling",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -13249,6 +13964,61 @@
   },
   {
     "phase": "local-database",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -14215,6 +14985,61 @@
   },
   {
     "phase": "restart",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -14693,7 +15518,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150030 sync_runs rows for db_1330f68f4a3ca391963aaf6a5785eed7"
+    "detail": "150028 sync_runs rows for db_00029f93ae65b80ec7cee9687629a919"
   },
   {
     "phase": "activity-history",
@@ -14705,25 +15530,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms over 150000 rows"
+    "detail": "p50 2ms p95 3ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 3ms"
+    "detail": "p50 2ms p95 2ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 47ms p99 101ms"
+    "detail": "p50 28ms p99 37ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 3ms"
+    "detail": "health p95 2ms"
   },
   {
     "phase": "activity-history",
@@ -15208,6 +16033,61 @@
   {
     "phase": "activity-history",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -15690,13 +16570,13 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4923"
+    "detail": "0 failed of 4922"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4923 requests: p50 1ms p99 10ms"
+    "detail": "4922 requests: p50 1ms p99 10ms"
   },
   {
     "phase": "poll-storm",
@@ -15708,7 +16588,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 7492 vs source 7492"
+    "detail": "orders replica 7429 vs source 7429"
   },
   {
     "phase": "poll-storm",
@@ -16193,6 +17073,61 @@
   {
     "phase": "poll-storm",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -17268,6 +18203,61 @@
   },
   {
     "phase": "control-plane",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -18235,6 +19225,61 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -19231,6 +20276,61 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -20213,6 +21313,61 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -20706,7 +21861,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_1330f68f4a3ca391963aaf6a5785eed7\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-08T20:52:37.868281736+00:00\",\"updated_at\":\"2026-09-08T20:58:40.441240302+00:00\"},\"tables\":21,\"rows\":10217}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_00029f93ae65b80ec7cee9687629a919\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-09T12:30:33.913420290+00:00\",\"updated_at\":\"2026-09-09T12:36:31.212589972+00:00\"},\"tables\":21,\"rows\":10154}"
   },
   {
     "phase": "drop-table-polling",
@@ -21201,6 +22356,61 @@
   {
     "phase": "drop-table-polling",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -22188,6 +23398,61 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -23190,6 +24455,61 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -23674,7 +24994,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 77 ok, dashboards 102 ok; no errors"
+    "detail": "wire 240 ok, http 74 ok, dashboards 102 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -23686,25 +25006,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 77"
+    "detail": "wire 240 of 240, http 74"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 214ms p99 989ms over 240 queries"
+    "detail": "wire p50 205ms p99 948ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 20ms over 7 samples"
+    "detail": "health p99 24ms over 7 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 180MB with a 256MB budget"
+    "detail": "peak RSS 176MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -24206,6 +25526,61 @@
   {
     "phase": "memory-pressure",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -24712,7 +26087,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 69MB before, peak 176MB during (margin 768MB)"
+    "detail": "RSS 73MB before, peak 179MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -25202,6 +26577,61 @@
   {
     "phase": "reconcile-memory",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
@@ -26213,6 +27643,61 @@
   },
   {
     "phase": "drop-database",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:unicode_ci: IN membership uses the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "query:general_ci: equality folds Latin-1 accents onto the base letter",
     "status": "PASS"
   },
@@ -27178,6 +28663,61 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:general_ci: equality folds ASCII case",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: equality expands the characters MySQL expands",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: equality folds case and accents",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: trailing spaces are insignificant (PAD SPACE)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: a combining mark weighs nothing",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: grouping partitions by collated equality",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: ordering follows the collation, not code points",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: DISTINCT collapses collation-equal values",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: joining on a collated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: folds a different set than general_ci does",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: extremes follow the collation",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:unicode_ci: IN membership uses the collation",
     "status": "PASS"
   },
   {
