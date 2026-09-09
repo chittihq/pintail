@@ -898,7 +898,7 @@ impl Backend {
         &self,
         recorded: Option<RecordedStatement>,
         started: std::time::Instant,
-        rows: Option<usize>,
+        outcome: Result<usize, &QueryError>,
     ) {
         let Some(recorded) = recorded else {
             return;
@@ -914,11 +914,21 @@ impl Backend {
                     .map(|auth| (auth.database_name.clone(), auth.key_name.clone()))
             })
             .unwrap_or_else(|| ("-".to_owned(), "-".to_owned()));
-        let outcome = rows.map_or_else(|| "error".to_owned(), |rows| format!("{rows} rows"));
-        pintail_log::log_info!(
-            "wire query db={database} key={key} {outcome} {millis}ms {}",
-            recorded.shape,
-        );
+        match outcome {
+            Ok(rows) => pintail_log::log_info!(
+                "wire query db={database} key={key} {rows} rows {millis}ms {}",
+                recorded.shape,
+            ),
+            // Why a query failed reached nobody: the client is told and the
+            // connection moves on, so an operator reading the log had the
+            // word "error" and a statement shape to work from. Error is also
+            // the level telemetry forwards, so a failure nobody was watching
+            // for is now one somebody hears about.
+            Err(error) => pintail_log::log_error!(
+                "wire query db={database} key={key} error {millis}ms {error}: {}",
+                recorded.shape,
+            ),
+        }
         if let Some(full) = recorded.full {
             pintail_log::log_debug!("wire query db={database} key={key} statement={full}");
         }
@@ -1008,7 +1018,7 @@ impl Backend {
         self.record_query(
             recorded,
             started,
-            execution.0.as_ref().ok().map(|output| output.rows.len()),
+            execution.0.as_ref().map(|output| output.rows.len()),
         );
         execution.0
     }
