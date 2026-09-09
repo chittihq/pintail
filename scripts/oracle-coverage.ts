@@ -11,6 +11,7 @@
 /// ```
 
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { join } from 'node:path'
 
 const repository = join(import.meta.dir, '..')
@@ -138,67 +139,20 @@ function templateKey(sql: string): string {
     .replace(/\{[^}]+\}/g, '{p}')
 }
 
-function unquoteRustStringLiteral(lit: string): string {
-  // Concatenated "..." "..." pieces. Rust line continuations are `\` + newline
-  // inside a single literal, so escape matching must allow newlines (`.` does not).
-  const parts = [...lit.matchAll(/"((?:\\[\s\S]|[^"\\])*)"/g)].map((m) =>
-    m[1]
-      .replace(/\\\n/g, '')
-      .replace(/\\n/g, '\n')
-      .replace(/\\t/g, '\t')
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, '\\'),
-  )
-  return parts.join('')
-}
-
-function extractOracle(source: string): {
-  expected: number | null
-  families: Map<string, number>
-  sqlSnippets: string[]
-  generatedCaseCount: number
-} {
-  const expectedMatch = source.match(/EXPECTED_CASES:\s*usize\s*=\s*(\d+)/)
-  const expected = expectedMatch ? Number(expectedMatch[1]) : null
+function extractOracle(source: string) {
+  const path = process.argv.find((arg) => arg.startsWith('--inventory='))?.slice(12)
+    ?? join(repository, 'validate-out/oracle-inventory.json')
+  let data: { expectedCases: number; sourceSha256: string; cases: { id: string; sql: string; family: string }[] }
+  try { data = JSON.parse(readFileSync(path, 'utf8')) } catch {
+    throw new Error(`Missing runtime inventory at ${path}. On the build host run PINTAIL_ORACLE_INVENTORY=validate-out/oracle-inventory.json cargo test -p pintail-sqllogic --test mysql_oracle oracle_case_inventory_matches_the_declared_gate, then copy the export here or pass --inventory=PATH.`)
+  }
+  if (data.sourceSha256 !== createHash('sha256').update(source).digest('hex')) {
+    throw new Error('Oracle inventory is stale; regenerate it from the current source.')
+  }
+  if (data.cases.length !== data.expectedCases) throw new Error('Incomplete oracle inventory')
   const families = new Map<string, number>()
-  const sqlSnippets: string[] = []
-
-  const loopCounts = [...source.matchAll(/for value in 0\.\.(\d+)/g)].map((m) =>
-    Number(m[1]),
-  )
-  const generatedCaseCount = loopCounts.reduce((a, b) => a + b, 0)
-
-  // Each parametric loop block: family name once, SQL format string once, N cases.
-  for (const block of source.matchAll(
-    /for value in 0\.\.(\d+)\s*\{([\s\S]*?)\n    \}/g,
-  )) {
-    const n = Number(block[1])
-    const body = block[2]
-    const family = body.match(/family:\s*"([^"]+)"/)?.[1]
-    if (family) families.set(family, (families.get(family) ?? 0) + n)
-    const fmt = body.match(
-      /format!\s*\(\s*((?:"(?:\\[\s\S]|[^"\\])*"\s*)+)/,
-    )
-    if (fmt) sqlSnippets.push(unquoteRustStringLiteral(fmt[1]))
-    else {
-      for (const f of body.matchAll(
-        /format!\s*\(\s*((?:"(?:\\[\s\S]|[^"\\])*"\s*)+)/g,
-      )) {
-        sqlSnippets.push(unquoteRustStringLiteral(f[1]))
-      }
-    }
-  }
-
-  // ordered("family", "sql" ...) including multi-line Rust string continuations.
-  for (const match of source.matchAll(
-    /(?:ordered|unordered)\(\s*"([^"]+)"\s*,\s*((?:"(?:\\[\s\S]|[^"\\])*"\s*)+)/g,
-  )) {
-    const family = match[1]
-    families.set(family, (families.get(family) ?? 0) + 1)
-    sqlSnippets.push(unquoteRustStringLiteral(match[2]))
-  }
-
-  return { expected, families, sqlSnippets, generatedCaseCount }
+  for (const item of data.cases) families.set(item.family, (families.get(item.family) ?? 0) + 1)
+  return { expected: data.expectedCases, families, sqlSnippets: data.cases.map((c) => c.sql) }
 }
 
 function extractE2e(source: string): { names: string[]; sql: string[] } {
@@ -248,7 +202,6 @@ for (const sql of oracle.sqlSnippets) {
 }
 
 const familyTotal = [...oracle.families.values()].reduce((a, b) => a + b, 0)
-const handWrittenApprox = familyTotal - oracle.generatedCaseCount
 
 const uncovered = [...supported.keys()]
   .filter((name) => !oracleOnlyFreq.has(name) && !SYNTAX_FORMS.has(name))
@@ -261,8 +214,6 @@ const diversifyCases = [...oracle.families.entries()]
 const report = {
   expectedCases: oracle.expected,
   inventoriedCases: familyTotal,
-  generatedParametricCases: oracle.generatedCaseCount,
-  handWrittenAndNamedCases: handWrittenApprox,
   diversifyTypedCases: diversifyCases,
   uniqueSqlTemplatesApprox: templates.size,
   familyCount: oracle.families.size,
@@ -292,8 +243,6 @@ console.log('MySQL compatibility corpus coverage')
 console.log('===================================')
 console.log(`oracle EXPECTED_CASES:       ${report.expectedCases ?? 'n/a'}`)
 console.log(`oracle inventoried:          ${report.inventoriedCases}`)
-console.log(`  parametric (loops):        ${report.generatedParametricCases}`)
-console.log(`  hand-written / named:      ${report.handWrittenAndNamedCases}`)
 console.log(`  diversify (typed tables):  ${report.diversifyTypedCases}`)
 console.log(
   `  unique templates (approx): ${report.uniqueSqlTemplatesApprox}`,

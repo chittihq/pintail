@@ -1,0 +1,20 @@
+# Parity coverage implementation todo
+
+Worktree: `test/expand-oracle-coverage`. Plan: [coverage-plan.md](coverage-plan.md).
+All edits and commits are local; compilation and execution use the configured build server.
+
+- [x] 1. Structured comparison: NULL/text/binary separation, expected-type float policy, comparator regressions.
+- [x] 2. Runtime inventory, stable IDs, explicit sessions, image/version provenance, complete red-run artifacts.
+- [ ] 3. Conversion/subquery matrices and richer typed fixtures, including negative cardinality cases.
+- [ ] 4. String/collation and temporal boundary matrices.
+- [ ] 5. Grouping/window and JSON composition coverage.
+- [ ] 6. Session, diagnostics, prepared protocol, and result metadata coverage.
+- [ ] 7. Snapshot/CDC/DDL/flush/restart and memory/spill replay packs.
+- [ ] 8. Extend seeded generators, save failures, and test reduction/replay.
+- [ ] 9. Review, final validation, and bank outcomes without masking parity failures.
+
+Known failures remain required failing cases. Completion means implementing and
+running the coverage work, not claiming all MySQL features have been implemented.
+
+Harness slice: eight unit tests pass; structured differential results retain the known failures.
+Runtime inventory is exported by the inventory unit test and checked for source freshness.

@@ -2441,15 +2441,18 @@ name = "pintail-sqllogic"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "mysql_async",
  "pintail-catalog",
  "pintail-exec",
  "pintail-sql",
  "pintail-store",
  "pintail-types",
  "rustix",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+ "tokio",
 ]
 
 [[package]]

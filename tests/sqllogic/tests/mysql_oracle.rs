@@ -9,6 +9,9 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
+#[path = "support/oracle_transport.rs"]
+mod oracle_transport;
+
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
@@ -88,8 +91,10 @@ struct OracleCase {
     ordered: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 enum OracleValue {
+    Null,
+    Binary(Vec<u8>),
     Exact(String),
     Float(String),
 }
@@ -101,8 +106,9 @@ struct MysqlContainer {
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
-        let image =
-            std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE").unwrap_or_else(|_| "mysql:8.4".to_owned());
+        let requested = std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE")
+            .unwrap_or_else(|_| "mysql:8.4".to_owned());
+        let image = oracle_transport::pinned_image(&requested)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
@@ -116,6 +122,10 @@ impl MysqlContainer {
                 &name,
                 "--tmpfs",
                 "/var/lib/mysql:rw,size=2g",
+                "--publish",
+                "3306",
+                "--env",
+                "MYSQL_ROOT_HOST=%",
                 "--env",
                 "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
                 "--env",
@@ -230,21 +240,41 @@ fn matches_configured_mysql_for_fixed_corpus() {
 fn oracle_applies_tolerance_only_to_float_results() {
     assert!(!oracle_values_equal(
         &OracleValue::Exact("9007199254740993".to_owned()),
-        "9007199254740992",
+        &OracleValue::Exact("9007199254740992".to_owned()),
     ));
     assert!(!oracle_values_equal(
         &OracleValue::Exact("01".to_owned()),
-        "1",
+        &OracleValue::Exact("1".to_owned()),
     ));
     assert!(oracle_values_equal(
         &OracleValue::Float("0.30000000000000004".to_owned()),
-        "0.3",
+        &OracleValue::Float("0.3".to_owned()),
     ));
 }
 
 #[test]
+fn oracle_preserves_null_bytes_and_expected_numeric_types() {
+    let text = OracleValue::Exact("NULL".into());
+    assert!(!oracle_values_equal(&OracleValue::Null, &text));
+    assert!(!oracle_values_equal(&text, &OracleValue::Null));
+    assert!(!oracle_values_equal(&OracleValue::Binary(vec![0xff]), &OracleValue::Binary(vec![0xfe])));
+    assert!(!oracle_values_equal(&OracleValue::Float("9007199254740992".into()), &OracleValue::Exact("9007199254740993".into())));
+    assert!(!oracle_values_equal(&OracleValue::Float("1".into()), &OracleValue::Exact("1".into())));
+    for bytes in [b"a\tb".as_slice(), b"a\nb", b"\0", b"", b"__PINTAIL_CASE_1__"] {
+        let value = OracleValue::Binary(bytes.to_vec());
+        assert!(oracle_values_equal(&value, &value));
+    }
+    let one = vec![OracleValue::Null];
+    let literal = vec![text];
+    assert!(!oracle_rows_equal(&[one.clone(), one.clone()], &[one.clone(), literal.clone()], false));
+    assert!(oracle_rows_equal(&[one.clone(), literal.clone()], &[literal, one], false));
+}
+
+#[test]
 fn oracle_case_inventory_matches_the_declared_gate() {
-    assert_eq!(oracle_cases().len(), EXPECTED_CASES);
+    let cases = oracle_cases();
+    assert_eq!(cases.len(), EXPECTED_CASES);
+    oracle_transport::export_inventory(&cases).expect("export runtime inventory");
 }
 
 #[allow(clippy::too_many_lines)]
@@ -314,11 +344,17 @@ fn run_oracle() -> Result<(), String> {
     }
     let mysql_results = execute_mysql_cases(&mysql, &cases)?;
     let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
         let actual = pintail_sql::with_parse_mode(
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
         );
+        outcomes.push(serde_json::json!({
+            "id": oracle_transport::case_id(case), "family": case.family, "sql": case.sql,
+            "status": if actual.as_ref().is_ok_and(|a| oracle_rows_equal(a, expected, case.ordered)) { "PASS" } else { "FAIL" },
+            "expected": expected, "actual": actual.as_ref().ok(), "error": actual.as_ref().err(),
+        }));
         match actual {
             Err(error) => failures.push(format!(
                 "case {index} ({})\nSQL: {}\nPintail execution error: {error}",
@@ -333,6 +369,7 @@ fn run_oracle() -> Result<(), String> {
             Ok(_) => {}
         }
     }
+    oracle_transport::write_outcomes(&mysql, &cases, &outcomes)?;
     if failures.is_empty() {
         export_oracle_evidence(&mysql, &cases, evidence.as_ref())?;
         println!(
@@ -452,7 +489,7 @@ fn export_oracle_evidence(
         "source": format!("MySQL {} ({})", version.trim(), mysql.image),
         "corpusSha256": corpus_hash,
         "expectedCases": EXPECTED_CASES,
-        "comparator": "exact text except float results: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
+        "comparator": "typed NULL and bytes; approximate types on both sides only: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
         "cases": cases.iter().enumerate().map(|(index, case)| serde_json::json!({
             "name": format!("{index:04}:{}", case.family),
             "sql": case.sql,
@@ -488,49 +525,8 @@ fn format_output_error(action: &str, output: &Output) -> String {
 fn execute_mysql_cases(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
-) -> Result<Vec<Vec<String>>, String> {
-    let mut sql = String::new();
-    for (index, case) in cases.iter().enumerate() {
-        writeln!(sql, "SELECT '__PINTAIL_CASE_{index}__';")
-            .expect("writing to an owned string cannot fail");
-        if !case.sql_mode.is_empty() {
-            writeln!(
-                sql,
-                "SET @pintail_previous_mode=@@sql_mode; SET sql_mode='{}';",
-                case.sql_mode
-            )
-            .unwrap();
-        }
-        sql.push_str(&case.sql);
-        sql.push_str(";\n");
-        if !case.sql_mode.is_empty() {
-            sql.push_str("SET sql_mode=@pintail_previous_mode;\n");
-        }
-    }
-    writeln!(sql, "SELECT '__PINTAIL_CASE_{}__';", cases.len())
-        .expect("writing to an owned string cannot fail");
-
-    let output = mysql.query_batch(&sql)?;
-    let mut results = vec![Vec::new(); cases.len()];
-    let mut current = None;
-    for line in output.lines() {
-        if let Some(index) = parse_marker(line) {
-            current = (index < cases.len()).then_some(index);
-        } else if let Some(index) = current {
-            results[index].push(line.to_owned());
-        } else if !line.is_empty() {
-            return Err(format!(
-                "unexpected MySQL output before first marker: {line}"
-            ));
-        }
-    }
-    Ok(results)
-}
-
-fn parse_marker(line: &str) -> Option<usize> {
-    line.strip_prefix("__PINTAIL_CASE_")
-        .and_then(|value| value.strip_suffix("__"))
-        .and_then(|value| value.parse().ok())
+) -> Result<Vec<Vec<Vec<OracleValue>>>, String> {
+    oracle_transport::execute(mysql, cases)
 }
 
 fn execute_pintail(
@@ -569,7 +565,7 @@ fn execute_pintail(
     Ok(rows)
 }
 
-fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[String], ordered: bool) -> bool {
+fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[Vec<OracleValue>], ordered: bool) -> bool {
     if actual.len() != expected.len() {
         return false;
     }
@@ -594,33 +590,32 @@ fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[String], ordered: 
     })
 }
 
-fn oracle_row_equal(actual: &[OracleValue], expected: &str) -> bool {
-    let expected = expected.split('\t').collect::<Vec<_>>();
+fn oracle_row_equal(actual: &[OracleValue], expected: &[OracleValue]) -> bool {
     actual.len() == expected.len()
-        && actual
-            .iter()
-            .zip(expected)
-            .all(|(actual, expected)| oracle_values_equal(actual, expected))
+        && actual.iter().zip(expected).all(|(a, e)| oracle_values_equal(a, e))
 }
 
-fn oracle_values_equal(actual: &OracleValue, expected: &str) -> bool {
-    match actual {
-        OracleValue::Exact(actual) => actual == expected,
-        OracleValue::Float(actual) if actual == expected => true,
-        OracleValue::Float(actual) => {
-            let (Ok(actual), Ok(expected)) = (actual.parse::<f64>(), expected.parse::<f64>())
-            else {
-                return false;
-            };
-            let scale = actual.abs().max(expected.abs()).max(1.0);
-            (actual - expected).abs() <= f64::EPSILON * 16.0 * scale
+fn oracle_values_equal(actual: &OracleValue, expected: &OracleValue) -> bool {
+    match (actual, expected) {
+        (OracleValue::Null, OracleValue::Null) => true,
+        (OracleValue::Binary(a), OracleValue::Binary(e)) => a == e,
+        (OracleValue::Exact(a), OracleValue::Exact(e)) => a == e,
+        // The text and binary carriers share byte identity, not lossy decoding.
+        (OracleValue::Exact(a), OracleValue::Binary(e)) => a.as_bytes() == e,
+        (OracleValue::Binary(a), OracleValue::Exact(e)) => a == e.as_bytes(),
+        (OracleValue::Float(a), OracleValue::Float(e)) => {
+            if a == e { return true; }
+            let (Ok(a), Ok(e)) = (a.parse::<f64>(), e.parse::<f64>()) else { return false; };
+            let scale = a.abs().max(e.abs()).max(1.0);
+            (a - e).abs() <= f64::EPSILON * 16.0 * scale
         }
+        _ => false,
     }
 }
 
 fn canonical_value(value: &Value) -> OracleValue {
     match value {
-        Value::Null => OracleValue::Exact("NULL".to_owned()),
+        Value::Null => OracleValue::Null,
         Value::Boolean(value) => OracleValue::Exact(u8::from(*value).to_string()),
         Value::Int64(value) => OracleValue::Exact(value.to_string()),
         Value::UInt64(value) => OracleValue::Exact(value.to_string()),
@@ -632,7 +627,7 @@ fn canonical_value(value: &Value) -> OracleValue {
             let value = &average.label;
             OracleValue::Exact(value.clone())
         }
-        Value::Binary(value) => OracleValue::Exact(String::from_utf8_lossy(value).into_owned()),
+        Value::Binary(value) => OracleValue::Binary(value.clone()),
     }
 }
 
