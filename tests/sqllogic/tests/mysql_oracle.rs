@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1229;
+const EXPECTED_CASES: usize = 1236;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1371,6 +1371,64 @@ fn hand_written_cases() -> Vec<OracleCase> {
         // MySQL 8 names. It expands (ss), ignores combining marks, pads with
         // spaces, and derives CJK weights from the code point - each of which
         // orders differently from the two collations beside it.
+        // A correlated subquery in a JOIN's ON condition. An INNER join's ON
+        // filters the rows WHERE filters, so a correlated IN or EXISTS there
+        // decorrelates; an OUTER join's does not, and still resolves per
+        // correlation value. These pin the ANSWERS across any rewrite that
+        // changes which path they take - above all the LEFT JOIN cases,
+        // where hoisting the predicate to the outer scope would drop the
+        // null-extended rows the join exists to keep.
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "join-condition subquery",
+            "SELECT COUNT(*) AS rows_out, COUNT(o.id) AS matched FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50)",
+        ),
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
+             JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
+             JOIN orders o ON o.user_id = u.id \
+             WHERE o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total \
+             AND o2.user_id = u.id) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        // COUNT(DISTINCT) hides a rewrite that duplicates rows; a plain SUM
+        // beside it does not.
+        ordered(
+            "join-condition subquery",
+            "SELECT u.id, COUNT(DISTINCT o.id) AS seen, SUM(o.total) AS total FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
         ordered(
             "unicode_ci collation",
             "SELECT id, label FROM events ORDER BY label, id",
