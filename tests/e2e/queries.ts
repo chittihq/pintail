@@ -705,6 +705,89 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'active'",
     tables: ['customers'],
   },
+  // A correlated subquery in a JOIN's ON condition. The decorrelation
+  // rewrites are offered a correlated IN or EXISTS only from WHERE, so these
+  // resolve per outer tuple today; they are here to pin the ANSWERS across
+  // any rewrite that changes which path they take. The LEFT JOIN cases carry
+  // the weight: an ON predicate filters only the right side, so a rewrite
+  // that hoists the subquery to the outer scope drops the null-extended rows
+  // and these cases say so.
+  {
+    // The production shape: a right-side column scoped to a membership list
+    // the left row decides.
+    name: 'join-condition subquery: correlated IN in a LEFT JOIN ON',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
+      'LEFT JOIN order_items oi ON oi.qty > 2 ' +
+      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    // Customers matching nothing must still appear, with a zero count. This
+    // is the assertion a wrong rewrite fails.
+    name: 'join-condition subquery: a LEFT JOIN keeps rows its ON matched nothing for',
+    sql:
+      'SELECT COUNT(*) AS rows_out, COUNT(oi.order_id) AS matched FROM customers c ' +
+      'LEFT JOIN order_items oi ON oi.qty > 2 ' +
+      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id)',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    name: 'join-condition subquery: correlated IN in an INNER JOIN ON',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
+      'JOIN order_items oi ON oi.qty > 2 ' +
+      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    // The same question with the subquery in WHERE, which is the placement
+    // that already decorrelates. Equal to the INNER JOIN case above, and the
+    // control that says the two placements agree.
+    name: 'join-condition subquery: the same predicate in WHERE agrees',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
+      'JOIN order_items oi ON oi.qty > 2 ' +
+      'WHERE oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    // Correlated to BOTH sides of the join it sits in - the shape a rewrite
+    // has to prove before it can plant a semi-join under the right input.
+    name: 'join-condition subquery: correlated EXISTS spanning both join sides',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
+      'LEFT JOIN order_items oi ON oi.qty > 2 ' +
+      'AND EXISTS (SELECT 1 FROM orders o WHERE o.id = oi.order_id AND o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    // The anti form. Both membership sides are non-nullable here, which is
+    // what MySQL's three-valued NOT IN needs to agree with an anti join.
+    name: 'join-condition subquery: correlated NOT IN in a LEFT JOIN ON',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS n FROM customers c ' +
+      'LEFT JOIN order_items oi ON oi.qty > 8 ' +
+      'AND oi.order_id NOT IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
+  {
+    // Two aggregates over the join, which is what the production report does
+    // and what makes a duplicate-row rewrite visible: COUNT(DISTINCT) hides
+    // duplication, plain SUM does not.
+    name: 'join-condition subquery: a duplicating rewrite shows up in a plain SUM',
+    sql:
+      'SELECT c.id, COUNT(DISTINCT oi.order_id) AS orders_seen, SUM(oi.qty) AS qty ' +
+      'FROM customers c LEFT JOIN order_items oi ON oi.qty > 2 ' +
+      'AND oi.order_id IN (SELECT o.id FROM orders o WHERE o.customer_id = c.id) ' +
+      'GROUP BY c.id ORDER BY c.id',
+    tables: ['customers', 'orders', 'order_items'],
+  },
   // utf8mb4_unicode_ci is UCA 4.0.0 - the collation a pre-8 schema names
   // explicitly. These run against a column declared with it, and each one
   // asks for behaviour general_ci cannot produce, so a fallback to either
