@@ -1349,8 +1349,7 @@ impl<'catalog> Binder<'catalog> {
                         // alternative is a wrong number nobody can see is
                         // wrong (docs/limitations.md).
                         if kind != BoundJoinKind::Inner {
-                            let right_scope =
-                                expression_scope(&right_tables, &self.outer_tables);
+                            let right_scope = expression_scope(&right_tables, &self.outer_tables);
                             for conjunct in split_and_conjuncts(condition) {
                                 let subquery = match conjunct {
                                     Expr::Exists { subquery, .. }
