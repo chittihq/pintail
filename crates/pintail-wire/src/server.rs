@@ -924,8 +924,13 @@ impl Backend {
             // word "error" and a statement shape to work from. Error is also
             // the level telemetry forwards, so a failure nobody was watching
             // for is now one somebody hears about.
+            //
+            // Without the elapsed time, which the success line carries and
+            // this one deliberately drops: telemetry groups by the message
+            // it is given, so a duration in here would file every repeat of
+            // one broken query as a new issue instead of one that recurs.
             Err(error) => pintail_log::log_error!(
-                "wire query db={database} key={key} error {millis}ms {error}: {}",
+                "wire query failed db={database} key={key} {error}: {}",
                 recorded.shape,
             ),
         }
