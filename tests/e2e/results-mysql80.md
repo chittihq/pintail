@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-08T21:06:53.642Z.
+Measured 2026-09-09T12:44:43.334Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**5446 passed, 0 failed, 30 documented-gap warnings, 44 skipped.**
+**5754 passed, 0 failed, 30 documented-gap warnings, 44 skipped.**
 
-176 unique corpus queries produced 4928 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+187 unique corpus queries produced 5236 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -105,6 +105,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:intersect all-style customer buyers | PASS |  |
 | snapshot | query:derived table status revenue share | PASS |  |
 | snapshot | query:general_ci: equality folds ASCII case | PASS |  |
+| snapshot | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| snapshot | query:unicode_ci: equality folds case and accents | PASS |  |
+| snapshot | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| snapshot | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| snapshot | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| snapshot | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| snapshot | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| snapshot | query:unicode_ci: joining on a collated column | PASS |  |
+| snapshot | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| snapshot | query:unicode_ci: extremes follow the collation | PASS |  |
+| snapshot | query:unicode_ci: IN membership uses the collation | PASS |  |
 | snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | snapshot | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -319,6 +330,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:intersect all-style customer buyers | PASS |  |
 | orm-compat | query:derived table status revenue share | PASS |  |
 | orm-compat | query:general_ci: equality folds ASCII case | PASS |  |
+| orm-compat | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| orm-compat | query:unicode_ci: equality folds case and accents | PASS |  |
+| orm-compat | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| orm-compat | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| orm-compat | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| orm-compat | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| orm-compat | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| orm-compat | query:unicode_ci: joining on a collated column | PASS |  |
+| orm-compat | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| orm-compat | query:unicode_ci: extremes follow the collation | PASS |  |
+| orm-compat | query:unicode_ci: IN membership uses the collation | PASS |  |
 | orm-compat | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | orm-compat | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | orm-compat | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -509,6 +531,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:intersect all-style customer buyers | PASS |  |
 | crud | query:derived table status revenue share | PASS |  |
 | crud | query:general_ci: equality folds ASCII case | PASS |  |
+| crud | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| crud | query:unicode_ci: equality folds case and accents | PASS |  |
+| crud | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| crud | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| crud | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| crud | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| crud | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| crud | query:unicode_ci: joining on a collated column | PASS |  |
+| crud | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| crud | query:unicode_ci: extremes follow the collation | PASS |  |
+| crud | query:unicode_ci: IN membership uses the collation | PASS |  |
 | crud | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | crud | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | crud | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -699,6 +732,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:intersect all-style customer buyers | PASS |  |
 | composite-keys | query:derived table status revenue share | PASS |  |
 | composite-keys | query:general_ci: equality folds ASCII case | PASS |  |
+| composite-keys | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| composite-keys | query:unicode_ci: equality folds case and accents | PASS |  |
+| composite-keys | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| composite-keys | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| composite-keys | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| composite-keys | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| composite-keys | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| composite-keys | query:unicode_ci: joining on a collated column | PASS |  |
+| composite-keys | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| composite-keys | query:unicode_ci: extremes follow the collation | PASS |  |
+| composite-keys | query:unicode_ci: IN membership uses the collation | PASS |  |
 | composite-keys | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | composite-keys | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | composite-keys | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -889,6 +933,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:intersect all-style customer buyers | PASS |  |
 | type-edges | query:derived table status revenue share | PASS |  |
 | type-edges | query:general_ci: equality folds ASCII case | PASS |  |
+| type-edges | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| type-edges | query:unicode_ci: equality folds case and accents | PASS |  |
+| type-edges | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| type-edges | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| type-edges | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| type-edges | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| type-edges | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| type-edges | query:unicode_ci: joining on a collated column | PASS |  |
+| type-edges | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| type-edges | query:unicode_ci: extremes follow the collation | PASS |  |
+| type-edges | query:unicode_ci: IN membership uses the collation | PASS |  |
 | type-edges | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | type-edges | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | type-edges | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -1084,6 +1139,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:intersect all-style customer buyers | PASS |  |
 | ddl | query:derived table status revenue share | PASS |  |
 | ddl | query:general_ci: equality folds ASCII case | PASS |  |
+| ddl | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| ddl | query:unicode_ci: equality folds case and accents | PASS |  |
+| ddl | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| ddl | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| ddl | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| ddl | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| ddl | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| ddl | query:unicode_ci: joining on a collated column | PASS |  |
+| ddl | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| ddl | query:unicode_ci: extremes follow the collation | PASS |  |
+| ddl | query:unicode_ci: IN membership uses the collation | PASS |  |
 | ddl | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | ddl | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | ddl | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -1276,6 +1342,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:intersect all-style customer buyers | PASS |  |
 | schema-drift-minimal | query:derived table status revenue share | PASS |  |
 | schema-drift-minimal | query:general_ci: equality folds ASCII case | PASS |  |
+| schema-drift-minimal | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| schema-drift-minimal | query:unicode_ci: equality folds case and accents | PASS |  |
+| schema-drift-minimal | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| schema-drift-minimal | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| schema-drift-minimal | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| schema-drift-minimal | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| schema-drift-minimal | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| schema-drift-minimal | query:unicode_ci: joining on a collated column | PASS |  |
+| schema-drift-minimal | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| schema-drift-minimal | query:unicode_ci: extremes follow the collation | PASS |  |
+| schema-drift-minimal | query:unicode_ci: IN membership uses the collation | PASS |  |
 | schema-drift-minimal | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | schema-drift-minimal | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | schema-drift-minimal | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -1468,6 +1545,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:intersect all-style customer buyers | PASS |  |
 | schema-drift-unseen | query:derived table status revenue share | PASS |  |
 | schema-drift-unseen | query:general_ci: equality folds ASCII case | PASS |  |
+| schema-drift-unseen | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| schema-drift-unseen | query:unicode_ci: equality folds case and accents | PASS |  |
+| schema-drift-unseen | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| schema-drift-unseen | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| schema-drift-unseen | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| schema-drift-unseen | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| schema-drift-unseen | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| schema-drift-unseen | query:unicode_ci: joining on a collated column | PASS |  |
+| schema-drift-unseen | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| schema-drift-unseen | query:unicode_ci: extremes follow the collation | PASS |  |
+| schema-drift-unseen | query:unicode_ci: IN membership uses the collation | PASS |  |
 | schema-drift-unseen | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | schema-drift-unseen | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | schema-drift-unseen | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -1666,6 +1754,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:intersect all-style customer buyers | PASS |  |
 | churn | query:derived table status revenue share | PASS |  |
 | churn | query:general_ci: equality folds ASCII case | PASS |  |
+| churn | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| churn | query:unicode_ci: equality folds case and accents | PASS |  |
+| churn | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| churn | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| churn | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| churn | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| churn | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| churn | query:unicode_ci: joining on a collated column | PASS |  |
+| churn | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| churn | query:unicode_ci: extremes follow the collation | PASS |  |
+| churn | query:unicode_ci: IN membership uses the collation | PASS |  |
 | churn | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | churn | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | churn | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -1858,6 +1957,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:intersect all-style customer buyers | PASS |  |
 | contention | query:derived table status revenue share | PASS |  |
 | contention | query:general_ci: equality folds ASCII case | PASS |  |
+| contention | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| contention | query:unicode_ci: equality folds case and accents | PASS |  |
+| contention | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| contention | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| contention | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| contention | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| contention | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| contention | query:unicode_ci: joining on a collated column | PASS |  |
+| contention | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| contention | query:unicode_ci: extremes follow the collation | PASS |  |
+| contention | query:unicode_ci: IN membership uses the collation | PASS |  |
 | contention | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | contention | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | contention | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2055,6 +2165,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:intersect all-style customer buyers | PASS |  |
 | execution-budget | query:derived table status revenue share | PASS |  |
 | execution-budget | query:general_ci: equality folds ASCII case | PASS |  |
+| execution-budget | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| execution-budget | query:unicode_ci: equality folds case and accents | PASS |  |
+| execution-budget | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| execution-budget | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| execution-budget | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| execution-budget | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| execution-budget | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| execution-budget | query:unicode_ci: joining on a collated column | PASS |  |
+| execution-budget | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| execution-budget | query:unicode_ci: extremes follow the collation | PASS |  |
+| execution-budget | query:unicode_ci: IN membership uses the collation | PASS |  |
 | execution-budget | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | execution-budget | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | execution-budget | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2251,6 +2372,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:intersect all-style customer buyers | PASS |  |
 | spill | query:derived table status revenue share | PASS |  |
 | spill | query:general_ci: equality folds ASCII case | PASS |  |
+| spill | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| spill | query:unicode_ci: equality folds case and accents | PASS |  |
+| spill | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| spill | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| spill | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| spill | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| spill | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| spill | query:unicode_ci: joining on a collated column | PASS |  |
+| spill | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| spill | query:unicode_ci: extremes follow the collation | PASS |  |
+| spill | query:unicode_ci: IN membership uses the collation | PASS |  |
 | spill | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | spill | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | spill | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2447,6 +2579,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:intersect all-style customer buyers | PASS |  |
 | pooling | query:derived table status revenue share | PASS |  |
 | pooling | query:general_ci: equality folds ASCII case | PASS |  |
+| pooling | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| pooling | query:unicode_ci: equality folds case and accents | PASS |  |
+| pooling | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| pooling | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| pooling | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| pooling | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| pooling | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| pooling | query:unicode_ci: joining on a collated column | PASS |  |
+| pooling | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| pooling | query:unicode_ci: extremes follow the collation | PASS |  |
+| pooling | query:unicode_ci: IN membership uses the collation | PASS |  |
 | pooling | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | pooling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | pooling | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2658,6 +2801,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:intersect all-style customer buyers | PASS |  |
 | local-database | query:derived table status revenue share | PASS |  |
 | local-database | query:general_ci: equality folds ASCII case | PASS |  |
+| local-database | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| local-database | query:unicode_ci: equality folds case and accents | PASS |  |
+| local-database | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| local-database | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| local-database | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| local-database | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| local-database | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| local-database | query:unicode_ci: joining on a collated column | PASS |  |
+| local-database | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| local-database | query:unicode_ci: extremes follow the collation | PASS |  |
+| local-database | query:unicode_ci: IN membership uses the collation | PASS |  |
 | local-database | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | local-database | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | local-database | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2851,6 +3005,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:intersect all-style customer buyers | PASS |  |
 | restart | query:derived table status revenue share | PASS |  |
 | restart | query:general_ci: equality folds ASCII case | PASS |  |
+| restart | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| restart | query:unicode_ci: equality folds case and accents | PASS |  |
+| restart | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| restart | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| restart | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| restart | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| restart | query:unicode_ci: joining on a collated column | PASS |  |
+| restart | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| restart | query:unicode_ci: extremes follow the collation | PASS |  |
+| restart | query:unicode_ci: IN membership uses the collation | PASS |  |
 | restart | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | restart | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | restart | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -2946,11 +3111,11 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_44d6cb5e44d4f058f8dc81c875981e98 |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_2e9bbd45bf5973275c232a2414b4f3a4 |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 1ms over 150000 rows |
 | activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 1ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 26ms p99 38ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 27ms p99 36ms |
 | activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 2ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
@@ -3049,6 +3214,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:intersect all-style customer buyers | PASS |  |
 | activity-history | query:derived table status revenue share | PASS |  |
 | activity-history | query:general_ci: equality folds ASCII case | PASS |  |
+| activity-history | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| activity-history | query:unicode_ci: equality folds case and accents | PASS |  |
+| activity-history | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| activity-history | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| activity-history | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| activity-history | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| activity-history | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| activity-history | query:unicode_ci: joining on a collated column | PASS |  |
+| activity-history | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| activity-history | query:unicode_ci: extremes follow the collation | PASS |  |
+| activity-history | query:unicode_ci: IN membership uses the collation | PASS |  |
 | activity-history | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | activity-history | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | activity-history | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -3144,10 +3320,10 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4934 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4934 requests: p50 1ms p99 9ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6939 vs source 6939 |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4931 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4931 requests: p50 1ms p99 10ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 1ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6987 vs source 6987 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -3245,6 +3421,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:intersect all-style customer buyers | PASS |  |
 | poll-storm | query:derived table status revenue share | PASS |  |
 | poll-storm | query:general_ci: equality folds ASCII case | PASS |  |
+| poll-storm | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| poll-storm | query:unicode_ci: equality folds case and accents | PASS |  |
+| poll-storm | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| poll-storm | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| poll-storm | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| poll-storm | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| poll-storm | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| poll-storm | query:unicode_ci: joining on a collated column | PASS |  |
+| poll-storm | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| poll-storm | query:unicode_ci: extremes follow the collation | PASS |  |
+| poll-storm | query:unicode_ci: IN membership uses the collation | PASS |  |
 | poll-storm | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | poll-storm | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | poll-storm | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -3459,6 +3646,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:intersect all-style customer buyers | PASS |  |
 | control-plane | query:derived table status revenue share | PASS |  |
 | control-plane | query:general_ci: equality folds ASCII case | PASS |  |
+| control-plane | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| control-plane | query:unicode_ci: equality folds case and accents | PASS |  |
+| control-plane | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| control-plane | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| control-plane | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| control-plane | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| control-plane | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| control-plane | query:unicode_ci: joining on a collated column | PASS |  |
+| control-plane | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| control-plane | query:unicode_ci: extremes follow the collation | PASS |  |
+| control-plane | query:unicode_ci: IN membership uses the collation | PASS |  |
 | control-plane | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | control-plane | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | control-plane | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -3653,6 +3851,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:intersect all-style customer buyers | PASS |  |
 | snapshot-ddl-window | query:derived table status revenue share | PASS |  |
 | snapshot-ddl-window | query:general_ci: equality folds ASCII case | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: equality folds case and accents | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: joining on a collated column | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: extremes follow the collation | PASS |  |
+| snapshot-ddl-window | query:unicode_ci: IN membership uses the collation | PASS |  |
 | snapshot-ddl-window | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | snapshot-ddl-window | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | snapshot-ddl-window | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -3851,6 +4060,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:intersect all-style customer buyers | PASS |  |
 | drop-table-cdc | query:derived table status revenue share | PASS |  |
 | drop-table-cdc | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-cdc | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| drop-table-cdc | query:unicode_ci: equality folds case and accents | PASS |  |
+| drop-table-cdc | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-cdc | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| drop-table-cdc | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-cdc | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-cdc | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-cdc | query:unicode_ci: joining on a collated column | PASS |  |
+| drop-table-cdc | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| drop-table-cdc | query:unicode_ci: extremes follow the collation | PASS |  |
+| drop-table-cdc | query:unicode_ci: IN membership uses the collation | PASS |  |
 | drop-table-cdc | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | drop-table-cdc | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | drop-table-cdc | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4047,6 +4267,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:intersect all-style customer buyers | PASS |  |
 | drop-table-recreate | query:derived table status revenue share | PASS |  |
 | drop-table-recreate | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-recreate | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| drop-table-recreate | query:unicode_ci: equality folds case and accents | PASS |  |
+| drop-table-recreate | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-recreate | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| drop-table-recreate | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-recreate | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-recreate | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-recreate | query:unicode_ci: joining on a collated column | PASS |  |
+| drop-table-recreate | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| drop-table-recreate | query:unicode_ci: extremes follow the collation | PASS |  |
+| drop-table-recreate | query:unicode_ci: IN membership uses the collation | PASS |  |
 | drop-table-recreate | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | drop-table-recreate | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | drop-table-recreate | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4145,7 +4376,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_44d6cb5e44d4f058f8dc81c875981e98","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-08T20:59:47.360232739+00:00","updated_at":"2026-09-08T21:05:43.655229930+00:00"},"tables":21,"rows":9664} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_2e9bbd45bf5973275c232a2414b4f3a4","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-09T12:37:37.353878522+00:00","updated_at":"2026-09-09T12:43:33.585078525+00:00"},"tables":21,"rows":9712} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -4245,6 +4476,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:intersect all-style customer buyers | PASS |  |
 | drop-table-polling | query:derived table status revenue share | PASS |  |
 | drop-table-polling | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-table-polling | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| drop-table-polling | query:unicode_ci: equality folds case and accents | PASS |  |
+| drop-table-polling | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-table-polling | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| drop-table-polling | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| drop-table-polling | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| drop-table-polling | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-table-polling | query:unicode_ci: joining on a collated column | PASS |  |
+| drop-table-polling | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| drop-table-polling | query:unicode_ci: extremes follow the collation | PASS |  |
+| drop-table-polling | query:unicode_ci: IN membership uses the collation | PASS |  |
 | drop-table-polling | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | drop-table-polling | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | drop-table-polling | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4442,6 +4684,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:intersect all-style customer buyers | PASS |  |
 | restart-during-snapshot | query:derived table status revenue share | PASS |  |
 | restart-during-snapshot | query:general_ci: equality folds ASCII case | PASS |  |
+| restart-during-snapshot | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| restart-during-snapshot | query:unicode_ci: equality folds case and accents | PASS |  |
+| restart-during-snapshot | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart-during-snapshot | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| restart-during-snapshot | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| restart-during-snapshot | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| restart-during-snapshot | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| restart-during-snapshot | query:unicode_ci: joining on a collated column | PASS |  |
+| restart-during-snapshot | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| restart-during-snapshot | query:unicode_ci: extremes follow the collation | PASS |  |
+| restart-during-snapshot | query:unicode_ci: IN membership uses the collation | PASS |  |
 | restart-during-snapshot | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | restart-during-snapshot | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | restart-during-snapshot | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4641,6 +4894,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:intersect all-style customer buyers | PASS |  |
 | restart-during-resync | query:derived table status revenue share | PASS |  |
 | restart-during-resync | query:general_ci: equality folds ASCII case | PASS |  |
+| restart-during-resync | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| restart-during-resync | query:unicode_ci: equality folds case and accents | PASS |  |
+| restart-during-resync | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| restart-during-resync | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| restart-during-resync | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| restart-during-resync | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| restart-during-resync | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| restart-during-resync | query:unicode_ci: joining on a collated column | PASS |  |
+| restart-during-resync | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| restart-during-resync | query:unicode_ci: extremes follow the collation | PASS |  |
+| restart-during-resync | query:unicode_ci: IN membership uses the collation | PASS |  |
 | restart-during-resync | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | restart-during-resync | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | restart-during-resync | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4737,12 +5001,12 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-resync | query:json: distinct case variants survive a derived table | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 95 ok, dashboards 108 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 91 ok, dashboards 108 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 95 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 213ms p99 978ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 16ms over 8 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 181MB with a 256MB budget |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 91 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 205ms p99 1109ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 17ms over 8 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 169MB with a 256MB budget |
 | memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200800 vs source 200800 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
@@ -4843,6 +5107,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:intersect all-style customer buyers | PASS |  |
 | memory-pressure | query:derived table status revenue share | PASS |  |
 | memory-pressure | query:general_ci: equality folds ASCII case | PASS |  |
+| memory-pressure | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| memory-pressure | query:unicode_ci: equality folds case and accents | PASS |  |
+| memory-pressure | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| memory-pressure | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| memory-pressure | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| memory-pressure | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| memory-pressure | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| memory-pressure | query:unicode_ci: joining on a collated column | PASS |  |
+| memory-pressure | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| memory-pressure | query:unicode_ci: extremes follow the collation | PASS |  |
+| memory-pressure | query:unicode_ci: IN membership uses the collation | PASS |  |
 | memory-pressure | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | memory-pressure | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | memory-pressure | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -4942,7 +5217,7 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 59MB before, peak 205MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 60MB before, peak 223MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -5041,6 +5316,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:intersect all-style customer buyers | PASS |  |
 | reconcile-memory | query:derived table status revenue share | PASS |  |
 | reconcile-memory | query:general_ci: equality folds ASCII case | PASS |  |
+| reconcile-memory | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| reconcile-memory | query:unicode_ci: equality folds case and accents | PASS |  |
+| reconcile-memory | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| reconcile-memory | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| reconcile-memory | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| reconcile-memory | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| reconcile-memory | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| reconcile-memory | query:unicode_ci: joining on a collated column | PASS |  |
+| reconcile-memory | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| reconcile-memory | query:unicode_ci: extremes follow the collation | PASS |  |
+| reconcile-memory | query:unicode_ci: IN membership uses the collation | PASS |  |
 | reconcile-memory | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | reconcile-memory | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | reconcile-memory | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -5242,6 +5528,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:intersect all-style customer buyers | PASS |  |
 | drop-database | query:derived table status revenue share | PASS |  |
 | drop-database | query:general_ci: equality folds ASCII case | PASS |  |
+| drop-database | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| drop-database | query:unicode_ci: equality folds case and accents | PASS |  |
+| drop-database | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| drop-database | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| drop-database | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| drop-database | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| drop-database | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| drop-database | query:unicode_ci: joining on a collated column | PASS |  |
+| drop-database | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| drop-database | query:unicode_ci: extremes follow the collation | PASS |  |
+| drop-database | query:unicode_ci: IN membership uses the collation | PASS |  |
 | drop-database | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | drop-database | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | drop-database | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -5435,6 +5732,17 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:intersect all-style customer buyers | PASS |  |
 | ddl-documented-gaps | query:derived table status revenue share | PASS |  |
 | ddl-documented-gaps | query:general_ci: equality folds ASCII case | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: equality expands the characters MySQL expands | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: equality folds case and accents | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: a combining mark weighs nothing | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: grouping partitions by collated equality | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: ordering follows the collation, not code points | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: DISTINCT collapses collation-equal values | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: joining on a collated column | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: folds a different set than general_ci does | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: extremes follow the collation | PASS |  |
+| ddl-documented-gaps | query:unicode_ci: IN membership uses the collation | PASS |  |
 | ddl-documented-gaps | query:general_ci: equality folds Latin-1 accents onto the base letter | PASS |  |
 | ddl-documented-gaps | query:general_ci: trailing spaces are insignificant (PAD SPACE) | PASS |  |
 | ddl-documented-gaps | query:general_ci: every supplementary character compares equal | PASS |  |
@@ -5541,26 +5849,26 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | 0.0 | 2.4 | 0.1 |
 | type-edges | 0.0 | 2.4 | 0.1 |
 | ddl | 7.4 | 2.7 | 0.1 |
-| schema-drift-minimal | 0.0 | 2.3 | 0.1 |
-| schema-drift-unseen | 0.0 | 2.3 | 0.1 |
+| schema-drift-minimal | 0.0 | 2.1 | 0.2 |
+| schema-drift-unseen | 0.0 | 2.3 | 0.2 |
 | churn | 0.2 | 2.1 | 0.1 |
 | contention | 13.6 | 0.1 | 0.7 |
 | execution-budget | 0.0 | 0.1 | 0.8 |
-| spill | 5.6 | 0.4 | 0.7 |
+| spill | 5.7 | 0.4 | 0.7 |
 | pooling | 0.1 | 1.3 | 0.7 |
 | local-database | 0.0 | 0.1 | 0.7 |
 | restart | 0.5 | 2.7 | 0.7 |
 | activity-history | 1.0 | 0.4 | 0.7 |
-| poll-storm | 21.7 | 0.1 | 0.7 |
-| control-plane | 31.9 | 0.1 | 0.4 |
+| poll-storm | 21.4 | 0.1 | 0.7 |
+| control-plane | 32.2 | 0.1 | 0.4 |
 | snapshot-ddl-window | 5.1 | 0.1 | 0.4 |
-| drop-table-cdc | 8.1 | 0.1 | 0.8 |
-| drop-table-recreate | 129.0 | 0.1 | 0.8 |
-| drop-table-polling | 104.3 | 0.1 | 0.4 |
-| restart-during-snapshot | 2.5 | 0.1 | 0.4 |
+| drop-table-cdc | 7.9 | 0.1 | 0.8 |
+| drop-table-recreate | 129.2 | 0.1 | 0.8 |
+| drop-table-polling | 104.2 | 0.1 | 0.4 |
+| restart-during-snapshot | 2.2 | 0.1 | 0.4 |
 | restart-during-resync | 4.1 | 0.1 | 0.4 |
 | memory-pressure | 10.9 | 0.1 | 0.4 |
 | reconcile-memory | 32.0 | 0.1 | 0.4 |
 | drop-database | 11.7 | 0.1 | 0.4 |
 | ddl-documented-gaps | 0.0 | 0.1 | 0.4 |
-| total | 391.7 | 21.5 | 12.1 |
+| total | 391.3 | 21.3 | 12.3 |
