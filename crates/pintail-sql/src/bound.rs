@@ -26,9 +26,15 @@ pub const GENERAL_CI_TEXT_COLLATION: &str = "utf8mb4_general_ci";
 pub const JSON_TEXT_COLLATION: &str = "json";
 
 pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 3] = [
+
+/// UCA 4.0.0, which a schema created before `MySQL` 8 names explicitly
+/// rather than inheriting. It expands and ignores where `general_ci` does
+/// neither, so it is its own profile and not an alias for one.
+pub const UNICODE_CI_TEXT_COLLATION: &str = "utf8mb4_unicode_ci";
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 4] = [
     DEFAULT_TEXT_COLLATION,
     GENERAL_CI_TEXT_COLLATION,
+    UNICODE_CI_TEXT_COLLATION,
     BIN_TEXT_COLLATION,
 ];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
@@ -163,6 +169,8 @@ pub enum NamedCollation {
     Default,
     /// `utf8mb4_general_ci`.
     GeneralCi,
+    /// `utf8mb4_unicode_ci`.
+    UnicodeCi,
     /// `utf8mb4_bin`.
     Bin,
 }
@@ -176,12 +184,19 @@ impl NamedCollation {
             Some(Self::Default)
         } else if lower == GENERAL_CI_TEXT_COLLATION {
             Some(Self::GeneralCi)
+        } else if lower == UNICODE_CI_TEXT_COLLATION {
+            Some(Self::UnicodeCi)
         } else if lower == BIN_TEXT_COLLATION {
             Some(Self::Bin)
         } else if lower.ends_with("_bin") || lower == "binary" {
             // Every binary collation compares code points; over the text a
             // replica holds they agree with utf8mb4_bin.
             Some(Self::Bin)
+        } else if lower.ends_with("_unicode_ci") {
+            // utf8mb3_unicode_ci weighs the same UCA 4.0.0 table over a
+            // subset of the same characters. utf8mb4_unicode_520_ci is UCA
+            // 5.2.0 and does NOT end this way, so it stays unsupported.
+            Some(Self::UnicodeCi)
         } else if lower.ends_with("_general_ci") || lower.ends_with("_swedish_ci") {
             // The legacy case-insensitive collations (latin1_swedish_ci,
             // utf8mb3_general_ci) fold case the way general_ci does; their
@@ -198,6 +213,7 @@ impl NamedCollation {
         match self {
             Self::Default => DEFAULT_TEXT_COLLATION,
             Self::GeneralCi => GENERAL_CI_TEXT_COLLATION,
+            Self::UnicodeCi => UNICODE_CI_TEXT_COLLATION,
             Self::Bin => BIN_TEXT_COLLATION,
         }
     }
