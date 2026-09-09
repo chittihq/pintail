@@ -603,6 +603,11 @@ async function phaseSeed() {
     -- default is utf8mb4_0900_ai_ci, so without a column like this the gate
     -- never exercises a second collation at all.
     legacy_label VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
+    -- UCA 4.0.0, the collation a schema created before MySQL 8 asks for by
+    -- name. It differs from BOTH columns above: it expands (ss), ignores
+    -- combining marks, and derives CJK weights from the code point, none of
+    -- which general_ci can express.
+    unicode_label VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NULL,
     -- MySQL writes VIRTUAL generated columns into row images. Under MINIMAL
     -- metadata that makes every row event one column wider than a schema
     -- that dropped the column, which quarantines the table on every event
@@ -661,13 +666,34 @@ async function phaseSeed() {
       id % 5 === 0 ? 'NULL' : `'{"lang":"en","score":${Math.floor(random() * 100)}}'`
     const avatar = id % 6 === 0 ? 'NULL' : `X'${id.toString(16).padStart(4, '0')}beef'`
     await sql(
-      `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note, legacy_label) VALUES ` +
+      `INSERT INTO customers (name, email, tier, tags, balance, meta, avatar, latin_note, legacy_label, unicode_label) VALUES ` +
         `('${name}', ${email}, '${tier}', '${tag}', ${balance}, ${meta}, ${avatar}, _latin1 0x636166E9, ` +
         // Values chosen to exercise what general_ci actually does differently:
         // ASCII case folding, Latin-1 accent folding onto the base letter,
         // PAD SPACE trailing spaces, and the supplementary-plane collapse
         // where every character above the BMP weighs the same.
-        `${['\'Active\'', '\'active\'', '\'ACTIVE\'', '\'Ärger\'', '\'arger\'', '\'pending  \'', '\'pending\'', '\'😀\'', '\'𠀀\'', 'NULL'][id % 10]})`,
+        `${['\'Active\'', '\'active\'', '\'ACTIVE\'', '\'Ärger\'', '\'arger\'', '\'pending  \'', '\'pending\'', '\'😀\'', '\'𠀀\'', 'NULL'][id % 10]}, ` +
+        // Values chosen for what unicode_ci does that general_ci cannot: the
+        // ss expansion, a combining mark that weighs nothing, a no-break
+        // space that weighs a space, PAD SPACE against a character BELOW the
+        // space weight, and a CJK ideograph weighed from its code point.
+        `${[
+          "'strasse'",
+          "'straße'",
+          "'STRASSE'",
+          "'Ärger'",
+          "'arger'",
+          "'a'",
+          "'a '",
+          "'a\t'",
+          "'a\u{a0}'",
+          "'æther'",
+          "'aether'",
+          "'一'",
+          "'á'",
+          "'a\u{301}'",
+          'NULL',
+        ][id % 15]})`,
     )
   }
   const statuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']

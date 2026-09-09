@@ -306,6 +306,9 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
         Collation::Utf8mb4GeneralCi => {
             out.extend_from_slice(&crate::collation::general_ci_sort_key(text));
         }
+        Collation::Utf8mb4UnicodeCi => {
+            out.extend_from_slice(&crate::collation::unicode_ci_sort_key(text));
+        }
         Collation::Utf8mb40900AiCi => MYSQL_DEFAULT_COLLATOR.with(|collator| {
             collator
                 .write_sort_key_to(text, out)
@@ -2132,6 +2135,7 @@ pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> Str
     let mut key = Vec::new();
     match collation {
         Collation::Utf8mb4GeneralCi => key = crate::collation::general_ci_sort_key(text),
+        Collation::Utf8mb4UnicodeCi => key = crate::collation::unicode_ci_sort_key(text),
         Collation::Utf8mb4Bin => key = crate::collation::bin_sort_key(text),
         Collation::Json => {
             key = crate::json_order::json_sort_key(text)
@@ -2156,6 +2160,7 @@ pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> Str
 pub fn compare_collated_text(left: &str, right: &str, collation: Collation) -> std::cmp::Ordering {
     match collation {
         Collation::Utf8mb4GeneralCi => crate::collation::compare_general_ci(left, right),
+        Collation::Utf8mb4UnicodeCi => crate::collation::compare_unicode_ci(left, right),
         Collation::Utf8mb4Bin => crate::collation::compare_bin(left, right),
         // Text that is not JSON (possible only through casts and mixed
         // sources) falls back to the byte comparison rather than erroring

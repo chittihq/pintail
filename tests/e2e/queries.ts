@@ -705,6 +705,74 @@ export const differentialQueries: DifferentialQuery[] = [
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'active'",
     tables: ['customers'],
   },
+  // utf8mb4_unicode_ci is UCA 4.0.0 - the collation a pre-8 schema names
+  // explicitly. These run against a column declared with it, and each one
+  // asks for behaviour general_ci cannot produce, so a fallback to either
+  // neighbouring collation fails them rather than passing quietly.
+  {
+    // straße = strasse: one character weighing two.
+    name: 'unicode_ci: equality expands the characters MySQL expands',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE unicode_label = 'strasse'",
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: equality folds case and accents',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE unicode_label = 'arger'",
+    tables: ['customers'],
+  },
+  {
+    // Matches 'a' and 'a ' and the no-break space, but NOT 'a<tab>': the pad
+    // puts a space against the tab and a space outweighs it.
+    name: 'unicode_ci: trailing spaces are insignificant (PAD SPACE)',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE unicode_label = 'a'",
+    tables: ['customers'],
+  },
+  {
+    // A combining mark weighs nothing, so the decomposed form equals the
+    // composed one and both equal the bare letter.
+    name: 'unicode_ci: a combining mark weighs nothing',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE unicode_label = '\u{e1}'",
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: grouping partitions by collated equality',
+    sql: 'SELECT unicode_label, COUNT(*) AS n FROM customers GROUP BY unicode_label ORDER BY n DESC, unicode_label',
+    tables: ['customers'],
+  },
+  {
+    // Latin sorts below a CJK ideograph, which weighs from its code point.
+    name: 'unicode_ci: ordering follows the collation, not code points',
+    sql: 'SELECT unicode_label FROM customers WHERE unicode_label IS NOT NULL ORDER BY unicode_label, id LIMIT 25',
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: DISTINCT collapses collation-equal values',
+    sql: 'SELECT DISTINCT unicode_label FROM customers ORDER BY unicode_label',
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: joining on a collated column',
+    sql: 'SELECT COUNT(*) AS n FROM customers c JOIN customers d ON c.unicode_label = d.unicode_label',
+    tables: ['customers'],
+  },
+  {
+    // The two collations fold different sets, so the counts differ - which
+    // is the check that each column is compared under its OWN collation
+    // rather than one applied to both.
+    name: 'unicode_ci: folds a different set than general_ci does',
+    sql: 'SELECT COUNT(DISTINCT unicode_label) AS uca_folds, COUNT(DISTINCT legacy_label) AS ci_folds FROM customers',
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: extremes follow the collation',
+    sql: 'SELECT MIN(unicode_label) AS lo, MAX(unicode_label) AS hi FROM customers',
+    tables: ['customers'],
+  },
+  {
+    name: 'unicode_ci: IN membership uses the collation',
+    sql: "SELECT COUNT(*) AS n FROM customers WHERE unicode_label IN ('STRASSE', 'aether')",
+    tables: ['customers'],
+  },
   {
     name: 'general_ci: equality folds Latin-1 accents onto the base letter',
     sql: "SELECT COUNT(*) AS n FROM customers WHERE legacy_label = 'arger'",
