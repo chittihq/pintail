@@ -11,7 +11,7 @@ All edits and commits are local; compilation and execution use the configured bu
 - [x] 6. Session, diagnostics, prepared protocol, and result metadata coverage.
 - [x] 7. Snapshot/CDC/DDL/flush/restart and memory/spill replay packs.
 - [x] 8. Extend seeded generators, save failures, and test reduction/replay.
-- [ ] 9. Review, final validation, and bank outcomes without masking parity failures.
+- [x] 9. Review, final validation, and bank outcomes without masking parity failures.
 
 Known failures remain required failing cases. Completion means implementing and
 running the coverage work, not claiming all MySQL features have been implemented.
@@ -26,4 +26,7 @@ including documented boundaries and previously hidden NULL/type mismatches.
 Replay/generation slice: lifecycle, diagnostics, prepared protocol, storage layouts,
 and spill packs implemented and run. Eight model proposals produced seven
 MySQL-valid regressions. The 800-query seeded sweep exposed 18 mismatches,
-reduced to 15 distinct stored regressions. Final verification remains pending.
+reduced to 15 distinct stored regressions. Final verification and evidence banking are recorded in [coverage-results.md](coverage-results.md). The development profile failed at existing formatting; no full-green claim is made.
+
+Final fixed corpus: 1,736 cases; 76 failures on MySQL 8.4.11 and 77 on
+MySQL 8.0.46. The original 58-case report remains an earlier snapshot.

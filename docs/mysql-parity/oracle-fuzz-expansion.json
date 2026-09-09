@@ -1,0 +1,2036 @@
+{
+  "provenance": {
+    "commit": "050be915df0ba18309268bb9864ff8c1d437e688",
+    "dirty": "",
+    "fixtureSha256": "93cafb85b926dd15179737d4ce535a0df2831bd7a79c8e8afc0bee5eddfbb101",
+    "image": "mysql@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb",
+    "session": {
+      "collation": "utf8mb4_0900_ai_ci",
+      "sqlMode": "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+      "timeZone": "+00:00"
+    },
+    "unixSeconds": 1788961336,
+    "version": "8.4.11"
+  },
+  "summary": {
+    "PASS": 782,
+    "FAIL": 18
+  },
+  "failures": [
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NU"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\t"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 21,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -8, 2) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -8, 2) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 51,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -5, 1) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -5, 1) FROM bounds WHERE id >= 6 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 80,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -6, 6) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -6, 6) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          {
+            "Exact": "0"
+          }
+        ]
+      ],
+      "family": "boundary-membership",
+      "index": 130,
+      "minimizedSQL": "SELECT approx IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, approx IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 132,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -9, 10) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -9, 10) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "U"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a"
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "b"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "U"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "b"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 135,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -3, 1) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -3, 1) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 275,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -7, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -7, 9) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 286,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -12, 5) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -12, 5) FROM bounds WHERE id >= 3 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 297,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -2, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -2, 9) FROM bounds WHERE id >= 3 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 298,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -10, 10) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -10, 10) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\n"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\n"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 324,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -5, 4) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 12648430,
+      "sql": "SELECT id, SUBSTRING(txt, -5, 4) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 43,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -12, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, SUBSTRING(txt, -12, 9) FROM bounds WHERE id >= 4 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "NULL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 80,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -12, 8) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, SUBSTRING(txt, -12, 8) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          {
+            "Exact": "0"
+          }
+        ]
+      ],
+      "family": "boundary-membership",
+      "index": 240,
+      "minimizedSQL": "SELECT n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 5 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\n"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "a\tb\n"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 252,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -5, 4) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, SUBSTRING(txt, -5, 4) FROM bounds WHERE id >= 6 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          {
+            "Exact": "0"
+          }
+        ]
+      ],
+      "family": "boundary-membership",
+      "index": 346,
+      "minimizedSQL": "SELECT n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "LL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": "\u00e9"
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "1"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "2"
+          },
+          {
+            "Exact": "LL"
+          }
+        ],
+        [
+          {
+            "Exact": "3"
+          },
+          {
+            "Exact": "a "
+          }
+        ],
+        [
+          {
+            "Exact": "4"
+          },
+          {
+            "Exact": "a\u00a0"
+          }
+        ],
+        [
+          {
+            "Exact": "5"
+          },
+          {
+            "Exact": ""
+          }
+        ],
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "e\u0301"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "\nc"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          "Null"
+        ]
+      ],
+      "family": "boundary-string",
+      "index": 349,
+      "minimizedSQL": "SELECT SUBSTRING(txt, -2, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, SUBSTRING(txt, -2, 9) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "status": "FAIL"
+    },
+    {
+      "actual": [
+        [
+          {
+            "Exact": "6"
+          },
+          "Null"
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          {
+            "Exact": "0"
+          }
+        ]
+      ],
+      "error": null,
+      "expected": [
+        [
+          {
+            "Exact": "6"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "7"
+          },
+          {
+            "Exact": "0"
+          }
+        ],
+        [
+          {
+            "Exact": "8"
+          },
+          {
+            "Exact": "0"
+          }
+        ]
+      ],
+      "family": "boundary-membership",
+      "index": 356,
+      "minimizedSQL": "SELECT u IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "seed": 2703025502,
+      "sql": "SELECT id, u IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 6 ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "status": "FAIL"
+    }
+  ],
+  "metamorphic": {
+    "PASS": 161
+  }
+}
