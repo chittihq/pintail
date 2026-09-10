@@ -57,9 +57,8 @@ stays readable as a list of things to fix.
   FROM (SELECT '2' AS v UNION ALL SELECT '10') t)` is 0 there), and Pintail
   does not reproduce that form.
 - A join with no hashable equality key (a pure range/theta join) runs on
-  the nested loop and tests every row pair, so it sits behind the same
-  cardinality guard as a cross join; above the guard it rejects rather
-  than running an unbounded quadratic scan.
+  the nested loop and tests every row pair, so over large inputs it runs
+  until the memory ceiling or `max_execution_time` stops it.
 - Compound temporal `RANGE` interval qualifiers reject because sqlparser does
   not accept their MySQL spelling (#13, #25).
 - A window frame with a bounded start recomputes its aggregate over the frame

@@ -123,10 +123,6 @@ pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
     SESSION_CTE_MAX_RECURSION_DEPTH.set(limit.unwrap_or(DEFAULT_CTE_MAX_RECURSION_DEPTH));
 }
 
-/// Maximum estimated result rows accepted by the unqualified cross-join
-/// operator.
-pub const MAX_CROSS_JOIN_ROWS: u64 = 1_000_000;
-
 /// The process-wide memory budget every query draws from.
 ///
 /// Separate from the per-query ceiling: that one bounds a single query, this
@@ -184,8 +180,9 @@ pub enum PhysicalPlan {
     CrossJoin {
         /// Inputs in physical execution order.
         inputs: Vec<Self>,
-        /// Catalog-derived result cardinality.
-        estimated_rows: u64,
+        /// Catalog-derived result cardinality, when every input's row count
+        /// is known; a hint for EXPLAIN only.
+        estimated_rows: Option<u64>,
     },
     /// Streaming branch concatenation.
     UnionAll {
@@ -503,18 +500,11 @@ impl PhysicalPlanner {
                 plan_limit(*input, limit.offset, limit.count, collation)
             }
             LogicalPlan::CrossJoin { inputs } => {
-                let estimated_rows = inputs
-                    .iter()
-                    .try_fold(1_u64, |rows, input| {
-                        rows.checked_mul(input.estimated_rows()?)
-                    })
-                    .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-                if estimated_rows > MAX_CROSS_JOIN_ROWS {
-                    return Err(ExecError::CrossJoinGuardExceeded {
-                        estimated_rows,
-                        limit: MAX_CROSS_JOIN_ROWS,
-                    });
-                }
+                // Only a hint for EXPLAIN. A runaway product is stopped by the
+                // query's memory ceiling and time limit, as MySQL stops it.
+                let estimated_rows = inputs.iter().try_fold(1_u64, |rows, input| {
+                    rows.checked_mul(input.estimated_rows()?)
+                });
                 Ok(PhysicalPlan::CrossJoin {
                     inputs: inputs
                         .into_iter()
@@ -585,14 +575,7 @@ impl PhysicalPlanner {
                 {
                     let estimated_rows = left
                         .estimated_rows()
-                        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
-                        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-                    if estimated_rows > MAX_CROSS_JOIN_ROWS {
-                        return Err(ExecError::CrossJoinGuardExceeded {
-                            estimated_rows,
-                            limit: MAX_CROSS_JOIN_ROWS,
-                        });
-                    }
+                        .and_then(|rows| rows.checked_mul(right.estimated_rows()?));
                     return Ok(PhysicalPlan::CrossJoin {
                         inputs: vec![
                             Self::plan(*left, collation)?,
@@ -620,9 +603,8 @@ impl PhysicalPlanner {
                     split_join_condition(condition, &left, &right, kind);
                 let Some(condition) = condition else {
                     // No conjunct spans the two inputs at all: a pure theta
-                    // shape like ON a.x > 5. The nested loop answers it,
-                    // bounded by the cross-join guard because every pair is
-                    // tested.
+                    // shape like ON a.x > 5. The nested loop answers it by
+                    // testing every pair.
                     return plan_theta_join(left, right, kind, original_condition, collation);
                 };
                 // An ON clause may also compare the two inputs with something
@@ -661,8 +643,8 @@ impl PhysicalPlanner {
 }
 
 /// A join with no hashable equality key: every left/right pair is tested
-/// against the ON condition, so the cross-join cardinality guard applies
-/// verbatim - the work IS a filtered cross product, whatever the join kind.
+/// against the ON condition. The work is a filtered cross product whatever
+/// the join kind, bounded by the query's memory ceiling and time limit.
 fn plan_theta_join(
     left: Box<LogicalPlan>,
     right: Box<LogicalPlan>,
@@ -670,16 +652,6 @@ fn plan_theta_join(
     condition: BoundExpr,
     collation: Collation,
 ) -> Result<PhysicalPlan, ExecError> {
-    let estimated_rows = left
-        .estimated_rows()
-        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
-        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-    if estimated_rows > MAX_CROSS_JOIN_ROWS {
-        return Err(ExecError::CrossJoinGuardExceeded {
-            estimated_rows,
-            limit: MAX_CROSS_JOIN_ROWS,
-        });
-    }
     Ok(PhysicalPlan::NestedLoopJoin {
         left: Box::new(PhysicalPlanner::plan(*left, collation)?),
         right: Box::new(PhysicalPlanner::plan(*right, collation)?),
@@ -7645,7 +7617,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cross_joins_above_the_cardinality_guard() {
+    fn plans_a_cross_join_whatever_its_size() {
         let database = DatabaseEntry::new(
             DatabaseId::new(1),
             "app",
@@ -7662,12 +7634,12 @@ mod tests {
             .bind(&statement)
             .expect("bind query");
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-        assert_eq!(
-            PhysicalPlanner::plan(logical, Collation::default()),
-            Err(ExecError::CrossJoinGuardExceeded {
-                estimated_rows: 4_000_000,
-                limit: crate::MAX_CROSS_JOIN_ROWS
-            })
+        let plan = PhysicalPlanner::plan(logical, Collation::default())
+            .expect("a cross join plans whatever its size");
+        let rendered = format!("{plan:?}");
+        assert!(
+            rendered.contains("CrossJoin") && rendered.contains("estimated_rows: Some(4000000)"),
+            "{rendered}"
         );
     }
 }
