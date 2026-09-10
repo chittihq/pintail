@@ -1718,6 +1718,24 @@ fn evaluate_scalar(
                 &args[2]
             };
             let value = branch.evaluate(batch, row)?;
+            // MySQL renders an IF or CASE branch at its own scale where the
+            // result is a wider DECIMAL: `CASE .. THEN 0 ELSE dec(12,2) END`
+            // answers `0`, not `0.00`. The value keeps its exact units at the
+            // result scale beside that label, so keys and comparisons still
+            // meet `0.00`.
+            if let Some(DataType::Decimal { scale, .. }) = data_type
+                && let Some(label) = narrower_decimal_label(&value, scale)
+                && let Some(units) = pintail_types::parse_decimal_rounded(&label, scale)
+            {
+                return Ok(Value::DecimalAverage(Box::new(
+                    pintail_types::DecimalQuotient {
+                        label,
+                        units,
+                        count: 1,
+                        scale,
+                    },
+                )));
+            }
             cast_scalar(&value, data_type)
         }
         ScalarFunction::Coalesce => {
@@ -3450,6 +3468,25 @@ fn format_with_fraction(value: NaiveDateTime, fsp: u8, pattern: &str) -> String 
     }
     let micros = format!("{:06}", value.and_utc().timestamp_subsec_micros());
     format!("{base}.{}", &micros[..usize::from(fsp).min(6)])
+}
+
+/// An exact number's own text when it carries fewer fraction digits than
+/// `scale`: an integer, or decimal text at a narrower scale.
+fn narrower_decimal_label(value: &Value, scale: u8) -> Option<String> {
+    let fraction = |text: &str| {
+        text.split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len())
+    };
+    match value {
+        Value::Int64(value) if scale > 0 => Some(value.to_string()),
+        Value::UInt64(value) if scale > 0 => Some(value.to_string()),
+        Value::Boolean(value) if scale > 0 => Some(u8::from(*value).to_string()),
+        Value::Utf8(text) if fraction(text) < usize::from(scale) => Some(text.clone()),
+        Value::DecimalAverage(average) if fraction(&average.label) < usize::from(scale) => {
+            Some(average.label.clone())
+        }
+        _ => None,
+    }
 }
 
 fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {

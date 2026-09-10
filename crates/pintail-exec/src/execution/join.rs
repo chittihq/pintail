@@ -2115,7 +2115,7 @@ pub(super) fn normalized_group_value(value: Value, collation: Collation) -> Valu
             Value::Utf8(normalized_group_text(&text, collation))
         }
         Value::DecimalAverage(average) => {
-            Value::Utf8(normalized_group_text(&average.label, collation))
+            Value::Utf8(normalized_group_text(&average.canonical(), collation))
         }
         value => value,
     }
@@ -2223,7 +2223,7 @@ pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> 
         // collide with the plain-text side.
         Value::Enum { label, .. } => Value::Utf8(normalized_collation_text(&label, collation)),
         Value::DecimalAverage(value) => {
-            Value::Utf8(normalized_collation_text(&value.label, collation))
+            Value::Utf8(normalized_collation_text(&value.canonical(), collation))
         }
         value => value,
     }
