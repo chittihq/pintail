@@ -3696,6 +3696,37 @@ impl PullOperator {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                let positions: Option<Vec<_>> = expressions
+                    .iter()
+                    .map(|(expression, data_type)| {
+                        let position = expression.column_index()?;
+                        let column = batch.column(position)?;
+                        data_type
+                            .is_none_or(|data_type| data_type == column.data_type())
+                            .then_some(position)
+                    })
+                    .collect();
+                if let Some(positions) = positions {
+                    let clones = positions
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, position)| positions[index + 1..].contains(position))
+                        .map(|(_, position)| batch.columns()[*position].estimated_bytes())
+                        .fold(0_usize, usize::saturating_add);
+                    memory.ensure_transient(
+                        batch
+                            .estimated_bytes()
+                            .saturating_add(clones)
+                            .saturating_add(
+                                positions
+                                    .len()
+                                    .saturating_mul(size_of::<ColumnVector>() * 2),
+                            ),
+                    )?;
+                    return batch.project_columns(&positions).map(Some).ok_or(
+                        ExecError::InvalidBatch("projection column is outside its input"),
+                    );
+                }
                 let batch_bytes = batch.estimated_bytes();
                 let expression_memory = expressions
                     .iter()

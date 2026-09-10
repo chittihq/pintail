@@ -1141,6 +1141,34 @@ impl RecordBatch {
         self.columns.get(index)
     }
 
+    /// Moves selected columns, cloning only repeated references. The row
+    /// selection and each column's packed representation remain intact.
+    pub(crate) fn project_columns(self, positions: &[usize]) -> Option<Self> {
+        if positions
+            .iter()
+            .any(|position| *position >= self.columns.len())
+        {
+            return None;
+        }
+        let mut source: Vec<_> = self.columns.into_iter().map(Some).collect();
+        let columns = positions
+            .iter()
+            .enumerate()
+            .map(|(index, position)| {
+                if positions[index + 1..].contains(position) {
+                    source[*position].clone().expect("retained for a later use")
+                } else {
+                    source[*position].take().expect("last use takes the column")
+                }
+            })
+            .collect();
+        Some(Self {
+            row_count: self.row_count,
+            columns,
+            selection: self.selection,
+        })
+    }
+
     /// Returns the shared selection mask.
     #[must_use]
     pub const fn selection(&self) -> &SelectionMask {
@@ -1666,5 +1694,52 @@ mod scalar_copy_tests {
         );
         assert_eq!(native.value_owned(1), Some(Value::Null));
         assert_eq!(native.value_owned(0), Some(Value::Utf8("-1.20".into())));
+    }
+}
+
+#[cfg(test)]
+mod column_projection_tests {
+    use super::*;
+
+    #[test]
+    fn column_projection_preserves_masks_nulls_duplicates_and_packed_storage() {
+        let mut batch = RecordBatch::new(
+            3,
+            vec![
+                ColumnVector::from_typed(
+                    DataType::Int64,
+                    TypedValues::Int64(vec![7, 8, 9]),
+                    ValidityMask::all_valid(3),
+                ),
+                ColumnVector::from_typed(
+                    DataType::UInt64,
+                    TypedValues::UInt64(vec![10, 20, 30]),
+                    ValidityMask::from_bools(&[true, false, true]),
+                ),
+            ],
+        )
+        .expect("batch");
+        batch.selection_mut().set(1, false).expect("selection");
+        let output = batch.project_columns(&[1, 0, 1]).expect("projection");
+        assert_eq!(
+            output.selection().selected_rows().collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert_eq!(output.row_count(), 3);
+        assert!(
+            output
+                .columns()
+                .iter()
+                .all(|column| column.values.get().is_none())
+        );
+        assert_eq!(
+            output.columns()[0].values(),
+            [Value::UInt64(10), Value::Null, Value::UInt64(30)]
+        );
+        assert_eq!(
+            output.columns()[1].values(),
+            [Value::Int64(7), Value::Int64(8), Value::Int64(9)]
+        );
+        assert_eq!(output.columns()[2].values(), output.columns()[0].values());
     }
 }
