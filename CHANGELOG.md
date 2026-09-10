@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.5-rc2] - 2026-09-10
+
+A TPC-H-derived Q05 join plan fifty times faster, storage scans that reuse
+what they already decoded, and a MySQL differential oracle of 1,895 cases
+that now gates, with the string, binary, TIME, ENUM and decimal fixes it
+drove.
+
 ### Performance
 
 - Avoid dimension fanout in cyclic inner joins, propagate complete integer join
