@@ -931,12 +931,20 @@ impl CompiledExpr {
                         op,
                         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
                     )
-                    && let Some(value) = self.evaluate_decimal_chain(batch, row)?
                 {
-                    return match value {
-                        DecimalChainValue::Null => Ok(Value::Null),
-                        DecimalChainValue::Exact(value) => value.rounded(*scale),
-                    };
+                    // The chain keeps MySQL's internal precision across nested
+                    // decimal operators in i128 fractions. One that outgrows
+                    // them is evaluated operator by operator instead, where
+                    // each step widens past i128 as it needs to.
+                    match self.evaluate_decimal_chain(batch, row) {
+                        Ok(Some(DecimalChainValue::Null)) => return Ok(Value::Null),
+                        Ok(Some(DecimalChainValue::Exact(value))) => match value.rounded(*scale) {
+                            Err(ExecError::NumericOverflow) => {}
+                            result => return result,
+                        },
+                        Ok(None) | Err(ExecError::NumericOverflow) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
