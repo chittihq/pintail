@@ -136,56 +136,72 @@ fn cyclic_join_avoids_dimension_fanout_and_preserves_nullable_matches() {
         )
     }))
     .expect("provider");
-    let sql = "SELECT a.grp, COUNT(*), SUM(s.amount) FROM hubs h, accounts a, records r, samples s WHERE h.grp = a.grp AND a.id = r.account_id AND r.id = s.record_id AND h.id = s.hub_id GROUP BY a.grp ORDER BY a.grp";
-    let bound = Binder::new(&catalog, Some("app"))
-        .bind(&parse_statement(sql).expect("parse"))
-        .expect("bind");
-    let plan = PhysicalPlanner::plan(
-        Optimizer::optimize(LogicalPlanner::plan(bound)),
-        Collation::default(),
-    )
-    .expect("plan");
-    let mut execution =
-        Execution::start_profiled(plan, &provider, 64 << 20, None, Collation::default())
-            .expect("execution");
-    let mut actual = Vec::new();
-    while let Some(batch) = execution.next_batch().expect("batch") {
-        for row in batch.selection().selected_rows() {
-            actual.push(
-                batch
-                    .columns()
-                    .iter()
-                    .map(|column| match column.value(row).expect("value") {
-                        Value::UInt64(value) => value.to_string(),
-                        Value::Int64(value) => value.to_string(),
-                        Value::Utf8(value) => value.clone(),
-                        other => panic!("unexpected aggregate value: {other:?}"),
-                    })
-                    .collect::<Vec<_>>(),
-            );
-        }
-    }
-    let mut groups = std::collections::BTreeMap::<u64, (u64, u64)>::new();
-    for id in 1..=2_000_u64 {
-        let account = (id - 1) % 1_000 + 1;
-        let hub = (id * 7) % 100 + 1;
-        if account % 17 != 0 && id % 13 != 0 && account % 5 == hub % 5 {
-            let entry = groups.entry(account % 5).or_default();
-            entry.0 += 1;
-            if id % 11 != 0 {
-                entry.1 += id % 19;
+    for limit in [20, 1_000] {
+        let sql = format!(
+            "SELECT a.grp, COUNT(*), SUM(s.amount) FROM hubs h, accounts a, records r, samples s WHERE r.id = s.record_id AND h.id = s.hub_id AND h.grp = a.grp AND a.id = r.account_id AND r.id <= {limit} GROUP BY a.grp ORDER BY a.grp"
+        );
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&parse_statement(&sql).expect("parse"))
+            .expect("bind");
+        let plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan");
+        let mut execution =
+            Execution::start_profiled(plan, &provider, 64 << 20, None, Collation::default())
+                .expect("execution");
+        let mut actual = Vec::new();
+        while let Some(batch) = execution.next_batch().expect("batch") {
+            for row in batch.selection().selected_rows() {
+                actual.push(
+                    batch
+                        .columns()
+                        .iter()
+                        .map(|column| match column.value(row).expect("value") {
+                            Value::UInt64(value) => value.to_string(),
+                            Value::Int64(value) => value.to_string(),
+                            Value::Utf8(value) => value.clone(),
+                            other => panic!("unexpected aggregate value: {other:?}"),
+                        })
+                        .collect::<Vec<_>>(),
+                );
             }
         }
+        let mut groups = std::collections::BTreeMap::<u64, (u64, u64)>::new();
+        for id in 1..=2_000_u64 {
+            let account = (id - 1) % 1_000 + 1;
+            let hub = (id * 7) % 100 + 1;
+            if account <= limit && account % 17 != 0 && id % 13 != 0 && account % 5 == hub % 5 {
+                let entry = groups.entry(account % 5).or_default();
+                entry.0 += 1;
+                if id % 11 != 0 {
+                    entry.1 += id % 19;
+                }
+            }
+        }
+        let expected: Vec<_> = groups
+            .into_iter()
+            .map(|(group, (count, sum))| {
+                vec![group.to_string(), count.to_string(), sum.to_string()]
+            })
+            .collect();
+        assert_eq!(actual, expected);
+        let profile = execution.profile().expect("profile");
+        assert!(
+            profile.operators.iter().all(|op| op.rows <= 2_000),
+            "the fact inputs bound useful join work; avoid dimension fanout:\n{}",
+            profile.render()
+        );
+        let fact_scan = profile
+            .operators
+            .iter()
+            .find(|op| op.label.starts_with("Scan app.samples"))
+            .expect("fact scan");
+        assert!(
+            fact_scan.rows <= 2 * limit,
+            "outer keys must reach the fact scan before the intermediate join:\n{}",
+            profile.render()
+        );
     }
-    let expected: Vec<_> = groups
-        .into_iter()
-        .map(|(group, (count, sum))| vec![group.to_string(), count.to_string(), sum.to_string()])
-        .collect();
-    assert_eq!(actual, expected);
-    let profile = execution.profile().expect("profile");
-    assert!(
-        profile.operators.iter().all(|op| op.rows <= 2_000),
-        "the fact inputs bound useful join work; avoid dimension fanout:\n{}",
-        profile.render()
-    );
 }

@@ -537,6 +537,41 @@ impl HashJoinState {
         self.filter_reserved = prefetch.keys_reserved;
     }
 
+    /// A complete primary-key membership set for a composite resident build.
+    /// The final join still checks every component. This set only rejects
+    /// rows that cannot possibly match, before an intermediate join copies them.
+    pub(super) fn primary_membership(
+        &mut self,
+        memory: &MemoryTracker,
+    ) -> Option<Arc<HashSet<JoinHashKey>>> {
+        if self.spilled() || self.build.dense_index.is_some() {
+            return None;
+        }
+        // Include hash capacity, the packed filter and its temporary integer
+        // vector. Refuse the optimization as a whole when it cannot fit.
+        let bytes = self.build.len().checked_mul(256)?.checked_add(2 << 20)?;
+        if bytes > (64 << 20) || bytes > memory.remaining() / 4 {
+            return None;
+        }
+        memory.reserve(bytes).ok()?;
+        let mut keys = HashSet::with_capacity(self.build.len());
+        for key in self.build.keys() {
+            let JoinHashKey::Composite(parts) = key else {
+                memory.release(bytes);
+                return None;
+            };
+            let Some(key @ (JoinHashKey::NegativeInteger(_) | JoinHashKey::NonNegativeInteger(_))) =
+                parts.first()
+            else {
+                memory.release(bytes);
+                return None;
+            };
+            keys.insert(key.clone());
+        }
+        self.filter_reserved = self.filter_reserved.saturating_add(bytes);
+        Some(Arc::new(keys))
+    }
+
     fn clear_left(&mut self, memory: &MemoryTracker) {
         self.left_values = None;
         self.left_key = None;

@@ -3312,6 +3312,41 @@ enum PullOperator {
 }
 
 impl PullOperator {
+    /// Find an unstarted scan below an inner-join input, translating the
+    /// output position at each join. Outer joins and layout-changing nodes
+    /// are boundaries: pushing through them could remove required rows.
+    fn nested_probe_scan(
+        &mut self,
+        position: usize,
+        crossed_join: bool,
+    ) -> Option<(&mut Self, usize)> {
+        match self {
+            Self::Profiled { input, .. } | Self::Filter { input, .. } => {
+                input.nested_probe_scan(position, crossed_join)
+            }
+            Self::HashJoin {
+                left,
+                right,
+                kind: BoundJoinKind::Inner,
+                column_types,
+                right_width,
+                state: None,
+                ..
+            } => {
+                let left_width = column_types.len().checked_sub(*right_width)?;
+                if position < left_width {
+                    left.nested_probe_scan(position, true)
+                } else if position < column_types.len() {
+                    right.nested_probe_scan(position - left_width, true)
+                } else {
+                    None
+                }
+            }
+            Self::Scan { .. } if crossed_join => Some((self, position)),
+            _ => None,
+        }
+    }
+
     /// Forwards a probe-side key restriction to the underlying scan, passing
     /// through filters only — any other operator changes row identity or
     /// layout and stops the pushdown.
@@ -3484,6 +3519,15 @@ impl PullOperator {
                         left.restrict_probe_range(position, minimum, maximum);
                     }
                     built.adopt_prefetch(prefetch);
+                    if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
+                        && matches!(key_mode, JoinKeyMode::Integer)
+                        && !extra_keys.is_empty()
+                        && let Some(position) = left_key.column_index()
+                        && let Some((scan, position)) = left.nested_probe_scan(position, false)
+                        && let Some(keys) = built.primary_membership(memory)
+                    {
+                        scan.restrict_build_keys(CompiledExpr::Column(position), *key_mode, keys);
+                    }
                     *state = Some(Box::new(built));
                 }
                 next_hash_join_batch(
@@ -3518,6 +3562,10 @@ impl PullOperator {
                 integers,
             } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
+                    // Release the retained membership storage before the
+                    // owning join returns its reservation at probe exhaustion.
+                    *keys = std::sync::Arc::new(std::collections::HashSet::new());
+                    *integers = None;
                     return Ok(None);
                 };
                 let batch_bytes = batch.estimated_bytes();
