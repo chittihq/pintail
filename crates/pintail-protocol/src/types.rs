@@ -52,6 +52,8 @@ pub enum ColumnType {
     MysqlTypeBlob = 0xfc,
     /// `LONGBLOB`/`LONGTEXT` - what `JSON_UNQUOTE` results advertise.
     MysqlTypeLongBlob = 0xfb,
+    /// `MEDIUMBLOB`/`MEDIUMTEXT`: a variable-length value of up to 16 MiB.
+    MysqlTypeMediumBlob = 0xfa,
     /// Spatial types, carried as `MySQL`'s internal SRID + WKB bytes.
     MysqlTypeGeometry = 0xff,
 }

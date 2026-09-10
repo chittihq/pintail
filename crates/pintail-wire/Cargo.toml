@@ -27,6 +27,7 @@ rand.workspace = true
 rustls-pemfile.workspace = true
 tokio-rustls.workspace = true
 serde_json.workspace = true
+sqlparser.workspace = true
 sha1.workspace = true
 rsa.workspace = true
 rand_core06.workspace = true
