@@ -13,20 +13,7 @@ All edits and commits are local; compilation and execution use the configured bu
 - [x] 8. Extend seeded generators, save failures, and test reduction/replay.
 - [x] 9. Review, final validation, and bank outcomes without masking parity failures.
 
-Known failures remain required failing cases. Completion means implementing and
-running the coverage work, not claiming all MySQL features have been implemented.
-
-Harness slice: eight unit tests pass; structured differential results retain the known failures.
-Runtime inventory is exported by the inventory unit test and checked for source freshness.
-
-Boundary slice: 341 new MySQL-valid shapes, 1,714 runtime-inventoried cases total.
-Clippy and eight oracle unit tests pass. Structured comparison reports 58 failures,
-including documented boundaries and previously hidden NULL/type mismatches.
-
-Replay/generation slice: lifecycle, diagnostics, prepared protocol, storage layouts,
-and spill packs implemented and run. Eight model proposals produced seven
-MySQL-valid regressions. The 800-query seeded sweep exposed 18 mismatches,
-reduced to 15 distinct stored regressions. Final verification and evidence banking are recorded in [coverage-results.md](coverage-results.md). The development profile failed at existing formatting; no full-green claim is made.
-
-Final fixed corpus: 1,736 cases; 76 failures on MySQL 8.4.11 and 77 on
-MySQL 8.0.46. The original 58-case report remains an earlier snapshot.
+The corpus now gates: every case matches MySQL 8.4 or sits on the reviewed
+known-failure ledger, which fails the run when an entry goes stale. Results
+are in [coverage-results.md](coverage-results.md); generation and candidate
+validation in [generated-cases.md](generated-cases.md).

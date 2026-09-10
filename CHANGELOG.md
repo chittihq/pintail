@@ -33,6 +33,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   met each other as text; a text subject meets DECIMAL bounds the same way.
 - A DATE member of an `IN (SELECT ...)` or `= ANY` list of DATETIME values,
   decorrelated or not, matches the instant at its midnight.
+- SUBSTRING with a negative start reaching past the first character answers
+  an empty string instead of the whole string, and LPAD or RPAD that must
+  pad with an empty pad string answers an empty string instead of NULL.
+- Binary strings go through SUBSTRING, TRIM, LPAD, RPAD, CONCAT_WS and LIKE
+  byte by byte, and return bytes, where bytes that were not UTF-8 raised an
+  error.
+- DATE_ADD and DATE_SUB keep a DATETIME's fractional seconds.
+- TIME values compare as times, not as text, so `-100:00:00` sorts below
+  `-00:00:01`; `TIME + 0` and numeric casts read the `HHMMSS.ffffff`
+  number, and ADDTIME and SUBTIME clamp at the TIME range.
+- An ENUM in a numeric context - `status = 3`, `status + 0`,
+  `CAST(status AS UNSIGNED)` - reads its declaration index, not its label.
+- COALESCE, IF and CASE over signed and unsigned BIGINT branches stay exact
+  instead of passing through a double, and JSON_LENGTH is a signed integer,
+  so `COALESCE(JSON_LENGTH(doc), -1)` stays an integer.
+- JSON_TYPE names a non-negative integer past 2^32 - 1 `UNSIGNED INTEGER`.
+- Equality between DECIMALs whose common type would need more than 38
+  digits compares by value instead of failing with a numeric overflow.
+- `x op ALL` and `x op ANY` accept a UNION subquery.
+- A query with a window function may sort by a column it does not select.
+
+### Tests
+
+- The MySQL differential oracle grew to 1,895 cases: typed result
+  comparison, a boundary fixture across integer, decimal, float, string,
+  binary and temporal limits, reviewed and seed-minimized regressions, and
+  a replay across storage layouts. Cases that diverge through a documented
+  limitation sit on a reviewed known-failure ledger that warns while they
+  fail and fails the run once they pass.
 
 ## [0.1.5-rc1] - 2026-09-10
 
