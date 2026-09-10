@@ -6355,12 +6355,15 @@ fn probe_csv_fields(line: &str) -> Vec<String> {
 }
 
 /// Reruns, in process, the corpus cases Pintail failed at scale 10,000 in
-/// `benchmark/corpus/results.csv` while MySQL answered them, over the
+/// `benchmark/corpus/results.csv` while `MySQL` answered them, over the
 /// fixture amplified the way the benchmark amplifies it. Prints each case's
 /// time or failure; asserts nothing. Run with `--ignored`; set
 /// `PINTAIL_CORPUS_PROBE_SCALE` for another scale.
 #[test]
 #[ignore = "diagnostic probe of the corpus benchmark's failing cases"]
+// One diagnostic: it loads four amplified tables, then times and prints each
+// case. Splitting it would only pass the fixture between pieces.
+#[allow(clippy::too_many_lines)]
 fn corpus_scale_probe() {
     let scale = std::env::var("PINTAIL_CORPUS_PROBE_SCALE")
         .ok()
@@ -6392,6 +6395,11 @@ fn corpus_scale_probe() {
             fields[scale_at] == "10000" && fields[pintail_at] != "ok" && fields[mysql_at] == "ok"
         })
         .filter(|fields| seen.insert(fields[id_at].clone()))
+        .filter(|fields| {
+            std::env::var("PINTAIL_CORPUS_PROBE_IDS").map_or(true, |ids| {
+                ids.split(',').any(|id| fields[id_at].starts_with(id))
+            })
+        })
         .map(|fields| {
             (
                 fields[id_at].clone(),
@@ -6501,6 +6509,26 @@ fn corpus_scale_probe() {
                 Collation::default(),
             )
             .map_err(|error| format!("plan: {error}"))?;
+            if std::env::var_os("PINTAIL_CORPUS_PROBE_PLAN").is_some() {
+                let rendered = format!("{physical:?}");
+                let shape = [
+                    "KeyLookupJoin",
+                    "HashJoin",
+                    "NestedLoopJoin",
+                    "CrossJoin",
+                    "PreparedIn",
+                    "InList",
+                    "InSubquery",
+                    "ExistsSubquery",
+                    "ScalarSubquery",
+                    "Semi",
+                    "Anti",
+                ]
+                .iter()
+                .map(|token| format!("{token}x{}", rendered.matches(token).count()))
+                .collect::<Vec<_>>();
+                eprintln!("plan {id}: {}", shape.join(" "));
+            }
             let mut execution = Execution::start_with_deadline(
                 physical,
                 &provider,
