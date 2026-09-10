@@ -43,7 +43,7 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
 4. [ ] **Joins MySQL answers.** Remove the cross-join safety estimate (10
    refusals) and fix the theta, null-safe and quantified-subquery join
    timeouts (most of 37). Fold in join-proof.
-5. [ ] **Window frames.** Six window queries time out at scale 10,000:
+5. [x] **Window frames.** Six window queries time out at scale 10,000:
    `ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, `RANGE` peer
    groups over a low-cardinality key, and numeric and temporal `RANGE`
    offsets, each recomputing its frame per row.
