@@ -9682,7 +9682,7 @@
       "name": "1613:boundary conversion contexts",
       "ordered": true,
       "sql": "SELECT id, CASE WHEN id % 2 = 0 THEN frac ELSE 0 END FROM bounds ORDER BY id",
-      "status": "KNOWN_FAILURE"
+      "status": "PASS"
     },
     {
       "name": "1614:boundary conversion contexts",
@@ -10276,7 +10276,7 @@
       "name": "1712:boundary string grouping",
       "ordered": false,
       "sql": "SELECT txt, COUNT(*) FROM bounds GROUP BY txt",
-      "status": "KNOWN_FAILURE"
+      "status": "PASS"
     },
     {
       "name": "1713:boundary string storage",
@@ -11248,7 +11248,7 @@
       "name": "1874:reviewed-nullable-decimal",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT CASE WHEN COUNT(*)=0 THEN NULL WHEN SUM(CASE WHEN b.frac IS NULL THEN NULL ELSE b.frac END)=0 THEN NULL ELSE COALESCE((SELECT MAX(b2.whole) FROM bounds b2 WHERE b2.id=1),0)/(SUM(CASE WHEN b.frac IS NULL THEN NULL ELSE b.frac END)*0.10) END FROM bounds b WHERE b.id BETWEEN 1 AND 3) AS q FROM events e WHERE e.id IN (1,2,3) ORDER BY e.id",
-      "status": "KNOWN_FAILURE"
+      "status": "PASS"
     },
     {
       "name": "1875:reviewed-quantified-subquery",
@@ -11272,13 +11272,13 @@
       "name": "1878:reviewed-cte-window",
       "ordered": true,
       "sql": "WITH x AS (SELECT e.id AS event_id, b.id AS bound_id, CAST(b.whole AS DECIMAL(38,3))+COALESCE(b.frac,0.000) AS amt FROM events e JOIN bounds b ON b.id=e.id WHERE e.id BETWEEN 1 AND 4) SELECT event_id, SUM(amt) OVER w AS running_sum FROM x WINDOW w AS (ORDER BY bound_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY event_id",
-      "status": "KNOWN_FAILURE"
+      "status": "PASS"
     },
     {
       "name": "1879:reviewed-cte-window",
       "ordered": true,
       "sql": "WITH x AS (SELECT e.id AS event_id, b.id AS bound_id, CASE WHEN b.approx IS NULL THEN NULL ELSE CAST(b.whole AS DECIMAL(38,3))+CAST(b.approx AS DECIMAL(38,3)) END AS amt FROM events e JOIN bounds b ON b.id=e.id WHERE e.id BETWEEN 1 AND 4) SELECT event_id, AVG(amt) OVER w AS peer_avg FROM x WINDOW w AS (PARTITION BY event_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) ORDER BY event_id,bound_id",
-      "status": "KNOWN_FAILURE"
+      "status": "PASS"
     },
     {
       "name": "1880:seed-minimized",
@@ -11372,11 +11372,11 @@
     }
   ],
   "cleanTree": true,
-  "commit": "3c025ad121cc6d18ef0fae592589aedd23e05c21",
+  "commit": "d787d3a65bf597a08e2c9d0dd0c1bd284cb2b283",
   "comparator": "typed NULL and bytes; approximate types on both sides only: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
-  "corpusSha256": "827c435bcb8f19b54eadacd508daeb98e8ecb1722cc2c050e223723b4abf2934",
+  "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d",
   "expectedCases": 1895,
-  "measuredAt": "2026-09-10T14:05:25.047880499+00:00",
+  "measuredAt": "2026-09-10T20:04:01.940650881+00:00",
   "schemaVersion": 1,
   "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
   "verdict": "PASS"
