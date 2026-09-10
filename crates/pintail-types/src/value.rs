@@ -152,6 +152,10 @@ impl std::hash::Hash for Float64 {
     }
 }
 
+/// The widest DECIMAL the store keeps as native scaled integers (it fits an
+/// `i64`); wider columns are stored as canonical text.
+pub const NATIVE_DECIMAL_MAX_PRECISION: u8 = 18;
+
 /// The scaled sum and count retained by a finished decimal average.
 #[derive(
     Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize,

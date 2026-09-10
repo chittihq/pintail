@@ -568,7 +568,9 @@ impl NativeUnits {
         match data_type {
             DataType::Date32 => Some(Self::Date),
             DataType::DateTime64 { fsp } => Some(Self::DateTime { fsp }),
-            DataType::Decimal { precision, scale } if precision <= 18 => {
+            DataType::Decimal { precision, scale }
+                if precision <= pintail_types::NATIVE_DECIMAL_MAX_PRECISION =>
+            {
                 Some(Self::Decimal { scale })
             }
             _ => None,

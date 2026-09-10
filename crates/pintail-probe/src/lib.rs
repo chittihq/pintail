@@ -1340,7 +1340,10 @@ pub fn stabilize_source_table(
 /// Whether a column's declared type can change without touching stored
 /// values: integer families share one 64-bit storage lane per signedness,
 /// floats share the 64-bit carrier, string-typed columns are width-free
-/// canonical text, and decimals render identically while the scale holds.
+/// canonical text, and decimals render identically while the scale holds -
+/// or, for a decimal stored as text, while neither the integer nor the
+/// fraction digits shrink: a wider scale renders the stored text at the new
+/// scale on read, as the source's rebuilt table does after the ALTER.
 /// Temporal precisions are part of the type and must match exactly.
 fn widening_compatible(
     previous: pintail_types::DataType,
@@ -1366,7 +1369,15 @@ fn widening_compatible(
                 precision: refreshed_precision,
                 scale: refreshed_scale,
             },
-        ) => previous_scale == refreshed_scale && refreshed_precision >= previous_precision,
+        ) => {
+            let integer_digits = |precision: u8, scale: u8| precision.saturating_sub(scale);
+            refreshed_precision >= previous_precision
+                && (previous_scale == refreshed_scale
+                    || (refreshed_scale > previous_scale
+                        && previous_precision > pintail_types::NATIVE_DECIMAL_MAX_PRECISION
+                        && integer_digits(refreshed_precision, refreshed_scale)
+                            >= integer_digits(previous_precision, previous_scale)))
+        }
         _ => false,
     }
 }
@@ -1752,5 +1763,20 @@ mod declared_column_tests {
                 scale: 2
             }
         );
+    }
+
+    #[test]
+    fn a_text_stored_decimal_widens_its_scale_in_place() {
+        let decimal = |precision, scale| pintail_types::DataType::Decimal { precision, scale };
+        // Stored as text: a wider scale re-renders on read.
+        assert!(super::widening_compatible(decimal(22, 4), decimal(24, 5)));
+        assert!(super::widening_compatible(decimal(22, 4), decimal(23, 4)));
+        // Integer digits would shrink.
+        assert!(!super::widening_compatible(decimal(22, 4), decimal(22, 5)));
+        // Narrowing loses digits.
+        assert!(!super::widening_compatible(decimal(24, 5), decimal(22, 4)));
+        // Native units are scaled at write time, so their scale is fixed.
+        assert!(!super::widening_compatible(decimal(10, 2), decimal(12, 4)));
+        assert!(super::widening_compatible(decimal(10, 2), decimal(12, 2)));
     }
 }

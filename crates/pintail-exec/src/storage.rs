@@ -1218,7 +1218,8 @@ impl BatchStream for SnapshotStream {
                     } else {
                         values
                     };
-                    ColumnVector::new(data_type, values).map_err(ExecError::from)
+                    ColumnVector::new(data_type, widen_decimal_values(data_type, values))
+                        .map_err(ExecError::from)
                 })
                 .collect::<Result<Vec<_>, _>>()?
         };
@@ -1907,7 +1908,8 @@ pub(crate) fn column_vector_from_decoded(
             } else {
                 values
             };
-            ColumnVector::new(data_type, values).map_err(ExecError::from)
+            ColumnVector::new(data_type, widen_decimal_values(data_type, values))
+                .map_err(ExecError::from)
         }
         DecodedColumn::Int64 { values, validity }
             if matches!(storage, pintail_types::DataType::Int64) =>
@@ -1941,6 +1943,9 @@ pub(crate) fn column_vector_from_decoded(
             offsets,
             validity,
         } if matches!(storage, pintail_types::DataType::Utf8) => {
+            if let Some(values) = widened_decimal_arena(data_type, &heap, &offsets, &validity) {
+                return ColumnVector::new(data_type, values).map_err(ExecError::from);
+            }
             Ok(typed_from_utf8_arena_labelled(
                 data_type,
                 &heap,
@@ -1985,6 +1990,9 @@ pub(crate) fn column_vector_from_decoded(
                     heap.extend_from_slice(&dict_heap[dict_offsets[code]..dict_offsets[code + 1]]);
                 }
                 offsets.push(heap.len());
+            }
+            if let Some(values) = widened_decimal_arena(data_type, &heap, &offsets, &validity) {
+                return ColumnVector::new(data_type, values).map_err(ExecError::from);
             }
             Ok(typed_from_utf8_arena_labelled(
                 data_type,
@@ -2175,6 +2183,75 @@ fn batch_memory_upper_bound(types: &[pintail_types::DataType], row_count: usize)
                 .div_ceil(64)
                 .saturating_mul(std::mem::size_of::<u64>()),
         )
+}
+
+/// Stored text of a DECIMAL column whose scale has since widened carries
+/// fewer fraction digits than its type; it renders at the type's scale, as
+/// the source's rebuilt table does after the ALTER. `None` for text that
+/// already carries the scale, or for anything that is not a decimal.
+fn widened_decimal_text(data_type: pintail_types::DataType, text: &str) -> Option<String> {
+    let pintail_types::DataType::Decimal { scale, .. } = data_type else {
+        return None;
+    };
+    let fraction = text
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    if fraction >= usize::from(scale) {
+        return None;
+    }
+    pintail_types::parse_decimal_wide(text, scale)
+        .map(|units| pintail_types::format_decimal_wide(&units, scale))
+}
+
+fn widen_decimal_values(data_type: pintail_types::DataType, values: Vec<Value>) -> Vec<Value> {
+    if !matches!(data_type, pintail_types::DataType::Decimal { .. }) {
+        return values;
+    }
+    values
+        .into_iter()
+        .map(|value| match value {
+            Value::Utf8(text) => {
+                Value::Utf8(widened_decimal_text(data_type, &text).unwrap_or(text))
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// [`widened_decimal_text`] over a stored text arena: the rows as values
+/// when any of them needs widening, `None` when every one already carries
+/// the type's scale - the common case, which keeps the packed path.
+fn widened_decimal_arena(
+    data_type: pintail_types::DataType,
+    heap: &[u8],
+    offsets: &[usize],
+    validity: &pintail_store::ColumnValidity,
+) -> Option<Vec<Value>> {
+    if !matches!(data_type, pintail_types::DataType::Decimal { .. }) {
+        return None;
+    }
+    let valid = validity.iter().collect::<Vec<_>>();
+    let text =
+        |row: usize| std::str::from_utf8(&heap[offsets[row]..offsets[row + 1]]).unwrap_or_default();
+    if !(0..valid.len())
+        .any(|row| valid[row] && widened_decimal_text(data_type, text(row)).is_some())
+    {
+        return None;
+    }
+    Some(
+        (0..valid.len())
+            .map(|row| {
+                if valid[row] {
+                    let text = text(row);
+                    Value::Utf8(
+                        widened_decimal_text(data_type, text).unwrap_or_else(|| text.to_owned()),
+                    )
+                } else {
+                    Value::Null
+                }
+            })
+            .collect(),
+    )
 }
 
 #[cfg(test)]
