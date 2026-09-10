@@ -305,7 +305,7 @@ fn expression(
             if let Some(expr) = query.group_by.get(*index) {
                 column = expression(expr, query, catalog, facts);
                 if !ordered_group(query) {
-                    group_key(&mut column, expr);
+                    group_key(&mut column, resolved_expr(expr, query));
                 }
             }
         }
@@ -328,7 +328,7 @@ fn expression(
             } else if let Some(expr) = query.group_by.get(*index) {
                 column = expression(expr, query, catalog, facts);
                 if !ordered_group(query) {
-                    group_key(&mut column, expr);
+                    group_key(&mut column, resolved_expr(expr, query));
                 }
             }
         }
@@ -752,6 +752,35 @@ fn ordered_group(query: &BoundQuery) -> bool {
                 }))
 }
 
+/// The expression a column reference stands for when it reads a derived
+/// table's projection, followed down through nested derived tables; a
+/// base-table column stands for itself. Grouping materializes a computed
+/// integer as INT in `MySQL` whether it is grouped where it is computed or
+/// read back from a derived table first, while a stored column keeps its
+/// declared type either way.
+fn resolved_expr<'a>(expr: &'a BoundExpr, query: &'a BoundQuery) -> &'a BoundExpr {
+    let BoundExprKind::Column(reference) = &expr.kind else {
+        return expr;
+    };
+    for relation in query.from.iter().flat_map(|from| {
+        std::iter::once(&from.base).chain(from.joins.iter().map(|join| &join.table))
+    }) {
+        if let Some(input) = &relation.input
+            && relation
+                .relation_name
+                .eq_ignore_ascii_case(&reference.relation_name)
+            && let Some(index) = relation
+                .columns
+                .iter()
+                .position(|value| value.column_id == reference.column_id)
+            && let Some(projection) = input.projection.get(index)
+        {
+            return resolved_expr(&projection.expr, input);
+        }
+    }
+    expr
+}
+
 fn group_key(column: &mut Column, expr: &BoundExpr) {
     if !matches!(expr.kind, BoundExprKind::Column(_)) {
         if column.character_set != 63 {
@@ -852,7 +881,18 @@ fn source_declaration(column: &mut Column, fact: &pintail_sql::ColumnFacts) {
         "datetime" | "date" | "time" => flags |= 128,
         "timestamp" => {
             column.coltype = ColumnType::MysqlTypeTimestamp;
-            flags |= 128 | 1024;
+            flags |= 128;
+            // MySQL 8.4 marks a TIMESTAMP column with TIMESTAMP_FLAG only when
+            // it initializes or updates itself - DEFAULT CURRENT_TIMESTAMP or
+            // ON UPDATE - not every TIMESTAMP (measured against the server).
+            let initializes = fact.default_value.as_deref().is_some_and(|default| {
+                default
+                    .to_ascii_uppercase()
+                    .starts_with("CURRENT_TIMESTAMP")
+            });
+            if initializes || fact.extra.contains("on update") {
+                flags |= 1024;
+            }
         }
         "json" => {
             flags |= 128 | 16;
@@ -977,5 +1017,63 @@ mod tests {
         );
         assert!(fields[2].colflags.contains(ColumnFlags::NOT_NULL_FLAG));
         assert!(!fields[2].colflags.contains(ColumnFlags::UNSIGNED_FLAG));
+    }
+    /// An integer expression grouped on is materialized in the `MySQL` grouping
+    /// temporary table as INT, and keeps that type when an outer query reads
+    /// it back through a derived table or groups on it there (measured
+    /// against `MySQL` 8.4: `YEAR(...)` as a grouping key reads as LONG).
+    #[test]
+    fn a_grouped_integer_expression_reads_as_int_through_a_derived_table() {
+        use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
+        use pintail_types::{Column as SchemaColumn, TableSchema};
+        let schema = TableSchema::new(
+            1,
+            vec![
+                SchemaColumn::new(0, "id", DataType::Int64, false),
+                SchemaColumn::new(1, "at", DataType::DateTime64 { fsp: 0 }, false),
+            ],
+        )
+        .unwrap();
+        let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+            DatabaseId::new(1),
+            "sample",
+            [TableEntry::new(
+                TableId::new(1),
+                "sales",
+                schema,
+                pintail_catalog::TableStatistics::default(),
+            )
+            .unwrap()
+            .with_key_columns([0])
+            .unwrap()],
+        )
+        .unwrap()])
+        .unwrap();
+        let types = |sql: &str| {
+            let statement = pintail_sql::parse_statement(sql).unwrap();
+            let query = pintail_sql::Binder::new(&catalog, Some("sample"))
+                .bind(&statement)
+                .unwrap();
+            columns(&query, &catalog, &SourceFacts::default())
+                .into_iter()
+                .map(|column| column.coltype)
+                .collect::<Vec<_>>()
+        };
+        let inner = "SELECT s.id, YEAR(CONVERT_TZ(s.at, '+00:00', '+09:30')) AS year, \
+                     MONTH(CONVERT_TZ(s.at, '+00:00', '+09:30')) AS month, COUNT(*) AS n \
+                     FROM sales s JOIN sales o ON o.id = s.id GROUP BY s.id, year, month";
+        assert_eq!(
+            types(&format!("SELECT t.year, t.month FROM ({inner}) t")),
+            vec![ColumnType::MysqlTypeLong, ColumnType::MysqlTypeLong],
+            "grouped inside the derived table"
+        );
+        assert_eq!(
+            types(
+                "SELECT t.year, COUNT(*) FROM (SELECT YEAR(CONVERT_TZ(at, '+00:00', '+09:30')) \
+                 AS year FROM sales) t GROUP BY t.year"
+            )[0],
+            ColumnType::MysqlTypeLong,
+            "grouped on outside it"
+        );
     }
 }
