@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- A range filter keeps pruning segments after a table takes updates. Value
+  pruning let a segment go only when it overlapped no other segment at all,
+  so the first flush of updated rows over a table's base switched pruning
+  off for every base segment, and a filter on a timestamp column read the
+  whole table - on a replicated table taking updates, always. A segment now
+  prunes when every segment overlapping it is newer: each row it holds is
+  current and fails the filter, or stale behind a newer version that
+  decides for itself. A segment overlapping an older one is still read, so
+  no stale version comes back.
+
 - A correlated `IN` or `EXISTS` in a LEFT or RIGHT join's ON condition that
   reaches the join's preserved side is answered instead of refused. The
   subquery's rows do not depend on the outer row - only which of them a
