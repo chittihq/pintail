@@ -77,12 +77,33 @@
     "q05-join-qualification/supplementary-target.json"
   ],
   "remaining_qualification": {
-    "rc": "pending",
     "eight_query_20m_candidate": "pending; setup attempts interrupted by overlapping harnesses"
   },
   "eight_query_baseline": {
     "path": "q05-join-qualification/eight-query-baseline.json",
     "all_answers_exact": true,
     "final_concurrency_result_excluded": "Other oracle containers started during the last two seconds of the final concurrency test, after the eight-query measurements."
+  },
+  "rc": {
+    "status": "PASS",
+    "profile": "rc",
+    "run": "2026-09-10T06-49-01-037Z-rc",
+    "head": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
+    "report": "q05-join-rc.md",
+    "oracle_queries": 1231,
+    "unit_passed": 1039,
+    "unit_skipped": 43,
+    "e2e_84": {
+      "passed": 5754,
+      "failed": 0,
+      "skipped": 44,
+      "warned": 30
+    },
+    "e2e_80": {
+      "passed": 5754,
+      "failed": 0,
+      "skipped": 44,
+      "warned": 30
+    }
   }
 }

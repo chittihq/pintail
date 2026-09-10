@@ -61,6 +61,22 @@ are not peak retained spill usage or the minimum sufficient spill quota.
 The optimizer had selected the first connected pair in a cyclic graph,
 creating dimension fanout before joining the fact table.
 
+The final candidate profile keeps the same final join cardinality:
+
+| Profile observation | Baseline | Candidate |
+|---|---:|---:|
+| Fact rows emitted to the intermediate join | 6,000,749 | 857,315 |
+| Fact storage blocks decoded | 1,684 | 1,684 |
+| Final joined rows | 6,869 | 6,869 |
+| Output rows | 5 | 5 |
+| Spill files | 32 | 0 |
+| Total spill bytes written | 1,466,506,682 | 0 |
+
+The fact scan still decodes the same blocks. Complete join membership removes
+impossible matches before intermediate row copying; the final join retains
+all matching rows. The speedup comes principally from execution order and
+payload handling, rather than an additional storage-block skip.
+
 The candidate chooses lower estimated intermediate work, folds literal date
 intervals so existing scan bounds apply, propagates complete integer join
 membership through inner joins, and avoids expanding or copying unused packed
@@ -70,9 +86,10 @@ residual predicate. Unsupported paths retain their original execution.
 
 ## Qualification status
 
-The Q05 target and four-query TPC-H comparison above are complete. The full rc
-gate and 20M candidate benchmark are still pending; this evidence is not a
-completed release gate. The 20M baseline's eight-query answers are exact.
+The Q05 target, four-query TPC-H comparison, and [complete rc profile](q05-join-rc.md)
+passed. The 20M candidate benchmark remains blocked by overlapping harnesses;
+this evidence does not establish eight-query regression parity or a stable
+release gate. The 20M baseline's eight-query answers are exact.
 Another oracle started during the last two seconds of its final concurrency
 test, after the eight-query measurements, so that concurrency result is excluded.
 Candidate setup attempts interrupted by overlapping harnesses produced no
@@ -84,8 +101,10 @@ The cyclic-join fixture independently computes expected results with sparse
 selectivity and nullable keys and projected values. It checks exact values
 before asserting intermediate row counts. Additional tests cover packed nulls,
 ENUM ordinals, scalar formatting, projection masks and duplicate projections,
-and literal date-interval bounds. The full rc gate must also cover the real snapshot,
-CDC and wire paths against both MySQL versions before qualification is complete.
+and literal date-interval bounds. The complete rc gate also passed through the real snapshot,
+CDC and wire paths against MySQL 8.4 and 8.0: 1,231 byte-exact oracle cases,
+1,039 unit tests, and 5,754 E2E checks per version, with zero failures. Both
+versions retain the same 30 documented-gap warnings and 44 skips as the baseline.
 
 ## Reproduction
 
