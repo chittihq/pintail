@@ -33,6 +33,12 @@ pub enum ExecError {
     },
     /// An expression operation received an impossible bound type.
     InvalidExpressionType,
+    /// A JSON path expression does not parse; `position` is where `MySQL`'s
+    /// parser stood when it stopped.
+    InvalidJsonPath {
+        /// Character offset the error names.
+        position: usize,
+    },
     /// Numeric evaluation exceeded the bound result type.
     NumericOverflow,
     /// Binary numeric coercion encountered invalid UTF-8.
@@ -125,6 +131,10 @@ impl fmt::Display for ExecError {
             Self::InvalidExpressionType => {
                 formatter.write_str("bound expression has an invalid physical type")
             }
+            Self::InvalidJsonPath { position } => write!(
+                formatter,
+                "Invalid JSON path expression. The error is around character position {position}."
+            ),
             Self::NumericOverflow => formatter.write_str("numeric expression overflow"),
             Self::InvalidUtf8Number => {
                 formatter.write_str("binary value is not valid UTF-8 for numeric coercion")

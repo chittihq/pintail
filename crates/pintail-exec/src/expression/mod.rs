@@ -5035,82 +5035,95 @@ fn parse_json_bound(text: &str) -> Result<JsonBound, ExecError> {
 /// goes through this, so a path cannot mean one thing in one function and
 /// something else in another.
 fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
-    let rest = path
-        .strip_prefix('$')
-        .ok_or(ExecError::InvalidExpressionType)?;
+    // A malformed path reports the position `MySQL`'s parser names: where it
+    // stood when the path stopped making sense. A missing `$` counts the
+    // character read in its place.
+    let invalid = |position: usize| ExecError::InvalidJsonPath { position };
+    let Some(rest) = path.strip_prefix('$') else {
+        return Err(invalid(usize::from(!path.is_empty())));
+    };
+    let end = path.len();
     let mut steps = Vec::new();
-    let mut chars = rest.chars().peekable();
-    while let Some(step) = chars.next() {
+    let mut chars = rest.char_indices().map(|(at, c)| (at + 1, c)).peekable();
+    loop {
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let Some((at, step)) = chars.next() else {
+            break;
+        };
         match step {
             '.' => {
-                if chars.peek() == Some(&'*') {
-                    chars.next();
+                if chars.next_if(|&(_, c)| c == '*').is_some() {
                     steps.push(JsonStep::WildMember);
                     continue;
                 }
                 let mut key = String::new();
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    for inner in chars.by_ref() {
+                if chars.next_if(|&(_, c)| c == '"').is_some() {
+                    let mut closed = false;
+                    for (_, inner) in chars.by_ref() {
                         if inner == '"' {
+                            closed = true;
                             break;
                         }
                         key.push(inner);
                     }
+                    if !closed {
+                        return Err(invalid(end));
+                    }
                 } else {
-                    while let Some(&next) = chars.peek() {
-                        if next == '.' || next == '[' {
-                            break;
-                        }
+                    while let Some((_, next)) =
+                        chars.next_if(|&(_, c)| !matches!(c, '.' | '[') && !c.is_whitespace())
+                    {
                         key.push(next);
-                        chars.next();
                     }
                 }
                 if key.is_empty() || key.contains('*') {
-                    return Err(ExecError::InvalidExpressionType);
+                    return Err(invalid(at + 1));
                 }
                 steps.push(JsonStep::Member(key));
             }
             '*' => {
                 // `**` is its own leg: `$**.b`. A single `*` here, or a
                 // path that ENDS with `**`, is invalid in MySQL too.
-                if chars.next() != Some('*') {
-                    return Err(ExecError::InvalidExpressionType);
+                if chars.next_if(|&(_, c)| c == '*').is_none() {
+                    return Err(invalid(at + 1));
                 }
                 if chars.peek().is_none() {
-                    return Err(ExecError::InvalidExpressionType);
+                    return Err(invalid(end));
                 }
                 steps.push(JsonStep::Descent);
             }
             '[' => {
                 let mut inside = String::new();
-                for inner in chars.by_ref() {
+                let mut closed = false;
+                for (_, inner) in chars.by_ref() {
                     if inner == ']' {
+                        closed = true;
                         break;
                     }
                     inside.push(inner);
                 }
+                if !closed {
+                    return Err(invalid(end));
+                }
+                let content = at + 1 + (inside.len() - inside.trim_start().len());
                 let inside = inside.trim();
+                let bound = |text: &str| parse_json_bound(text).map_err(|_| invalid(content));
                 if inside == "*" {
                     steps.push(JsonStep::WildIndex);
                 } else if let Some((from, to)) = inside.split_once(" to ") {
-                    steps.push(JsonStep::Range(
-                        parse_json_bound(from)?,
-                        parse_json_bound(to)?,
-                    ));
+                    steps.push(JsonStep::Range(bound(from)?, bound(to)?));
                 } else {
-                    steps.push(match parse_json_bound(inside)? {
+                    steps.push(match bound(inside)? {
                         JsonBound::Forward(index) => JsonStep::Index(index),
                         JsonBound::Last(back) => JsonStep::LastIndex(back),
                     });
                 }
             }
-            _ => return Err(ExecError::InvalidExpressionType),
+            _ => return Err(invalid(at)),
         }
     }
     Ok(steps)
 }
-
 /// Object members in `MySQL`'s binary-JSON order: shortest key first, then
 /// bytewise. Wildcard and descent traversal must agree with `JSON_KEYS`
 /// and the object renderer about what "document order" means.
@@ -7161,5 +7174,32 @@ mod tests {
         assert_eq!(convert("2026-06-15 10:00:00", "Bad/Zone", "UTC"), None);
         assert_eq!(convert("not a datetime", "+00:00", "+01:00"), None);
         assert_eq!(convert("2026-06-15 10:00:00", "+15:00", "+00:00"), None);
+    }
+
+    #[test]
+    fn a_malformed_json_path_names_mysqls_character_position() {
+        // Positions MySQL 8.4 reports for the same paths.
+        for (path, position) in [
+            ("$[", 2),
+            ("abc", 1),
+            ("$.", 2),
+            ("$..a", 2),
+            ("$[a]", 2),
+            ("$.a[", 4),
+            ("$**", 3),
+            ("", 0),
+            ("$ x", 2),
+            ("$.a.b[1", 7),
+        ] {
+            assert!(
+                matches!(
+                    super::json_path_steps(path),
+                    Err(super::ExecError::InvalidJsonPath { position: at }) if at == position
+                ),
+                "{path}"
+            );
+        }
+        assert!(super::json_path_steps("$.a[0].b").is_ok());
+        assert!(super::json_path_steps("$**.b").is_ok());
     }
 }

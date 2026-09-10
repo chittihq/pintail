@@ -2201,6 +2201,8 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::TableExists => ErrorKind::ErTableExistsError,
             SqlRejection::DuplicateKey => ErrorKind::ErDupEntry,
             SqlRejection::NotNull => ErrorKind::ErBadNullError,
+            SqlRejection::SubqueryRows => ErrorKind::ErSubqueryNo1Row,
+            SqlRejection::InvalidJsonPath => ErrorKind::ErInvalidJsonPath,
         },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
         QueryError::Overloaded => ErrorKind::ErConCountError,
