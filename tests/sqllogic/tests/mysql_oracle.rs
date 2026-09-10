@@ -452,6 +452,7 @@ fn run_oracle() -> Result<(), String> {
     let known = oracle_ledger::load()?;
     let mut listed = BTreeSet::new();
     let mut warnings = Vec::new();
+    let mut known_failed = BTreeSet::new();
     let mut failures = Vec::new();
     let mut outcomes = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
@@ -499,6 +500,7 @@ fn run_oracle() -> Result<(), String> {
                     case.family, case.sql
                 ));
             } else {
+                known_failed.insert(id.clone());
                 warnings.push(format!(
                     "case {index} ({}): {} [{}]\nSQL: {}",
                     case.family, entry.reason, entry.limitation, case.sql
@@ -528,7 +530,7 @@ fn run_oracle() -> Result<(), String> {
     }
     oracle_transport::write_outcomes(&mysql, &cases, &outcomes)?;
     if failures.is_empty() {
-        export_oracle_evidence(&mysql, &cases, evidence.as_ref())?;
+        export_oracle_evidence(&mysql, &cases, &known_failed, evidence.as_ref())?;
         println!(
             "{} of {EXPECTED_CASES} generated and hand-written queries matched {}; {} reviewed known failure(s) warned",
             EXPECTED_CASES - warnings.len(),
@@ -628,6 +630,7 @@ fn oracle_evidence_rejects_dirty_starts_and_changes_during_the_run() {
 fn export_oracle_evidence(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
+    known_failed: &BTreeSet<String>,
     evidence: Option<&(String, OracleRunProvenance)>,
 ) -> Result<(), String> {
     let Some((path, provenance)) = evidence else {
@@ -653,7 +656,8 @@ fn export_oracle_evidence(
             "name": format!("{index:04}:{}", case.family),
             "sql": case.sql,
             "ordered": case.ordered,
-            "status": "PASS",
+            // A reviewed known failure is recorded as one, never as a pass.
+            "status": if known_failed.contains(&oracle_transport::case_id(case)) { "KNOWN_FAILURE" } else { "PASS" },
         })).collect::<Vec<_>>(),
     });
     let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
