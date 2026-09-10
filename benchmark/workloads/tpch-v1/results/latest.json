@@ -2,8 +2,8 @@
   "workload": "tpch-v1",
   "profile": "smoke",
   "scale": 0.0005,
-  "startedAt": "2026-09-09T13:40:17.476Z",
-  "finishedAt": "2026-09-09T13:40:25.664Z",
+  "startedAt": "2026-09-10T07:31:15.362Z",
+  "finishedAt": "2026-09-10T07:31:23.552Z",
   "counts": {
     "region": 5,
     "nation": 25,
@@ -20,7 +20,7 @@
       "class": "scan-aggregate",
       "status": "ok",
       "mysqlMs": 6,
-      "pintailMs": 11,
+      "pintailMs": 15,
       "rows": 6
     },
     {
@@ -28,7 +28,7 @@
       "class": "join-topn",
       "status": "ok",
       "mysqlMs": 1,
-      "pintailMs": 4,
+      "pintailMs": 5,
       "rows": 2
     },
     {
@@ -36,7 +36,7 @@
       "class": "join-wide",
       "status": "ok",
       "mysqlMs": 2,
-      "pintailMs": 4,
+      "pintailMs": 6,
       "rows": 2
     },
     {
@@ -44,7 +44,7 @@
       "class": "join-high-cardinality",
       "status": "ok",
       "mysqlMs": 2,
-      "pintailMs": 3,
+      "pintailMs": 4,
       "rows": 13
     }
   ],
