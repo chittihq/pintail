@@ -18,6 +18,9 @@
 //     --corpus validate-out/oracle-outcomes.json --scales 1,10000
 //   [--runs 3] [--warmups 1] [--timeout-ms 10000] [--out benchmark/corpus]
 //   [--pintail-image tag] [--families substring] [--limit N] [--keep]
+//
+// Only results.csv is tracked. To rebuild it from a run's local JSON:
+//   bun run benchmark/run-corpus.ts --csv-from benchmark/corpus/results.json
 
 import mysql from 'mysql2/promise'
 import { createHash } from 'node:crypto'
@@ -593,7 +596,7 @@ async function main() {
     mkdirSync(outDir, { recursive: true })
     writeFileSync(join(outDir, 'results.json'), `${JSON.stringify(artifact, null, 2)}\n`)
     writeFileSync(join(outDir, 'results.md'), summarize(artifact))
-    writeFileSync(join(outDir, 'results.csv'), toCsv(report as { scale: number; outcomes: Outcome[] }[]))
+    writeFileSync(join(outDir, 'results.csv'), toCsv(artifact))
     log(`wrote results.json, results.md and results.csv under ${outDir}`)
   } finally {
     await cleanup()
@@ -601,8 +604,10 @@ async function main() {
 }
 
 /// One row per case per scale, for plotting: each engine's median, minimum,
-/// status and row count, Pintail's ratio to the other two, and parity.
-function toCsv(scales: { scale: number; outcomes: Outcome[] }[]): string {
+/// status and row count, Pintail's ratio to the other two, and parity. The
+/// CSV is the tracked record, so every row carries the run's time and commit.
+function toCsv(artifact: { measuredAt: string; commit: string; scales: Record<string, unknown>[] }): string {
+  const scales = artifact.scales as { scale: number; outcomes: Outcome[] }[]
   const quote = (value: unknown) => {
     const text = value === undefined || value === null ? '' : String(value)
     return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
@@ -611,7 +616,7 @@ function toCsv(scales: { scale: number; outcomes: Outcome[] }[]): string {
   const ratio = (a: Timing, b: Timing) =>
     a.status === 'ok' && b.status === 'ok' ? (a.medianMs! / Math.max(b.medianMs!, 0.001)).toFixed(4) : ''
   const header = [
-    'scale', 'id', 'family',
+    'measured_at', 'commit', 'scale', 'id', 'family',
     'pintail_ms', 'mysql_ms', 'clickhouse_ms',
     'pintail_min_ms', 'mysql_min_ms', 'clickhouse_min_ms',
     'pintail_status', 'mysql_status', 'clickhouse_status',
@@ -623,7 +628,7 @@ function toCsv(scales: { scale: number; outcomes: Outcome[] }[]): string {
     for (const o of outcomes) {
       lines.push(
         [
-          scale, o.id.slice(0, 16), o.family,
+          artifact.measuredAt, artifact.commit.slice(0, 12), scale, o.id.slice(0, 16), o.family,
           ms(o.pintail), ms(o.mysql), ms(o.clickhouse),
           o.pintail.minMs?.toFixed(3), o.mysql.minMs?.toFixed(3), o.clickhouse.minMs?.toFixed(3),
           o.pintail.status, o.mysql.status, o.clickhouse.status,
@@ -726,4 +731,12 @@ function summarize(artifact: {
   return `${lines.join('\n')}\n`
 }
 
-await main()
+const csvFrom = option('--csv-from')
+if (csvFrom) {
+  const artifact = JSON.parse(readFileSync(resolve(repository, csvFrom), 'utf8'))
+  mkdirSync(outDir, { recursive: true })
+  writeFileSync(join(outDir, 'results.csv'), toCsv(artifact))
+  log(`rebuilt ${join(outDir, 'results.csv')} from ${csvFrom}`)
+} else {
+  await main()
+}

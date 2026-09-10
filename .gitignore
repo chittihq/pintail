@@ -43,3 +43,8 @@ REVIEW.md
 /tests/integration/bi-clients/node_modules/
 /tests/integration/bi-clients/results.json
 *.pyc
+
+# The corpus benchmark tracks only its CSV. The JSON, Markdown summary and
+# partial outcomes are rewritten locally by every run.
+/benchmark/corpus/*
+!/benchmark/corpus/results.csv
