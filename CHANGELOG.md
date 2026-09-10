@@ -4,6 +4,54 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.3-rc1] - 2026-09-10
+
+### Fixed
+
+- A subquery in an OUTER join's ON condition correlated to the join's LEFT
+  side is refused rather than answered. Dependent resolution exists only at
+  Filter level, so in a join condition the subquery ran without the outer
+  context it needs and the join matched too few rows: measured against
+  MySQL 8.4, three matches reported as one and two reported as none, with
+  no error to notice. Refusing is not the fix - the rewrite that would lift
+  the restriction has to widen the join's right input, because a semi-join
+  under it cannot see the left side - but a wrong count is worse than a
+  rejection. Correlating to the join's RIGHT side alone answers correctly
+  and is unaffected, as is an uncorrelated subquery.
+
+- A failed query no longer holds a worker for as long as the client allows.
+  The refused shape above resolved once per correlation value on a single
+  thread, so a report that carried it consumed a core until the client's
+  deadline elapsed; under several concurrent readers that starves the
+  queries that would have answered.
+
+- The resumed replication position is reported when something about it
+  changes - a new binlog file, a different target count, a table newly
+  blocked or paused - rather than on every supervised pass. A pass is
+  non-blocking and runs every few seconds per database, so the line printed
+  hundreds of times an hour and buried the log it was meant to clarify.
+
+- Telemetry reports the release a deployment is running. Every event
+  carried the workspace crate version, which does not track the released
+  version, so an issue named a build nobody deployed. A deployment's
+  PINTAIL_BUILD_VERSION is used when PINTAIL_RELEASE is unset.
+
+- A deployment can set its spill limits. The engine reads a per-query and a
+  process-wide spill quota and the compose file named neither, so setting
+  them had no effect. A query that exceeds its quota fails rather than
+  falling back to a slower plan, and the per-query default of one gibibyte
+  is small for a multi-table join.
+
+### Performance
+
+- A correlated `IN` or `EXISTS` in an INNER join's ON condition decorrelates
+  into a semi-join. An INNER join's ON filters the rows WHERE filters, so
+  the same predicate asked the same question from either place, but only
+  WHERE reached the rewrites: the ON placement resolved once per distinct
+  correlation value instead. Measured on a three-table fixture, that
+  placement went from one inner execution per correlation value to none,
+  answering identically.
+
 ## [0.1.2] - 2026-09-09
 
 The release candidate's contents plus the entries below, gated with the
