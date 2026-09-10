@@ -8,11 +8,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Browser exceptions and Nuxt errors are reported to the configured Sentry
+  project with deployment release tags. Reporting excludes component props,
+  request details and navigation breadcrumbs; source maps can be uploaded
+  during the dashboard build.
 - The SQL console renders 100 result rows per page instead of mounting the
   entire result set. Large results no longer create thousands of offscreen
   components, and changing pages keeps every returned row accessible.
 - Chart tooltip HTML rendering releases detached Vue components and no
   longer caches an unlimited history of payloads.
+
+## [0.1.4] - 2026-09-10
+
+Everything in 0.1.3-rc1, gated with the full stable chain, plus the two
+replication fixes below.
+
+### Fixed
+
+- A source's double-quoted identifiers are read as identifiers. A source
+  running with `ANSI_QUOTES` writes them that way, and the DDL lexer read
+  them as string literals, so an ordinary `CREATE TABLE` did not parse. The
+  source's SQL mode does not travel with the statement, so it is parsed as
+  written and, on failure, parsed again with double quotes delimiting
+  identifiers. Nothing loses a valid reading to that retry: the first parse
+  rejects a double-quoted token outright, so any statement carrying one has
+  already failed by the time the retry runs.
+
+- A DDL nobody can parse no longer stops a database replicating. The
+  replication pass returned on an unreadable statement and the next pass
+  resumed at the same offset and failed identically, so one such statement
+  froze every table in that database at one binlog position indefinitely.
+  The tables the statement NAMES are now quarantined for resync and the
+  stream moves on: a DDL that alters a table cannot avoid naming it, so
+  nothing that changed is missed, while a name appearing in a comment costs
+  a resync rather than a wrong answer.
 
 ## [0.1.3-rc1] - 2026-09-10
 
