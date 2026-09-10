@@ -3659,8 +3659,8 @@ fn bind_binary(
             | BinaryOperator::Gt
             | BinaryOperator::GtEq
     ) {
-        let right = canonical_temporal_operand(&left, right)?;
-        let left = canonical_temporal_operand(&right, left)?;
+        let right = canonical_literal_operand(&left, right)?;
+        let left = canonical_literal_operand(&right, left)?;
         rewrite_json_comparison(left, right)
     } else {
         (left, right)
@@ -5324,13 +5324,16 @@ fn as_json(expr: BoundExpr) -> BoundExpr {
 /// string and answers wrongly. Anything that is not such a literal comes
 /// back unchanged; a literal shaped like a date that names an impossible
 /// one is refused against a column, as `MySQL` refuses it.
-fn canonical_temporal_operand(
+fn canonical_literal_operand(
     target: &BoundExpr,
     operand: BoundExpr,
 ) -> Result<BoundExpr, BindError> {
     let date_only = match target.data_type {
         Some(DataType::Date32) => true,
         Some(DataType::DateTime64 { .. }) => false,
+        target_type if exact_numeric_type(target_type) => {
+            return Ok(numeric_literal(operand));
+        }
         _ => return Ok(operand),
     };
     let text = match &operand.kind {
@@ -5363,6 +5366,48 @@ fn canonical_temporal_operand(
         data_type: Some(DataType::Utf8),
         nullable: false,
     })
+}
+
+/// An exact number compared with a string literal compares as a number in
+/// `MySQL`. The DECIMAL carrier is text, so `balance > '100.5'` compared the
+/// strings and `'99.00'` came out greater; a literal that is a plain number
+/// is read as one first. Anything else is left as written.
+fn numeric_literal(operand: BoundExpr) -> BoundExpr {
+    let BoundExprKind::Literal(Value::Utf8(text)) = &operand.kind else {
+        return operand;
+    };
+    let number = text.trim();
+    let unsigned = number.strip_prefix(['-', '+']).unwrap_or(number);
+    let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, "0"));
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    if !digits(integer) || !digits(fraction) {
+        return operand;
+    }
+    match parse_number(number) {
+        Ok((value, data_type)) => BoundExpr {
+            kind: BoundExprKind::Literal(value),
+            data_type,
+            nullable: false,
+        },
+        Err(_) => operand,
+    }
+}
+
+fn exact_numeric_type(data_type: Option<DataType>) -> bool {
+    matches!(
+        data_type,
+        Some(
+            DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Decimal { .. }
+        )
+    )
 }
 
 /// A date or datetime literal in one of the spellings `MySQL` reads:

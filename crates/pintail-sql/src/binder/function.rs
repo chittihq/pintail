@@ -771,7 +771,7 @@ pub(super) fn bind_in_list(
             if index == 0 {
                 Ok(argument)
             } else {
-                super::canonical_temporal_operand(&subject, argument)
+                super::canonical_literal_operand(&subject, argument)
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -797,11 +797,11 @@ pub(super) fn bind_between(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     let subject = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
-    let low = super::canonical_temporal_operand(
+    let low = super::canonical_literal_operand(
         &subject,
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
     )?;
-    let high = super::canonical_temporal_operand(
+    let high = super::canonical_literal_operand(
         &subject,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
     )?;
