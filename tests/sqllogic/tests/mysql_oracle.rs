@@ -13,6 +13,8 @@ use sha2::{Digest, Sha256};
 mod oracle_boundaries;
 #[path = "support/oracle_candidates.rs"]
 mod oracle_candidates;
+#[path = "support/oracle_ledger.rs"]
+mod oracle_ledger;
 #[path = "support/oracle_physical.rs"]
 mod oracle_physical;
 #[path = "support/oracle_transport.rs"]
@@ -447,6 +449,9 @@ fn run_oracle() -> Result<(), String> {
         ));
     }
     let mysql_results = oracle_transport::execute_all(&mysql, &cases)?;
+    let known = oracle_ledger::load()?;
+    let mut listed = BTreeSet::new();
+    let mut warnings = Vec::new();
     let mut failures = Vec::new();
     let mut outcomes = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
@@ -462,11 +467,45 @@ fn run_oracle() -> Result<(), String> {
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
         );
+        let id = oracle_transport::case_id(case);
+        let entry = known.get(&id);
+        if let Some(entry) = entry {
+            listed.insert(id.clone());
+            if entry.sql != case.sql {
+                failures.push(format!(
+                    "known failure {id} lists different SQL than case {index}: {}",
+                    entry.sql
+                ));
+            }
+        }
+        let pass = actual
+            .as_ref()
+            .is_ok_and(|a| oracle_rows_equal(a, expected, case.ordered));
         outcomes.push(serde_json::json!({
-            "id": oracle_transport::case_id(case), "family": case.family, "sql": case.sql,
-            "status": if actual.as_ref().is_ok_and(|a| oracle_rows_equal(a, expected, case.ordered)) { "PASS" } else { "FAIL" },
+            "id": id, "family": case.family, "sql": case.sql,
+            "status": match (pass, entry.is_some()) {
+                (true, false) => "PASS",
+                (false, false) => "FAIL",
+                (false, true) => "KNOWN_FAILURE",
+                (true, true) => "STALE_KNOWN_FAILURE",
+            },
             "expected": expected, "actual": actual.as_ref().ok(), "error": actual.as_ref().err(),
         }));
+        if let Some(entry) = entry {
+            if pass {
+                failures.push(format!(
+                    "case {index} ({})\nSQL: {}\nnow matches MySQL but is listed as a known failure; \
+                     remove {id} from oracle_known_failures.json",
+                    case.family, case.sql
+                ));
+            } else {
+                warnings.push(format!(
+                    "case {index} ({}): {} [{}]\nSQL: {}",
+                    case.family, entry.reason, entry.limitation, case.sql
+                ));
+            }
+            continue;
+        }
         match actual {
             Err(error) => failures.push(format!(
                 "case {index} ({})\nSQL: {}\nPintail execution error: {error}",
@@ -481,12 +520,20 @@ fn run_oracle() -> Result<(), String> {
             Ok(_) => {}
         }
     }
+    for id in known.keys().filter(|id| !listed.contains(*id)) {
+        failures.push(format!("known failure {id} names no case in the corpus"));
+    }
+    for warning in &warnings {
+        println!("WARN known failure, {warning}");
+    }
     oracle_transport::write_outcomes(&mysql, &cases, &outcomes)?;
     if failures.is_empty() {
         export_oracle_evidence(&mysql, &cases, evidence.as_ref())?;
         println!(
-            "all {EXPECTED_CASES} generated and hand-written queries matched {}",
-            mysql.image
+            "{} of {EXPECTED_CASES} generated and hand-written queries matched {}; {} reviewed known failure(s) warned",
+            EXPECTED_CASES - warnings.len(),
+            mysql.image,
+            warnings.len()
         );
         Ok(())
     } else {

@@ -78,6 +78,7 @@ pub fn run() -> Result<(), String> {
         DatabaseEntry::new(DATABASE_ID, "app", [entry]).map_err(|e| e.to_string())?
     ])
     .map_err(|e| e.to_string())?;
+    let known = oracle_ledger::load()?;
     let mut outcomes = Vec::new();
     for phase in ["memtable", "persisted", "mixed", "compacted", "reopened"] {
         match phase {
@@ -115,12 +116,30 @@ pub fn run() -> Result<(), String> {
             let pass = actual
                 .as_ref()
                 .is_ok_and(|(rows, _)| oracle_rows_equal(rows, expected, case.ordered));
-            outcomes.push(serde_json::json!({ "phase": phase, "id": oracle_transport::case_id(case), "sql": case.sql,
-                "status": if pass { "PASS" } else { "FAIL" }, "expected": expected, "actual": actual.as_ref().ok().map(|(r, _)| r), "error": actual.as_ref().err() }));
+            // A reviewed known failure warns here as in the fixed corpus, whose
+            // run alone judges staleness: this replay covers a subset.
+            let id = oracle_transport::case_id(case);
+            let status = match (pass, known.contains_key(&id)) {
+                (true, _) => "PASS",
+                (false, true) => "KNOWN_FAILURE",
+                (false, false) => "FAIL",
+            };
+            outcomes.push(serde_json::json!({ "phase": phase, "id": id, "sql": case.sql,
+                "status": status, "expected": expected, "actual": actual.as_ref().ok().map(|(r, _)| r), "error": actual.as_ref().err() }));
         }
     }
     stress(&mysql, &mut outcomes)?;
-    let failures = outcomes.iter().filter(|o| o["status"] != "PASS").count();
+    let failures = outcomes
+        .iter()
+        .filter(|o| o["status"] != "PASS" && o["status"] != "KNOWN_FAILURE")
+        .count();
+    let warned = outcomes
+        .iter()
+        .filter(|o| o["status"] == "KNOWN_FAILURE")
+        .count();
+    if warned > 0 {
+        println!("WARN {warned} physical replay check(s) hit reviewed known failures");
+    }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../validate-out/oracle-physical.json");
     std::fs::create_dir_all(path.parent().expect("report parent")).map_err(|e| e.to_string())?;

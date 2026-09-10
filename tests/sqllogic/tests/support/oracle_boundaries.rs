@@ -187,7 +187,10 @@ pub fn rows() -> Vec<StoredRow> {
                 Value::UInt64(10),
                 Value::Utf8("3".into()),
                 Value::Utf8("99.995".into()),
-                Value::float64(-0.0),
+                // `-0.0` in the INSERT is a DECIMAL literal, which MySQL stores in
+                // a DOUBLE column as 0 (measured); the replica holds what the
+                // source stored.
+                Value::float64(0.0),
                 Value::Utf8("a\tb\nc".into()),
                 Value::Utf8("x".into()),
                 Value::Binary(vec![97, 32]),
