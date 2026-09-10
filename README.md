@@ -155,13 +155,13 @@ and joined shapes.
 | Query | MySQL | Pintail (no memo) | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
 | Full table count | 1,454 ms | 5 ms | 5 ms | 1.00× |
-| Filtered count | 586 ms | 49 ms | 15 ms | 0.31× |
-| Group by status | 34,866 ms | 122 ms | 49 ms | 0.40× |
-| Region × status breakdown | 13,144 ms | 144 ms | 186 ms | 1.29× |
-| Monthly revenue (2023) | 5,525 ms | 97 ms | 40 ms | 0.41× |
-| Top 10 spenders | 897,953 ms | 438 ms | 166 ms | 0.38× |
-| Regional analytics | 54,231 ms | 403 ms | 146 ms | 0.36× |
-| Join users + orders | 894,286 ms | 351 ms | 171 ms | 0.49× |
+| Filtered count | 586 ms | 50 ms | 16 ms | 0.32× |
+| Group by status | 34,866 ms | 129 ms | 51 ms | 0.40× |
+| Region × status breakdown | 13,144 ms | 155 ms | 234 ms | 1.51× |
+| Monthly revenue (2023) | 5,525 ms | 107 ms | 37 ms | 0.35× |
+| Top 10 spenders | 897,953 ms | 446 ms | 181 ms | 0.41× |
+| Regional analytics | 54,231 ms | 398 ms | 158 ms | 0.40× |
+| Join users + orders | 894,286 ms | 360 ms | 166 ms | 0.46× |
 
 **Repeated queries — memo hit vs execution.** Pintail keeps an exact-result
 memo for aggregates over a settled snapshot, invalidated by any ingest, so
@@ -172,14 +172,14 @@ and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,454 ms | 4 ms | 5 ms |
+| Full table count | 1,454 ms | 5 ms | 5 ms |
 | Filtered count | 586 ms | 5 ms | 16 ms |
-| Group by status | 34,866 ms | 5 ms | 49 ms |
-| Region × status breakdown | 13,144 ms | 5 ms | 233 ms |
-| Monthly revenue (2023) | 5,525 ms | 5 ms | 35 ms |
-| Top 10 spenders | 897,953 ms | 67 ms | 166 ms |
-| Regional analytics | 54,231 ms | 5 ms | 142 ms |
-| Join users + orders | 894,286 ms | 5 ms | 167 ms |
+| Group by status | 34,866 ms | 5 ms | 48 ms |
+| Region × status breakdown | 13,144 ms | 5 ms | 230 ms |
+| Monthly revenue (2023) | 5,525 ms | 5 ms | 36 ms |
+| Top 10 spenders | 897,953 ms | 68 ms | 176 ms |
+| Regional analytics | 54,231 ms | 5 ms | 154 ms |
+| Join users + orders | 894,286 ms | 5 ms | 168 ms |
 
 **Novel queries — memo-cold constants.** Distinct predicate variants the
 memo has never seen, run once per engine with no warmup, so neither the
@@ -188,10 +188,10 @@ engine-speed question above.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,074 ms | 5 ms | 44 ms | 8.80× |
-| Group by region (novel group column) | 13,455 ms | 306 ms | 75 ms | 0.25× |
-| Monthly revenue, novel year | 8,582 ms | 5 ms | 38 ms | 7.60× |
-| Regional analytics, novel range | 55,518 ms | 411 ms | 170 ms | 0.41× |
+| Filtered count, novel constant | 1,074 ms | 5 ms | 41 ms | 8.20× |
+| Group by region (novel group column) | 13,455 ms | 303 ms | 75 ms | 0.25× |
+| Monthly revenue, novel year | 8,582 ms | 6 ms | 39 ms | 6.50× |
+| Regional analytics, novel range | 55,518 ms | 414 ms | 171 ms | 0.41× |
 
 **Concurrency — mixed Q2–Q8.** Simultaneous clients, each call taking the
 next of Q2 through Q8 in turn, against both engines executing (memo off,
@@ -200,10 +200,10 @@ together show whether an engine holds its latency while it adds throughput.
 
 | Clients | Pintail /s | Pintail p95 | CH /s | CH p95 |
 |---:|---:|---:|---:|---:|
-| 1 | 4.4 | 443 ms | 8.8 | 193 ms |
-| 4 | 5.5 | 1418 ms | 3.5 | 2013 ms |
-| 8 | 10.4 | 1808 ms | 3.2 | 4810 ms |
-| 16 | 18.3 | 2035 ms | 3 | 11872 ms |
+| 1 | 4.1 | 456 ms | 8.3 | 235 ms |
+| 4 | 4.9 | 1520 ms | 3.5 | 2091 ms |
+| 8 | 9.4 | 1851 ms | 3.2 | 4215 ms |
+| 16 | 17.3 | 2032 ms | 2.9 | 10662 ms |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -223,7 +223,7 @@ queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-09-09T13:39:21.078Z) by
+<sub>Generated from `benchmark/results.json` (2026-09-10T07:30:19.953Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->
