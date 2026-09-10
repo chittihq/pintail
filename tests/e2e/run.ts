@@ -758,6 +758,155 @@ async function phaseSeed() {
     `INSERT INTO counters VALUES (1, 200, 65535, 3000000000, 18446744073709551615, -9223372036854775808), ` +
       `(2, 0, 0, 0, 0, 9223372036854775807)`,
   )
+  await seedStorefrontSales()
+}
+
+/// A storefront marketplace, shaped for one report: flash sales joined
+/// through their bundles and listings, with an OUTER join to product
+/// reviews scoped to the shoppers who follow the sale's own storefront - a
+/// correlated IN in the LEFT JOIN's ON that reaches the join's left side.
+/// No phase churns these tables, so their answers converge; phaseCrud
+/// changes a few rows once, which puts memberships and reviews in the
+/// replica's memtable and takes some away again.
+///
+/// The rows are built to make every wrong answer visible: followers repeat
+/// (the same shopper follows a storefront twice, so a rewrite that forgets
+/// DISTINCT double-counts), some reviews have no shopper (NULL membership),
+/// locales differ by case and a trailing space (the source collation
+/// decides which match), one storefront names a marketplace that does not
+/// exist, and sale times fall on both sides of month boundaries after a
+/// half-hour time zone shift.
+async function seedStorefrontSales() {
+  await sql(`CREATE TABLE marketplaces (
+    marketplace_id BIGINT PRIMARY KEY,
+    name VARCHAR(32) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE storefronts (
+    storefront_id BIGINT PRIMARY KEY,
+    marketplace_id BIGINT NOT NULL,
+    name VARCHAR(32) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE sellers (
+    seller_id BIGINT PRIMARY KEY,
+    name VARCHAR(32) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE flash_sales (
+    sale_id BIGINT PRIMARY KEY,
+    seller_id BIGINT NOT NULL,
+    storefront_id BIGINT NOT NULL,
+    collection_id BIGINT NOT NULL,
+    bundle_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    channel VARCHAR(16) NOT NULL,
+    starts_at DATETIME NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE bundle_products (
+    bundle_product_id BIGINT PRIMARY KEY,
+    bundle_id BIGINT NOT NULL,
+    product_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE listing_groups (
+    listing_group_id BIGINT PRIMARY KEY,
+    collection_id BIGINT NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE listing_entries (
+    listing_entry_id BIGINT PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    listing_group_id BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    entry_type VARCHAR(16) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE storefront_followers (
+    follower_id BIGINT PRIMARY KEY,
+    storefront_id BIGINT NOT NULL,
+    shopper_id BIGINT NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    locale VARCHAR(8) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+  await sql(`CREATE TABLE product_reviews (
+    review_id BIGINT PRIMARY KEY,
+    product_id BIGINT NOT NULL,
+    shopper_id BIGINT NULL,
+    status VARCHAR(16) NOT NULL,
+    rating INT NOT NULL,
+    locale VARCHAR(8) NOT NULL
+  ) DEFAULT CHARACTER SET utf8mb4`)
+
+  const insert = async (table: string, rows: string[]) => {
+    for (let start = 0; start < rows.length; start += 200) {
+      await sql(`INSERT INTO ${table} VALUES ${rows.slice(start, start + 200).join(', ')}`)
+    }
+  }
+  const range = (count: number) => Array.from({ length: count }, (_, index) => index + 1)
+  await insert('marketplaces', range(4).map((id) => `(${id}, 'market-${id}')`))
+  // Storefront 13 names marketplace 9, which does not exist: its sales
+  // fall out at the inner join, before the outer join is reached.
+  await insert(
+    'storefronts',
+    range(13).map((id) => `(${id}, ${id === 13 ? 9 : 1 + (id % 4)}, 'front-${id}')`),
+  )
+  const sellers = range(10).map((k) => 8800000000000 + k * 37)
+  await insert('sellers', sellers.map((id, k) => `(${id}, 'seller-${k + 1}')`))
+  const channels = ['web', 'app', 'popup', 'partner', 'other', 'internal']
+  await insert(
+    'flash_sales',
+    range(150).map((id) => {
+      // Every 53 hours from late December: the hour of day walks round
+      // the clock, so some sales cross into the next month once shifted.
+      const at = new Date(Date.UTC(2025, 11, 20) + id * 53 * 3600 * 1000)
+        .toISOString()
+        .slice(0, 19)
+        .replace('T', ' ')
+      const status = id % 9 === 0 ? 'draft' : id % 11 === 0 ? 'cancelled' : 'completed'
+      return (
+        `(${id}, ${sellers[(id * 3) % 10]}, ${1 + (id % 13)}, ${1 + (id % 5)}, ` +
+        `${1 + (id % 15)}, '${status}', '${channels[id % 6]}', '${at}')`
+      )
+    }),
+  )
+  await insert(
+    'bundle_products',
+    range(15).flatMap((bundle) =>
+      range(4).map(
+        (k) =>
+          `(${bundle * 10 + k}, ${bundle}, ${1 + ((bundle * 7 + k * 3) % 40)}, ` +
+          `'${(bundle + k) % 6 === 0 ? 'retired' : 'live'}')`,
+      ),
+    ),
+  )
+  await insert('listing_groups', range(10).map((id) => `(${id}, ${1 + (id % 5)})`))
+  await insert(
+    'listing_entries',
+    range(80).map(
+      (id) =>
+        `(${id}, ${1 + (id % 40)}, ${1 + ((id * 3) % 10)}, ` +
+        `'${id % 7 === 0 ? 'hidden' : 'live'}', '${id % 5 === 0 ? 'banner' : 'product'}')`,
+    ),
+  )
+  // (storefront, shopper) repeats every 180 rows, so every membership is
+  // listed twice - sometimes once active and once not.
+  const followerLocales = ['en', 'EN', 'fr', 'de ', 'De']
+  await insert(
+    'storefront_followers',
+    range(360).map(
+      (id) =>
+        `(${id}, ${1 + (id % 12)}, ${1 + ((id * 7) % 90)}, ` +
+        `'${id % 8 === 0 ? 'staff' : 'shopper'}', '${id % 10 === 3 ? 'left' : 'active'}', ` +
+        `'${followerLocales[id % 5]}')`,
+    ),
+  )
+  const reviewStatuses = ['published', 'flagged', 'withdrawn', 'pending', 'published']
+  const reviewLocales = ['en', 'EN', 'fr', 'de', 'pt']
+  await insert(
+    'product_reviews',
+    range(500).map(
+      (id) =>
+        `(${id}, ${1 + ((id * 13) % 40)}, ${id % 17 === 0 ? 'NULL' : 1 + ((id * 11) % 90)}, ` +
+        `'${reviewStatuses[id % 5]}', ${1 + (id % 5)}, '${reviewLocales[Math.floor(id / 5) % 5]}')`,
+    ),
+  )
 }
 
 async function phaseCrud() {
@@ -778,6 +927,17 @@ async function phaseCrud() {
   await sql(`DELETE FROM customers WHERE id = 4`)
   await sql(`UPDATE orders SET total = 0 WHERE customer_id = 4`)
   await mysqlConnection!.rollback()
+  // The storefront report's memberships and reviews change under
+  // replication: a new follower gains matches, two memberships go away
+  // (one of each repeated pair, so the DISTINCT still finds the other),
+  // reviews are flagged out and added, and a draft sale completes.
+  await sql(`INSERT INTO storefront_followers VALUES (361, 5, 44, 'shopper', 'active', 'en')`)
+  await sql(`DELETE FROM storefront_followers WHERE follower_id IN (17, 18)`)
+  await sql(`UPDATE product_reviews SET status = 'flagged' WHERE review_id IN (3, 33)`)
+  await sql(
+    `INSERT INTO product_reviews VALUES (501, 5, 44, 'published', 4, 'en'), (502, 9, NULL, 'published', 2, 'fr')`,
+  )
+  await sql(`UPDATE flash_sales SET status = 'completed' WHERE sale_id = 9`)
   await sql(`INSERT INTO audit_log VALUES ('crud complete')`)
 }
 
