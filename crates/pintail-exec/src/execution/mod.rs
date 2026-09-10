@@ -3347,6 +3347,41 @@ enum PullOperator {
 }
 
 impl PullOperator {
+    /// Find an unstarted scan below an inner-join input, translating the
+    /// output position at each join. Outer joins and layout-changing nodes
+    /// are boundaries: pushing through them could remove required rows.
+    fn nested_probe_scan(
+        &mut self,
+        position: usize,
+        crossed_join: bool,
+    ) -> Option<(&mut Self, usize)> {
+        match self {
+            Self::Profiled { input, .. } | Self::Filter { input, .. } => {
+                input.nested_probe_scan(position, crossed_join)
+            }
+            Self::HashJoin {
+                left,
+                right,
+                kind: BoundJoinKind::Inner,
+                column_types,
+                right_width,
+                state: None,
+                ..
+            } => {
+                let left_width = column_types.len().checked_sub(*right_width)?;
+                if position < left_width {
+                    left.nested_probe_scan(position, true)
+                } else if position < column_types.len() {
+                    right.nested_probe_scan(position - left_width, true)
+                } else {
+                    None
+                }
+            }
+            Self::Scan { .. } if crossed_join => Some((self, position)),
+            _ => None,
+        }
+    }
+
     /// Forwards a probe-side key restriction to the underlying scan, passing
     /// through filters only — any other operator changes row identity or
     /// layout and stops the pushdown.
@@ -3519,6 +3554,15 @@ impl PullOperator {
                         left.restrict_probe_range(position, minimum, maximum);
                     }
                     built.adopt_prefetch(prefetch);
+                    if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
+                        && matches!(key_mode, JoinKeyMode::Integer)
+                        && !extra_keys.is_empty()
+                        && let Some(position) = left_key.column_index()
+                        && let Some((scan, position)) = left.nested_probe_scan(position, false)
+                        && let Some(keys) = built.primary_membership(memory)
+                    {
+                        scan.restrict_build_keys(CompiledExpr::Column(position), *key_mode, keys);
+                    }
                     *state = Some(Box::new(built));
                 }
                 next_hash_join_batch(
@@ -3553,6 +3597,10 @@ impl PullOperator {
                 integers,
             } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
+                    // Release the retained membership storage before the
+                    // owning join returns its reservation at probe exhaustion.
+                    *keys = std::sync::Arc::new(std::collections::HashSet::new());
+                    *integers = None;
                     return Ok(None);
                 };
                 let batch_bytes = batch.estimated_bytes();
@@ -3683,6 +3731,37 @@ impl PullOperator {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                let positions: Option<Vec<_>> = expressions
+                    .iter()
+                    .map(|(expression, data_type)| {
+                        let position = expression.column_index()?;
+                        let column = batch.column(position)?;
+                        data_type
+                            .is_none_or(|data_type| data_type == column.data_type())
+                            .then_some(position)
+                    })
+                    .collect();
+                if let Some(positions) = positions {
+                    let clones = positions
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, position)| positions[index + 1..].contains(position))
+                        .map(|(_, position)| batch.columns()[*position].estimated_bytes())
+                        .fold(0_usize, usize::saturating_add);
+                    memory.ensure_transient(
+                        batch
+                            .estimated_bytes()
+                            .saturating_add(clones)
+                            .saturating_add(
+                                positions
+                                    .len()
+                                    .saturating_mul(size_of::<ColumnVector>() * 2),
+                            ),
+                    )?;
+                    return batch.project_columns(&positions).map(Some).ok_or(
+                        ExecError::InvalidBatch("projection column is outside its input"),
+                    );
+                }
                 let batch_bytes = batch.estimated_bytes();
                 let expression_memory = expressions
                     .iter()
@@ -4628,7 +4707,7 @@ fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
         .columns()
         .iter()
         .map(|column| {
-            column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+            column.value_owned(row).ok_or(ExecError::InvalidBatch(
                 "join row is outside an input column",
             ))
         })
@@ -4868,10 +4947,10 @@ fn estimated_batch_row_bytes(batch: &RecordBatch, row: usize) -> Result<usize, E
         .columns()
         .iter()
         .try_fold(0_usize, |heap_bytes, column| {
-            let value = column
-                .value(row)
+            let bytes = column
+                .scalar_heap_bytes(row)
                 .ok_or(ExecError::InvalidBatch("row is outside an input column"))?;
-            Ok::<_, ExecError>(heap_bytes.saturating_add(value.heap_bytes()))
+            Ok::<_, ExecError>(heap_bytes.saturating_add(bytes))
         })?;
     Ok(size_of::<Vec<Value>>()
         .saturating_add(batch.columns().len().saturating_mul(size_of::<Value>()))

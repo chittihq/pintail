@@ -1,0 +1,54 @@
+{
+  "workload": "tpch-v1",
+  "profile": "sf1",
+  "scale": 1,
+  "startedAt": "2026-09-09T19:19:59.530Z",
+  "finishedAt": "2026-09-09T19:29:06.624Z",
+  "counts": {
+    "region": 5,
+    "nation": 25,
+    "supplier": 10000,
+    "part": 200000,
+    "partsupp": 800000,
+    "customer": 150000,
+    "orders": 1500000,
+    "lineitem": 6000749
+  },
+  "queries": [
+    {
+      "id": "q01-pricing-summary",
+      "class": "scan-aggregate",
+      "status": "ok",
+      "mysqlMs": 8329,
+      "pintailMs": 9076,
+      "rows": 6
+    },
+    {
+      "id": "q03-shipping-priority",
+      "class": "join-topn",
+      "status": "ok",
+      "mysqlMs": 940,
+      "pintailMs": 5474,
+      "rows": 10
+    },
+    {
+      "id": "q05-local-supplier-volume",
+      "class": "join-wide",
+      "status": "error",
+      "mysqlMs": 778,
+      "detail": "Error: /api/query -> 500: {\"error\":\"query engine failed: scan source failed: join spill write: query spill disk quota exceeded\"}"
+    },
+    {
+      "id": "q10-returned-item-reporting",
+      "class": "join-high-cardinality",
+      "status": "ok",
+      "mysqlMs": 399,
+      "pintailMs": 3990,
+      "rows": 20
+    }
+  ],
+  "gate": {
+    "exactResults": true,
+    "passed": false
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "revision": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+  "binarySha256": "b28de37230ae96c3bcda8d45e878cea563a79799e047fe16c50230ebe2bcf9bc",
+  "startedAt": "2026-09-10T06:36:12.627Z",
+  "finishedAt": "2026-09-10T06:38:52.776Z",
+  "runs": 3,
+  "warmups": 1,
+  "settledMemo": false,
+  "queryMemoryBytes": "4294967296",
+  "querySpillBytes": "17179869184",
+  "globalSpillBytes": "34359738368",
+  "mysqlBufferPoolBytes": "4294967296",
+  "counts": {
+    "region": "5",
+    "nation": "25",
+    "supplier": "10000",
+    "part": "200000",
+    "partsupp": "800000",
+    "customer": "150000",
+    "orders": "1500000",
+    "lineitem": "6000749"
+  },
+  "outcomes": [
+    {
+      "id": "q05-local-supplier-volume",
+      "sqlSha256": "e47443c2fad86ce86e785fafc0a4685cefa82f57991c0a6d9ca38c331442f139",
+      "exact": true,
+      "answer": [
+        [
+          "VIETNAM",
+          "75180864.2457"
+        ],
+        [
+          "INDIA",
+          "75070739.4641"
+        ],
+        [
+          "CHINA",
+          "66728146.5186"
+        ],
+        [
+          "JAPAN",
+          "66251633.3028"
+        ],
+        [
+          "INDONESIA",
+          "63017263.9848"
+        ]
+      ],
+      "answerSha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T06:36:44.973Z",
+          "finishedAt": "2026-09-10T06:37:16.908Z",
+          "mysqlMs": 491.3050390000026,
+          "pintailMs": 31443.601449,
+          "stats": {
+            "duration_ms": 31287,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:37:16.908Z",
+          "finishedAt": "2026-09-10T06:37:48.916Z",
+          "mysqlMs": 490.1380619999982,
+          "pintailMs": 31517.955114999997,
+          "stats": {
+            "duration_ms": 31363,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:37:48.916Z",
+          "finishedAt": "2026-09-10T06:38:20.738Z",
+          "mysqlMs": 557.5911500000075,
+          "pintailMs": 31264.412847,
+          "stats": {
+            "duration_ms": 31111,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 31443.601449,
+      "p95Ms": 31517.955114999997,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: Some(\"utf8mb4_0900_ai_ci\") }] top_k=None trim=0\n  Project outputs=[n_name, revenue]\n    HashAggregate groups=1 aggregates=1\n      HashJoin kind=inner\n        HashJoin kind=inner\n          Scan table=tpch.lineitem rows=Some(6000749) columns=[1, 3, 6, 7] predicates=0 limit=None actual_segments=61/61 actual_blocks=1684/1684 decoded_blocks=1684\n          Scan table=tpch.orders rows=Some(1500000) columns=[1, 2, 5] predicates=2 limit=None actual_segments=15/15 actual_blocks=420/420 decoded_blocks=420\n        HashJoin kind=inner\n          HashJoin kind=inner\n            Scan table=tpch.customer rows=Some(150000) columns=[1, 4] predicates=0 limit=None actual_segments=2/2 actual_blocks=22/22 decoded_blocks=22\n            Scan table=tpch.supplier rows=Some(10000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=2/2 decoded_blocks=2\n          HashJoin kind=inner\n            Scan table=tpch.nation rows=Some(25) columns=[1, 2, 3] predicates=0 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\n            Scan table=tpch.region rows=Some(5) columns=[1, 2] predicates=1 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\nSpill files=32 bytes=1466506682 active_bytes=0 quota_failures=0 peak_handles=2\nProfile total=31567.5ms spill_files=32 spill_bytes=1466506682 peak_spill_handles=2\nSort keys=2 total=31567.5ms self=0.0ms first=31567.5ms build=0.3ms batches=1 rows=5 peak_reserved=357.6MiB\n  Project columns=2 total=31567.5ms self=0.0ms first=31567.5ms build=0.3ms batches=1 rows=5 peak_reserved=357.6MiB\n    HashAggregate keys=1 aggregates=1 total=31567.5ms self=2.2ms first=31567.5ms build=0.3ms batches=1 rows=5 peak_reserved=357.6MiB\n      HashJoin kind=Inner keys=2 residual=false total=31565.3ms self=12526.7ms first=28894.8ms build=0.3ms batches=2 rows=6869 peak_reserved=629.4MiB (fused into the aggregate above; its inputs ran directly)\n        HashJoin kind=Inner keys=1 residual=false total=2717.4ms self=1931.9ms first=1014.4ms build=0.3ms batches=210 rows=857315 peak_reserved=542.5MiB\n          Scan tpch.lineitem predicates=0 total=8.6ms self=8.6ms first=8.4ms build=0.2ms batches=61 rows=6000749 peak_reserved=538.9MiB\n          Scan tpch.orders predicates=2 total=776.9ms self=776.9ms first=56.0ms build=0.0ms batches=15 rows=214279 peak_reserved=358.1MiB\n        HashJoin kind=Inner keys=1 residual=false total=16321.2ms self=9797.9ms first=18.0ms build=0.0ms batches=2946 rows=12066680 peak_reserved=2050.8MiB\n          HashJoin kind=Inner keys=1 residual=false total=6523.1ms self=6522.2ms first=9.2ms build=0.0ms batches=14648 rows=59995715 peak_reserved=2050.3MiB\n            Scan tpch.customer predicates=0 total=0.7ms self=0.7ms first=0.7ms build=0.0ms batches=2 rows=150000 peak_reserved=2.0MiB\n            Scan tpch.supplier predicates=0 total=0.2ms self=0.2ms first=0.2ms build=0.0ms batches=1 rows=10000 peak_reserved=1.3MiB\n          HashJoin kind=Inner keys=1 residual=false total=0.1ms self=0.0ms first=0.1ms build=0.0ms batches=1 rows=5 peak_reserved=0.1MiB\n            Scan tpch.nation predicates=0 total=0.0ms self=0.0ms first=0.0ms build=0.0ms batches=1 rows=25 peak_reserved=0.1MiB\n            Scan tpch.region predicates=1 total=0.1ms self=0.1ms first=0.1ms build=0.0ms batches=1 rows=1 peak_reserved=0.0MiB\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 31718,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 81,
+          "segments_pruned": 0,
+          "blocks_read": 2134,
+          "blocks_pruned": 0,
+          "blocks_decoded": 2134
+        },
+        "truncated": false
+      }
+    }
+  ]
+}

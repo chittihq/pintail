@@ -2146,7 +2146,7 @@ impl ProjectedScanStream {
         let predicate_blocks_pruned = fetch.blocks_pruned;
         let predicate_blocks_decoded = fetch.blocks_decoded;
         let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
-        if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+        if predicate_ids == self.column_ids {
             return retain_predicate_fetch(
                 fetch,
                 ranges.as_deref(),
@@ -2255,7 +2255,7 @@ impl ProjectedScanStream {
             let predicate_blocks_pruned = fetch.blocks_pruned;
             let predicate_blocks_decoded = fetch.blocks_decoded;
             let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
-            if predicate_ids == self.column_ids && fetch.columns.iter().all(packed_integer_column) {
+            if predicate_ids == self.column_ids {
                 return retain_predicate_fetch(
                     fetch,
                     ranges.as_deref(),
@@ -2885,16 +2885,10 @@ fn rows_to_columns(
     Ok(columns)
 }
 
-fn packed_integer_column(column: &DecodedColumn) -> bool {
-    matches!(
-        column,
-        DecodedColumn::Int64 { .. } | DecodedColumn::UInt64 { .. }
-    )
-}
-
-/// An all-predicate integer projection already decoded every output column.
-/// Compact those buffers before the prefetch round retains them; rereading
-/// identical blocks would add both decode work and a second working set.
+/// The predicate projection already decoded every output column. Compact
+/// those buffers before the prefetch round retains them, preserving native
+/// values, text arenas and dictionary codes instead of decoding them again.
+#[allow(clippy::too_many_lines)]
 fn retain_predicate_fetch(
     mut fetch: segment::ProjectedColumnFetch,
     ranges: Option<&[std::ops::Range<usize>]>,
@@ -2927,15 +2921,67 @@ fn retain_predicate_fetch(
         }
         for column in &mut fetch.columns {
             let validity = match column {
-                DecodedColumn::Int64 { values, validity } => {
+                DecodedColumn::Int64 { values, validity }
+                | DecodedColumn::NativeUnits {
+                    values, validity, ..
+                } => {
                     compact(values, ranges);
                     validity
                 }
-                DecodedColumn::UInt64 { values, validity } => {
+                DecodedColumn::UInt64 { values, validity }
+                | DecodedColumn::Float64 {
+                    bits: values,
+                    validity,
+                } => {
                     compact(values, ranges);
                     validity
                 }
-                _ => unreachable!("checked integer projection"),
+                DecodedColumn::DictionaryUtf8 {
+                    codes, validity, ..
+                } => {
+                    compact(codes, ranges);
+                    validity
+                }
+                DecodedColumn::Utf8 {
+                    heap,
+                    offsets,
+                    validity,
+                } => {
+                    let mut written_rows = 0;
+                    let mut written_bytes = 0;
+                    for range in ranges {
+                        for row in range.clone() {
+                            let start = offsets[row];
+                            let end = offsets[row + 1];
+                            heap.copy_within(start..end, written_bytes);
+                            offsets[written_rows] = written_bytes;
+                            written_bytes += end - start;
+                            written_rows += 1;
+                        }
+                    }
+                    offsets[written_rows] = written_bytes;
+                    offsets.truncate(written_rows + 1);
+                    heap.truncate(written_bytes);
+                    offsets.shrink_to_fit();
+                    heap.shrink_to_fit();
+                    validity
+                }
+                DecodedColumn::Values(values) => {
+                    let mut row = 0;
+                    let mut range_index = 0;
+                    values.retain(|_| {
+                        while range_index < ranges.len() && row >= ranges[range_index].end {
+                            range_index += 1;
+                        }
+                        let keep = ranges
+                            .get(range_index)
+                            .is_some_and(|range| range.contains(&row));
+                        row += 1;
+                        keep
+                    });
+                    values.shrink_to_fit();
+                    continue;
+                }
             };
             match validity {
                 ColumnValidity::AllValid(count) => *count = selected,

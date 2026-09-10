@@ -1,0 +1,323 @@
+{
+  "revision": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
+  "binarySha256": "c6d07a43a8771985bdfd079112a700001f8cb485b68952be5b827eab08312776",
+  "startedAt": "2026-09-10T06:38:54.120Z",
+  "finishedAt": "2026-09-10T06:39:13.922Z",
+  "runs": 15,
+  "warmups": 2,
+  "settledMemo": false,
+  "queryMemoryBytes": "4294967296",
+  "querySpillBytes": "1073741824",
+  "globalSpillBytes": "8589934592",
+  "mysqlBufferPoolBytes": "4294967296",
+  "counts": {
+    "region": "5",
+    "nation": "25",
+    "supplier": "10000",
+    "part": "200000",
+    "partsupp": "800000",
+    "customer": "150000",
+    "orders": "1500000",
+    "lineitem": "6000749"
+  },
+  "outcomes": [
+    {
+      "id": "q05-local-supplier-volume",
+      "sqlSha256": "e47443c2fad86ce86e785fafc0a4685cefa82f57991c0a6d9ca38c331442f139",
+      "exact": true,
+      "answer": [
+        [
+          "VIETNAM",
+          "75180864.2457"
+        ],
+        [
+          "INDIA",
+          "75070739.4641"
+        ],
+        [
+          "CHINA",
+          "66728146.5186"
+        ],
+        [
+          "JAPAN",
+          "66251633.3028"
+        ],
+        [
+          "INDONESIA",
+          "63017263.9848"
+        ]
+      ],
+      "answerSha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T06:38:56.466Z",
+          "finishedAt": "2026-09-10T06:38:57.475Z",
+          "mysqlMs": 492.4674490000002,
+          "pintailMs": 517.0579439999997,
+          "stats": {
+            "duration_ms": 476,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:38:57.475Z",
+          "finishedAt": "2026-09-10T06:38:58.474Z",
+          "mysqlMs": 491.2828529999997,
+          "pintailMs": 507.7522619999995,
+          "stats": {
+            "duration_ms": 465,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:38:58.474Z",
+          "finishedAt": "2026-09-10T06:38:59.584Z",
+          "mysqlMs": 493.64581,
+          "pintailMs": 616.2312929999998,
+          "stats": {
+            "duration_ms": 576,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:38:59.584Z",
+          "finishedAt": "2026-09-10T06:39:00.627Z",
+          "mysqlMs": 489.3122740000008,
+          "pintailMs": 553.6531520000008,
+          "stats": {
+            "duration_ms": 510,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:00.627Z",
+          "finishedAt": "2026-09-10T06:39:01.743Z",
+          "mysqlMs": 541.9199939999999,
+          "pintailMs": 573.7724979999994,
+          "stats": {
+            "duration_ms": 532,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:01.743Z",
+          "finishedAt": "2026-09-10T06:39:02.875Z",
+          "mysqlMs": 495.8052600000001,
+          "pintailMs": 636.161137000001,
+          "stats": {
+            "duration_ms": 592,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:02.875Z",
+          "finishedAt": "2026-09-10T06:39:04.078Z",
+          "mysqlMs": 598.7932029999993,
+          "pintailMs": 603.7548759999991,
+          "stats": {
+            "duration_ms": 559,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:04.078Z",
+          "finishedAt": "2026-09-10T06:39:05.469Z",
+          "mysqlMs": 671.8617610000001,
+          "pintailMs": 719.4911379999994,
+          "stats": {
+            "duration_ms": 675,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:05.469Z",
+          "finishedAt": "2026-09-10T06:39:06.482Z",
+          "mysqlMs": 488.76397799999904,
+          "pintailMs": 523.8134529999988,
+          "stats": {
+            "duration_ms": 482,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:06.482Z",
+          "finishedAt": "2026-09-10T06:39:07.553Z",
+          "mysqlMs": 508.5339320000003,
+          "pintailMs": 563.1984890000003,
+          "stats": {
+            "duration_ms": 520,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:07.553Z",
+          "finishedAt": "2026-09-10T06:39:08.699Z",
+          "mysqlMs": 522.7801790000012,
+          "pintailMs": 622.9290860000001,
+          "stats": {
+            "duration_ms": 580,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:08.699Z",
+          "finishedAt": "2026-09-10T06:39:09.729Z",
+          "mysqlMs": 482.6651030000012,
+          "pintailMs": 546.7433149999997,
+          "stats": {
+            "duration_ms": 505,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:09.729Z",
+          "finishedAt": "2026-09-10T06:39:10.736Z",
+          "mysqlMs": 488.7791320000015,
+          "pintailMs": 518.3735739999993,
+          "stats": {
+            "duration_ms": 475,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:10.736Z",
+          "finishedAt": "2026-09-10T06:39:11.875Z",
+          "mysqlMs": 501.46340899999996,
+          "pintailMs": 637.4530489999997,
+          "stats": {
+            "duration_ms": 594,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:39:11.875Z",
+          "finishedAt": "2026-09-10T06:39:12.927Z",
+          "mysqlMs": 489.8619749999998,
+          "pintailMs": 561.9621150000021,
+          "stats": {
+            "duration_ms": 520,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 563.1984890000003,
+      "p95Ms": 719.4911379999994,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: Some(\"utf8mb4_0900_ai_ci\") }] top_k=None trim=0\n  Project outputs=[n_name, revenue]\n    HashAggregate groups=1 aggregates=1\n      HashJoin kind=inner\n        HashJoin kind=inner\n          Scan table=tpch.lineitem rows=Some(6000749) columns=[1, 3, 6, 7] predicates=0 limit=None actual_segments=61/61 actual_blocks=1684/1684 decoded_blocks=1684\n          HashJoin kind=inner\n            Scan table=tpch.supplier rows=Some(10000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=2/2 decoded_blocks=2\n            HashJoin kind=inner\n              Scan table=tpch.nation rows=Some(25) columns=[1, 2, 3] predicates=0 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\n              Project outputs=[r_regionkey]\n                Scan table=tpch.region rows=Some(5) columns=[1, 2] predicates=1 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\n        HashJoin kind=inner\n          Project outputs=[o_orderkey, o_custkey]\n            Scan table=tpch.orders rows=Some(1500000) columns=[1, 2, 5] predicates=2 limit=None actual_segments=15/15 actual_blocks=420/420 decoded_blocks=420\n          Scan table=tpch.customer rows=Some(150000) columns=[1, 4] predicates=0 limit=None actual_segments=2/2 actual_blocks=22/22 decoded_blocks=22\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0 peak_handles=0\nProfile total=639.4ms spill_files=0 spill_bytes=0 peak_spill_handles=0\nSort keys=2 total=639.4ms self=0.0ms first=639.4ms build=40.6ms batches=1 rows=5 peak_reserved=626.5MiB\n  Project columns=2 total=639.4ms self=0.0ms first=639.4ms build=40.6ms batches=1 rows=5 peak_reserved=626.5MiB\n    HashAggregate keys=1 aggregates=1 total=639.4ms self=2.0ms first=639.4ms build=40.6ms batches=1 rows=5 peak_reserved=626.5MiB\n      HashJoin kind=Inner keys=2 residual=false total=637.4ms self=221.6ms first=571.5ms build=40.6ms batches=2 rows=6869 peak_reserved=755.7MiB (fused into the aggregate above; its inputs ran directly)\n        HashJoin kind=Inner keys=1 residual=false total=188.3ms self=117.1ms first=56.9ms build=40.6ms batches=42 rows=170678 peak_reserved=861.7MiB\n          Scan tpch.lineitem predicates=0 total=69.9ms self=69.9ms first=49.8ms build=40.6ms batches=61 rows=857315 peak_reserved=861.7MiB\n          HashJoin kind=Inner keys=1 residual=false total=1.2ms self=1.0ms first=1.2ms build=0.0ms batches=1 rows=1991 peak_reserved=680.8MiB\n            Scan tpch.supplier predicates=0 total=0.0ms self=0.0ms first=0.0ms build=0.0ms batches=1 rows=10000 peak_reserved=680.8MiB\n            HashJoin kind=Inner keys=1 residual=false total=0.1ms self=0.0ms first=0.1ms build=0.0ms batches=1 rows=5 peak_reserved=676.9MiB\n              Scan tpch.nation predicates=0 total=0.0ms self=0.0ms first=0.0ms build=0.0ms batches=1 rows=25 peak_reserved=676.9MiB\n              Project columns=1 total=0.1ms self=0.0ms first=0.1ms build=0.0ms batches=1 rows=1 peak_reserved=676.9MiB\n                Scan tpch.region predicates=1 total=0.1ms self=0.1ms first=0.1ms build=0.0ms batches=1 rows=1 peak_reserved=676.9MiB\n        HashJoin kind=Inner keys=1 residual=false total=227.6ms self=219.5ms first=109.8ms build=0.0ms batches=53 rows=214279 peak_reserved=622.6MiB\n          Project columns=2 total=7.3ms self=0.1ms first=4.3ms build=0.0ms batches=15 rows=214279 peak_reserved=622.6MiB\n            Scan tpch.orders predicates=2 total=7.2ms self=7.2ms first=4.3ms build=0.0ms batches=15 rows=214279 peak_reserved=622.6MiB\n          Scan tpch.customer predicates=0 total=0.8ms self=0.8ms first=0.8ms build=0.0ms batches=2 rows=150000 peak_reserved=248.7MiB\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 677,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 81,
+          "segments_pruned": 0,
+          "blocks_read": 2134,
+          "blocks_pruned": 0,
+          "blocks_decoded": 2134
+        },
+        "truncated": false
+      }
+    }
+  ]
+}

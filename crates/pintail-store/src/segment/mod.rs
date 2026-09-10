@@ -7,7 +7,7 @@ use encoding::{
 };
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{File, OpenOptions},
     io::{BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -115,6 +115,9 @@ impl FileDecoder {
     }
 
     fn seek_to(&mut self, position: usize) -> Result<(), String> {
+        if position == self.position {
+            return Ok(());
+        }
         self.reader
             .seek(SeekFrom::Start(
                 u64::try_from(position).map_err(|_| "file offset exceeds u64".to_owned())?,
@@ -2358,6 +2361,110 @@ fn read_segment_columns_header(
     })
 }
 
+/// A bounded, disposable directory over immutable block headers. Payloads
+/// remain on disk and are checksum-verified whenever they are decoded.
+struct ProjectedBlock {
+    offset: usize,
+    start: usize,
+    end: usize,
+}
+
+struct ProjectedColumnLayout {
+    id: u32,
+    logical_type: LogicalType,
+    blocks: Vec<ProjectedBlock>,
+}
+
+#[derive(Default)]
+struct ProjectedLayoutCache {
+    entries: HashMap<VerifiedKey, std::sync::Arc<Vec<ProjectedColumnLayout>>>,
+    bytes: usize,
+}
+
+fn projected_layout_cache() -> &'static std::sync::Mutex<ProjectedLayoutCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<ProjectedLayoutCache>> =
+        std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(ProjectedLayoutCache::default()))
+}
+
+fn projected_layout(
+    path: &Path,
+    meta: &SegmentMeta,
+    schema: &TableSchema,
+    decoder: &mut FileDecoder,
+    header: &SegmentColumnsHeader,
+) -> Result<std::sync::Arc<Vec<ProjectedColumnLayout>>, StoreError> {
+    const CACHE_BYTES: usize = 16 * 1024 * 1024;
+    let key = verified_key(path, meta, schema);
+    if let Some(key) = &key
+        && let Some(layout) = projected_layout_cache()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .get(key)
+    {
+        return Ok(layout.clone());
+    }
+    // No I/O while holding the cache lock. Concurrent first readers may
+    // construct the same directory; publishing either copy is harmless.
+    let mut columns = Vec::new();
+    let mut bytes = 0_usize;
+    for _ in 0..header.column_count {
+        let (id, logical_type, block_count) =
+            read_column_directory_entry(path, decoder, decoder.position as u64)?;
+        let mut blocks = Vec::new();
+        let mut start = 0_usize;
+        for _ in 0..block_count {
+            let offset = decoder.position;
+            let block = skip_file_block(path, decoder)?;
+            let end = start
+                .checked_add(block.row_count)
+                .ok_or_else(|| corrupt_here(path, decoder, "column row count overflow"))?;
+            if end > header.row_count {
+                return Err(corrupt_here(
+                    path,
+                    decoder,
+                    "column exceeds segment row count",
+                ));
+            }
+            blocks.push(ProjectedBlock { offset, start, end });
+            start = end;
+        }
+        if start != header.row_count {
+            return Err(corrupt_here(
+                path,
+                decoder,
+                "column row count differs from segment header",
+            ));
+        }
+        bytes = bytes.saturating_add(blocks.capacity() * size_of::<ProjectedBlock>());
+        columns.push(ProjectedColumnLayout {
+            id,
+            logical_type,
+            blocks,
+        });
+    }
+    bytes = bytes.saturating_add(columns.capacity() * size_of::<ProjectedColumnLayout>());
+    let layout = std::sync::Arc::new(columns);
+    if let Some(key) = key {
+        bytes = bytes.saturating_add(size_of::<VerifiedKey>() + key.0.as_os_str().len());
+        if bytes <= CACHE_BYTES {
+            let mut cache = projected_layout_cache()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !cache.entries.contains_key(&key) {
+                if cache.bytes.saturating_add(bytes) > CACHE_BYTES || cache.entries.len() >= 8192 {
+                    cache.entries.clear();
+                    cache.bytes = 0;
+                }
+                cache.bytes += bytes;
+                cache.entries.insert(key, layout.clone());
+            }
+        }
+    }
+    Ok(layout)
+}
+
 /// Packed columns produced by [`read_projected_columns`].
 pub(crate) struct ProjectedColumnFetch {
     pub(crate) columns: Vec<DecodedColumn>,
@@ -2960,6 +3067,7 @@ pub(crate) fn read_projected_column_ranges(
     verify(directory, meta, schema)?;
     let mut decoder = FileDecoder::open(&path)?;
     let header = read_segment_columns_header(&path, &mut decoder, meta, schema)?;
+    let layout = projected_layout(&path, meta, schema, &mut decoder, &header)?;
     let mut previous_end = 0_usize;
     for range in ranges {
         if range.start > range.end || range.end > header.row_count || range.start < previous_end {
@@ -2979,20 +3087,9 @@ pub(crate) fn read_projected_column_ranges(
     // pruned block from an unreported one.
     let mut blocks_read = 0_usize;
     let mut blocks_pruned = 0_usize;
-    for _ in 0..header.column_count {
-        let id = decoder
-            .u32()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-        let logical_type = LogicalType::decode(
-            decoder
-                .u8()
-                .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
-        )
-        .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
-        let block_count = decoder
-            .u32()
-            .map_err(|reason| corrupt_here(&path, &decoder, reason))?
-            as usize;
+    for column_layout in layout.iter() {
+        let id = column_layout.id;
+        let logical_type = column_layout.logical_type;
         let schema_index = schema.columns().iter().position(|column| column.id() == id);
         if let Some(schema_index) = schema_index
             && !wire_type_compatible(schema.columns()[schema_index].data_type(), logical_type)
@@ -3021,20 +3118,27 @@ pub(crate) fn read_projected_column_ranges(
             reserved_bytes = reserved_bytes.saturating_add(builder_bytes);
             builders[position] = Some(builder);
         }
-        let mut block_start = 0_usize;
-        for _ in 0..block_count {
-            let block_limit = block_start.saturating_add(header.block_rows);
-            let selected = projected_position.is_some()
-                && ranges
-                    .iter()
-                    .any(|range| block_start < range.end && block_limit > range.start);
-            if projected_position.is_some() {
-                if selected {
-                    blocks_read += 1;
-                } else {
-                    blocks_pruned += 1;
-                }
+        let Some(_) = projected_position else {
+            continue;
+        };
+        let mut range_cursor = 0;
+        for indexed_block in &column_layout.blocks {
+            let block_start = indexed_block.start;
+            let block_limit = indexed_block.end;
+            while range_cursor < ranges.len() && ranges[range_cursor].end <= block_start {
+                range_cursor += 1;
             }
+            let selected = ranges
+                .get(range_cursor)
+                .is_some_and(|range| range.start < block_limit && range.end > block_start);
+            if !selected {
+                blocks_pruned += 1;
+                continue;
+            }
+            blocks_read += 1;
+            decoder
+                .seek_to(indexed_block.offset)
+                .map_err(|reason| corrupt_here(&path, &decoder, reason))?;
             // Block-relative intersections of the requested ranges, clamped
             // to the target block span (the last block may be shorter; row
             // loops clamp naturally).
@@ -3158,14 +3262,13 @@ pub(crate) fn read_projected_column_ranges(
                 memory.reserve(appended)?;
                 reserved_bytes = reserved_bytes.saturating_add(appended);
             }
-            block_start = block_end;
-        }
-        if block_start != header.row_count {
-            return Err(corrupt_here(
-                &path,
-                &decoder,
-                "column row count differs from segment header",
-            ));
+            if block_end != indexed_block.end {
+                return Err(corrupt_here(
+                    &path,
+                    &decoder,
+                    "block row count differs from directory",
+                ));
+            }
         }
     }
 
@@ -4883,6 +4986,31 @@ mod range_read_tests {
             .is_err(),
             "unsorted ranges are rejected"
         );
+    }
+
+    #[test]
+    fn projected_directory_reuses_offsets_and_invalidates_changed_files() {
+        let directory = tempfile::tempdir().expect("directory");
+        let (schema, meta) = write_wide_segment(directory.path(), 16);
+        let path = directory.path().join(&meta.file_name);
+        let load = || {
+            let mut decoder = super::FileDecoder::open(&path).expect("open");
+            let header = super::read_segment_columns_header(&path, &mut decoder, &meta, &schema)
+                .expect("header");
+            super::projected_layout(&path, &meta, &schema, &mut decoder, &header).expect("layout")
+        };
+        let first = load();
+        let second = load();
+        assert!(std::sync::Arc::ptr_eq(&first, &second));
+        // A changed file identity cannot retain offsets from its predecessor.
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open writable");
+        file.set_len(file.metadata().expect("metadata").len() + 1)
+            .expect("change length");
+        let third = load();
+        assert!(!std::sync::Arc::ptr_eq(&first, &third));
     }
 
     /// Three columns, the last one wide (`body_bytes` of incompressible text

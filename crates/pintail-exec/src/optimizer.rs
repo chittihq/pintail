@@ -698,6 +698,25 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
+        BoundExprKind::Scalar {
+            function: ScalarFunction::DateInterval { .. },
+            args,
+        } if args
+            .iter()
+            .all(|arg| matches!(arg.kind, BoundExprKind::Literal(_))) =>
+        {
+            // A literal interval is statement-invariant. Use the runtime
+            // evaluator to retain its month-end, NULL and precision rules;
+            // an error stays in the original expression for execution.
+            let collation = crate::collation::Collation::from_mysql_name(
+                pintail_sql::session_default_collation(),
+            )
+            .unwrap_or_default();
+            let compiled = crate::expression::CompiledExpr::compile(expr, &[], collation).ok()?;
+            compiled
+                .evaluate(&crate::RecordBatch::new(1, Vec::new()).ok()?, 0)
+                .ok()
+        }
         BoundExprKind::PreparedIn { .. }
         | BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -1079,25 +1098,112 @@ fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalP
     plan
 }
 
-/// A plan's row estimate, with an unknown one counting as the largest so it is
-/// never chosen as the side to hold in memory.
-fn estimated_or_max(plan: &LogicalPlan) -> u64 {
-    plan.estimated_rows().unwrap_or(u64::MAX)
+/// Cost hints are deliberately separate from `LogicalPlan::estimated_rows`:
+/// the latter is a conservative bound used by execution guards. These guesses
+/// choose an order only; they never remove a predicate, row, or runtime check.
+struct JoinCost {
+    rows: u64,
+    keys: Vec<BTreeSet<ColumnKey>>,
 }
 
-/// The first pair of components some conjunct joins, with `left < right`.
+impl JoinCost {
+    fn for_plan(plan: &LogicalPlan) -> Self {
+        match plan {
+            LogicalPlan::Scan(scan) => {
+                let key: BTreeSet<_> = scan
+                    .table
+                    .columns
+                    .iter()
+                    .filter(|column| scan.table.key_column_ids.contains(&column.column_id))
+                    .map(column_key)
+                    .collect();
+                Self {
+                    rows: scan.estimated_rows().unwrap_or(u64::MAX),
+                    keys: if key.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![key]
+                    },
+                }
+            }
+            LogicalPlan::Filter { input, .. } | LogicalPlan::Sort { input, .. } => {
+                Self::for_plan(input)
+            }
+            LogicalPlan::Join {
+                left,
+                right,
+                kind: BoundJoinKind::Inner,
+                condition: Some(condition),
+            } => Self::joined(
+                &Self::for_plan(left),
+                &Self::for_plan(right),
+                &conjuncts_of(condition),
+            ),
+            _ => Self {
+                rows: plan.estimated_rows().unwrap_or(u64::MAX),
+                keys: Vec::new(),
+            },
+        }
+    }
+
+    fn joined(left: &Self, right: &Self, conditions: &[&BoundExpr]) -> Self {
+        let columns: BTreeSet<_> = conditions
+            .iter()
+            .flat_map(|expr| join_equalities(expr))
+            .flat_map(|(left, right)| [column_key(&left), column_key(&right)])
+            .collect();
+        let left_key = left.keys.iter().any(|key| key.is_subset(&columns));
+        let right_key = right.keys.iter().any(|key| key.is_subset(&columns));
+        let rows = match (left_key, right_key) {
+            (true, true) => left.rows.min(right.rows),
+            (true, false) => right.rows,
+            (false, true) => left.rows,
+            (false, false) => left.rows.saturating_mul(right.rows),
+        };
+        // Joining to a key preserves the other side's key as a cost hint.
+        // Coercions, collations and missing statistics can make these estimates
+        // inaccurate; execution still compares all keys and retains duplicates.
+        let mut keys = Vec::new();
+        if right_key {
+            keys.extend(left.keys.iter().cloned());
+        }
+        if left_key {
+            keys.extend(right.keys.iter().cloned());
+        }
+        Self { rows, keys }
+    }
+}
+
+fn estimated_or_max(plan: &LogicalPlan) -> u64 {
+    JoinCost::for_plan(plan).rows
+}
+
+/// Choose the connected pair with the smallest estimated intermediate work.
+/// Source order breaks ties. In a cyclic graph, the first linked pair can be
+/// two dimensions sharing a non-unique attribute, expanding millions of rows
+/// before either fact-table key is applied.
 fn find_linked_pair(components: &[LogicalPlan], conjuncts: &[BoundExpr]) -> Option<(usize, usize)> {
+    let estimates: Vec<_> = components.iter().map(JoinCost::for_plan).collect();
+    let mut best = None;
     for left in 0..components.len() {
         for right in (left + 1)..components.len() {
-            if conjuncts
+            let conditions: Vec<_> = conjuncts
                 .iter()
-                .any(|conjunct| joins_two_sides(conjunct, &components[left], &components[right]))
-            {
-                return Some((left, right));
+                .filter(|conjunct| joins_two_sides(conjunct, &components[left], &components[right]))
+                .collect();
+            if conditions.is_empty() {
+                continue;
+            }
+            let joined = JoinCost::joined(&estimates[left], &estimates[right], &conditions);
+            let work = u128::from(joined.rows)
+                + u128::from(estimates[left].rows)
+                + u128::from(estimates[right].rows);
+            if best.is_none_or(|(cost, _, _)| work < cost) {
+                best = Some((work, left, right));
             }
         }
     }
-    None
+    best.map(|(_, left, right)| (left, right))
 }
 
 /// Whether a conjunct is usable as the join condition between two sides.
@@ -1259,7 +1365,7 @@ fn reorder_cross_joins(plan: LogicalPlan) -> LogicalPlan {
 
 fn prune_projections(plan: &mut LogicalPlan) {
     let mut required = BTreeSet::new();
-    collect_plan_columns(plan, &mut required);
+    collect_plan_columns(plan, &mut required, true);
     // Attribution needs the relation instance; a projection does not. Two
     // aliases of one table are two reads of one file, and the scan under
     // each is planned from the same column set, so the relation is dropped
@@ -1270,28 +1376,93 @@ fn prune_projections(plan: &mut LogicalPlan) {
         .map(|(database, table, _, column)| (database, table, column))
         .collect();
     prune_scan_columns(plan, &required);
+    let mut payload = BTreeSet::new();
+    collect_plan_columns(plan, &mut payload, false);
+    trim_predicate_payloads(plan, &payload, false);
 }
 
-fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) {
+/// A join need not carry a scan-only predicate column after filtering it.
+/// Keep the storage projection intact; drop the column at the scan boundary.
+fn trim_predicate_payloads(plan: &mut LogicalPlan, required: &BTreeSet<ColumnKey>, in_join: bool) {
     match plan {
-        LogicalPlan::Recursive { anchor, member, .. } => {
-            collect_plan_columns(anchor, required);
-            collect_plan_columns(member, required);
-        }
-        LogicalPlan::Scan(scan) => {
-            for predicate in &scan.predicates {
-                collect_expr_columns(predicate, required);
+        LogicalPlan::Scan(scan) if in_join && !scan.predicates.is_empty() => {
+            let expressions: Vec<_> = scan
+                .table
+                .columns
+                .iter()
+                .filter(|column| {
+                    scan.projected_column_ids.contains(&column.column_id)
+                        && required.contains(&column_key(column))
+                })
+                .map(|column| BoundProjection {
+                    name: column.name.clone(),
+                    expr: BoundExpr {
+                        kind: BoundExprKind::Column(column.clone()),
+                        data_type: Some(column.data_type),
+                        nullable: column.nullable,
+                    },
+                })
+                .collect();
+            if !expressions.is_empty() && expressions.len() < scan.projected_column_ids.len() {
+                let input = std::mem::replace(plan, LogicalPlan::Empty);
+                *plan = LogicalPlan::Project {
+                    input: Box::new(input),
+                    expressions,
+                };
             }
         }
-        LogicalPlan::Derived { input, .. } => collect_plan_columns(input, required),
+        LogicalPlan::Join { left, right, .. } => {
+            trim_predicate_payloads(left, required, true);
+            trim_predicate_payloads(right, required, true);
+        }
+        LogicalPlan::Filter { input, .. } => trim_predicate_payloads(input, required, in_join),
+        LogicalPlan::Derived { input, .. }
+        | LogicalPlan::Project { input, .. }
+        | LogicalPlan::Aggregate { input, .. }
+        | LogicalPlan::Window { input, .. }
+        | LogicalPlan::Distinct { input, .. }
+        | LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Limit { input, .. } => trim_predicate_payloads(input, required, false),
         LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
             for input in inputs {
-                collect_plan_columns(input, required);
+                trim_predicate_payloads(input, required, false);
             }
         }
         LogicalPlan::SetOp { left, right, .. } => {
-            collect_plan_columns(left, required);
-            collect_plan_columns(right, required);
+            trim_predicate_payloads(left, required, false);
+            trim_predicate_payloads(right, required, false);
+        }
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            trim_predicate_payloads(anchor, required, false);
+            trim_predicate_payloads(member, required, false);
+        }
+        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => {}
+    }
+}
+
+fn collect_plan_columns(
+    plan: &LogicalPlan,
+    required: &mut BTreeSet<ColumnKey>,
+    scan_predicates: bool,
+) {
+    match plan {
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            collect_plan_columns(anchor, required, scan_predicates);
+            collect_plan_columns(member, required, scan_predicates);
+        }
+        LogicalPlan::Scan(scan) => {
+            for predicate in scan.predicates.iter().filter(|_| scan_predicates) {
+                collect_expr_columns(predicate, required);
+            }
+        }
+        LogicalPlan::CrossJoin { inputs } | LogicalPlan::UnionAll { inputs } => {
+            for input in inputs {
+                collect_plan_columns(input, required, scan_predicates);
+            }
+        }
+        LogicalPlan::SetOp { left, right, .. } => {
+            collect_plan_columns(left, required, scan_predicates);
+            collect_plan_columns(right, required, scan_predicates);
         }
         LogicalPlan::Join {
             left,
@@ -1299,15 +1470,15 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
             condition,
             ..
         } => {
-            collect_plan_columns(left, required);
-            collect_plan_columns(right, required);
+            collect_plan_columns(left, required, scan_predicates);
+            collect_plan_columns(right, required, scan_predicates);
             if let Some(condition) = condition {
                 collect_expr_columns(condition, required);
             }
         }
         LogicalPlan::Filter { input, predicate } => {
             collect_expr_columns(predicate, required);
-            collect_plan_columns(input, required);
+            collect_plan_columns(input, required, scan_predicates);
         }
         LogicalPlan::Window { input, windows, .. } => {
             for window in windows {
@@ -1341,13 +1512,13 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
                     collect_expr_columns(&key.expr, required);
                 }
             }
-            collect_plan_columns(input, required);
+            collect_plan_columns(input, required, scan_predicates);
         }
         LogicalPlan::Project { input, expressions } => {
             for expression in expressions {
                 collect_expr_columns(&expression.expr, required);
             }
-            collect_plan_columns(input, required);
+            collect_plan_columns(input, required, scan_predicates);
         }
         LogicalPlan::Aggregate {
             input,
@@ -1365,12 +1536,13 @@ fn collect_plan_columns(plan: &LogicalPlan, required: &mut BTreeSet<ColumnKey>) 
                     collect_expr_columns(key, required);
                 }
             }
-            collect_plan_columns(input, required);
+            collect_plan_columns(input, required, scan_predicates);
         }
-        LogicalPlan::Distinct { input, .. }
+        LogicalPlan::Derived { input, .. }
+        | LogicalPlan::Distinct { input, .. }
         | LogicalPlan::Sort { input, .. }
         | LogicalPlan::Limit { input, .. } => {
-            collect_plan_columns(input, required);
+            collect_plan_columns(input, required, scan_predicates);
         }
         LogicalPlan::Empty | LogicalPlan::OneRow => {}
     }
@@ -2385,6 +2557,55 @@ mod tests {
             panic!("scan");
         };
         assert_eq!(scan.limit, None);
+    }
+
+    #[test]
+    fn joins_do_not_carry_scan_only_predicate_columns() {
+        let plan = project_input(optimized(
+            "SELECT e.id FROM events e, users u WHERE e.id = u.id AND e.name = 'selected'",
+        ));
+        let LogicalPlan::Join { left, right, .. } = plan else {
+            panic!("join");
+        };
+        let trimmed = [left, right]
+            .into_iter()
+            .find_map(|side| match *side {
+                LogicalPlan::Project { input, expressions } => Some((input, expressions)),
+                _ => None,
+            })
+            .expect("scan-only payload must be projected away before joining");
+        assert_eq!(trimmed.1.len(), 1);
+        let LogicalPlan::Scan(scan) = *trimmed.0 else {
+            panic!("scan");
+        };
+        assert_eq!(scan.predicates.len(), 1);
+        assert_eq!(
+            scan.projected_column_ids,
+            [1, 2],
+            "storage still needs the predicate column"
+        );
+    }
+
+    #[test]
+    fn constant_date_intervals_become_scan_literals() {
+        for (sql, expected) in [
+            ("DATE_ADD('1994-01-01', INTERVAL 1 YEAR)", "1995-01-01"),
+            ("DATE_ADD('2024-02-29', INTERVAL 1 YEAR)", "2025-02-28"),
+            ("DATE_SUB('2024-03-01', INTERVAL 1 DAY)", "2024-02-29"),
+        ] {
+            let LogicalPlan::Scan(scan) = project_input(optimized(&format!(
+                "SELECT id FROM events WHERE name < {sql}"
+            ))) else {
+                panic!("scan");
+            };
+            let BoundExprKind::Binary { right, .. } = &scan.predicates[0].kind else {
+                panic!("comparison");
+            };
+            assert_eq!(
+                right.kind,
+                BoundExprKind::Literal(pintail_types::Value::Utf8(expected.to_owned()))
+            );
+        }
     }
 
     #[test]

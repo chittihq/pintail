@@ -906,8 +906,7 @@ impl CompiledExpr {
 
             Self::Column(index) => batch
                 .column(*index)
-                .and_then(|column| column.value(row))
-                .cloned()
+                .and_then(|column| column.value_owned(row))
                 .ok_or(ExecError::InvalidBatch(
                     "compiled column index is outside the input batch",
                 )),
@@ -1129,8 +1128,8 @@ impl CompiledExpr {
             }
             Self::Column(index) => batch
                 .column(*index)
-                .and_then(|column| column.value(row))
-                .map_or(0, Value::heap_bytes),
+                .and_then(|column| column.scalar_heap_bytes(row))
+                .unwrap_or(0),
             Self::Literal(value) => value.heap_bytes(),
             Self::Unary {
                 expr, data_type, ..
