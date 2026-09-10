@@ -605,7 +605,6 @@ const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     "IGNORE_SPACE",
     // Evaluation.
     "REAL_AS_FLOAT",
-    "NO_UNSIGNED_SUBTRACTION",
     // Would ask ingestion to keep values it normalizes to NULL.
     "ALLOW_INVALID_DATES",
 ];

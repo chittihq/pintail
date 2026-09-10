@@ -2,7 +2,9 @@
 use std::cell::Cell;
 
 /// The supported parsing flags in a session's SQL mode.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+// Each flag mirrors one independent `sql_mode` member.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParseMode {
     /// Double quotes delimit identifiers instead of strings.
     pub ansi_quotes: bool,
@@ -10,6 +12,8 @@ pub struct ParseMode {
     pub pipes_as_concat: bool,
     /// Backslashes in strings remain literal characters.
     pub no_backslash_escapes: bool,
+    /// Subtraction is signed even over unsigned operands.
+    pub no_unsigned_subtraction: bool,
 }
 
 impl ParseMode {
@@ -25,6 +29,7 @@ impl ParseMode {
             ansi_quotes: has("ANSI_QUOTES"),
             pipes_as_concat: has("PIPES_AS_CONCAT"),
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
+            no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
         }
     }
 }

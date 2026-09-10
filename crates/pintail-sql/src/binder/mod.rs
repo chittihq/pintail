@@ -3716,6 +3716,17 @@ fn bind_binary(
                 _ => unreachable!("matched arithmetic operators"),
             };
             let result = arithmetic_type(op, left.data_type, right.data_type);
+            // NO_UNSIGNED_SUBTRACTION makes a subtraction signed whatever its
+            // operands: CAST(0 AS UNSIGNED) - 1 is -1, and an unsigned operand
+            // past the signed range is out of range rather than wrapped.
+            let result = if op == BinaryOp::Subtract
+                && result == Some(DataType::UInt64)
+                && crate::session_parse_mode().no_unsigned_subtraction
+            {
+                Some(DataType::Int64)
+            } else {
+                result
+            };
             (op, result)
         }
         BinaryOperator::BitwiseAnd

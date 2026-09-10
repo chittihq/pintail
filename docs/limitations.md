@@ -471,8 +471,8 @@ stays readable as a list of things to fix.
   against the stored verifiers. Keys from before metadata schema version 6
   lack both verifiers and must still be rotated.
 - The endpoint is read-only. Parsing modes `HIGH_NOT_PRECEDENCE` and
-  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`
-  and `ALLOW_INVALID_DATES`, and combination modes (`ANSI`, `DB2`, `MAXDB`,
+  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT` and `ALLOW_INVALID_DATES`,
+  and combination modes (`ANSI`, `DB2`, `MAXDB`,
   `MSSQL`, `ORACLE`, `POSTGRESQL`) remain refused.
 - Variable-width expressions outside the declaration rules use a type-derived
   `column_length` fallback of 1024. Only a
