@@ -860,14 +860,14 @@ impl<'catalog> Binder<'catalog> {
         // Every correlated conjunct must be an equality spanning exactly
         // the inner table and the outer scope; together they become the
         // (possibly multi-key) join condition.
-        let inner_key = (inner_table.database_id, inner_table.table_id);
+        let inner_key = relation_key(&inner_table);
         let mut condition: Option<BoundExpr> = None;
         for conjunct in correlated {
             let bound = bind_expr(conjunct, tables, None).map_err(|_| {
                 tables.pop();
                 unsupported()
             })?;
-            if !is_correlation_equality(&bound, inner_key) {
+            if !is_correlation_equality(&bound, &inner_key) {
                 tables.pop();
                 return Err(unsupported());
             }
@@ -965,7 +965,7 @@ impl<'catalog> Binder<'catalog> {
             self.filtered_join_input(subquery, &probe_table, &inner_only, ctes)
                 .ok_or_else(unsupported)?
         };
-        let inner_key = (inner_table.database_id, inner_table.table_id);
+        let inner_key = relation_key(&inner_table);
         // The outer operand must not reference the inner relation; the
         // projected expression must reference only the inner relation.
         let outer_value = bind_expr(outer, tables, None)?;
@@ -1002,7 +1002,7 @@ impl<'catalog> Binder<'catalog> {
                 tables.pop();
                 unsupported()
             })?;
-            if !is_correlation_equality(&bound, inner_key) {
+            if !is_correlation_equality(&bound, &inner_key) {
                 tables.pop();
                 return Err(unsupported());
             }
@@ -3967,34 +3967,97 @@ fn split_and_conjuncts(expr: &Expr) -> Vec<&Expr> {
 /// Distinct (database, table) pairs referenced by a bound expression.
 /// Whether a bound conjunct is an equality spanning exactly the inner
 /// relation and the outer scope (a decorrelation join key).
-fn is_correlation_equality(
-    expr: &BoundExpr,
-    inner_key: (pintail_catalog::DatabaseId, pintail_catalog::TableId),
-) -> bool {
+fn is_correlation_equality(expr: &BoundExpr, inner_key: &RelationKey) -> bool {
     // Any comparison spanning the two scopes decorrelates: an equality
     // becomes a hash-join key, anything else rides the join's residual or
     // the nested loop. NULL comparisons filter the pair in the join exactly
     // as they filter the inner row in MySQL's subquery, for semi and anti
-    // alike.
-    let BoundExprKind::Binary {
-        op:
-            BinaryOp::Equal
-            | BinaryOp::NotEqual
-            | BinaryOp::Less
-            | BinaryOp::LessOrEqual
-            | BinaryOp::Greater
-            | BinaryOp::GreaterOrEqual,
-        left,
-        right,
+    // alike. A null-safe equality spans the scopes the same way.
+    let (left, right) = match &expr.kind {
+        BoundExprKind::Binary {
+            op:
+                BinaryOp::Equal
+                | BinaryOp::NotEqual
+                | BinaryOp::Less
+                | BinaryOp::LessOrEqual
+                | BinaryOp::Greater
+                | BinaryOp::GreaterOrEqual,
+            left,
+            right,
+        } => (left.as_ref(), right.as_ref()),
+        _ => match null_safe_operands(expr) {
+            Some(operands) => operands,
+            None => return false,
+        },
+    };
+    let inner = |side: &BoundExpr| expr_tables(side).iter().all(|key| key == inner_key);
+    let outer = |side: &BoundExpr| expr_tables(side).iter().all(|key| key != inner_key);
+    ((inner(left) && outer(right)) || (inner(right) && outer(left)))
+        && !expr_tables(left).is_empty()
+        && !expr_tables(right).is_empty()
+}
+
+/// The operands of `l <=> r`, which binds as
+/// `COALESCE((l IS NULL AND r IS NULL) OR l = r, FALSE)`.
+fn null_safe_operands(expr: &BoundExpr) -> Option<(&BoundExpr, &BoundExpr)> {
+    let BoundExprKind::Scalar {
+        function: ScalarFunction::Coalesce,
+        args,
     } = &expr.kind
     else {
-        return false;
+        return None;
     };
-    let sides_split = (expr_tables(left).iter().all(|key| *key == inner_key)
-        && expr_tables(right).iter().all(|key| *key != inner_key))
-        || (expr_tables(right).iter().all(|key| *key == inner_key)
-            && expr_tables(left).iter().all(|key| *key != inner_key));
-    sides_split && !expr_tables(left).is_empty() && !expr_tables(right).is_empty()
+    let [either, fallback] = args.as_slice() else {
+        return None;
+    };
+    if !matches!(fallback.kind, BoundExprKind::Literal(Value::Boolean(false))) {
+        return None;
+    }
+    let BoundExprKind::Binary {
+        op: BinaryOp::Or,
+        left: both_null,
+        ..
+    } = &either.kind
+    else {
+        return None;
+    };
+    let BoundExprKind::Binary {
+        op: BinaryOp::And,
+        left,
+        right,
+    } = &both_null.kind
+    else {
+        return None;
+    };
+    match (&left.kind, &right.kind) {
+        (
+            BoundExprKind::IsNull {
+                expr: left,
+                negated: false,
+            },
+            BoundExprKind::IsNull {
+                expr: right,
+                negated: false,
+            },
+        ) => Some((left, right)),
+        _ => None,
+    }
+}
+
+/// One relation instance: its table and the alias it is visible under, so
+/// the two sides of a self-join are different relations.
+type RelationKey = (
+    pintail_catalog::DatabaseId,
+    pintail_catalog::TableId,
+    String,
+);
+
+fn relation_key(table: &BoundTable) -> RelationKey {
+    (
+        table.database_id,
+        table.table_id,
+        table.relation_name.to_ascii_lowercase(),
+    )
 }
 
 /// Boolean conjunction of two bound predicates.
@@ -4010,14 +4073,15 @@ fn and_bound(left: BoundExpr, right: BoundExpr) -> BoundExpr {
     }
 }
 
-fn expr_tables(expr: &BoundExpr) -> Vec<(pintail_catalog::DatabaseId, pintail_catalog::TableId)> {
-    fn walk(
-        expr: &BoundExpr,
-        out: &mut Vec<(pintail_catalog::DatabaseId, pintail_catalog::TableId)>,
-    ) {
+fn expr_tables(expr: &BoundExpr) -> Vec<RelationKey> {
+    fn walk(expr: &BoundExpr, out: &mut Vec<RelationKey>) {
         match &expr.kind {
             BoundExprKind::Column(column) => {
-                let key = (column.database_id, column.table_id);
+                let key = (
+                    column.database_id,
+                    column.table_id,
+                    column.relation_name.to_ascii_lowercase(),
+                );
                 if !out.contains(&key) {
                     out.push(key);
                 }

@@ -2542,8 +2542,9 @@ pub(super) fn execute_nested_loop_join(
                         }
                         output.push(candidate, memory)?;
                     }
-                    BoundJoinKind::Semi => break,
-                    BoundJoinKind::Anti => {}
+                    // One match decides both: the row is kept by a semi join and
+                    // dropped by an anti join, whatever else would match.
+                    BoundJoinKind::Semi | BoundJoinKind::Anti => break,
                     BoundJoinKind::Cross => {
                         return Err(ExecError::InvalidPhysicalPlan(
                             "nested-loop ON evaluation cannot represent a cross join",
