@@ -698,6 +698,25 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
+        BoundExprKind::Scalar {
+            function: ScalarFunction::DateInterval { .. },
+            args,
+        } if args
+            .iter()
+            .all(|arg| matches!(arg.kind, BoundExprKind::Literal(_))) =>
+        {
+            // A literal interval is statement-invariant. Use the runtime
+            // evaluator to retain its month-end, NULL and precision rules;
+            // an error stays in the original expression for execution.
+            let collation = crate::collation::Collation::from_mysql_name(
+                pintail_sql::session_default_collation(),
+            )
+            .unwrap_or_default();
+            let compiled = crate::expression::CompiledExpr::compile(expr, &[], collation).ok()?;
+            compiled
+                .evaluate(&crate::RecordBatch::new(1, Vec::new()).ok()?, 0)
+                .ok()
+        }
         BoundExprKind::PreparedIn { .. }
         | BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -2472,6 +2491,28 @@ mod tests {
             panic!("scan");
         };
         assert_eq!(scan.limit, None);
+    }
+
+    #[test]
+    fn constant_date_intervals_become_scan_literals() {
+        for (sql, expected) in [
+            ("DATE_ADD('1994-01-01', INTERVAL 1 YEAR)", "1995-01-01"),
+            ("DATE_ADD('2024-02-29', INTERVAL 1 YEAR)", "2025-02-28"),
+            ("DATE_SUB('2024-03-01', INTERVAL 1 DAY)", "2024-02-29"),
+        ] {
+            let LogicalPlan::Scan(scan) = project_input(optimized(&format!(
+                "SELECT id FROM events WHERE name < {sql}"
+            ))) else {
+                panic!("scan");
+            };
+            let BoundExprKind::Binary { right, .. } = &scan.predicates[0].kind else {
+                panic!("comparison");
+            };
+            assert_eq!(
+                right.kind,
+                BoundExprKind::Literal(pintail_types::Value::Utf8(expected.to_owned()))
+            );
+        }
     }
 
     #[test]
