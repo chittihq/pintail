@@ -6306,3 +6306,228 @@ fn candidate_worker_executes_aggregate_under_process_limits() {
         vec![vec![OracleValue::Exact("550".into())]]
     );
 }
+
+/// Each fixture copy moves its keys this far, as the corpus benchmark does.
+const PROBE_KEY_STRIDE: u64 = 1_000_000;
+
+/// A fixture row copied with its key, and `user_id` where it has one, moved
+/// `offset` along.
+fn probe_copy(row: &StoredRow, offset: u64, user_id: Option<usize>) -> StoredRow {
+    let shift = |value: &Value| match value {
+        Value::UInt64(value) => Value::UInt64(value + offset),
+        Value::Int64(value) => Value::Int64(value + i64::try_from(offset).expect("offset fits")),
+        other => other.clone(),
+    };
+    let mut values = row.values().to_vec();
+    values[0] = shift(&values[0]);
+    if let Some(position) = user_id {
+        values[position] = shift(&values[position]);
+    }
+    let key = match &values[0] {
+        Value::UInt64(value) => KeyPart::UInt64(*value),
+        Value::Int64(value) => KeyPart::Int64(*value),
+        other => panic!("fixture keys are integers, not {other:?}"),
+    };
+    StoredRow::new(
+        PrimaryKey::new(vec![key]).expect("key"),
+        values,
+        row.version(),
+        false,
+    )
+}
+
+fn probe_csv_fields(line: &str) -> Vec<String> {
+    let mut fields = vec![String::new()];
+    let mut quoted = false;
+    let mut characters = line.chars().peekable();
+    while let Some(character) = characters.next() {
+        match character {
+            '"' if quoted && characters.peek() == Some(&'"') => {
+                characters.next();
+                fields.last_mut().expect("field").push('"');
+            }
+            '"' => quoted = !quoted,
+            ',' if !quoted => fields.push(String::new()),
+            other => fields.last_mut().expect("field").push(other),
+        }
+    }
+    fields
+}
+
+/// Reruns, in process, the corpus cases Pintail failed at scale 10,000 in
+/// `benchmark/corpus/results.csv` while MySQL answered them, over the
+/// fixture amplified the way the benchmark amplifies it. Prints each case's
+/// time or failure; asserts nothing. Run with `--ignored`; set
+/// `PINTAIL_CORPUS_PROBE_SCALE` for another scale.
+#[test]
+#[ignore = "diagnostic probe of the corpus benchmark's failing cases"]
+fn corpus_scale_probe() {
+    let scale = std::env::var("PINTAIL_CORPUS_PROBE_SCALE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(10_000);
+    let csv = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benchmark/corpus/results.csv"),
+    )
+    .expect("corpus results");
+    let mut lines = csv.lines();
+    let header = probe_csv_fields(lines.next().expect("header"));
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|field| field == name)
+            .unwrap_or_else(|| panic!("results.csv has no {name} column"))
+    };
+    let (scale_at, id_at, pintail_at, mysql_at, sql_at) = (
+        column("scale"),
+        column("id"),
+        column("pintail_status"),
+        column("mysql_status"),
+        column("sql"),
+    );
+    let mut seen = BTreeSet::new();
+    let cases = lines
+        .map(probe_csv_fields)
+        .filter(|fields| {
+            fields[scale_at] == "10000" && fields[pintail_at] != "ok" && fields[mysql_at] == "ok"
+        })
+        .filter(|fields| seen.insert(fields[id_at].clone()))
+        .map(|fields| {
+            (
+                fields[id_at].clone(),
+                fields[pintail_at].clone(),
+                fields[sql_at].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let copies = |rows: Vec<StoredRow>, user_id: Option<usize>| {
+        (0..scale)
+            .flat_map(|copy| {
+                rows.iter()
+                    .map(move |row| probe_copy(row, copy * PROBE_KEY_STRIDE, user_id))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
+    let open = |schema: TableSchema, rows: Vec<StoredRow>| {
+        let directory = tempfile::tempdir().expect("directory");
+        let mut store =
+            TableStore::open(directory.path(), schema, StoreOptions::default()).expect("store");
+        let count = u64::try_from(rows.len()).expect("row count");
+        store.bulk_ingest_snapshot(rows).expect("rows");
+        (directory, store, count)
+    };
+    let (_events_directory, events, events_rows) = open(
+        events_schema().expect("events schema"),
+        copies((1..=10).map(event_row).collect(), None),
+    );
+    let (_users_directory, users, users_rows) = open(
+        users_schema().expect("users schema"),
+        copies((1..=8).map(user_row).collect(), None),
+    );
+    let (_orders_directory, orders, orders_rows) = open(
+        orders_schema().expect("orders schema"),
+        copies(order_rows(), Some(1)),
+    );
+    let (_bounds_directory, bounds, bounds_rows) = open(
+        oracle_boundaries::schema(),
+        copies(oracle_boundaries::rows(), None),
+    );
+    let entry = |id: TableId, name: &str, schema: TableSchema, rows: u64| {
+        TableEntry::new(id, name, schema, TableStatistics::with_row_count(rows))
+            .expect("entry")
+            .with_key_columns([1])
+            .expect("key")
+    };
+    let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+        DATABASE_ID,
+        "app",
+        [
+            entry(
+                EVENTS_ID,
+                "events",
+                events_schema().expect("schema"),
+                events_rows,
+            ),
+            entry(
+                USERS_ID,
+                "users",
+                users_schema().expect("schema"),
+                users_rows,
+            ),
+            entry(
+                ORDERS_ID,
+                "orders",
+                orders_schema().expect("schema"),
+                orders_rows,
+            ),
+            entry(
+                TableId::new(4),
+                "bounds",
+                oracle_boundaries::schema(),
+                bounds_rows,
+            ),
+        ],
+    )
+    .expect("database")])
+    .expect("catalog");
+    let snapshots = [
+        events.snapshot(),
+        users.snapshot(),
+        orders.snapshot(),
+        bounds.snapshot(),
+    ];
+    let provider = SnapshotScanProvider::new([
+        (DATABASE_ID, EVENTS_ID, &snapshots[0]),
+        (DATABASE_ID, USERS_ID, &snapshots[1]),
+        (DATABASE_ID, ORDERS_ID, &snapshots[2]),
+        (DATABASE_ID, TableId::new(4), &snapshots[3]),
+    ])
+    .expect("provider");
+    eprintln!(
+        "scale {scale}: events {events_rows}, users {users_rows}, orders {orders_rows}, bounds {bounds_rows}; {} cases",
+        cases.len()
+    );
+    let mut answered = 0;
+    for (id, before, sql) in &cases {
+        let started = std::time::Instant::now();
+        let outcome = (|| -> Result<usize, String> {
+            let bound = Binder::new(&catalog, Some("app"))
+                .bind(&parse_statement(sql).map_err(|error| format!("parse: {error}"))?)
+                .map_err(|error| format!("bind: {error}"))?;
+            let physical = PhysicalPlanner::plan(
+                Optimizer::optimize(LogicalPlanner::plan(bound)),
+                Collation::default(),
+            )
+            .map_err(|error| format!("plan: {error}"))?;
+            let mut execution = Execution::start_with_deadline(
+                physical,
+                &provider,
+                4 * 1024 * 1024 * 1024,
+                Some(started + Duration::from_secs(10)),
+                Collation::default(),
+            )
+            .map_err(|error| error.to_string())?;
+            let mut rows = 0;
+            while let Some(batch) = execution.next_batch().map_err(|error| error.to_string())? {
+                rows += batch.visible_row_count();
+            }
+            Ok(rows)
+        })();
+        let elapsed = started.elapsed();
+        let status = match &outcome {
+            Ok(rows) => {
+                answered += 1;
+                format!("ok {rows} rows")
+            }
+            Err(error) => error.chars().take(60).collect(),
+        };
+        eprintln!(
+            "{:>10.1} ms  {id} was {before:<7} now {status:<40} {}",
+            elapsed.as_secs_f64() * 1000.0,
+            sql.chars().take(110).collect::<String>()
+        );
+    }
+    eprintln!("{answered} of {} answered", cases.len());
+}
