@@ -573,30 +573,32 @@ pub(super) struct AggregateState {
 /// Exact decimal units: `i128` while a running total fits one, 512-bit past
 /// it, so a SUM or AVG over DECIMAL values nearing 65 digits stays exact
 /// rather than overflowing the narrow carrier.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum ExactUnits {
     Narrow(i128),
-    Wide(pintail_types::WideInt),
+    /// Boxed: a total rarely overflows i128, and inline the wide carrier
+    /// would grow every aggregate state, charged per group.
+    Wide(Box<pintail_types::WideInt>),
 }
 
 impl ExactUnits {
-    fn wide(self) -> pintail_types::WideInt {
+    fn wide(&self) -> pintail_types::WideInt {
         match self {
-            Self::Narrow(units) => pintail_types::WideInt::from_i128(units),
-            Self::Wide(units) => units,
+            Self::Narrow(units) => pintail_types::WideInt::from_i128(*units),
+            Self::Wide(units) => **units,
         }
     }
 
     /// `self + other`, widening where `i128` would overflow.
-    fn plus(self, other: Self) -> Result<Self, ExecError> {
+    fn plus(&self, other: &Self) -> Result<Self, ExecError> {
         if let (Self::Narrow(left), Self::Narrow(right)) = (self, other)
-            && let Some(sum) = left.checked_add(right)
+            && let Some(sum) = left.checked_add(*right)
         {
             return Ok(Self::Narrow(sum));
         }
         self.wide()
             .checked_add(other.wide())
-            .map(Self::Wide)
+            .map(|units| Self::Wide(Box::new(units)))
             .ok_or(ExecError::NumericOverflow)
     }
 
@@ -604,7 +606,10 @@ impl ExactUnits {
     fn parse(text: &str, scale: u8) -> Option<Self> {
         crate::batch::parse_decimal_scaled(text, scale)
             .map(Self::Narrow)
-            .or_else(|| pintail_types::parse_decimal_wide(text, scale).map(Self::Wide))
+            .or_else(|| {
+                pintail_types::parse_decimal_wide(text, scale)
+                    .map(|units| Self::Wide(Box::new(units)))
+            })
     }
 
     /// An integer in units of `10^-scale`.
@@ -614,35 +619,35 @@ impl ExactUnits {
             .or_else(|| {
                 pintail_types::WideInt::from_i128(value)
                     .checked_mul(pintail_types::WideInt::pow10(u32::from(scale))?)
-                    .map(Self::Wide)
+                    .map(|units| Self::Wide(Box::new(units)))
             })
     }
 
     /// The units as decimal text at `scale`; a total past 65 digits
     /// overflows, as it does in `MySQL`.
-    fn format(self, scale: u8) -> Result<String, ExecError> {
+    fn format(&self, scale: u8) -> Result<String, ExecError> {
         match self {
-            Self::Narrow(units) => Ok(pintail_types::format_decimal_scaled(units, scale)),
+            Self::Narrow(units) => Ok(pintail_types::format_decimal_scaled(*units, scale)),
             Self::Wide(units) if units.digits() > 65 => Err(ExecError::NumericOverflow),
-            Self::Wide(units) => Ok(pintail_types::format_decimal_wide(&units, scale)),
+            Self::Wide(units) => Ok(pintail_types::format_decimal_wide(units, scale)),
         }
     }
 
     #[allow(clippy::cast_precision_loss)]
-    fn to_f64(self, scale: u8) -> f64 {
+    fn to_f64(&self, scale: u8) -> f64 {
         match self {
-            Self::Narrow(units) => units as f64 / 10_f64.powi(i32::from(scale)),
-            Self::Wide(units) => pintail_types::format_decimal_wide(&units, scale)
+            Self::Narrow(units) => *units as f64 / 10_f64.powi(i32::from(scale)),
+            Self::Wide(units) => pintail_types::format_decimal_wide(units, scale)
                 .parse()
                 .unwrap_or(f64::NAN),
         }
     }
 
     /// The units as a plain integer, for a spill record.
-    fn spilled(self) -> String {
+    fn spilled(&self) -> String {
         match self {
             Self::Narrow(units) => units.to_string(),
-            Self::Wide(units) => pintail_types::format_decimal_wide(&units, 0),
+            Self::Wide(units) => pintail_types::format_decimal_wide(units, 0),
         }
     }
 }
@@ -949,7 +954,7 @@ impl AggregateState {
                     }
                 };
                 let scaled = ExactUnits::parse(text, *scale).ok_or(ExecError::NumericOverflow)?;
-                *units = units.plus(scaled)?;
+                *units = units.plus(&scaled)?;
             }
             AggregateValue::Sum(sum) => {
                 *sum = Some(if let Some(number) = number {
@@ -991,7 +996,7 @@ impl AggregateState {
                     }
                 };
                 let scaled = scaled.ok_or(ExecError::NumericOverflow)?;
-                *units = units.plus(scaled)?;
+                *units = units.plus(&scaled)?;
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Minimum(minimum) => {
@@ -1105,7 +1110,7 @@ impl AggregateState {
                 AggregateValue::DecimalSum { units: left, .. },
                 AggregateValue::DecimalSum { units: right, .. },
             ) => {
-                *left = left.plus(right)?;
+                *left = left.plus(&right)?;
             }
             (
                 value @ AggregateValue::Sum(None),
@@ -1135,7 +1140,7 @@ impl AggregateState {
                     *scale,
                 )
                 .ok_or(ExecError::NumericOverflow)?;
-                *units = units.plus(scaled)?;
+                *units = units.plus(&scaled)?;
             }
             (
                 AggregateValue::DecimalAverage {
@@ -1154,7 +1159,7 @@ impl AggregateState {
                         "decimal average merged across scales",
                     ));
                 }
-                *left_units = left_units.plus(right_units)?;
+                *left_units = left_units.plus(&right_units)?;
                 *left_count = left_count
                     .checked_add(right_count)
                     .ok_or(ExecError::NumericOverflow)?;
@@ -1357,7 +1362,7 @@ impl AggregateState {
                 scale: existing,
                 ..
             } if *existing == scale => {
-                *total = total.plus(units)?;
+                *total = total.plus(&units)?;
                 Ok(())
             }
             value @ AggregateValue::Sum(None) => {
@@ -1415,7 +1420,7 @@ impl AggregateState {
                 scale: existing,
                 count,
             } if *existing == scale => {
-                *total = total.plus(ExactUnits::Narrow(units))?;
+                *total = total.plus(&ExactUnits::Narrow(units))?;
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
                 Ok(())
             }
@@ -1587,11 +1592,11 @@ impl AggregateState {
                 // A total past i128 renders its average as plain decimal
                 // text: the quotient carrier keeps its total in i128.
                 ExactUnits::Wide(total) => Value::Utf8(
-                    ExactUnits::Wide(
+                    ExactUnits::Wide(Box::new(
                         total
                             .div_round_half_up(pintail_types::WideInt::from_i128(i128::from(count)))
                             .ok_or(ExecError::NumericOverflow)?,
-                    )
+                    ))
                     .format(scale)?,
                 ),
             },
@@ -3784,7 +3789,10 @@ fn spilled_units(units: &str) -> Result<ExactUnits, ExecError> {
         .parse::<i128>()
         .map(ExactUnits::Narrow)
         .ok()
-        .or_else(|| pintail_types::parse_decimal_wide(units, 0).map(ExactUnits::Wide))
+        .or_else(|| {
+            pintail_types::parse_decimal_wide(units, 0)
+                .map(|units| ExactUnits::Wide(Box::new(units)))
+        })
         .ok_or_else(|| ExecError::Source("aggregate spill decode: bad decimal units".to_owned()))
 }
 
