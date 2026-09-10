@@ -19,6 +19,10 @@ export interface DifferentialQuery {
   /// Divergence is a documented limitation (docs/limitations.md), reported
   /// as WARN so regressions stay visible and a fix flips it to PASS.
   documentedGap?: string
+  /// MySQL optimizer switches the SOURCE side runs this query under, where
+  /// MySQL's defaults answer it wrongly. Pintail runs the statement as
+  /// written; the reference is MySQL answering the same statement correctly.
+  mysqlOptimizerSwitch?: string
 }
 
 /// The storefront report (seedStorefrontSales in run.ts): flash sales
@@ -26,6 +30,13 @@ export interface DifferentialQuery {
 /// correlated IN in the ON that scopes them to the shoppers following the
 /// sale's own storefront. The subquery reaches the LEFT side of its join,
 /// so it is answered by widening the join's right input.
+///
+/// MySQL 8.4's semi-join transformation materializes such a subquery
+/// without its own non-correlated filters - the role and status tests
+/// vanish, so shoppers who left and staff are counted as members - so the
+/// source answers these with semi-joins off, which is MySQL answering the
+/// statement as written.
+const storefrontSwitch = 'semijoin=off'
 const storefrontTables = [
   'flash_sales',
   'sellers',
@@ -1550,11 +1561,13 @@ export const differentialQueries: DifferentialQuery[] = [
       'ON fol.storefront_id = t.storefront_id ' +
       'GROUP BY t.seller_id, t.year, t.month ORDER BY t.seller_id, t.year, t.month',
     tables: storefrontTables,
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     name: 'storefront: the per-sale rows under the report',
     sql: `SELECT * FROM (${storefrontPerSale}) t ORDER BY t.sale_id`,
     tables: storefrontTables,
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // Null-extended rows against matched ones, and a SUM beside them:
@@ -1569,6 +1582,7 @@ export const differentialQueries: DifferentialQuery[] = [
       "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
       'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     name: 'storefront: the same membership written as EXISTS',
@@ -1581,6 +1595,7 @@ export const differentialQueries: DifferentialQuery[] = [
       "AND sfo.role = 'shopper' AND sfo.status = 'active') " +
       'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // RIGHT JOIN is the LEFT JOIN with its inputs swapped; the preserved
@@ -1594,6 +1609,7 @@ export const differentialQueries: DifferentialQuery[] = [
       "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
       'GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // Two equalities anchor the membership to the reviews: the shopper,
@@ -1608,6 +1624,7 @@ export const differentialQueries: DifferentialQuery[] = [
       'WHERE sfo.storefront_id = fs.storefront_id AND sfo.locale = pr.locale) ' +
       'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // A text membership: the DISTINCT that widens the join must keep what
@@ -1621,6 +1638,7 @@ export const differentialQueries: DifferentialQuery[] = [
       "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
       'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // Two outer joins, each scoped by its own membership list.
@@ -1637,6 +1655,7 @@ export const differentialQueries: DifferentialQuery[] = [
       "WHERE sfs.storefront_id = fs.storefront_id AND sfs.role = 'staff') " +
       'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
   {
     // Correlated to a different table of the preserved side: the
@@ -1653,5 +1672,63 @@ export const differentialQueries: DifferentialQuery[] = [
       "WHERE sfo.storefront_id = sf.storefront_id AND sfo.status = 'active') " +
       'GROUP BY sf.marketplace_id ORDER BY sf.marketplace_id',
     tables: ['flash_sales', 'storefronts', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  // Shapes the widening does not take: they run on the dependent join path.
+  {
+    // Reviews from anyone NOT following the storefront. A review with no
+    // shopper makes NOT IN unknown, which the ON reads as no match.
+    name: 'storefront: reviews from outside the storefront (NOT IN)',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id NOT IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    name: 'storefront: reviews from outside the storefront (NOT EXISTS)',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND NOT EXISTS (SELECT 1 FROM storefront_followers sfo ' +
+      'WHERE sfo.shopper_id = pr.shopper_id AND sfo.storefront_id = fs.storefront_id ' +
+      "AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // An inequality correlation: followers of any storefront numbered at
+    // or below the sale's own.
+    name: 'storefront: membership across a storefront range',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND EXISTS (SELECT 1 FROM storefront_followers sfo ' +
+      'WHERE sfo.shopper_id = pr.shopper_id AND sfo.storefront_id <= fs.storefront_id) ' +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // A membership list with its own join and grouping.
+    name: 'storefront: membership from a grouped, joined list',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      'JOIN storefronts sf2 ON sf2.storefront_id = sfo.storefront_id ' +
+      "WHERE sf2.storefront_id = fs.storefront_id AND sfo.status = 'active' " +
+      'GROUP BY sfo.shopper_id HAVING COUNT(*) >= 1) ' +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers', 'storefronts'],
+    mysqlOptimizerSwitch: storefrontSwitch,
   },
 ]

@@ -28,16 +28,19 @@ stays readable as a list of things to fix.
   NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
   shapes reject.
 - A subquery in a LEFT (or RIGHT) join's ON condition that reaches the
-  join's preserved side is refused unless it is a non-negated `IN` or
-  `EXISTS` over a single table whose correlations are all equalities, at
-  least one of them against the other side's columns. Those shapes are
-  answered by joining the other side to the subquery's distinct rows;
-  `NOT IN`, `NOT EXISTS`, an inequality correlation, a subquery with its own
-  join, grouping or LIMIT, and a subquery tied to the preserved side alone
-  have no such rewrite yet. Dependent resolution exists only at Filter
-  level, so in a join condition those would run without the outer context
-  they need and match too few rows - measured against MySQL 8.4, three
-  matches reported as one - and a refusal is the honest answer.
+  join's preserved side, and is not a non-negated `IN` or `EXISTS` over one
+  table correlated by equalities, runs on the dependent join path: every
+  candidate pair of rows is tested and the subquery resolves once per
+  distinct correlation value. `NOT IN`, `NOT EXISTS`, inequality
+  correlations and subqueries with their own joins or grouping answer
+  there, at nested-loop cost rather than hash-join cost.
+- MySQL 8.4 with its default optimizer switches answers a correlated `IN`
+  or `EXISTS` in an outer join's ON condition wrongly when the subquery
+  carries filters of its own: its semi-join materialization drops them, so
+  the join matches rows the subquery excludes. Pintail answers the
+  statement as written, which is what MySQL returns with
+  `optimizer_switch='semijoin=off'`, so on this shape Pintail's result
+  differs from a default-configured MySQL's.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather

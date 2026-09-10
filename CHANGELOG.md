@@ -16,8 +16,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   more join key. DISTINCT keeps the answer exact: a joined row meets at most
   one subquery row per preserved row, so no match is duplicated and an
   unmatched row stays null-extended. It runs as hash joins with no per-row
-  subquery executions. Negated forms, inequality correlations and
-  multi-table subqueries are still refused (docs/limitations.md).
+  subquery executions.
+- The shapes that widening does not take - `NOT IN`, `NOT EXISTS`,
+  inequality correlations, subqueries with their own joins or grouping -
+  are answered on the dependent join path instead of refused. Each
+  candidate pair of rows resolves the subquery with both rows in scope,
+  memoized per distinct correlation value.
+
+### Fixed
+
+- MySQL 8.4 with default optimizer switches drops a subquery's own filters
+  when it materializes a correlated `IN` or `EXISTS` from an outer join's ON
+  condition, so it matches rows the subquery excludes. The refusal shipped
+  in 0.1.3-rc1 was built on that answer: the differential suite compared
+  against it and read Pintail's correct count as too low. Pintail's answer
+  is what MySQL itself returns with `semijoin=off`, which is now the
+  reference the suites compare these shapes against.
 
 ### Fixed
 

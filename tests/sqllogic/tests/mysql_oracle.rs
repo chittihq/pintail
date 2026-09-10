@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1238;
+const EXPECTED_CASES: usize = 1245;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -482,6 +482,19 @@ fn format_output_error(action: &str, output: &Output) -> String {
     )
 }
 
+/// The optimizer settings a family's `MySQL` side runs under, where the
+/// defaults answer the question wrongly.
+///
+/// A correlated `IN` or `EXISTS` in an outer join's ON condition: `MySQL`
+/// 8.4 with semi-join transformations on materializes the subquery without
+/// its own non-correlated filters, so the join matches rows the subquery
+/// excludes - a subquery keeping one of a user's three orders matched all
+/// three. With `semijoin=off` the source answers the statement as written,
+/// and that answer is the reference.
+fn mysql_optimizer_switch(family: &str) -> Option<&'static str> {
+    (family == "outer join-condition subquery").then_some("semijoin=off")
+}
+
 fn execute_mysql_cases(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
@@ -498,8 +511,15 @@ fn execute_mysql_cases(
             )
             .unwrap();
         }
+        let optimizer_switch = mysql_optimizer_switch(case.family);
+        if let Some(switch) = optimizer_switch {
+            writeln!(sql, "SET SESSION optimizer_switch='{switch}';").unwrap();
+        }
         sql.push_str(&case.sql);
         sql.push_str(";\n");
+        if optimizer_switch.is_some() {
+            sql.push_str("SET SESSION optimizer_switch='default';\n");
+        }
         if !case.sql_mode.is_empty() {
             sql.push_str("SET sql_mode=@pintail_previous_mode;\n");
         }
@@ -1443,6 +1463,52 @@ fn hand_written_cases() -> Vec<OracleCase> {
              AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.user_id = ev.id \
              AND o2.status <> 'cancelled') GROUP BY u.id) t \
              GROUP BY t.uid ORDER BY t.uid",
+        ),
+        // Shapes the widening does not take run on the dependent join
+        // path, which resolves the subquery per candidate pair.
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, COUNT(o.id) AS n, SUM(o.total) AS s FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, e.id FROM users u LEFT JOIN events e ON e.id = u.id \
+             AND e.note NOT IN (SELECT e2.note FROM events e2 WHERE e2.score > u.id * 10) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > o.total) ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o \
+             ON o.user_id <> u.id AND EXISTS (SELECT 1 FROM orders o2 \
+             WHERE o2.user_id = u.id AND o2.placed_at > o.placed_at) \
+             GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.id IN (SELECT o2.id FROM orders o2 JOIN users u2 ON u2.id = o2.user_id \
+             WHERE u2.id = u.id AND o2.total > 20) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT MAX(o2.total) FROM orders o2 WHERE o2.user_id = u.id \
+             GROUP BY o2.status) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total > (SELECT AVG(o2.total) FROM orders o2 WHERE o2.user_id = u.id) \
+             ORDER BY u.id, o.id",
         ),
         ordered(
             "unicode_ci collation",
@@ -3664,23 +3730,6 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject json arithmetic",
             "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
             "json|\\+|binary|invalid",
-        ),
-        // An OUTER join's ON reaching its left side through a subquery is
-        // answered by widening the right input with the subquery's DISTINCT
-        // pairs. What that cannot express still refuses: a negated
-        // membership, whose NULL semantics an anti join does not share, and
-        // a correlation that is not an equality.
-        (
-            "reject negated membership under an outer join condition",
-            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id)",
-            "outer join|unsupported",
-        ),
-        (
-            "reject inequality correlation under an outer join condition",
-            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
-             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total AND o2.user_id < u.id)",
-            "outer join|unsupported",
         ),
         (
             "reject unknown collate",

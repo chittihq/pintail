@@ -227,7 +227,19 @@ function corpusPool(): mysql.Pool {
   return mysqlPool
 }
 
-async function poolRows(sql: string, metadata?: (fields: mysql.FieldPacket[]) => void): Promise<unknown[][]> {
+/// A corpus query as the SOURCE runs it: under the optimizer switches the
+/// case names, set for this statement alone by a SET_VAR hint so pooled
+/// connections never carry them into the next case.
+function sourceSql(query: { sql: string; mysqlOptimizerSwitch?: string }): string {
+  if (!query.mysqlOptimizerSwitch) return query.sql
+  return query.sql.replace(
+    /^\s*SELECT\b/i,
+    `SELECT /*+ SET_VAR(optimizer_switch = '${query.mysqlOptimizerSwitch}') */`,
+  )
+}
+
+async function poolRows(
+sql: string, metadata?: (fields: mysql.FieldPacket[]) => void): Promise<unknown[][]> {
   const [rows, fields] = await corpusPool().query<mysql.RowDataPacket[]>({ sql, rowsAsArray: true })
   metadata?.(fields)
   return rows as unknown as unknown[][]
@@ -432,7 +444,7 @@ async function verifyCorpus(phase: string) {
     let expected: unknown[][]
     let expectedFields: mysql.FieldPacket[] = []
     try {
-      expected = await poolRows(query.sql, (fields) => { expectedFields = fields })
+      expected = await poolRows(sourceSql(query), (fields) => { expectedFields = fields })
     } catch (error) {
       settled[index] = {
         phase,
@@ -1209,7 +1221,7 @@ async function liveQueryConverges(
   const deadline = Date.now() + deadlineMs
   let last: string | undefined = 'never compared'
   while (Date.now() < deadline) {
-    const expected = await mysqlRows(query.sql)
+    const expected = await mysqlRows(sourceSql(query))
     try {
       const actual = await pintailQuery(query.sql)
       last = diffRows(expected, actual, { csvColumns: query.csvColumns })

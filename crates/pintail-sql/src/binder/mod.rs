@@ -1041,6 +1041,41 @@ impl<'catalog> Binder<'catalog> {
             })
     }
 
+    /// The widened form of a LEFT join whose ON reaches its left side through
+    /// a subquery, bound: its right input and its condition. `None` when the
+    /// shape does not widen or the widened form does not bind, which leaves
+    /// the join as written for the dependent join path.
+    fn widened_outer_join(
+        &self,
+        factor: &TableFactor,
+        condition: &Expr,
+        tables: &[BoundTable],
+        right_tables: &[BoundTable],
+        ctes: &[BoundCte],
+    ) -> Option<(BoundJoinRelation, Expr)> {
+        let (factor, widened) =
+            self.widen_outer_join_right(factor, condition, tables, right_tables, ctes)?;
+        let mut relation = self.bind_join_relation(&factor, ctes).ok()?;
+        if relation
+            .tables
+            .iter()
+            .any(|visible| reject_duplicate_relation(tables, visible).is_err())
+        {
+            return None;
+        }
+        // The pair table's columns are the rewrite's, not the query's, so
+        // `*` never shows them.
+        relation
+            .wildcard_order
+            .retain(|column| !column.relation_name.starts_with(WIDENED_PAIRS_PREFIX));
+        let mut visible = tables.to_vec();
+        visible.extend(relation.tables.iter().cloned());
+        let scope = expression_scope(&visible, &self.outer_tables);
+        let resolve_subquery = |query: &Query| self.bind_subquery(query, ctes, &scope);
+        bind_expr(&widened, &scope, Some(&resolve_subquery)).ok()?;
+        Some((relation, widened))
+    }
+
     /// Answers a LEFT join whose ON condition reaches its left side through
     /// a correlated `IN` or `EXISTS`, by widening the right input.
     ///
@@ -1554,42 +1589,30 @@ impl<'catalog> Binder<'catalog> {
                     reject_duplicate_relation(&tables, visible)?;
                 }
                 // A LEFT join whose ON reaches its left side through a
-                // subquery is answered by widening the right input instead
-                // (widen_outer_join_right). What the widening cannot take
-                // keeps the refusal below, and so does a widened form that
-                // fails to bind: the refusal says why, a bind error about a
-                // column the user never wrote would not.
+                // subquery is answered by widening the right input when the
+                // shape allows (widen_outer_join_right): hash joins, no
+                // per-row executions. Anything the widening cannot take -
+                // negated forms, inequality correlations, a subquery with its
+                // own joins or grouping - stays as written and runs on the
+                // dependent join path, which resolves the subquery against
+                // each candidate pair of rows.
                 let widened_constraint;
-                let mut refusal: Option<BindError> = None;
                 if kind == BoundJoinKind::Left
                     && let JoinConstraint::On(condition) = constraint
-                    && let Some(subquery) =
-                        self.left_correlated_subquery(condition, &relation.tables, ctes)
+                    && self
+                        .left_correlated_subquery(condition, &relation.tables, ctes)
+                        .is_some()
+                    && let Some((widened_relation, widened)) = self.widened_outer_join(
+                        &join.relation,
+                        condition,
+                        &tables,
+                        &relation.tables,
+                        ctes,
+                    )
                 {
-                    let refused = outer_join_refusal(subquery);
-                    let (factor, widened) = self
-                        .widen_outer_join_right(
-                            &join.relation,
-                            condition,
-                            &tables,
-                            &relation.tables,
-                            ctes,
-                        )
-                        .ok_or_else(|| refused.clone())?;
-                    relation = self
-                        .bind_join_relation(&factor, ctes)
-                        .map_err(|_| refused.clone())?;
-                    for visible in &relation.tables {
-                        reject_duplicate_relation(&tables, visible)?;
-                    }
-                    // The pair table's columns are the rewrite's, not the
-                    // query's, so `*` never shows them.
-                    relation
-                        .wildcard_order
-                        .retain(|column| !column.relation_name.starts_with(WIDENED_PAIRS_PREFIX));
+                    relation = widened_relation;
                     widened_constraint = JoinConstraint::On(widened);
                     constraint = &widened_constraint;
-                    refusal = Some(refused);
                 }
                 if matches!(kind, BoundJoinKind::Left | BoundJoinKind::Scalar) {
                     for column in &mut relation.table.columns {
@@ -1613,22 +1636,12 @@ impl<'catalog> Binder<'catalog> {
                     JoinConstraint::On(condition) => {
                         item_wildcard.extend(relation.wildcard_order.iter().cloned());
                         // An INNER join's ON was hoisted to WHERE before
-                        // binding, so a correlated subquery still here belongs
-                        // to an OUTER join. Dependent resolution exists only
-                        // at Filter level, and this is a join condition, so a
-                        // subquery correlated to the join's LEFT side runs
-                        // without the outer context it needs and the join
-                        // silently matches too few rows - measured against
-                        // MySQL, three matches reported as one. Correlating
-                        // to the RIGHT side alone is a different question and
-                        // answers correctly, so the test is whether the
-                        // subquery binds against the right side by itself.
-                        //
-                        // A LEFT join's were widened away above; one still
-                        // here is a shape the widening does not take, and a
-                        // refusal beats a wrong number nobody can see is
-                        // wrong (docs/limitations.md).
-                        if kind != BoundJoinKind::Inner
+                        // binding, and a LEFT join's runs on the dependent
+                        // join path when it was not widened above. Any other
+                        // kind reaching its left side through a subquery has
+                        // no path that answers it, and a refusal beats a
+                        // wrong number nobody can see is wrong.
+                        if !matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Left)
                             && let Some(subquery) =
                                 self.left_correlated_subquery(condition, &right_tables, ctes)
                         {
@@ -1637,10 +1650,7 @@ impl<'catalog> Binder<'catalog> {
                         let join_scope = expression_scope(&tables, &self.outer_tables);
                         let resolve_subquery =
                             |query: &Query| self.bind_subquery(query, ctes, &join_scope);
-                        Some(
-                            bind_expr(condition, &join_scope, Some(&resolve_subquery))
-                                .map_err(|error| refusal.take().unwrap_or(error))?,
-                        )
+                        Some(bind_expr(condition, &join_scope, Some(&resolve_subquery))?)
                     }
                     JoinConstraint::None if kind == BoundJoinKind::Cross => {
                         item_wildcard.extend(relation.wildcard_order.iter().cloned());
