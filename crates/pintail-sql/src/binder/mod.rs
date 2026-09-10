@@ -2314,7 +2314,10 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
         // digits: max integer part plus max scale.
         let scale = ls.max(rs);
         return Some(Some(DataType::Decimal {
-            precision: (lp - ls).max(rp - rs).saturating_add(scale).min(38),
+            precision: (lp - ls)
+                .max(rp - rs)
+                .saturating_add(scale)
+                .min(MAX_DECIMAL_PRECISION),
             scale,
         }));
     }
@@ -5283,7 +5286,7 @@ fn expression_scope(local: &[BoundTable], outer: &[BoundTable]) -> Vec<BoundTabl
 const DIVISION_SCALE_INCREMENT: u8 = 4;
 /// Pintail v1 decimal bounds (`DataType::is_valid`).
 const MAX_DECIMAL_SCALE: u8 = 30;
-const MAX_DECIMAL_PRECISION: u8 = 38;
+const MAX_DECIMAL_PRECISION: u8 = 65;
 
 fn division_result_type(left: DataType, right: DataType) -> Option<DataType> {
     let (left_scale, left_integer) = exact_numeric_digits(left)?;

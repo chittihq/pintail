@@ -1121,7 +1121,9 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
                 (*precision, *scale)
             }
         };
-        let precision = u8::try_from(precision).ok()?.clamp(1, 38);
+        let precision = u8::try_from(precision)
+            .ok()?
+            .clamp(1, MAX_DECIMAL_PRECISION);
         let scale = u8::try_from(scale).ok()?.min(30).min(precision);
         return Some(DataType::Decimal { precision, scale });
     }
