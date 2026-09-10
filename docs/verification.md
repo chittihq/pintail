@@ -54,10 +54,10 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL container and compares 1,081 generated
+The oracle starts a uniquely named MySQL container and compares 1,895 generated
 and hand-written queries over equivalent MySQL and Pintail data. MySQL 8.4 is
 the default; `PINTAIL_ORACLE_MYSQL_IMAGE=mysql:8.0` runs the same corpus against
-the older supported major. The fixed corpus has four layers:
+the older supported major. The fixed corpus has six layers:
 
 1. **Parametric loops** (~557 cases) — small AST templates with a varying
    scalar; good regression bulk, low template entropy.
@@ -68,9 +68,22 @@ the older supported major. The fixed corpus has four layers:
    column-native aggregates, windows, JSON extract, and temporal grains.
 4. **Collation differential matrix** (12 cases) — Unicode equality, ordering,
    grouping, DISTINCT, joins, `IN`, extrema, and character-counted `LIKE`
-   behavior under the advertised `utf8mb4_0900_ai_ci` profile.
+. **Boundary fixture** (341 cases) — a `bounds` table at the limits of
+   signed and unsigned integers, `DECIMAL(38)`, floats, padded and binary
+   strings, and temporal types including negative `TIME` and fractional
+   seconds, exercised through conversion, comparison and grouping contexts.
+6. **Reviewed and minimized regressions** (22 cases) — seven reviewed
+   candidate queries and fifteen seed-minimized mismatches, stored as JSON
+   in `tests/sqllogic/tests/support/`.
 
-The ignored differential fuzzer is a fifth, generated layer. One grammar emits
+Results compare as typed values: NULL never equals text, bytes stay bytes,
+and floats get a tolerance only when both sides are floats. A case that
+diverges through a documented limitation is listed in
+`tests/sqllogic/tests/support/oracle_known_failures.json` with the
+limitation it quotes. It warns while it fails; the run fails once it passes,
+or if its quotation is no longer in `docs/limitations.md`.
+
+The ignored differential fuzzer adds a generated layer on top. One grammar emits
 sixteen balanced families—scalar, filters, grouping, two/three-table joins,
 DECIMAL, temporal, JSON, ENUM, windows, conditionals/NULLs, strings, correlated
 subqueries, derived set operations, numeric functions, and hashes/encodings.
