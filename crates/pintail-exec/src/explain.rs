@@ -250,6 +250,13 @@ fn write_plan(
             write_plan(left, depth + 1, output, provider)?;
             write_plan(right, depth + 1, output, provider)
         }
+        PhysicalPlan::KeyLookupJoin {
+            left, right, kind, ..
+        } => {
+            writeln!(output, "KeyLookupJoin kind={}", join_name(*kind))?;
+            write_plan(left, depth + 1, output, provider)?;
+            write_plan(right, depth + 1, output, provider)
+        }
         PhysicalPlan::NestedLoopJoin {
             left, right, kind, ..
         } => {

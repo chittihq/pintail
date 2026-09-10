@@ -3,6 +3,7 @@ pub use aggregate::take_fold_phase_timings;
 mod budget;
 mod error;
 mod join;
+mod key_lookup;
 pub(crate) mod membership;
 mod memo;
 mod morsel;
@@ -244,6 +245,19 @@ pub enum PhysicalPlan {
     },
     /// Bounded nested-loop join for ON predicates containing a dependent
     /// subquery that cannot be represented as hash keys alone.
+    /// A join that streams its driving input in that table's key order and
+    /// finds each row's match by the other table's primary key. The output
+    /// keeps the driving order, so a limit above it stops both inputs early.
+    KeyLookupJoin {
+        left: Box<Self>,
+        right: Box<Self>,
+        kind: BoundJoinKind,
+        /// Whether the left input drives; the other is found by its key.
+        driving_left: bool,
+        driving_key: BoundExpr,
+        lookup_key: BoundExpr,
+        residual: Option<BoundExpr>,
+    },
     NestedLoopJoin {
         /// Left input.
         left: Box<Self>,
@@ -395,6 +409,9 @@ impl PhysicalPlan {
                 .first()
                 .map_or_else(Vec::new, PhysicalPlan::output_fields),
             Self::HashJoin {
+                left, right, kind, ..
+            }
+            | Self::KeyLookupJoin {
                 left, right, kind, ..
             }
             | Self::NestedLoopJoin {
@@ -707,12 +724,20 @@ fn plan_limit(
     collation: Collation,
 ) -> Result<PhysicalPlan, ExecError> {
     let input = match input {
-        LogicalPlan::Sort { input, keys, trim } => PhysicalPlan::Sort {
-            input: Box::new(PhysicalPlanner::plan(*input, collation)?),
-            keys,
-            top_k: usize::try_from(offset.saturating_add(count)).ok(),
-            trim,
-        },
+        LogicalPlan::Sort { input, keys, trim } => {
+            let input = PhysicalPlanner::plan(*input, collation)?;
+            // A join that already yields the sort's order needs no sort, and
+            // the limit above it then stops both of its inputs early.
+            match key_lookup::ordered_input(input, &keys, trim) {
+                (ordered, true) => ordered,
+                (input, false) => PhysicalPlan::Sort {
+                    input: Box::new(input),
+                    keys,
+                    top_k: usize::try_from(offset.saturating_add(count)).ok(),
+                    trim,
+                },
+            }
+        }
         input => PhysicalPlanner::plan(input, collation)?,
     };
     Ok(PhysicalPlan::Limit {
@@ -1205,6 +1230,18 @@ pub trait ScanProvider {
         scan: &Scan,
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError>;
+
+    /// A provider for one table that the caller may keep for the rest of
+    /// the query, so an operator can open ranged scans of that table while
+    /// it runs rather than all at build time. `None` when this provider
+    /// cannot hand one out; callers then read the table once.
+    fn table_provider(
+        &self,
+        _database_id: DatabaseId,
+        _table_id: TableId,
+    ) -> Option<Box<dyn ScanProvider + Send + Sync>> {
+        None
+    }
 }
 
 /// Hard per-query memory accounting.
@@ -1444,6 +1481,10 @@ fn plan_label(plan: &PhysicalPlan) -> String {
             if *all { " all" } else { "" }
         ),
         PhysicalPlan::Recursive { .. } => "Recursive".to_owned(),
+        PhysicalPlan::KeyLookupJoin { kind, residual, .. } => format!(
+            "KeyLookupJoin kind={kind:?} residual={}",
+            residual.is_some()
+        ),
         PhysicalPlan::HashJoin {
             kind,
             extra_keys,
@@ -1880,6 +1921,18 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
         PhysicalPlan::Recursive { anchor, member, .. } => {
             nested(anchor).saturating_add(nested(member))
         }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            driving_key,
+            lookup_key,
+            residual,
+            ..
+        } => nested(left)
+            .saturating_add(nested(right))
+            .saturating_add(bound_regex_memory_upper_bound(driving_key))
+            .saturating_add(bound_regex_memory_upper_bound(lookup_key))
+            .saturating_add(residual.as_ref().map_or(0, bound_regex_memory_upper_bound)),
         PhysicalPlan::HashJoin {
             left,
             right,
@@ -2201,6 +2254,40 @@ fn resolve_plan_subqueries(
             for input in inputs {
                 resolve_plan_subqueries(
                     input,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                    query_spill,
+                )?;
+            }
+        }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            driving_key,
+            lookup_key,
+            residual,
+            ..
+        } => {
+            for input in [left, right] {
+                resolve_plan_subqueries(
+                    input,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                    query_spill,
+                )?;
+            }
+            for expression in [driving_key, lookup_key]
+                .into_iter()
+                .chain(residual.as_mut())
+            {
+                resolve_expr_subqueries(
+                    expression,
                     provider,
                     memory_limit,
                     deadline,
@@ -3245,6 +3332,7 @@ enum PullOperator {
         inputs: Vec<Self>,
         current: usize,
     },
+    KeyLookupJoin(Box<key_lookup::KeyLookupJoin>),
     HashJoin {
         left: Box<Self>,
         right: Box<Self>,
@@ -3943,6 +4031,7 @@ impl PullOperator {
                     .expect("initialized above")
                     .next_batch(column_types, memory)
             }
+            Self::KeyLookupJoin(join) => join.next_batch(memory),
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
                     return Ok(None);
@@ -4216,6 +4305,28 @@ fn build_operator_inner(
                 output_columns,
             ))
         }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            kind,
+            driving_left,
+            driving_key,
+            lookup_key,
+            residual,
+        } => key_lookup::build(
+            key_lookup::Inputs {
+                left: *left,
+                right: *right,
+                kind,
+                driving_left,
+                driving_key,
+                lookup_key,
+                residual,
+            },
+            provider,
+            memory,
+            collation,
+        ),
         PhysicalPlan::NestedLoopJoin {
             left,
             right,

@@ -40,6 +40,38 @@ pub struct SnapshotScanProvider<'snapshot> {
     stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
 }
 
+/// One table's snapshot, owned, for an operator that opens scans of that
+/// table while the query runs. Scans open exactly as the provider that
+/// handed it out would open them.
+struct OwnedTableProvider {
+    key: (DatabaseId, TableId),
+    snapshot: TableSnapshot,
+    collation: Collation,
+    unique_visibility: Option<Vec<Vec<u32>>>,
+    stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
+}
+
+impl ScanProvider for OwnedTableProvider {
+    fn open_scan(
+        &self,
+        scan: &Scan,
+        memory_limit: usize,
+    ) -> Result<Box<dyn BatchStream>, ExecError> {
+        let provider = SnapshotScanProvider {
+            collation: self.collation,
+            snapshots: BTreeMap::from([(self.key, &self.snapshot)]),
+            unique_visibility: self
+                .unique_visibility
+                .iter()
+                .map(|keys| (self.key, keys.clone()))
+                .collect(),
+            not_ready: BTreeMap::new(),
+            stats: Arc::clone(&self.stats),
+        };
+        provider.open_scan(scan, memory_limit)
+    }
+}
+
 /// Actual storage work accumulated for one table during query execution.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PhysicalScanStats {
@@ -238,6 +270,24 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
 }
 
 impl ScanProvider for SnapshotScanProvider<'_> {
+    fn table_provider(
+        &self,
+        database_id: DatabaseId,
+        table_id: TableId,
+    ) -> Option<Box<dyn ScanProvider + Send + Sync>> {
+        let key = (database_id, table_id);
+        if self.not_ready.contains_key(&key) {
+            return None;
+        }
+        Some(Box::new(OwnedTableProvider {
+            key,
+            snapshot: (*self.snapshots.get(&key)?).clone(),
+            collation: self.collation,
+            unique_visibility: self.unique_visibility.get(&key).cloned(),
+            stats: Arc::clone(&self.stats),
+        }))
+    }
+
     #[allow(clippy::too_many_lines)]
     fn open_scan(
         &self,
