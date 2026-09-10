@@ -2430,6 +2430,14 @@ pub(super) fn execute_nested_loop_join(
         _ => None,
     };
     let mut output = LoopRows::new();
+    // A condition with no subquery reads only the pair's own values, so it
+    // compiles once. Cloning, resolving and compiling it for every
+    // candidate pair cost far more than testing the pair.
+    let fixed = if super::expression_has_subquery(condition) {
+        None
+    } else {
+        Some(CompiledExpr::compile(condition, &columns, collation)?)
+    };
     // One memo for the whole join: the ON condition's subqueries are keyed
     // by the (left, right) values they substitute, and a nested loop
     // revisits the same right row once per left row.
@@ -2491,23 +2499,28 @@ pub(super) fn execute_nested_loop_join(
                 memory.reserve(candidate_batch_bytes)?;
                 let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
                 let batch = RecordBatch::new(1, vectors)?;
-                let mut predicate = condition.clone();
-                let context = super::DependentRow {
-                    batch: &batch,
-                    row: 0,
-                    columns: &columns,
-                    provider,
-                    memory,
-                    collation,
+                let accepted = if let Some(fixed) = &fixed {
+                    predicate_truth(&fixed.evaluate(&batch, 0)?)?
+                } else {
+                    let mut predicate = condition.clone();
+                    let context = super::DependentRow {
+                        batch: &batch,
+                        row: 0,
+                        columns: &columns,
+                        provider,
+                        memory,
+                        collation,
+                    };
+                    if memory.remaining() < memory.limit() / 2 {
+                        super::record_dependent_memo(memo.finish(memory));
+                        memo =
+                            super::memo::DependentMemo::for_expressions(std::iter::once(condition));
+                    }
+                    memo.begin_row();
+                    resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
+                    let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
+                    predicate_truth(&predicate.evaluate(&batch, 0)?)?
                 };
-                if memory.remaining() < memory.limit() / 2 {
-                    super::record_dependent_memo(memo.finish(memory));
-                    memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
-                }
-                memo.begin_row();
-                resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
-                let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
-                let accepted = predicate_truth(&predicate.evaluate(&batch, 0)?)?;
                 drop(batch);
                 drop(right);
                 memory.release(
