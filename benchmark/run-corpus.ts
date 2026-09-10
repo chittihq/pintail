@@ -21,7 +21,7 @@
 
 import mysql from 'mysql2/promise'
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { canonicalValue, docker, dockerHost, publishedPort, waitForMysql } from '../tests/e2e/lib.ts'
 
@@ -39,6 +39,10 @@ const scales = option('--scales', '1,10000')!.split(',').map(Number)
 const RUNS = Number(option('--runs', '3'))
 const WARMUPS = Number(option('--warmups', '1'))
 const TIMEOUT_MS = Number(option('--timeout-ms', '10000'))
+// A result past this many rows is recorded as too large, not timed: at
+// amplified scales some joins return tens of millions of rows, and
+// buffering them measures the client, and exhausted its memory once.
+const MAX_ROWS = Number(option('--max-rows', '1000000'))
 // A warmup this slow gets one measured run: the median of three multi-second
 // runs says little more than one, and the corpus has to finish.
 const SLOW_MS = 2_000
@@ -73,7 +77,7 @@ type Case = {
   timeZone: string
   ordered: boolean
 }
-type Status = 'ok' | 'error' | 'timeout'
+type Status = 'ok' | 'error' | 'timeout' | 'too-large'
 type Timing = {
   status: Status
   medianMs?: number
@@ -140,6 +144,10 @@ function digest(rows: Rows, ordered: boolean): string {
   const keys = rows.map(rowKey)
   if (!ordered) keys.sort()
   return createHash('sha256').update(keys.join('')).digest('hex').slice(0, 24)
+}
+
+function isTooLarge(message: string): boolean {
+  return /row cap|more than \d+ rows|PINTAIL_MAX_RESULT_ROWS|TOO_MANY_ROWS|Limit for result exceeded/i.test(message)
 }
 
 function isTimeout(message: string): boolean {
@@ -257,6 +265,8 @@ async function clickhouseQuery(baseUrl: string, database: string, sql: string, t
     // MySQL's outer joins fill the missing side with NULL, not defaults.
     join_use_nulls: '1',
     use_query_cache: '0',
+    max_result_rows: String(MAX_ROWS),
+    result_overflow_mode: 'throw',
   })
   const response = await fetch(`${baseUrl}/?${params}`, {
     method: 'POST',
@@ -301,11 +311,16 @@ async function measure(run: () => Promise<Rows>, ordered: boolean): Promise<Timi
     const started = performance.now()
     try {
       const result = await run()
+      if (result.length > MAX_ROWS) throw new Error(`result exceeds the row cap of ${MAX_ROWS}`)
       rows ??= result
       return { elapsed: performance.now() - started }
     } catch (error) {
       const message = String(error instanceof Error ? error.message : error)
-      return { status: isTimeout(message) ? 'timeout' : 'error', samples, error: message.slice(0, 300) }
+      return {
+        status: isTooLarge(message) ? 'too-large' : isTimeout(message) ? 'timeout' : 'error',
+        samples,
+        error: message.slice(0, 300),
+      }
     }
   }
   for (let index = 0; index < WARMUPS; index += 1) {
@@ -370,6 +385,7 @@ async function main() {
       '--publish', '0:8080', '--publish', '0:3306', ...engineLimits,
       // The engine track: a repeated query must execute, not replay a memo.
       '--env', 'PINTAIL_DISABLE_SETTLED_MEMO=1',
+      '--env', `PINTAIL_MAX_RESULT_ROWS=${MAX_ROWS}`,
       '--env', `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
       pintailImage,
     )
@@ -490,6 +506,9 @@ async function main() {
         pintail: new WireSession('Pintail', connectOptions(host, pintailWirePort, database, key.secret, database)),
       }
 
+      mkdirSync(outDir, { recursive: true })
+      const partial = join(outDir, `partial-s${scale}.jsonl`)
+      writeFileSync(partial, '')
       const random = mulberry32(SEED + scale)
       const outcomes: Outcome[] = []
       const started = performance.now()
@@ -502,6 +521,7 @@ async function main() {
           deadline: `SET SESSION max_execution_time = ${TIMEOUT_MS}`,
           ...(engine === 'mysql'
             ? {
+                limit: `SET SESSION sql_select_limit = ${MAX_ROWS + 1}`,
                 switch:
                   entry.family === 'outer join-condition subquery'
                     ? "SET SESSION optimizer_switch = 'semijoin=off'"
@@ -541,6 +561,7 @@ async function main() {
           ...timings,
           parity: { pintail: agree('pintail'), clickhouse: agree('clickhouse') },
         })
+        appendFileSync(partial, `${JSON.stringify(outcomes[outcomes.length - 1])}\n`)
         if ((index + 1) % 100 === 0) {
           log(`scale ${scale}: ${index + 1}/${cases.length} cases, ${Math.round((performance.now() - started) / 1000)} s`)
         }
@@ -566,7 +587,7 @@ async function main() {
         pintail: `image ${pintailImageId.slice(0, 19)}, settled-result memo disabled`,
       },
       limits: engineLimits.join(' '),
-      settings: { warmups: WARMUPS, runs: RUNS, timeoutMs: TIMEOUT_MS, slowMs: SLOW_MS, seed: SEED },
+      settings: { warmups: WARMUPS, runs: RUNS, timeoutMs: TIMEOUT_MS, slowMs: SLOW_MS, maxRows: MAX_ROWS, seed: SEED },
       scales: report,
     }
     mkdirSync(outDir, { recursive: true })
@@ -632,6 +653,7 @@ function summarize(artifact: {
     `Measured ${artifact.measuredAt} at \`${artifact.commit.slice(0, 12)}\`. ` +
       `${artifact.corpus.cases} cases, ${artifact.settings.warmups} warmup and up to ` +
       `${artifact.settings.runs} measured runs each, ${artifact.settings.timeoutMs} ms timeout, ` +
+      `results capped at ${artifact.settings.maxRows} rows, ` +
       `engines limited to \`${artifact.limits}\` on one docker host.`,
     '',
     ...Object.entries(artifact.engines).map(([engine, description]) => `- ${engine}: ${description}`),
@@ -645,12 +667,12 @@ function summarize(artifact: {
     const { scale, rowCounts } = scaleEntry as { scale: number; rowCounts: Record<string, number> }
     const outcomes = scaleEntry.outcomes as Outcome[]
     lines.push(`## Scale ${scale}`, '', `Rows: ${Object.entries(rowCounts).map(([t, n]) => `${t} ${n.toLocaleString()}`).join(', ')}.`, '')
-    lines.push('| Engine | ok | error | timeout | median of medians (ms) |', '|---|---:|---:|---:|---:|')
+    lines.push('| Engine | ok | error | timeout | too large | median of medians (ms) |', '|---|---:|---:|---:|---:|---:|')
     for (const engine of ['mysql', 'pintail', 'clickhouse'] as Engine[]) {
       const ok = outcomes.filter((o) => o[engine].status === 'ok')
       lines.push(
         `| ${engine} | ${ok.length} | ${outcomes.filter((o) => o[engine].status === 'error').length} | ` +
-          `${outcomes.filter((o) => o[engine].status === 'timeout').length} | ${fmt(median(ok.map((o) => o[engine].medianMs!)))} |`,
+          `${outcomes.filter((o) => o[engine].status === 'timeout').length} | ${outcomes.filter((o) => o[engine].status === 'too-large').length} | ${fmt(median(ok.map((o) => o[engine].medianMs!)))} |`,
       )
     }
     const ratio = (o: Outcome, other: Engine) => o.pintail.medianMs! / Math.max(o[other].medianMs!, 0.001)
