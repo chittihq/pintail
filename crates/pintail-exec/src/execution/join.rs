@@ -1665,7 +1665,15 @@ pub(super) fn next_hash_join_batch(
             break;
         }
         if state.left_values.is_none()
-            && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
+            && !prepare_hash_join_left(
+                left,
+                left_key,
+                key_mode,
+                extra_keys,
+                state,
+                memory,
+                matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi),
+            )?
         {
             break;
         }
@@ -1767,7 +1775,7 @@ pub(super) fn next_grace_join_batch(
             break;
         }
         if state.left_values.is_none()
-            && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory)?
+            && !prepare_hash_join_left(left, left_key, key_mode, extra_keys, state, memory, false)?
         {
             let grace = state.grace.as_mut().expect("grace state engaged");
             grace.probing_done = true;
@@ -1958,6 +1966,7 @@ pub(super) fn next_grace_join_batch(
     Ok(Some(RecordBatch::new(rows.len(), columns)?))
 }
 
+#[allow(clippy::too_many_arguments)] // resident and spilled probes share row preparation
 fn prepare_hash_join_left(
     left: &mut PullOperator,
     left_key: &CompiledExpr,
@@ -1965,6 +1974,7 @@ fn prepare_hash_join_left(
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
     state: &mut HashJoinState,
     memory: &MemoryTracker,
+    discard_unmatched: bool,
 ) -> Result<bool, ExecError> {
     loop {
         let exhausted = state
@@ -1999,15 +2009,29 @@ fn prepare_hash_join_left(
         if !batch.selection().is_selected(row) {
             continue;
         }
-        let row_bytes = estimated_batch_row_bytes(batch, row)?;
         let key_memory = left_key
             .allocation_upper_bound(batch, row)
             .saturating_mul(12);
-        memory.ensure_transient(row_bytes.saturating_add(key_memory))?;
+        memory.ensure_transient(key_memory)?;
         state.left_key = match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? {
             Some(primary) => composite_join_key(primary, batch, row, extra_keys, JoinSide::Probe)?,
             None => None,
         };
+        // Inner/semi probes with no resident bucket cannot produce a row.
+        // Test the complete normalized key before touching projected values:
+        // decoding decimal/text payloads for rejected probes dominates sparse
+        // joins. Spilled, outer, anti and scalar joins retain their row path.
+        if discard_unmatched
+            && state
+                .left_key
+                .as_ref()
+                .is_none_or(|key| state.build.get(key).is_none())
+        {
+            state.left_key = None;
+            continue;
+        }
+        let row_bytes = estimated_batch_row_bytes(batch, row)?;
+        memory.ensure_transient(row_bytes.saturating_add(key_memory))?;
         state.left_reserved = row_bytes.saturating_sub(size_of::<Vec<Value>>());
         memory.reserve(state.left_reserved)?;
         state.left_values = Some(batch_row(batch, row)?);
