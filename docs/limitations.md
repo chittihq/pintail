@@ -150,16 +150,6 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles, full per-expression coercibility, and
   collation-sensitive execution over mixed source profiles remain unsupported
   (#10).
-- `GROUP BY` over a PAD SPACE collation puts two values in one group where
-  MySQL sometimes puts them in two. A string ending in a character that
-  WEIGHS a space without BEING one - a no-break space is the reachable case
-  - compares equal to the string without it, and MySQL agrees: `=` matches
-  and `COUNT(DISTINCT)` folds them. Its `GROUP BY` does not, because that
-  key trims trailing spaces by character where the comparison pads by
-  weight, so MySQL reports two groups for values it also reports as one
-  distinct value and as equal. Pintail folds consistently across all three,
-  which agrees with MySQL on the first two and differs on the third.
-
 - `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
 
 - Date parsing is limited to canonical date and date-time forms. Compound
@@ -195,8 +185,6 @@ stays readable as a list of things to fix.
 
 - Source `DECIMAL` columns above precision 38 are replicated as text with a
   probe warning and deliberately decline exact-numeric expression semantics.
-  Numeric overflow returns an explicit error rather than supporting MySQL's
-  wider, up-to-65-digit DECIMAL range.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 
@@ -584,14 +572,6 @@ clustered query execution, synchronous high availability, source writes,
 multi-tenant isolation, or spatial querying. Those
 boundaries are explicit rather than emulated with results that look plausible
 but may be wrong.
-
-- A `CASE`/`IF` branch value with a scale smaller than the unified DECIMAL
-  result type renders at the unified scale: `CASE WHEN .. THEN 0 ELSE
-  dec(12,2) END` answers `0.00` where MySQL 8.4 answers `0` (MySQL keeps
-  the branch value's own scale; its `COALESCE` rescales like Pintail
-  does). Pintail's decimal columns carry one canonical text scale per
-  COLUMN, regenerated whenever a batch is repacked, so a per-VALUE scale
-  does not survive execution. Numerically the answers are equal.
 
 - One source transaction may carry at most 16,777,215 row mutations in GTID
   mode, and 65,535 in file-position mode - the per-transaction ordinal is

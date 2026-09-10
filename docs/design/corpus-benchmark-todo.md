@@ -43,6 +43,12 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
 4. [ ] **Joins MySQL answers.** Remove the cross-join safety estimate (10
    refusals) and fix the theta, null-safe and quantified-subquery join
    timeouts (most of 37). Fold in join-proof.
+   Done: the estimate is gone (c3ff1de6), and constant ON conjuncts,
+   exact-decimal IN keys, self-join and null-safe EXISTS decorrelation and
+   the anti join's first-match stop cleared 16 of the 19 join and
+   subquery timeouts at scale 10,000. Open: a correlated IN inside an ON
+   clause, a doubly nested scalar subquery, and a second NOT EXISTS reusing
+   the first's alias; join-proof waits on its own qualification.
 5. [x] **Window frames.** Six window queries time out at scale 10,000:
    `ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, `RANGE` peer
    groups over a low-cardinality key, and numeric and temporal `RANGE`
@@ -54,7 +60,7 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
 7. [ ] **Confirm the expected differences.** 26 differences are `LIMIT` over
    tied rows and 25 are `GROUP_CONCAT` without `ORDER BY`; capture the rows
    for differing cases to prove it.
-8. [ ] **Parity gaps.** `CASE` decimal branch scale, `GROUP BY` with a
+8. [x] **Parity gaps.** `CASE` decimal branch scale, `GROUP BY` with a
    trailing no-break space, DECIMAL wider than 38 digits.
 9. [ ] **Lifecycle replay.** Rerun `tests/e2e/parity-replay.ts`; 33 wire and
    session checks were red (prepared statements, `SHOW WARNINGS`, TIMESTAMP
