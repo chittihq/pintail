@@ -223,6 +223,13 @@ fn expression(
                     && let Some(projection) = input.projection.get(index)
                 {
                     let mut column = expression(&projection.expr, input, catalog, facts);
+                    // A materialized derived table stores an integer of up to
+                    // eleven digits as INT, whatever computed it (measured
+                    // against MySQL 8.4); a merged one keeps the type.
+                    if materialized_derived(input) && integer(&column) && column.column_length <= 11
+                    {
+                        column.coltype = ColumnType::MysqlTypeLong;
+                    }
                     if input.recursive.is_some() {
                         column.column_length = column.column_length.saturating_add(1);
                         set_flags(&mut column, 0);
@@ -775,10 +782,29 @@ fn resolved_expr<'a>(expr: &'a BoundExpr, query: &'a BoundQuery) -> &'a BoundExp
                 .position(|value| value.column_id == reference.column_id)
             && let Some(projection) = input.projection.get(index)
         {
-            return resolved_expr(&projection.expr, input);
+            return match projection.expr.kind {
+                BoundExprKind::GroupKey(key) => input
+                    .group_by
+                    .get(key)
+                    .map_or(&projection.expr, |grouped| resolved_expr(grouped, input)),
+                _ => resolved_expr(&projection.expr, input),
+            };
         }
     }
     expr
+}
+
+/// Whether `MySQL` materializes a derived table rather than merging it into
+/// the outer query: grouping, aggregates, DISTINCT, windows, LIMIT and set
+/// operations all prevent the merge.
+fn materialized_derived(input: &BoundQuery) -> bool {
+    !input.group_by.is_empty()
+        || !input.aggregates.is_empty()
+        || input.distinct
+        || !input.windows.is_empty()
+        || input.limit.is_some()
+        || !input.union_all.is_empty()
+        || !input.set_ops.is_empty()
 }
 
 fn group_key(column: &mut Column, expr: &BoundExpr) {
@@ -790,7 +816,9 @@ fn group_key(column: &mut Column, expr: &BoundExpr) {
             column.coltype = ColumnType::MysqlTypeBlob;
             column.colflags |= ColumnFlags::from_bits(16);
         }
-        if integer(column) {
+        // The grouping temporary table stores an integer of up to eleven
+        // digits as INT; a wider one - `id + 1`, NTILE - stays BIGINT.
+        if integer(column) && column.column_length <= 11 {
             column.coltype = ColumnType::MysqlTypeLong;
             column.colflags.set(ColumnFlags::BINARY_FLAG, false);
         }
@@ -1074,6 +1102,24 @@ mod tests {
             )[0],
             ColumnType::MysqlTypeLong,
             "grouped on outside it"
+        );
+        assert_eq!(
+            types(
+                "SELECT t.w, COUNT(*) FROM (SELECT NTILE(4) OVER (ORDER BY id) AS w FROM sales) t \
+                 GROUP BY t.w"
+            )[0],
+            ColumnType::MysqlTypeLonglong,
+            "a BIGINT-wide integer stays BIGINT when grouped"
+        );
+        assert_eq!(
+            types("SELECT t.id FROM (SELECT id, COUNT(*) AS n FROM sales GROUP BY id) t")[0],
+            ColumnType::MysqlTypeLonglong,
+            "a stored BIGINT keeps its type through a grouped derived table"
+        );
+        assert_eq!(
+            types("SELECT t.y FROM (SELECT YEAR(at) AS y FROM sales) t")[0],
+            ColumnType::MysqlTypeLonglong,
+            "a merged derived table keeps the computed type"
         );
     }
 }

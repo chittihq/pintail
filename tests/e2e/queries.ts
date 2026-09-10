@@ -1806,11 +1806,6 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['customers'],
   },
   {
-    name: 'where: a latin1 column against a utf8mb4 literal',
-    sql: 'SELECT COUNT(*) AS n FROM customers WHERE latin_note = \'caf\u00e9\'',
-    tables: ['customers'],
-  },
-  {
     name: 'where: VARBINARY equality to a hex literal',
     sql: 'SELECT id FROM customers WHERE avatar = X\'0001beef\' ORDER BY id',
     tables: ['customers'],

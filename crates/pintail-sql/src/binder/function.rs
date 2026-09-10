@@ -812,6 +812,41 @@ pub(super) fn bind_between(
     {
         return Err(BindError::InvalidScalarFunction("BETWEEN".to_owned()));
     }
+    // A DECIMAL travels as text, and the row-level BETWEEN compared that text
+    // with its bounds: -12.50 sorted below -0.01. Written as the two exact
+    // comparisons MySQL defines BETWEEN to be, every path - vectorized
+    // masks, pruning, the row loop - compares by value.
+    if super::is_exact_decimal_comparison(BinaryOp::GreaterOrEqual, &args[0], &args[1])
+        && super::is_exact_decimal_comparison(BinaryOp::LessOrEqual, &args[0], &args[2])
+    {
+        let [value, low, high]: [BoundExpr; 3] = args
+            .try_into()
+            .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+        let lower =
+            super::bind_exact_decimal_comparison(BinaryOp::GreaterOrEqual, value.clone(), low);
+        let upper = super::bind_exact_decimal_comparison(BinaryOp::LessOrEqual, value, high);
+        let range = BoundExpr {
+            nullable: lower.nullable || upper.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::And,
+                left: Box::new(lower),
+                right: Box::new(upper),
+            },
+        };
+        return Ok(if negated {
+            BoundExpr {
+                nullable: range.nullable,
+                data_type: Some(DataType::Boolean),
+                kind: BoundExprKind::Unary {
+                    op: crate::bound::UnaryOp::Not,
+                    expr: Box::new(range),
+                },
+            }
+        } else {
+            range
+        });
+    }
     bind_scalar(ScalarFunction::Between { negated }, args)
 }
 
