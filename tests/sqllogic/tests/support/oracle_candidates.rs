@@ -322,7 +322,13 @@ fn bounded_execute_mode(sql: &str, mode: &str) -> Result<Vec<Vec<OracleValue>>, 
             "validates_generated_candidates_worker",
             "--ignored",
         ])
+        // Two workers means two: the scan pool otherwise sizes itself to the
+        // host's cores, and on a many-core host its threads and their malloc
+        // arenas outgrow the 1 GiB address-space ceiling before any query
+        // runs, failing thread creation with EAGAIN.
         .env("RAYON_NUM_THREADS", "2")
+        .env("PINTAIL_SCAN_THREADS", "2")
+        .env("MALLOC_ARENA_MAX", "2")
         .env("PINTAIL_CANDIDATE_SQL", sql)
         .env("PINTAIL_CANDIDATE_MODE", mode)
         .env("PINTAIL_CANDIDATE_RESULT", &output)
