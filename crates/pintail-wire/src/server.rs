@@ -702,6 +702,10 @@ struct Authenticated {
     /// would tell a client its writes were transactional when each of them
     /// autocommitted.
     local: bool,
+    /// The source's `@@global.time_zone`: a session starts in it, as it
+    /// would on the source. Absent for a source probed before it was
+    /// recorded, which keeps `SYSTEM`.
+    source_time_zone: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -857,7 +861,9 @@ impl Backend {
             database_name: database.name,
             key_name: key.name,
             local: database.kind == "local",
+            source_time_zone: source_time_zone(database.probe_json.as_deref()),
         });
+        self.start_in_source_zone();
         Ok(true)
     }
 
@@ -878,8 +884,32 @@ impl Backend {
         )
     }
 
+    /// A new session's state: the defaults, in the source's global time
+    /// zone when its probe recorded one.
+    fn fresh_session(&self) -> Session {
+        let zone = self.authentication.lock().ok().and_then(|current| {
+            current
+                .as_ref()
+                .and_then(|authenticated| authenticated.source_time_zone.clone())
+        });
+        Session {
+            time_zone: zone.unwrap_or_else(|| Session::default().time_zone),
+            ..Session::default()
+        }
+    }
+
+    /// Starts the session in the source's global time zone, as a new
+    /// session on the source would.
+    fn start_in_source_zone(&self) {
+        let zone = self.fresh_session().time_zone;
+        if let Ok(mut session) = self.session.lock() {
+            session.time_zone = zone;
+        }
+    }
+
     fn reset_session_state(&mut self) -> io::Result<()> {
-        *self.session.lock().map_err(io_other)? = Session::default();
+        let fresh = self.fresh_session();
+        *self.session.lock().map_err(io_other)? = fresh;
         self.prepared.clear();
         self.prepared_bytes = 0;
         self.next_statement_id = 1;
@@ -1310,13 +1340,17 @@ impl Handler for Backend {
         let Ok(Ok(Some(authenticated))) = verified else {
             return false;
         };
-        match self.authentication.lock() {
+        let stored = match self.authentication.lock() {
             Ok(mut current) => {
                 *current = Some(authenticated);
                 true
             }
             Err(_) => false,
+        };
+        if stored {
+            self.start_in_source_zone();
         }
+        stored
     }
 
     fn full_auth_public_key(&self) -> Option<Vec<u8>> {
@@ -1570,6 +1604,8 @@ impl Handler for Backend {
             return false;
         };
         *current = Some(authenticated);
+        drop(current);
+        self.start_in_source_zone();
         true
     }
 }
@@ -2796,6 +2832,16 @@ fn connection_worth_recording(key_id: &str) -> bool {
     }
 }
 
+/// The source's `@@global.time_zone` from its stored probe report.
+fn source_time_zone(probe_json: Option<&str>) -> Option<String> {
+    let report: serde_json::Value = serde_json::from_str(probe_json?).ok()?;
+    report
+        .get("server")?
+        .get("time_zone")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// Resolves a scrambled wire login against the keys of the database named
 /// by `username`. Free of the connection so the handshake can run it on a
 /// blocking thread: it reads the metadata store, and on the first
@@ -2841,6 +2887,7 @@ fn verify_wire_key_at(
             database_name: database.name,
             key_name: key.name,
             local: database.kind == "local",
+            source_time_zone: source_time_zone(database.probe_json.as_deref()),
         }));
     }
     metadata
@@ -2880,6 +2927,7 @@ fn verify_wire_key_at(
         database_name: database.name,
         key_name: key.name,
         local: database.kind == "local",
+        source_time_zone: source_time_zone(database.probe_json.as_deref()),
     }))
 }
 #[cfg(test)]
@@ -3720,5 +3768,20 @@ mod result_ceiling_tests {
         assert_eq!(max_result_rows_from(Some("0")), usize::MAX);
         assert_eq!(max_result_rows_from(Some("not a number")), usize::MAX);
         assert_eq!(max_result_rows_from(Some(" 250000 ")), 250_000);
+    }
+
+    #[test]
+    fn a_session_starts_in_the_sources_global_time_zone() {
+        assert_eq!(
+            super::source_time_zone(Some(
+                r#"{"server":{"version":"8.4.0","time_zone":"+00:00"}}"#
+            )),
+            Some("+00:00".to_owned())
+        );
+        assert_eq!(
+            super::source_time_zone(Some(r#"{"server":{"version":"8.4.0"}}"#)),
+            None
+        );
+        assert_eq!(super::source_time_zone(None), None);
     }
 }

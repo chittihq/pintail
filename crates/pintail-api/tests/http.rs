@@ -142,6 +142,7 @@ fn test_probe_report(database_name: &str, source: SourceTable) -> ProbeReport {
             version: "8.4.0".to_owned(),
             version_comment: "MySQL Community Server".to_owned(),
             flavor: SourceFlavor::Mysql,
+            time_zone: None,
         },
         variables: BTreeMap::new(),
         grants: Vec::new(),

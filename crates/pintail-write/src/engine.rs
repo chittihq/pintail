@@ -354,6 +354,7 @@ fn local_report(database: &str, tables: Vec<SourceTable>) -> ProbeReport {
             version: env!("CARGO_PKG_VERSION").to_owned(),
             version_comment: "Pintail local database".to_owned(),
             flavor: pintail_probe::SourceFlavor::Mysql,
+            time_zone: None,
         },
         variables: std::collections::BTreeMap::new(),
         grants: Vec::new(),

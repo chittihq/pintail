@@ -49,6 +49,10 @@ pub struct ServerIdentity {
     pub version_comment: String,
     /// Product family inferred from the server's own version strings.
     pub flavor: SourceFlavor,
+    /// The server's `@@global.time_zone`, the zone a new session starts in.
+    /// Absent from reports taken before it was recorded.
+    #[serde(default)]
+    pub time_zone: Option<String>,
 }
 
 /// Recommended continuous-replication mode.
@@ -510,8 +514,8 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
         ));
     }
     let mut connection = pool.get_conn().await?;
-    let (version, version_comment): (String, String) = connection
-        .query_first("SELECT @@version, @@version_comment")
+    let (version, version_comment, time_zone): (String, String, Option<String>) = connection
+        .query_first("SELECT @@version, @@version_comment, @@global.time_zone")
         .await?
         .ok_or_else(|| ProbeError::InvalidMetadata("server identity query was empty".to_owned()))?;
     let flavor = if version.to_ascii_lowercase().contains("mariadb")
@@ -612,6 +616,7 @@ pub async fn probe(pool: &Pool, database: &str) -> Result<ProbeReport, ProbeErro
             version,
             version_comment,
             flavor,
+            time_zone,
         },
         variables,
         grants,
