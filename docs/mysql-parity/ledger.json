@@ -2,19 +2,19 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "35fb3d7c17de0ef2efe0e23e5590ee2cb3d153da",
-    "measuredAt": "2026-09-10T14:13:48.923Z",
+    "commit": "201d8b3e8716d58606325a4513bda7551f5d8724",
+    "measuredAt": "2026-09-10T20:12:25.829Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "4da6d9689c80846168eb0d774c6f30364e28cda8533532416ccd05147a326c90",
+    "ledgerSha256": "95f826928d3107c83d5a60cdef9eb37492415fdd16813d9d4ee184d8317eab87",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "663550deca5738f7f370f35905f85a91aa2407bf",
-      "sourceCommit": "3c025ad121cc6d18ef0fae592589aedd23e05c21",
-      "measuredAt": "2026-09-10T14:05:25.047880499+00:00",
+      "commit": "201d8b3e8716d58606325a4513bda7551f5d8724",
+      "sourceCommit": "d787d3a65bf597a08e2c9d0dd0c1bd284cb2b283",
+      "measuredAt": "2026-09-10T20:04:01.940650881+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "26875896449b562986147b6234b5049094324612d65a2c8ba4435abbf3cccfe9",
-      "corpusSha256": "827c435bcb8f19b54eadacd508daeb98e8ecb1722cc2c050e223723b4abf2934"
+      "ledgerSha256": "fcf3f5acba0e53f499115ff6de6234549244f415c22495849f149cfeb9a6343f",
+      "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d"
     }
   },
   "baseline": {
@@ -33,11 +33,11 @@
   "pintailImplementation": [
     {
       "path": "crates/pintail-sql/src/binder/mod.rs",
-      "sha256": "327d47977976851cdad192ea17534182a5f22aec9a3d093afe9facef3c69cbfe"
+      "sha256": "c5852a7a844ff010437b4ef8551f063d7f57dcf83dbf31b161fef78d9b0f98ad"
     },
     {
       "path": "crates/pintail-sql/src/binder/function.rs",
-      "sha256": "314dba3cb6c0bce79a2eb4b3c6038ec217ddffeffac7c36b7bbd2b11a8e36e31"
+      "sha256": "51d27c6d95abcc95f09fcb3e8cb29743aaa2e25020175a9de60f064a69eab828"
     },
     {
       "path": "crates/pintail-sql/src/lib.rs",
@@ -45,7 +45,7 @@
     },
     {
       "path": "crates/pintail-wire/src/server.rs",
-      "sha256": "d47cfadb3c9361f4fb427c86b9cfdd5c08bd244c4b0a30c0087ff85929ede61b"
+      "sha256": "551c3d10cb654f1a3024797f8a6dbace7aad4cd92a95a106e9a7249013405c19"
     },
     {
       "path": "crates/pintail-write/src/engine.rs",
@@ -699,7 +699,8 @@
         "oracle:1404:empty aggregate interactions",
         "oracle:1405:empty aggregate interactions",
         "oracle:1411:empty aggregate interactions",
-        "oracle:1431:subquery aggregate interactions"
+        "oracle:1431:subquery aggregate interactions",
+        "oracle:1879:reviewed-cte-window"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -858,7 +859,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4603"
+        "crates/pintail-sql/src/binder/mod.rs:4670"
       ],
       "binderGuards": [
         "any arity"
@@ -966,7 +967,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4604"
+        "crates/pintail-sql/src/binder/mod.rs:4671"
       ],
       "binderGuards": [
         "any arity"
@@ -1009,7 +1010,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4605"
+        "crates/pintail-sql/src/binder/mod.rs:4672"
       ],
       "binderGuards": [
         "any arity"
@@ -1402,7 +1403,9 @@
         "oracle:1656:boundary conversion contexts",
         "oracle:1873:reviewed-nullable-decimal",
         "oracle:1875:reviewed-quantified-subquery",
-        "oracle:1876:reviewed-quantified-subquery"
+        "oracle:1876:reviewed-quantified-subquery",
+        "oracle:1878:reviewed-cte-window",
+        "oracle:1879:reviewed-cte-window"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -1823,7 +1826,9 @@
         "oracle:1612:boundary conversion contexts",
         "oracle:1633:boundary conversion contexts",
         "oracle:1654:boundary conversion contexts",
-        "oracle:1873:reviewed-nullable-decimal"
+        "oracle:1873:reviewed-nullable-decimal",
+        "oracle:1874:reviewed-nullable-decimal",
+        "oracle:1878:reviewed-cte-window"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
@@ -2893,6 +2898,7 @@
         "oracle:1511:null safe relational joins",
         "oracle:1691:boundary scalar cardinality",
         "oracle:1710:boundary string grouping",
+        "oracle:1712:boundary string grouping",
         "oracle:1731:boundary string grouping",
         "oracle:1733:boundary string grouping",
         "oracle:1752:boundary string grouping",
@@ -2916,6 +2922,7 @@
         "oracle:1839:boundary window carriers",
         "oracle:1840:boundary window carriers",
         "oracle:1868:boundary composition",
+        "oracle:1874:reviewed-nullable-decimal",
         "oracle:1876:reviewed-quantified-subquery"
       ],
       "status": "implemented-unverified",
@@ -2930,8 +2937,8 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/admission.rs:72",
         "crates/pintail-exec/tests/constant_predicate_folds.rs:124",
-        "crates/pintail-exec/tests/decimal_average_exactness.rs:208",
-        "crates/pintail-exec/tests/decimal_internal_digits.rs:7"
+        "crates/pintail-exec/tests/correlated_self_join.rs:100",
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:208"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -3302,7 +3309,9 @@
         "crates/pintail-wire/src/server.rs:2033"
       ],
       "binderGuards": [],
-      "testOccurrences": [],
+      "testOccurrences": [
+        "crates/pintail-exec/tests/key_lookup_join.rs:19"
+      ],
       "verification": "not-run",
       "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
       "acceptance": "Compare valid and invalid arities, NULLs, coercions, boundary values, warnings/errors, result bytes and column metadata against pinned MySQL; cover literals and stored columns over HTTP, wire text and prepared binary execution."
@@ -3390,7 +3399,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:5613"
+        "crates/pintail-sql/src/binder/mod.rs:5680"
       ],
       "binderGuards": [
         "if args.len() == 1"
@@ -4402,8 +4411,8 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/admission.rs:23",
         "crates/pintail-exec/tests/constant_predicate_folds.rs:53",
-        "crates/pintail-exec/tests/decimal_average_exactness.rs:104",
-        "crates/pintail-exec/tests/decimal_internal_digits.rs:37"
+        "crates/pintail-exec/tests/correlated_self_join.rs:47",
+        "crates/pintail-exec/tests/decimal_average_exactness.rs:104"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -11123,7 +11132,8 @@
         "oracle:1839:boundary window carriers",
         "oracle:1840:boundary window carriers",
         "oracle:1868:boundary composition",
-        "oracle:1873:reviewed-nullable-decimal"
+        "oracle:1873:reviewed-nullable-decimal",
+        "oracle:1874:reviewed-nullable-decimal"
       ],
       "status": "implemented-unverified",
       "scope": "triage",
@@ -12176,10 +12186,10 @@
         "if args.is_empty()"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/correlated_self_join.rs:101",
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:170",
         "crates/pintail-exec/tests/grouped_fold.rs:75",
-        "crates/pintail-exec/tests/morsel_bench.rs:155",
-        "crates/pintail-exec/tests/multi_core.rs:154"
+        "crates/pintail-exec/tests/key_lookup_join.rs:176"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -12741,7 +12751,8 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "crates/pintail-exec/tests/profile.rs:268"
+        "crates/pintail-exec/tests/profile.rs:268",
+        "tests/sqllogic/tests/mysql_oracle.rs:6381"
       ],
       "verification": "not-run",
       "note": "Do not infer alias support from the equivalent function. Dedicated syntax and parser rewriting must be exercised through the actual front end.",
@@ -13562,9 +13573,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/decimal_average_exactness.rs:379",
+        "crates/pintail-exec/tests/key_lookup_join.rs:275",
         "crates/pintail-exec/tests/range_prune_bench.rs:187",
-        "tests/sqllogic/tests/mysql_oracle.rs:842",
-        "tests/sqllogic/tests/support/oracle_candidates.rs:50"
+        "tests/sqllogic/tests/mysql_oracle.rs:842"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -14063,9 +14074,9 @@
       "binderGuards": [],
       "testOccurrences": [
         "crates/pintail-exec/tests/constant_predicate_folds.rs:20",
+        "crates/pintail-exec/tests/correlated_self_join.rs:19",
         "crates/pintail-exec/tests/decimal_average_exactness.rs:31",
-        "crates/pintail-exec/tests/decimal_internal_digits.rs:19",
-        "crates/pintail-exec/tests/decimal_negative_range.rs:17"
+        "crates/pintail-exec/tests/decimal_internal_digits.rs:19"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -17898,7 +17909,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4599"
+        "crates/pintail-sql/src/binder/mod.rs:4666"
       ],
       "binderGuards": [
         "any arity"
@@ -17939,7 +17950,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4599"
+        "crates/pintail-sql/src/binder/mod.rs:4666"
       ],
       "binderGuards": [
         "any arity"
@@ -17984,7 +17995,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4599"
+        "crates/pintail-sql/src/binder/mod.rs:4666"
       ],
       "binderGuards": [
         "any arity"
@@ -18027,7 +18038,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4600"
+        "crates/pintail-sql/src/binder/mod.rs:4667"
       ],
       "binderGuards": [
         "any arity"
@@ -18571,7 +18582,9 @@
         "oracle:1477:cte reuse and composition",
         "oracle:1480:cte reuse and composition",
         "oracle:1494:window peer and partition interactions",
-        "oracle:1876:reviewed-quantified-subquery"
+        "oracle:1874:reviewed-nullable-decimal",
+        "oracle:1876:reviewed-quantified-subquery",
+        "oracle:1878:reviewed-cte-window"
       ],
       "status": "partial",
       "scope": "analytics",
@@ -19576,6 +19589,7 @@
       "pintailEvidence": [],
       "binderGuards": [],
       "testOccurrences": [
+        "crates/pintail-exec/tests/key_lookup_join.rs:60",
         "tests/sqllogic/tests/support/oracle_transport.rs:99"
       ],
       "verification": "not-run",
@@ -19842,8 +19856,8 @@
       "testOccurrences": [
         "crates/pintail-exec/tests/live_replication_queries.rs:79",
         "crates/pintail-exec/tests/memtable_overlay.rs:157",
-        "tests/sqllogic/tests/support/oracle_boundaries.rs:3",
-        "tests/sqllogic/tests/support/oracle_physical.rs:93"
+        "tests/sqllogic/tests/mysql_oracle.rs:6321",
+        "tests/sqllogic/tests/support/oracle_boundaries.rs:3"
       ],
       "verification": "not-run",
       "note": "No binder name match. Check parser rewrites, dedicated syntax, wire handling and optional modules before declaring a gap.",
@@ -19880,7 +19894,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4601"
+        "crates/pintail-sql/src/binder/mod.rs:4668"
       ],
       "binderGuards": [
         "any arity"
@@ -19923,7 +19937,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4602"
+        "crates/pintail-sql/src/binder/mod.rs:4669"
       ],
       "binderGuards": [
         "any arity"
@@ -19965,7 +19979,7 @@
       "scope": "triage",
       "priority": "P2",
       "pintailEvidence": [
-        "crates/pintail-sql/src/binder/mod.rs:4601"
+        "crates/pintail-sql/src/binder/mod.rs:4668"
       ],
       "binderGuards": [
         "any arity"
