@@ -180,6 +180,8 @@ show no material TPC-H regression or gain in the tested shapes.
 is retained. The successful comparison uses **16 GiB per-query / 32 GiB process
 spill limits in both arms**, with a 4 GiB query-memory ceiling. This does not
 claim SF1 passes with the default spill quota. Product defaults were not changed.
+This remains a [known Q05 capacity and latency limitation](../../docs/limitations.md#tpch-q05-spill-capacity);
+the tested spill allowance is not a measurement of peak usage or the minimum required.
 The test MySQL source used a 4 GiB buffer pool, configured before query timing
 in every pass. Dataset loading and snapshot time are excluded from the comparison.
 
