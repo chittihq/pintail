@@ -15,15 +15,6 @@ pub enum ExecError {
     UnsupportedOperator(&'static str),
     /// A join predicate is not a single cross-input equality yet.
     UnsupportedJoinCondition,
-    /// A cross join has no safe catalog cardinality estimate.
-    CrossJoinCardinalityUnknown,
-    /// A cross join exceeds the v1 Cartesian-product guard.
-    CrossJoinGuardExceeded {
-        /// Estimated result rows.
-        estimated_rows: u64,
-        /// Configured safety ceiling.
-        limit: u64,
-    },
     /// A scalar subquery produced more than one row.
     ScalarSubqueryRows {
         /// Actual result cardinality.
@@ -113,16 +104,6 @@ impl fmt::Display for ExecError {
             }
             Self::UnsupportedJoinCondition => formatter
                 .write_str("join ON clause has no equality between the two inputs to join on"),
-            Self::CrossJoinCardinalityUnknown => {
-                formatter.write_str("cross join requires known catalog row counts for every input")
-            }
-            Self::CrossJoinGuardExceeded {
-                estimated_rows,
-                limit,
-            } => write!(
-                formatter,
-                "cross join estimate {estimated_rows} exceeds safety limit {limit}"
-            ),
             Self::ScalarSubqueryRows { rows } => {
                 write!(formatter, "scalar subquery produced {rows} rows")
             }

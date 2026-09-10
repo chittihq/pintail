@@ -2090,6 +2090,42 @@ pub(super) fn normalized_hash_key(value: Value, collation: Collation) -> Option<
     (!matches!(value, Value::Null)).then(|| normalized_collation_value(value, collation))
 }
 
+/// [`normalized_collation_text`] for a `GROUP BY` key. The equivalence is the
+/// same except under `unicode_ci`, where `MySQL`'s grouping trims trailing
+/// spaces by character rather than by weight (see
+/// [`crate::collation::unicode_ci_group_key`]).
+pub(crate) fn normalized_group_text(text: &str, collation: Collation) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    if collation != Collation::Utf8mb4UnicodeCi {
+        return normalized_collation_text(text, collation);
+    }
+    let key = crate::collation::unicode_ci_group_key(text);
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+/// [`normalized_collation_value`] for a `GROUP BY` key.
+pub(super) fn normalized_group_value(value: Value, collation: Collation) -> Value {
+    match value {
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            Value::Utf8(normalized_group_text(&text, collation))
+        }
+        Value::DecimalAverage(average) => {
+            Value::Utf8(normalized_group_text(&average.canonical(), collation))
+        }
+        value => value,
+    }
+}
+
+/// [`normalized_hash_key`] for a `GROUP BY` key.
+pub(super) fn normalized_group_hash_key(value: Value, collation: Collation) -> Option<Value> {
+    (!matches!(value, Value::Null)).then(|| normalized_group_value(value, collation))
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(super) enum JoinHashKey {
     NegativeInteger(i64),
@@ -2187,7 +2223,7 @@ pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> 
         // collide with the plain-text side.
         Value::Enum { label, .. } => Value::Utf8(normalized_collation_text(&label, collation)),
         Value::DecimalAverage(value) => {
-            Value::Utf8(normalized_collation_text(&value.label, collation))
+            Value::Utf8(normalized_collation_text(&value.canonical(), collation))
         }
         value => value,
     }
@@ -2430,6 +2466,14 @@ pub(super) fn execute_nested_loop_join(
         _ => None,
     };
     let mut output = LoopRows::new();
+    // A condition with no subquery reads only the pair's own values, so it
+    // compiles once. Cloning, resolving and compiling it for every
+    // candidate pair cost far more than testing the pair.
+    let fixed = if super::expression_has_subquery(condition) {
+        None
+    } else {
+        Some(CompiledExpr::compile(condition, &columns, collation)?)
+    };
     // One memo for the whole join: the ON condition's subqueries are keyed
     // by the (left, right) values they substitute, and a nested loop
     // revisits the same right row once per left row.
@@ -2491,23 +2535,28 @@ pub(super) fn execute_nested_loop_join(
                 memory.reserve(candidate_batch_bytes)?;
                 let vectors = rows_to_columns(std::slice::from_ref(&candidate), &column_types)?;
                 let batch = RecordBatch::new(1, vectors)?;
-                let mut predicate = condition.clone();
-                let context = super::DependentRow {
-                    batch: &batch,
-                    row: 0,
-                    columns: &columns,
-                    provider,
-                    memory,
-                    collation,
+                let accepted = if let Some(fixed) = &fixed {
+                    predicate_truth(&fixed.evaluate(&batch, 0)?)?
+                } else {
+                    let mut predicate = condition.clone();
+                    let context = super::DependentRow {
+                        batch: &batch,
+                        row: 0,
+                        columns: &columns,
+                        provider,
+                        memory,
+                        collation,
+                    };
+                    if memory.remaining() < memory.limit() / 2 {
+                        super::record_dependent_memo(memo.finish(memory));
+                        memo =
+                            super::memo::DependentMemo::for_expressions(std::iter::once(condition));
+                    }
+                    memo.begin_row();
+                    resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
+                    let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
+                    predicate_truth(&predicate.evaluate(&batch, 0)?)?
                 };
-                if memory.remaining() < memory.limit() / 2 {
-                    super::record_dependent_memo(memo.finish(memory));
-                    memo = super::memo::DependentMemo::for_expressions(std::iter::once(condition));
-                }
-                memo.begin_row();
-                resolve_dependent_expr_subqueries(&mut predicate, &context, &mut memo)?;
-                let predicate = CompiledExpr::compile(&predicate, &columns, collation)?;
-                let accepted = predicate_truth(&predicate.evaluate(&batch, 0)?)?;
                 drop(batch);
                 drop(right);
                 memory.release(
@@ -2529,8 +2578,9 @@ pub(super) fn execute_nested_loop_join(
                         }
                         output.push(candidate, memory)?;
                     }
-                    BoundJoinKind::Semi => break,
-                    BoundJoinKind::Anti => {}
+                    // One match decides both: the row is kept by a semi join and
+                    // dropped by an anti join, whatever else would match.
+                    BoundJoinKind::Semi | BoundJoinKind::Anti => break,
                     BoundJoinKind::Cross => {
                         return Err(ExecError::InvalidPhysicalPlan(
                             "nested-loop ON evaluation cannot represent a cross join",

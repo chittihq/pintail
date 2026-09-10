@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "commit": "35fb3d7c17de0ef2efe0e23e5590ee2cb3d153da",
-  "measuredAt": "2026-09-10T14:13:48.923Z",
+  "commit": "201d8b3e8716d58606325a4513bda7551f5d8724",
+  "measuredAt": "2026-09-10T20:12:25.829Z",
   "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-  "ledgerSha256": "4da6d9689c80846168eb0d774c6f30364e28cda8533532416ccd05147a326c90",
+  "ledgerSha256": "95f826928d3107c83d5a60cdef9eb37492415fdd16813d9d4ee184d8317eab87",
   "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
   "cases": [
     {
@@ -8159,12 +8159,12 @@
   ],
   "oracle": {
     "schemaVersion": 1,
-    "commit": "663550deca5738f7f370f35905f85a91aa2407bf",
-    "sourceCommit": "3c025ad121cc6d18ef0fae592589aedd23e05c21",
-    "measuredAt": "2026-09-10T14:05:25.047880499+00:00",
+    "commit": "201d8b3e8716d58606325a4513bda7551f5d8724",
+    "sourceCommit": "d787d3a65bf597a08e2c9d0dd0c1bd284cb2b283",
+    "measuredAt": "2026-09-10T20:04:01.940650881+00:00",
     "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-    "ledgerSha256": "26875896449b562986147b6234b5049094324612d65a2c8ba4435abbf3cccfe9",
-    "corpusSha256": "827c435bcb8f19b54eadacd508daeb98e8ecb1722cc2c050e223723b4abf2934",
+    "ledgerSha256": "fcf3f5acba0e53f499115ff6de6234549244f415c22495849f149cfeb9a6343f",
+    "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d",
     "cases": [
       {
         "name": "oracle:0000:arithmetic and predicates",
@@ -26057,6 +26057,14 @@
         ]
       },
       {
+        "name": "oracle:1613:boundary conversion contexts",
+        "sqlSha256": "fa532f992b58042a6158ab5a65b7010ba67e513f18762ee3411f8eeddc733d17",
+        "functions": [],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
         "name": "oracle:1614:boundary conversion contexts",
         "sqlSha256": "5550469e7039c8ddcebaba42e8ec3895a19b310c4d29b280a5141a01c96aa3cc",
         "functions": [
@@ -26970,6 +26978,16 @@
         "functions": [
           "MAX",
           "MIN"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:1712:boundary string grouping",
+        "sqlSha256": "e5d795c1c39c33a0b764ad7848b4b264e6a42bda192b4c5deb98f2fb81c35684",
+        "functions": [
+          "COUNT"
         ],
         "phases": [
           "fixed-oracle"
@@ -28594,6 +28612,20 @@
         ]
       },
       {
+        "name": "oracle:1874:reviewed-nullable-decimal",
+        "sqlSha256": "2555f430b7ef2626b5bfe4e0506dc6bc44f3143eba49b8bb7cd59ad10e116c1f",
+        "functions": [
+          "COALESCE",
+          "COUNT",
+          "IN",
+          "MAX",
+          "SUM"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
         "name": "oracle:1875:reviewed-quantified-subquery",
         "sqlSha256": "ff6cca6e76846c7af3a7566a75a5c94d69d874e1f822c759e973f67d2fe136a2",
         "functions": [
@@ -28627,6 +28659,31 @@
           "IN",
           "JSON_EXTRACT",
           "JSON_UNQUOTE"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:1878:reviewed-cte-window",
+        "sqlSha256": "68cefdaecb268eaad6e59c5964c021519c58e4049804e2df1e6b9d5b4bb2e1b4",
+        "functions": [
+          "AS",
+          "CAST",
+          "COALESCE",
+          "SUM"
+        ],
+        "phases": [
+          "fixed-oracle"
+        ]
+      },
+      {
+        "name": "oracle:1879:reviewed-cte-window",
+        "sqlSha256": "755acbc600fe4d9b6830a26cfaf37aaf690cd73407e0d24398ce10f40a0bb25f",
+        "functions": [
+          "AS",
+          "AVG",
+          "CAST"
         ],
         "phases": [
           "fixed-oracle"

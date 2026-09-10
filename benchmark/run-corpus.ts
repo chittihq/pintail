@@ -89,6 +89,8 @@ type Timing = {
   rows?: number
   error?: string
   digest?: string
+  /// The rows, kept in memory to classify a difference; never written.
+  kept?: Rows
 }
 type Outcome = {
   id: string
@@ -147,6 +149,34 @@ function digest(rows: Rows, ordered: boolean): string {
   const keys = rows.map(rowKey)
   if (!ordered) keys.sort()
   return createHash('sha256').update(keys.join('')).digest('hex').slice(0, 24)
+}
+
+/// A trailing LIMIT, which a difference's classification removes to see
+/// the whole answer the LIMIT chose from.
+const LIMIT_TAIL = /\s+LIMIT\s+\d+(\s*(,|OFFSET)\s*\d+)?\s*$/i
+
+/// Why Pintail's answer differs from MySQL's: `order` when the rows are
+/// the same in another order, `group_concat` when they are equal once
+/// each cell's comma-separated members are sorted, `limit` when every row
+/// Pintail returned is in MySQL's answer without the LIMIT, `other`
+/// otherwise.
+function classify(mysql: Rows, pintail: Rows, full: Rows | undefined): string {
+  const bag = (rows: Rows) => JSON.stringify(rows.map(rowKey).sort())
+  if (bag(mysql) === bag(pintail)) return 'order'
+  const members = (rows: Rows) =>
+    rows.map((row) => row.map((value) => canonicalValue(value).split(',').sort().join(',')))
+  if (bag(members(mysql)) === bag(members(pintail))) return 'group_concat'
+  if (full && mysql.length === pintail.length) {
+    const available = new Map<string, number>()
+    for (const row of full) available.set(rowKey(row), (available.get(rowKey(row)) ?? 0) + 1)
+    const drawn = pintail.every((row) => {
+      const left = available.get(rowKey(row)) ?? 0
+      available.set(rowKey(row), left - 1)
+      return left > 0
+    })
+    if (drawn) return 'limit'
+  }
+  return 'other'
 }
 
 function isTooLarge(message: string): boolean {
@@ -343,6 +373,7 @@ async function measure(run: () => Promise<Rows>, ordered: boolean): Promise<Timi
     samples: samples.map((sample) => Math.round(sample * 1000) / 1000),
     rows: rows?.length ?? 0,
     digest: rows ? digest(rows, ordered) : undefined,
+    kept: rows,
   }
 }
 
@@ -511,6 +542,11 @@ async function main() {
 
       mkdirSync(outDir, { recursive: true })
       const partial = join(outDir, `partial-s${scale}.jsonl`)
+      // Differing cases with both engines' rows, for telling a tie under a
+      // LIMIT or a GROUP_CONCAT order from a wrong answer. Not tracked.
+      const differences = join(outDir, `differences-s${scale}.jsonl`)
+      writeFileSync(differences, '')
+      const differenceKinds: Record<string, number> = {}
       writeFileSync(partial, '')
       const random = mulberry32(SEED + scale)
       const outcomes: Outcome[] = []
@@ -556,6 +592,27 @@ async function main() {
             : timings.mysql.digest === timings[engine].digest
               ? 'equal'
               : 'differs'
+        if (agree('pintail') === 'differs') {
+          const withoutLimit = entry.sql.replace(LIMIT_TAIL, '')
+          let full: Rows | undefined
+          if (withoutLimit !== entry.sql) {
+            try {
+              full = await sessions.mysql.query(withoutLimit, TIMEOUT_MS + 5_000)
+            } catch {
+              full = undefined
+            }
+          }
+          const mysqlRows = timings.mysql.kept ?? []
+          const pintailRows = timings.pintail.kept ?? []
+          const kind = classify(mysqlRows, pintailRows, full)
+          differenceKinds[kind] = (differenceKinds[kind] ?? 0) + 1
+          const sample = (rows: Rows) => rows.slice(0, 50).map((row) => row.map(canonicalValue))
+          appendFileSync(
+            differences,
+            `${JSON.stringify({ id: entry.id, family: entry.family, sql: entry.sql, kind, mysql: sample(mysqlRows), pintail: sample(pintailRows) })}\n`,
+          )
+        }
+        for (const engine of order) delete timings[engine].kept
         outcomes.push({
           id: entry.id,
           family: entry.family,
@@ -571,7 +628,7 @@ async function main() {
       }
       sessions.mysql.close()
       sessions.pintail.close()
-      report.push({ scale, database, rowCounts, clickhouseTables, outcomes })
+      report.push({ scale, database, rowCounts, clickhouseTables, outcomes, differences: differenceKinds })
     }
 
     const commit = (await Bun.$`git -C ${repository} rev-parse HEAD`.text()).trim()
@@ -724,6 +781,10 @@ function summarize(artifact: {
     }
     const differs = outcomes.filter((o) => o.parity.pintail === 'differs')
     lines.push('', '### Pintail answers that differ from MySQL', '')
+    const kinds = (scaleEntry as { differences?: Record<string, number> }).differences
+    if (kinds && Object.keys(kinds).length > 0) {
+      lines.push(`By kind: ${Object.entries(kinds).map(([kind, count]) => `${kind} ${count}`).join(', ')}.`, '')
+    }
     if (differs.length === 0) lines.push('None.')
     for (const o of differs.slice(0, 40)) lines.push(`- (${o.family}) \`${o.sql.slice(0, 160)}\``)
     lines.push('')

@@ -15,13 +15,17 @@ const PARTITIONS: usize = 64;
 
 pub(super) enum MaterializedMembership {
     Memory(Vec<Value>),
-    External(PreparedMembership, usize),
+    /// A lookup the query owns, and the bytes it holds for the query's
+    /// lifetime: a spilled set read back by partition, or a hashed index
+    /// over a set collected in memory.
+    Prepared(PreparedMembership, usize),
 }
 
 #[derive(Debug, Clone, Copy)]
 enum BucketMode {
     Integer,
     Text,
+    Decimal,
     Common,
 }
 
@@ -65,33 +69,97 @@ impl std::fmt::Debug for ExternalMembership {
     }
 }
 
-fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
+/// A member's equality key, for the modes whose comparison it decides:
+/// integers by value whatever their signedness, exact numbers by value
+/// whatever their scale, text by its collation weights. Values outside
+/// the mode have none and are compared one by one.
+#[derive(PartialEq, Eq, Hash)]
+enum MemberKey {
+    Integer(i128),
+    Text(String),
+    Decimal(i128, u8),
+}
+
+fn member_key(value: &Value, mode: BucketMode, collation: Collation) -> Option<MemberKey> {
     match (mode, value) {
-        (BucketMode::Integer, Value::Int64(value)) => i128::from(*value).hash(&mut hash),
-        (BucketMode::Integer, Value::UInt64(value)) => i128::from(*value).hash(&mut hash),
-        (BucketMode::Text, Value::Utf8(value) | Value::Enum { label: value, .. }) => {
-            super::join::normalized_collation_text(value, collation).hash(&mut hash);
+        (BucketMode::Integer, Value::Int64(value)) => Some(MemberKey::Integer(i128::from(*value))),
+        (BucketMode::Integer, Value::UInt64(value)) => Some(MemberKey::Integer(i128::from(*value))),
+        (BucketMode::Text, Value::Utf8(value) | Value::Enum { label: value, .. }) => Some(
+            MemberKey::Text(super::join::normalized_collation_text(value, collation)),
+        ),
+        (BucketMode::Text, Value::DecimalAverage(value)) => Some(MemberKey::Text(
+            super::join::normalized_collation_text(&value.label, collation),
+        )),
+        (BucketMode::Decimal, value) => {
+            decimal_key(value).map(|(units, scale)| MemberKey::Decimal(units, scale))
         }
-        (BucketMode::Text, Value::DecimalAverage(value)) => {
-            super::join::normalized_collation_text(&value.label, collation).hash(&mut hash);
-        }
-        _ => return 0,
+        _ => None,
     }
+}
+
+/// An exact number as its digits and scale with trailing fractional zeros
+/// dropped, so `1.5`, `1.50` and `1.500` share a key and `3` meets `3.00`.
+fn decimal_key(value: &Value) -> Option<(i128, u8)> {
+    let (mut units, mut scale) = match value {
+        Value::Int64(value) => (i128::from(*value), 0),
+        Value::UInt64(value) => (i128::from(*value), 0),
+        value => {
+            let text = value.text()?;
+            let scale = u8::try_from(
+                text.split_once('.')
+                    .map_or(0, |(_, fraction)| fraction.len()),
+            )
+            .ok()?;
+            (pintail_types::parse_decimal_scaled(text, scale)?, scale)
+        }
+    };
+    while scale > 0 && units % 10 == 0 {
+        units /= 10;
+        scale -= 1;
+    }
+    Some((units, scale))
+}
+
+fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
+    let Some(key) = member_key(value, mode, collation) else {
+        return 0;
+    };
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hash);
     usize::try_from(hash.finish() % PARTITIONS as u64).expect("partition fits usize")
+}
+
+fn bucket_mode(needle_type: Option<DataType>, value_type: Option<DataType>) -> BucketMode {
+    let exact = |data_type: Option<DataType>| {
+        integer_type(data_type) || matches!(data_type, Some(DataType::Decimal { .. }))
+    };
+    if integer_type(needle_type) && integer_type(value_type) {
+        BucketMode::Integer
+    } else if exact(needle_type) && exact(value_type) {
+        BucketMode::Decimal
+    } else if needle_type == Some(DataType::Utf8) && value_type == Some(DataType::Utf8) {
+        BucketMode::Text
+    } else {
+        BucketMode::Common
+    }
+}
+
+/// Compares the needle against one member exactly as the literal list does.
+fn member_matches(
+    needle: &Value,
+    value: Value,
+    exact_decimal: bool,
+    collation: Collation,
+) -> Result<bool, MembershipError> {
+    crate::expression::evaluate_in_list(&[needle.clone(), value], false, exact_decimal, collation)
+        .map_err(lookup_error)
+        .map(|outcome| outcome == Value::Boolean(true))
 }
 
 impl ExternalMembership {
     /// Compares the needle against one already-decoded value.
     fn matches(&self, needle: &Value, value: Value) -> Result<bool, MembershipError> {
-        crate::expression::evaluate_in_list(
-            &[needle.clone(), value],
-            false,
-            self.exact_decimal,
-            self.collation,
-        )
-        .map_err(lookup_error)
-        .map(|outcome| outcome == Value::Boolean(true))
+        member_matches(needle, value, self.exact_decimal, self.collation)
     }
 
     /// Reads one partition's file, answering the probe as it goes and,
@@ -254,6 +322,168 @@ impl MembershipLookup for ExternalMembership {
     }
 }
 
+/// Marks the end of a key's chain of members.
+const CHAIN_END: usize = usize::MAX;
+
+/// Sets up to this size stay a literal list: comparing a probe against a
+/// few members costs less than hashing it, and a literal list keeps the
+/// expression's signature for the settled-result memo.
+const LITERAL_MEMBERS: usize = 64;
+
+/// A set collected in memory, indexed by its members' equality keys.
+///
+/// A literal list compares every probe against every member, so a scan of
+/// many rows against a large subquery result costs rows times members. The
+/// index answers a probe from the members that share its key. A key hit is
+/// still confirmed by the list's own comparison, and members or probes
+/// without a key are compared one by one, so the answer is always the
+/// list's.
+struct HashedMembership {
+    values: Vec<Value>,
+    /// The latest member per key; `chain` links it to the earlier ones.
+    heads: std::collections::HashMap<MemberKey, usize>,
+    chain: Vec<usize>,
+    unkeyed: Vec<usize>,
+    mode: BucketMode,
+    collation: Collation,
+    saw_null: bool,
+    /// Members and probes compare as exact numbers.
+    exact_decimal: bool,
+}
+
+impl std::fmt::Debug for HashedMembership {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("HashedMembership")
+            .field("mode", &self.mode)
+            .field("members", &self.values.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl HashedMembership {
+    fn any_of(
+        &self,
+        needle: &Value,
+        members: impl IntoIterator<Item = usize>,
+    ) -> Result<bool, MembershipError> {
+        for index in members {
+            if member_matches(
+                needle,
+                self.values[index].clone(),
+                self.exact_decimal,
+                self.collation,
+            )? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn keyed(&self, key: &MemberKey) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(self.heads.get(key).copied(), |&index| {
+            Some(self.chain[index]).filter(|&next| next != CHAIN_END)
+        })
+    }
+}
+
+impl MembershipLookup for HashedMembership {
+    fn lookup(&self, needle: &Value) -> Result<Value, MembershipError> {
+        if matches!(needle, Value::Null) {
+            return Ok(Value::Null);
+        }
+        let found = match member_key(needle, self.mode, self.collation) {
+            Some(key) => {
+                self.any_of(needle, self.keyed(&key))?
+                    || self.any_of(needle, self.unkeyed.iter().copied())?
+            }
+            None => self.any_of(needle, 0..self.values.len())?,
+        };
+        Ok(if found {
+            Value::Boolean(true)
+        } else if self.saw_null {
+            Value::Null
+        } else {
+            Value::Boolean(false)
+        })
+    }
+}
+
+/// Indexes a set collected in memory when its members have an equality key
+/// and there are enough of them to be worth hashing; any other set comes
+/// back as the literal list it was. The bytes returned are what the index
+/// holds for the query's lifetime.
+pub(super) fn index_members(
+    mut values: Vec<Value>,
+    collation: Collation,
+    needle_type: Option<DataType>,
+    value_type: Option<DataType>,
+) -> MaterializedMembership {
+    let mode = bucket_mode(needle_type, value_type);
+    if values.len() <= LITERAL_MEMBERS || matches!(mode, BucketMode::Common) {
+        return MaterializedMembership::Memory(values);
+    }
+    // NULL is never a member; it only turns a miss into NULL.
+    let collected = values.len();
+    values.retain(|value| !matches!(value, Value::Null));
+    let saw_null = values.len() != collected;
+    let mut heads = std::collections::HashMap::with_capacity(values.len());
+    let mut chain = vec![CHAIN_END; values.len()];
+    let mut unkeyed = Vec::new();
+    let mut key_bytes = 0_usize;
+    for (index, value) in values.iter().enumerate() {
+        let Some(key) = member_key(value, mode, collation) else {
+            unkeyed.push(index);
+            continue;
+        };
+        match heads.entry(key) {
+            std::collections::hash_map::Entry::Occupied(mut head) => {
+                chain[index] = head.insert(index);
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                if let MemberKey::Text(text) = slot.key() {
+                    key_bytes = key_bytes.saturating_add(text.capacity());
+                }
+                slot.insert(index);
+            }
+        }
+    }
+    let bytes = values
+        .capacity()
+        .saturating_mul(size_of::<Value>())
+        .saturating_add(
+            values
+                .iter()
+                .map(Value::heap_bytes)
+                .fold(0_usize, usize::saturating_add),
+        )
+        .saturating_add(
+            heads
+                .capacity()
+                .saturating_mul(size_of::<(MemberKey, usize)>().saturating_add(1)),
+        )
+        .saturating_add(key_bytes)
+        .saturating_add(
+            chain
+                .len()
+                .saturating_add(unkeyed.capacity())
+                .saturating_mul(size_of::<usize>()),
+        );
+    MaterializedMembership::Prepared(
+        PreparedMembership(Arc::new(HashedMembership {
+            values,
+            heads,
+            chain,
+            unkeyed,
+            mode,
+            collation,
+            saw_null,
+            exact_decimal: matches!(mode, BucketMode::Decimal),
+        })),
+        bytes,
+    )
+}
+
 fn lookup_error(error: ExecError) -> MembershipError {
     match error {
         ExecError::QueryCancelled => MembershipError::Cancelled,
@@ -338,13 +568,7 @@ pub(super) fn materialize_membership(
     let mut execution =
         Execution::start_with_deadline(plan, provider, limit / 2, deadline, collation)?;
     let memory = MemoryTracker::with_deadline(limit, deadline);
-    let mode = if integer_type(needle_type) && integer_type(value_type) {
-        BucketMode::Integer
-    } else if needle_type == Some(DataType::Utf8) && value_type == Some(DataType::Utf8) {
-        BucketMode::Text
-    } else {
-        BucketMode::Common
-    };
+    let mode = bucket_mode(needle_type, value_type);
     let exact_type = |value| {
         integer_type(value) || matches!(value, Some(DataType::Boolean | DataType::Decimal { .. }))
     };
@@ -362,6 +586,10 @@ pub(super) fn materialize_membership(
     let mut saw_null = false;
     let mut largest = 0;
     while let Some(batch) = execution.next_batch()? {
+        // Charged once per batch: the batch's value cache is built by the
+        // first read, and summing it again for every row made collecting a
+        // set that arrives in one batch quadratic in its size.
+        let mut batch_bytes = None;
         for row in batch.selection().selected_rows() {
             let value = batch
                 .column(0)
@@ -379,9 +607,9 @@ pub(super) fn materialize_membership(
                 reserved = 0;
                 external = true;
             }
+            let batch_bytes = *batch_bytes.get_or_insert_with(|| batch.estimated_bytes());
             memory.ensure_transient(
-                batch
-                    .estimated_bytes()
+                batch_bytes
                     .saturating_add(execution.memory().used())
                     .saturating_add(bytes.saturating_mul(4)),
             )?;
@@ -409,7 +637,7 @@ pub(super) fn materialize_membership(
         .saturating_add(largest.saturating_mul(16))
         .saturating_add(resident_budget);
     memory.ensure_transient(retained)?;
-    Ok(MaterializedMembership::External(
+    Ok(MaterializedMembership::Prepared(
         PreparedMembership(Arc::new(ExternalMembership {
             runs: runs
                 .into_iter()
@@ -601,6 +829,106 @@ mod tests {
         assert!(matches!(
             set.lookup(&Value::UInt64(1)),
             Err(MembershipError::TimedOut)
+        ));
+    }
+
+    fn assert_answers_as_list(
+        membership: &PreparedMembership,
+        members: &[Value],
+        needle: &Value,
+        collation: Collation,
+        exact_decimal: bool,
+    ) {
+        let mut list = vec![needle.clone()];
+        list.extend_from_slice(members);
+        assert_eq!(
+            membership.0.lookup(needle).expect("lookup"),
+            crate::expression::evaluate_in_list(&list, false, exact_decimal, collation)
+                .expect("list"),
+            "{needle:?}"
+        );
+    }
+
+    #[test]
+    fn an_indexed_set_answers_as_its_literal_list_would() {
+        let mut members = (1..=100).map(Value::Int64).collect::<Vec<_>>();
+        members.push(Value::UInt64(u64::MAX));
+        for with_null in [false, true] {
+            if with_null {
+                members.push(Value::Null);
+            }
+            let MaterializedMembership::Prepared(integers, _) = index_members(
+                members.clone(),
+                Collation::default(),
+                Some(DataType::Int64),
+                Some(DataType::UInt64),
+            ) else {
+                panic!("a hundred integers are indexed");
+            };
+            for needle in [
+                Value::Int64(50),
+                Value::UInt64(100),
+                Value::UInt64(u64::MAX),
+                Value::Int64(0),
+                Value::Int64(-1),
+                Value::Null,
+            ] {
+                assert_answers_as_list(&integers, &members, &needle, Collation::default(), false);
+            }
+        }
+        let words = (0..100)
+            .map(|word| Value::Utf8(format!("Word {word}")))
+            .collect::<Vec<_>>();
+        for collation in [Collation::Utf8mb4GeneralCi, Collation::default()] {
+            let MaterializedMembership::Prepared(text, _) = index_members(
+                words.clone(),
+                collation,
+                Some(DataType::Utf8),
+                Some(DataType::Utf8),
+            ) else {
+                panic!("a hundred words are indexed");
+            };
+            for needle in ["word 7", "WORD 99 ", "word 100", "Word 7x", "Wörd 8"] {
+                assert_answers_as_list(
+                    &text,
+                    &words,
+                    &Value::Utf8(needle.to_owned()),
+                    collation,
+                    false,
+                );
+            }
+        }
+        let decimals = (0..100)
+            .map(|quarter| Value::Utf8(format!("{}.{:02}", quarter / 4, quarter % 4 * 25)))
+            .collect::<Vec<_>>();
+        let money = Some(DataType::Decimal {
+            precision: 12,
+            scale: 2,
+        });
+        let MaterializedMembership::Prepared(exact, _) =
+            index_members(decimals.clone(), Collation::default(), money, money)
+        else {
+            panic!("a hundred decimals are indexed");
+        };
+        for needle in [
+            Value::Utf8("1.5".to_owned()),
+            Value::Utf8("1.50".to_owned()),
+            Value::Utf8("24.75".to_owned()),
+            Value::Utf8("25.00".to_owned()),
+            Value::Utf8("-0.00".to_owned()),
+            Value::Utf8("0.1".to_owned()),
+            Value::Int64(3),
+        ] {
+            assert_answers_as_list(&exact, &decimals, &needle, Collation::default(), true);
+        }
+        assert!(matches!(
+            index_members(
+                vec![Value::Int64(1)],
+                Collation::default(),
+                Some(DataType::Int64),
+                Some(DataType::Int64),
+            ),
+            MaterializedMembership::Memory(_)
         ));
     }
 }

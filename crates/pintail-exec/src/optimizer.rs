@@ -1022,8 +1022,8 @@ fn contains_table(plan: &LogicalPlan, table: &TableKey) -> bool {
 /// `FROM a, b WHERE a.id = b.a_id` is the SQL-89 join, and it is what TPC-H
 /// and a great deal of generated and legacy SQL are written in. Bound
 /// literally it is a cross join under a filter, which for six tables is an
-/// estimate in the quadrillions and is refused by the cross-join guard before
-/// it can run - so the query fails rather than executing slowly.
+/// estimate in the quadrillions: a Cartesian product that runs until the
+/// query's memory ceiling or time limit stops it.
 ///
 /// The conversion is the standard one: a conjunct that references tables from
 /// exactly two sides, one of them already in the tree, becomes that join's
@@ -2456,7 +2456,7 @@ mod tests {
     /// either scan and there was nowhere else for it to go. That safety
     /// property is still checked below; what changed is that there is now
     /// somewhere for it to go, which is the difference between answering
-    /// `FROM a, b WHERE a.id = b.id` and refusing it at the cross-join guard.
+    /// `FROM a, b WHERE a.id = b.id` and running it as a Cartesian product.
     #[test]
     fn a_predicate_spanning_two_tables_becomes_a_join_condition() {
         let input = project_input(optimized(

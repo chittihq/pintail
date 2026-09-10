@@ -13,28 +13,24 @@ hash, session settings and code commit.
 
 | Run | Matching | Known failures | Other |
 |---|---:|---:|---|
-| Fixed corpus, MySQL 8.4 | 1,890 | 5 | none |
+| Fixed corpus, MySQL 8.4 | 1,895 | 0 | none |
 | Fixed corpus, MySQL 8.0 | 1,889 | 5 | 1 version difference, below |
 | Seeded sweep, MySQL 8.4 | 400 | 0 | 383 unique queries, default seed |
-| Storage layouts and spill | all | 5 warnings | memtable, persisted, mixed, compacted, reopened |
+| Storage layouts and spill | all | 0 warnings | memtable, persisted, mixed, compacted, reopened |
 
 The oracle stage of `scripts/validate.ts` runs the fixed corpus, the seeded
 sweep and the storage-layout replay against MySQL 8.4.
 
 ## Known failures
 
-Five cases diverge through limitations recorded in `docs/limitations.md`
-and sit on the reviewed ledger
-(`tests/sqllogic/tests/support/oracle_known_failures.json`). They warn
-while they fail, and the run fails once any of them starts to match:
-
-- three decimal results need more than 38 significant digits, past
-  Pintail's DECIMAL range, and refuse with a numeric overflow error;
-- an integer `CASE` branch renders at the unified DECIMAL scale (`0.000`
-  where MySQL answers `0`);
-- `GROUP BY` under `utf8mb4_unicode_ci` folds a trailing space and a
-  trailing no-break space into one group, where MySQL keeps two groups for
-  values it also reports as equal.
+None. The reviewed ledger
+(`tests/sqllogic/tests/support/oracle_known_failures.json`) is empty: the
+five cases it held now match MySQL 8.4. Three decimal results that need
+39 to 43 significant digits compute exactly up to 65 digits, an integer
+`CASE` branch keeps its own scale (`0` where the result type is
+DECIMAL(20,3)), and `GROUP BY` under `utf8mb4_unicode_ci` keeps a trailing
+space and a trailing no-break space in separate groups. The ledger still
+fails a run the moment an entry is added and then starts to match.
 
 ## MySQL 8.0 difference
 

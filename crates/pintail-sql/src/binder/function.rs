@@ -1121,7 +1121,9 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
                 (*precision, *scale)
             }
         };
-        let precision = u8::try_from(precision).ok()?.clamp(1, 38);
+        let precision = u8::try_from(precision)
+            .ok()?
+            .clamp(1, MAX_DECIMAL_PRECISION);
         let scale = u8::try_from(scale).ok()?.min(30).min(precision);
         return Some(DataType::Decimal { precision, scale });
     }
@@ -1689,9 +1691,11 @@ fn str_to_date_format_supported(format: &str) -> bool {
     true
 }
 
-/// A decimal-unified IF/COALESCE/GREATEST/LEAST must also coerce its branch
+/// A decimal-unified COALESCE/GREATEST/LEAST must also coerce its branch
 /// VALUES: integer branches would otherwise reach decimal-typed consumers
 /// (SUM, the wire layer) as raw integers and lose the declared scale.
+/// IF, and CASE which binds as nested IFs, keeps each branch at its own
+/// scale instead: the executor gives a narrower branch its own label.
 fn coerce_decimal_branches(
     function: ScalarFunction,
     data_type: Option<DataType>,
@@ -1702,15 +1706,11 @@ fn coerce_decimal_branches(
     };
     if !matches!(
         function,
-        ScalarFunction::If
-            | ScalarFunction::Coalesce
-            | ScalarFunction::Greatest { .. }
-            | ScalarFunction::Least { .. }
+        ScalarFunction::Coalesce | ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
     ) {
         return;
     }
-    let first_value = usize::from(matches!(function, ScalarFunction::If));
-    for argument in args.iter_mut().skip(first_value) {
+    for argument in args.iter_mut() {
         if argument.data_type != Some(unified)
             && !matches!(argument.kind, BoundExprKind::Literal(Value::Null))
         {

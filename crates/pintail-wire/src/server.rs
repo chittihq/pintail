@@ -1064,22 +1064,16 @@ impl Backend {
         let lowered = command.to_ascii_lowercase();
         let mut session = self.session.lock().map_err(|error| error.to_string())?;
         if let Some(rest) = lowered.strip_prefix("set names ") {
-            let charset = rest.split_whitespace().next().unwrap_or("");
-            let charset = charset.trim_matches(['\'', '"', '`']);
-            if matches!(charset, "utf8" | "utf8mb3" | "utf8mb4" | "binary") {
-                charset.clone_into(&mut session.charset_client);
-                charset.clone_into(&mut session.charset_connection);
-                charset.clone_into(&mut session.charset_results);
-                // SET NAMES adopts the charset's DEFAULT collation, as
-                // MySQL does, replacing the handshake-negotiated one.
-                session.charset_byte = match charset {
-                    "utf8" | "utf8mb3" => 33,
-                    "binary" => 63,
-                    _ => 255,
-                };
-                return Ok(());
-            }
-            return Err(format!("Unknown character set: '{charset}'"));
+            // SET NAMES replaces the handshake-negotiated collation: with
+            // the named one, or with the charset's default, as MySQL does.
+            // Literal comparisons collate under it.
+            let (charset, collation) = set_names_target(rest)?;
+            session.charset_client.clone_from(&charset);
+            session.charset_connection.clone_from(&charset);
+            session.charset_results = charset;
+            session.collation_connection = collation;
+            session.charset_byte = collation_byte(collation, &session.charset_connection);
+            return Ok(());
         }
         if let Some(rest) = lowered.strip_prefix("kill ") {
             return apply_kill_command(rest);
@@ -1138,6 +1132,12 @@ impl Backend {
                     Err(format!("Unknown character set: '{value}'"))
                 }
             }
+            "collation_connection" => {
+                let collation = connection_collation(&value)?;
+                session.collation_connection = collation;
+                session.charset_byte = collation_byte(collation, &session.charset_connection);
+                Ok(())
+            }
             "group_concat_max_len" => {
                 let limit = value
                     .parse::<u64>()
@@ -1179,6 +1179,60 @@ impl Backend {
     }
 }
 
+/// The charset and connection collation `SET NAMES charset [COLLATE name]`
+/// asks for. Without `COLLATE` the charset's default applies, as in `MySQL`.
+fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
+    let mut words = rest
+        .split_whitespace()
+        .map(|word| word.trim_matches(['\'', '"', '`']));
+    let charset = words.next().unwrap_or("").to_owned();
+    let default = match charset.as_str() {
+        "utf8mb4" => "utf8mb4_0900_ai_ci",
+        "utf8" | "utf8mb3" => "utf8mb4_general_ci",
+        "binary" => "utf8mb4_bin",
+        _ => return Err(format!("Unknown character set: '{charset}'")),
+    };
+    match (words.next(), words.next(), words.next()) {
+        (None, _, _) => Ok((charset, default)),
+        (Some("collate"), Some(name), None) => Ok((charset, connection_collation(name)?)),
+        _ => Err(format!(
+            "You have an error in your SQL syntax near 'SET NAMES {rest}'"
+        )),
+    }
+}
+
+/// A connection collation Pintail implements. One it does not is refused,
+/// not replaced by one that compares differently: a wrong answer is worse
+/// than a refusal. `utf8mb3` names mean their `utf8mb4` counterparts.
+fn connection_collation(name: &str) -> Result<&'static str, String> {
+    let name = name
+        .trim()
+        .trim_matches(['\'', '"', '`'])
+        .to_ascii_lowercase();
+    let widened = name
+        .strip_prefix("utf8mb3_")
+        .or_else(|| name.strip_prefix("utf8_"))
+        .map_or_else(|| name.clone(), |rest| format!("utf8mb4_{rest}"));
+    match pintail_exec::collation::Collation::from_mysql_name(&widened) {
+        Some(collation) if !matches!(collation, pintail_exec::collation::Collation::Json) => {
+            Ok(collation.mysql_name())
+        }
+        _ => Err(format!("Unknown collation: '{name}'")),
+    }
+}
+
+/// The collation id stamped on text results for a connection collation.
+fn collation_byte(collation: &str, charset: &str) -> u16 {
+    match (charset, collation) {
+        ("binary", _) => 63,
+        ("utf8" | "utf8mb3", _) => 33,
+        (_, "utf8mb4_general_ci") => 45,
+        (_, "utf8mb4_bin") => 46,
+        (_, "utf8mb4_unicode_ci") => 224,
+        _ => 255,
+    }
+}
+
 /// The version string clients see: the deployed release when the image
 /// says which one it is (`PINTAIL_BUILD_VERSION`, set by the compose
 /// file from the image tag), else the crate version. A customer had to
@@ -1216,10 +1270,13 @@ impl Handler for Backend {
         // otherwise-unconstrained text; MySQL collates two-literal
         // comparisons under it, so Pintail must too. Ids from MySQL's
         // information_schema.collations: general_ci 45, bin 46, unicode_ci
-        // 224 (approximated by general_ci - both ci PAD SPACE), 0900_ai_ci
-        // 255. Anything unrecognized keeps the server default.
+        // 224, 0900_ai_ci 255. Anything unrecognized keeps the server
+        // default. unicode_ci is its own collation: approximating it by
+        // general_ci answered 'ß' = 'ss' and 'Æ' = 'ae' wrongly for every
+        // client whose driver opens connections as unicode_ci.
         let collation = match response.character_set {
-            45 | 224 => Some("utf8mb4_general_ci"),
+            45 => Some("utf8mb4_general_ci"),
+            224 => Some("utf8mb4_unicode_ci"),
             46 => Some("utf8mb4_bin"),
             255 => Some("utf8mb4_0900_ai_ci"),
             _ => None,
@@ -2378,7 +2435,7 @@ fn compatibility_charset_query(
         let collation = match session.charset_connection.as_str() {
             "utf8" | "utf8mb3" => "utf8mb3_general_ci",
             "binary" => "binary",
-            _ => "utf8mb4_0900_ai_ci",
+            _ => session.collation_connection,
         };
         ("@@collation_connection", collation.to_owned())
     } else {
@@ -2916,6 +2973,58 @@ mod tests {
         ] {
             assert_eq!(rejected(command), None, "{command} promises nothing false");
         }
+    }
+
+    #[test]
+    fn set_names_sets_the_collation_literal_comparisons_use() {
+        use super::{collation_byte, connection_collation, set_names_target};
+
+        // The charset's default collation, as MySQL applies it.
+        assert_eq!(
+            set_names_target("utf8mb4"),
+            Ok(("utf8mb4".to_owned(), "utf8mb4_0900_ai_ci"))
+        );
+        assert_eq!(
+            set_names_target("'utf8mb4'"),
+            Ok(("utf8mb4".to_owned(), "utf8mb4_0900_ai_ci"))
+        );
+        assert_eq!(
+            set_names_target("utf8"),
+            Ok(("utf8".to_owned(), "utf8mb4_general_ci"))
+        );
+        // An explicit COLLATE wins, including the utf8mb3 spelling.
+        assert_eq!(
+            set_names_target("utf8mb4 collate utf8mb4_unicode_ci"),
+            Ok(("utf8mb4".to_owned(), "utf8mb4_unicode_ci"))
+        );
+        assert_eq!(
+            set_names_target("utf8 collate utf8_general_ci"),
+            Ok(("utf8".to_owned(), "utf8mb4_general_ci"))
+        );
+        // Unknown names are refused, never replaced by a different collation.
+        assert!(set_names_target("latin1").is_err());
+        assert!(set_names_target("utf8mb4 collate utf8mb4_de_pb_0900_ai_ci").is_err());
+        assert!(set_names_target("utf8mb4 collate").is_err());
+        assert_eq!(connection_collation("'UTF8MB4_BIN'"), Ok("utf8mb4_bin"));
+        assert!(connection_collation("json").is_err());
+        // Result metadata carries the collation's own id.
+        assert_eq!(collation_byte("utf8mb4_unicode_ci", "utf8mb4"), 224);
+        assert_eq!(collation_byte("utf8mb4_0900_ai_ci", "utf8mb4"), 255);
+        assert_eq!(collation_byte("utf8mb4_general_ci", "utf8"), 33);
+    }
+
+    #[test]
+    fn collation_connection_reports_the_session_collation() {
+        let session = Session {
+            collation_connection: "utf8mb4_unicode_ci",
+            ..Session::default()
+        };
+        let output = compatibility_query("SELECT @@collation_connection", "analytics", &session)
+            .expect("compatibility response");
+        assert_eq!(
+            output.rows[0][0],
+            pintail_types::Value::Utf8("utf8mb4_unicode_ci".to_owned())
+        );
     }
 
     #[test]

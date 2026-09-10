@@ -3,6 +3,7 @@ pub use aggregate::take_fold_phase_timings;
 mod budget;
 mod error;
 mod join;
+mod key_lookup;
 pub(crate) mod membership;
 mod memo;
 mod morsel;
@@ -122,10 +123,6 @@ pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
     SESSION_CTE_MAX_RECURSION_DEPTH.set(limit.unwrap_or(DEFAULT_CTE_MAX_RECURSION_DEPTH));
 }
 
-/// Maximum estimated result rows accepted by the unqualified cross-join
-/// operator.
-pub const MAX_CROSS_JOIN_ROWS: u64 = 1_000_000;
-
 /// The process-wide memory budget every query draws from.
 ///
 /// Separate from the per-query ceiling: that one bounds a single query, this
@@ -183,8 +180,9 @@ pub enum PhysicalPlan {
     CrossJoin {
         /// Inputs in physical execution order.
         inputs: Vec<Self>,
-        /// Catalog-derived result cardinality.
-        estimated_rows: u64,
+        /// Catalog-derived result cardinality, when every input's row count
+        /// is known; a hint for EXPLAIN only.
+        estimated_rows: Option<u64>,
     },
     /// Streaming branch concatenation.
     UnionAll {
@@ -244,6 +242,19 @@ pub enum PhysicalPlan {
     },
     /// Bounded nested-loop join for ON predicates containing a dependent
     /// subquery that cannot be represented as hash keys alone.
+    /// A join that streams its driving input in that table's key order and
+    /// finds each row's match by the other table's primary key. The output
+    /// keeps the driving order, so a limit above it stops both inputs early.
+    KeyLookupJoin {
+        left: Box<Self>,
+        right: Box<Self>,
+        kind: BoundJoinKind,
+        /// Whether the left input drives; the other is found by its key.
+        driving_left: bool,
+        driving_key: BoundExpr,
+        lookup_key: BoundExpr,
+        residual: Option<BoundExpr>,
+    },
     NestedLoopJoin {
         /// Left input.
         left: Box<Self>,
@@ -397,6 +408,9 @@ impl PhysicalPlan {
             Self::HashJoin {
                 left, right, kind, ..
             }
+            | Self::KeyLookupJoin {
+                left, right, kind, ..
+            }
             | Self::NestedLoopJoin {
                 left, right, kind, ..
             } => {
@@ -486,18 +500,11 @@ impl PhysicalPlanner {
                 plan_limit(*input, limit.offset, limit.count, collation)
             }
             LogicalPlan::CrossJoin { inputs } => {
-                let estimated_rows = inputs
-                    .iter()
-                    .try_fold(1_u64, |rows, input| {
-                        rows.checked_mul(input.estimated_rows()?)
-                    })
-                    .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-                if estimated_rows > MAX_CROSS_JOIN_ROWS {
-                    return Err(ExecError::CrossJoinGuardExceeded {
-                        estimated_rows,
-                        limit: MAX_CROSS_JOIN_ROWS,
-                    });
-                }
+                // Only a hint for EXPLAIN. A runaway product is stopped by the
+                // query's memory ceiling and time limit, as MySQL stops it.
+                let estimated_rows = inputs.iter().try_fold(1_u64, |rows, input| {
+                    rows.checked_mul(input.estimated_rows()?)
+                });
                 Ok(PhysicalPlan::CrossJoin {
                     inputs: inputs
                         .into_iter()
@@ -568,14 +575,7 @@ impl PhysicalPlanner {
                 {
                     let estimated_rows = left
                         .estimated_rows()
-                        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
-                        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-                    if estimated_rows > MAX_CROSS_JOIN_ROWS {
-                        return Err(ExecError::CrossJoinGuardExceeded {
-                            estimated_rows,
-                            limit: MAX_CROSS_JOIN_ROWS,
-                        });
-                    }
+                        .and_then(|rows| rows.checked_mul(right.estimated_rows()?));
                     return Ok(PhysicalPlan::CrossJoin {
                         inputs: vec![
                             Self::plan(*left, collation)?,
@@ -603,10 +603,16 @@ impl PhysicalPlanner {
                     split_join_condition(condition, &left, &right, kind);
                 let Some(condition) = condition else {
                     // No conjunct spans the two inputs at all: a pure theta
-                    // shape like ON a.x > 5. The nested loop answers it,
-                    // bounded by the cross-join guard because every pair is
-                    // tested.
-                    return plan_theta_join(left, right, kind, original_condition, collation);
+                    // shape like ON a.x > 5, or an ON clause folded to a
+                    // constant. Each side's own conjuncts filter it first,
+                    // and the nested loop tests what is left pair by pair.
+                    return plan_theta_join(
+                        logically_filtered(left, left_filter),
+                        logically_filtered(right, right_filter),
+                        kind,
+                        original_condition,
+                        collation,
+                    );
                 };
                 // An ON clause may also compare the two inputs with something
                 // that is not equality. The hash join still runs on the
@@ -644,8 +650,8 @@ impl PhysicalPlanner {
 }
 
 /// A join with no hashable equality key: every left/right pair is tested
-/// against the ON condition, so the cross-join cardinality guard applies
-/// verbatim - the work IS a filtered cross product, whatever the join kind.
+/// against the ON condition. The work is a filtered cross product whatever
+/// the join kind, bounded by the query's memory ceiling and time limit.
 fn plan_theta_join(
     left: Box<LogicalPlan>,
     right: Box<LogicalPlan>,
@@ -653,16 +659,6 @@ fn plan_theta_join(
     condition: BoundExpr,
     collation: Collation,
 ) -> Result<PhysicalPlan, ExecError> {
-    let estimated_rows = left
-        .estimated_rows()
-        .and_then(|rows| rows.checked_mul(right.estimated_rows()?))
-        .ok_or(ExecError::CrossJoinCardinalityUnknown)?;
-    if estimated_rows > MAX_CROSS_JOIN_ROWS {
-        return Err(ExecError::CrossJoinGuardExceeded {
-            estimated_rows,
-            limit: MAX_CROSS_JOIN_ROWS,
-        });
-    }
     Ok(PhysicalPlan::NestedLoopJoin {
         left: Box::new(PhysicalPlanner::plan(*left, collation)?),
         right: Box::new(PhysicalPlanner::plan(*right, collation)?),
@@ -707,12 +703,20 @@ fn plan_limit(
     collation: Collation,
 ) -> Result<PhysicalPlan, ExecError> {
     let input = match input {
-        LogicalPlan::Sort { input, keys, trim } => PhysicalPlan::Sort {
-            input: Box::new(PhysicalPlanner::plan(*input, collation)?),
-            keys,
-            top_k: usize::try_from(offset.saturating_add(count)).ok(),
-            trim,
-        },
+        LogicalPlan::Sort { input, keys, trim } => {
+            let input = PhysicalPlanner::plan(*input, collation)?;
+            // A join that already yields the sort's order needs no sort, and
+            // the limit above it then stops both of its inputs early.
+            match key_lookup::ordered_input(input, &keys, trim) {
+                (ordered, true) => ordered,
+                (input, false) => PhysicalPlan::Sort {
+                    input: Box::new(input),
+                    keys,
+                    top_k: usize::try_from(offset.saturating_add(count)).ok(),
+                    trim,
+                },
+            }
+        }
         input => PhysicalPlanner::plan(input, collation)?,
     };
     Ok(PhysicalPlan::Limit {
@@ -758,6 +762,29 @@ fn filtered(input: PhysicalPlan, predicate: Option<BoundExpr>) -> PhysicalPlan {
     }
 }
 
+fn logically_filtered(input: Box<LogicalPlan>, predicate: Option<BoundExpr>) -> Box<LogicalPlan> {
+    match predicate {
+        None => input,
+        Some(predicate) => Box::new(LogicalPlan::Filter { input, predicate }),
+    }
+}
+
+/// Whether an expression reads no row: literals combined by comparison,
+/// logic and NULL tests. Functions are left out, so a volatile one is still
+/// evaluated per candidate pair.
+fn constant_expression(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Binary { left, right, .. } => {
+            constant_expression(left) && constant_expression(right)
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            constant_expression(expr)
+        }
+        _ => false,
+    }
+}
+
 /// Separates an ON clause into conjuncts that span both inputs and conjuncts
 /// confined to one of them, so an ordinary predicate sitting beside the join
 /// keys does not make the whole join unplannable.
@@ -791,7 +818,10 @@ fn split_join_condition(
     and_conjuncts(&condition, &mut conjuncts);
     let (mut spanning, mut left_only, mut right_only) = (Vec::new(), Vec::new(), Vec::new());
     for conjunct in conjuncts {
-        if expression_belongs_to(&conjunct, &right_tables) {
+        // A constant conjunct - `1 = 0`, or an ON clause folded to FALSE - reads
+        // neither input. Filtering the right one by it is what it means for
+        // every join kind: it decides whether any right row can match.
+        if expression_belongs_to(&conjunct, &right_tables) || constant_expression(&conjunct) {
             right_only.push(conjunct);
         } else if matches!(kind, BoundJoinKind::Inner)
             && expression_belongs_to(&conjunct, &left_tables)
@@ -1205,6 +1235,18 @@ pub trait ScanProvider {
         scan: &Scan,
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError>;
+
+    /// A provider for one table that the caller may keep for the rest of
+    /// the query, so an operator can open ranged scans of that table while
+    /// it runs rather than all at build time. `None` when this provider
+    /// cannot hand one out; callers then read the table once.
+    fn table_provider(
+        &self,
+        _database_id: DatabaseId,
+        _table_id: TableId,
+    ) -> Option<Box<dyn ScanProvider + Send + Sync>> {
+        None
+    }
 }
 
 /// Hard per-query memory accounting.
@@ -1444,6 +1486,10 @@ fn plan_label(plan: &PhysicalPlan) -> String {
             if *all { " all" } else { "" }
         ),
         PhysicalPlan::Recursive { .. } => "Recursive".to_owned(),
+        PhysicalPlan::KeyLookupJoin { kind, residual, .. } => format!(
+            "KeyLookupJoin kind={kind:?} residual={}",
+            residual.is_some()
+        ),
         PhysicalPlan::HashJoin {
             kind,
             extra_keys,
@@ -1880,6 +1926,18 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
         PhysicalPlan::Recursive { anchor, member, .. } => {
             nested(anchor).saturating_add(nested(member))
         }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            driving_key,
+            lookup_key,
+            residual,
+            ..
+        } => nested(left)
+            .saturating_add(nested(right))
+            .saturating_add(bound_regex_memory_upper_bound(driving_key))
+            .saturating_add(bound_regex_memory_upper_bound(lookup_key))
+            .saturating_add(residual.as_ref().map_or(0, bound_regex_memory_upper_bound)),
         PhysicalPlan::HashJoin {
             left,
             right,
@@ -2210,6 +2268,40 @@ fn resolve_plan_subqueries(
                 )?;
             }
         }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            driving_key,
+            lookup_key,
+            residual,
+            ..
+        } => {
+            for input in [left, right] {
+                resolve_plan_subqueries(
+                    input,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                    query_spill,
+                )?;
+            }
+            for expression in [driving_key, lookup_key]
+                .into_iter()
+                .chain(residual.as_mut())
+            {
+                resolve_expr_subqueries(
+                    expression,
+                    provider,
+                    memory_limit,
+                    deadline,
+                    retained_bytes,
+                    collation,
+                    query_spill,
+                )?;
+            }
+        }
         PhysicalPlan::HashJoin {
             left,
             right,
@@ -2473,20 +2565,34 @@ fn resolve_expr_subqueries(
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let values = match membership::materialize_membership(
+            let member_collation = expr
+                .text_collation()
+                .and_then(Collation::from_mysql_name)
+                .unwrap_or(collation);
+            // Answered once for the whole query, so a large set is worth
+            // indexing: each probe then costs a hash lookup rather than a
+            // comparison per member.
+            let materialized = match membership::materialize_membership(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
-                expr.text_collation()
-                    .and_then(Collation::from_mysql_name)
-                    .unwrap_or(collation),
+                member_collation,
                 query_spill,
                 expr.data_type,
                 projection_type,
             )? {
+                membership::MaterializedMembership::Memory(values) => membership::index_members(
+                    values,
+                    member_collation,
+                    expr.data_type,
+                    projection_type,
+                ),
+                prepared @ membership::MaterializedMembership::Prepared(..) => prepared,
+            };
+            let values = match materialized {
                 membership::MaterializedMembership::Memory(values) => values,
-                membership::MaterializedMembership::External(membership, bytes) => {
+                membership::MaterializedMembership::Prepared(membership, bytes) => {
                     if retained_bytes.saturating_add(bytes) > memory_limit {
                         return Err(ExecError::MemoryLimitExceeded {
                             used: *retained_bytes,
@@ -2963,7 +3069,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
                         memo.insert(context.memory, slot, key, &values);
                         values
                     }
-                    membership::MaterializedMembership::External(membership, bytes) => {
+                    membership::MaterializedMembership::Prepared(membership, bytes) => {
                         context.memory.reserve(bytes)?;
                         let needle =
                             CompiledExpr::compile(expr, context.columns, context.collation)?
@@ -3231,6 +3337,7 @@ enum PullOperator {
         inputs: Vec<Self>,
         current: usize,
     },
+    KeyLookupJoin(Box<key_lookup::KeyLookupJoin>),
     HashJoin {
         left: Box<Self>,
         right: Box<Self>,
@@ -3929,6 +4036,7 @@ impl PullOperator {
                     .expect("initialized above")
                     .next_batch(column_types, memory)
             }
+            Self::KeyLookupJoin(join) => join.next_batch(memory),
             Self::Limit { input, skip, take } => {
                 if *take == 0 {
                     return Ok(None);
@@ -4202,6 +4310,28 @@ fn build_operator_inner(
                 output_columns,
             ))
         }
+        PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            kind,
+            driving_left,
+            driving_key,
+            lookup_key,
+            residual,
+        } => key_lookup::build(
+            key_lookup::Inputs {
+                left: *left,
+                right: *right,
+                kind,
+                driving_left,
+                driving_key,
+                lookup_key,
+                residual,
+            },
+            provider,
+            memory,
+            collation,
+        ),
         PhysicalPlan::NestedLoopJoin {
             left,
             right,
@@ -4814,7 +4944,15 @@ fn reserve_vec_elements<T>(
         return Ok(0);
     }
     let old_capacity = values.capacity();
-    let growth = required.saturating_sub(old_capacity).max(minimum_growth);
+    // Grow geometrically. Growing by exactly the requested slot asked the
+    // allocator for a larger block on every push, and only in-place
+    // reallocation kept that from copying the whole vector each time. The
+    // charge below already assumed a power-of-two capacity, so doubling
+    // spends nothing the budget did not already count.
+    let growth = required
+        .saturating_sub(old_capacity)
+        .max(minimum_growth)
+        .max(old_capacity.max(4));
     let capacity_bound = old_capacity
         .saturating_add(growth)
         .checked_next_power_of_two()
@@ -7512,7 +7650,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cross_joins_above_the_cardinality_guard() {
+    fn plans_a_cross_join_whatever_its_size() {
         let database = DatabaseEntry::new(
             DatabaseId::new(1),
             "app",
@@ -7529,12 +7667,12 @@ mod tests {
             .bind(&statement)
             .expect("bind query");
         let logical = Optimizer::optimize(LogicalPlanner::plan(bound));
-        assert_eq!(
-            PhysicalPlanner::plan(logical, Collation::default()),
-            Err(ExecError::CrossJoinGuardExceeded {
-                estimated_rows: 4_000_000,
-                limit: crate::MAX_CROSS_JOIN_ROWS
-            })
+        let plan = PhysicalPlanner::plan(logical, Collation::default())
+            .expect("a cross join plans whatever its size");
+        let rendered = format!("{plan:?}");
+        assert!(
+            rendered.contains("CrossJoin") && rendered.contains("estimated_rows: Some(4000000)"),
+            "{rendered}"
         );
     }
 }

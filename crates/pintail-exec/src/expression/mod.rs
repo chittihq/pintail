@@ -14,7 +14,7 @@ use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Tim
 use md5::{Digest as _, Md5};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
-use pintail_types::{DataType, Value};
+use pintail_types::{DataType, Value, WideInt};
 
 use crate::array::ValidityMask;
 use crate::batch::TypedValues;
@@ -931,12 +931,20 @@ impl CompiledExpr {
                         op,
                         BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
                     )
-                    && let Some(value) = self.evaluate_decimal_chain(batch, row)?
                 {
-                    return match value {
-                        DecimalChainValue::Null => Ok(Value::Null),
-                        DecimalChainValue::Exact(value) => value.rounded(*scale),
-                    };
+                    // The chain keeps MySQL's internal precision across nested
+                    // decimal operators in i128 fractions. One that outgrows
+                    // them is evaluated operator by operator instead, where
+                    // each step widens past i128 as it needs to.
+                    match self.evaluate_decimal_chain(batch, row) {
+                        Ok(Some(DecimalChainValue::Null)) => return Ok(Value::Null),
+                        Ok(Some(DecimalChainValue::Exact(value))) => match value.rounded(*scale) {
+                            Err(ExecError::NumericOverflow) => {}
+                            result => return result,
+                        },
+                        Ok(None) | Err(ExecError::NumericOverflow) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
@@ -1710,6 +1718,24 @@ fn evaluate_scalar(
                 &args[2]
             };
             let value = branch.evaluate(batch, row)?;
+            // MySQL renders an IF or CASE branch at its own scale where the
+            // result is a wider DECIMAL: `CASE .. THEN 0 ELSE dec(12,2) END`
+            // answers `0`, not `0.00`. The value keeps its exact units at the
+            // result scale beside that label, so keys and comparisons still
+            // meet `0.00`.
+            if let Some(DataType::Decimal { scale, .. }) = data_type
+                && let Some(label) = narrower_decimal_label(&value, scale)
+                && let Some(units) = pintail_types::parse_decimal_rounded(&label, scale)
+            {
+                return Ok(Value::DecimalAverage(Box::new(
+                    pintail_types::DecimalQuotient {
+                        label,
+                        units,
+                        count: 1,
+                        scale,
+                    },
+                )));
+            }
             cast_scalar(&value, data_type)
         }
         ScalarFunction::Coalesce => {
@@ -3444,14 +3470,33 @@ fn format_with_fraction(value: NaiveDateTime, fsp: u8, pattern: &str) -> String 
     format!("{base}.{}", &micros[..usize::from(fsp).min(6)])
 }
 
+/// An exact number's own text when it carries fewer fraction digits than
+/// `scale`: an integer, or decimal text at a narrower scale.
+fn narrower_decimal_label(value: &Value, scale: u8) -> Option<String> {
+    let fraction = |text: &str| {
+        text.split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len())
+    };
+    match value {
+        Value::Int64(value) if scale > 0 => Some(value.to_string()),
+        Value::UInt64(value) if scale > 0 => Some(value.to_string()),
+        Value::Boolean(value) if scale > 0 => Some(u8::from(*value).to_string()),
+        Value::Utf8(text) if fraction(text) < usize::from(scale) => Some(text.clone()),
+        Value::DecimalAverage(average) if fraction(&average.label) < usize::from(scale) => {
+            Some(average.label.clone())
+        }
+        _ => None,
+    }
+}
+
 fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);
     }
     // Exact decimal coercion runs before the storage-type collapse: decimals
     // store as canonical text, so collapsing first would lose the scale.
-    if let Some(DataType::Decimal { scale, .. }) = data_type {
-        return cast_decimal(value, scale);
+    if let Some(DataType::Decimal { precision, scale }) = data_type {
+        return cast_decimal(value, precision, scale);
     }
     // Temporal targets likewise collapse to the Utf8 carrier, so without
     // this they would pass their input through untouched — `CAST(ts AS DATE)`
@@ -3839,14 +3884,17 @@ fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
             )));
         }
     }
-    Err(ExecError::NumericOverflow)
+    divide_decimal_wide(left, right, target)
 }
 
 /// Exact remainder over fixed-point operands. Both operands are aligned to
 /// the result scale before `%`; an overflowing alignment fails explicitly.
 fn decimal_modulo(left: &Value, right: &Value, target: u8) -> Result<Value, ExecError> {
-    let (left_units, left_scale) = decimal_units_of(left).ok_or(ExecError::NumericOverflow)?;
-    let (right_units, right_scale) = decimal_units_of(right).ok_or(ExecError::NumericOverflow)?;
+    let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_units_of(left), decimal_units_of(right))
+    else {
+        return decimal_modulo_wide(left, right, target);
+    };
     if right_units == 0 {
         return Ok(Value::Null);
     }
@@ -3859,12 +3907,18 @@ fn decimal_modulo(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
             })
             .flatten()
     };
-    let left = rescale(left_units, left_scale).ok_or(ExecError::NumericOverflow)?;
-    let right = rescale(right_units, right_scale).ok_or(ExecError::NumericOverflow)?;
-    let units = left.checked_rem(right).ok_or(ExecError::NumericOverflow)?;
-    Ok(Value::Utf8(pintail_types::format_decimal_scaled(
-        units, target,
-    )))
+    match (
+        rescale(left_units, left_scale),
+        rescale(right_units, right_scale),
+    ) {
+        (Some(left_units), Some(right_units)) => match left_units.checked_rem(right_units) {
+            Some(units) => Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                units, target,
+            ))),
+            None => decimal_modulo_wide(left, right, target),
+        },
+        _ => decimal_modulo_wide(left, right, target),
+    }
 }
 
 /// Exact decimal addition, subtraction, and multiplication on scaled i128
@@ -3927,49 +3981,162 @@ fn decimal_add_sub_mul(
             )));
         }
     }
-    Err(ExecError::NumericOverflow)
+    decimal_add_sub_mul_wide(op, left, right, target)
 }
 
 /// Coerces a value to canonical decimal text at `scale`, rounding half away
 /// from zero like `MySQL`. Floats format at the target scale first (their
 /// tie-rounding is the platform's, an accepted v1 edge).
-fn cast_decimal(value: &Value, scale: u8) -> Result<Value, ExecError> {
+/// `CAST(value AS DECIMAL(precision, scale))`: rounded half away from zero to
+/// the scale, and clamped to the largest magnitude the precision holds, as
+/// `MySQL` clamps an out-of-range value in a SELECT.
+fn cast_decimal(value: &Value, precision: u8, scale: u8) -> Result<Value, ExecError> {
+    let text = |text: &str| {
+        pintail_types::parse_decimal_rounded(text, scale)
+            .map(WideInt::from_i128)
+            .or_else(|| pintail_types::parse_decimal_wide_rounded(text, scale))
+    };
     let units = match value {
-        Value::Utf8(text) | Value::Enum { label: text, .. } => {
-            pintail_types::parse_decimal_rounded(text, scale)
+        Value::Utf8(value) | Value::Enum { label: value, .. } => text(value),
+        Value::DecimalAverage(average) => text(&average.label),
+        Value::Boolean(flag) => wide_rescale(WideInt::from_i128(i128::from(*flag)), 0, scale),
+        Value::Int64(signed) => wide_rescale(WideInt::from_i128(i128::from(*signed)), 0, scale),
+        Value::UInt64(unsigned) => {
+            wide_rescale(WideInt::from_i128(i128::from(*unsigned)), 0, scale)
         }
-        Value::DecimalAverage(average) => {
-            let text = &average.label;
-            pintail_types::parse_decimal_rounded(text, scale)
-        }
-        Value::Boolean(flag) => decimal_units_from_i128(i128::from(*flag), scale),
-        Value::Int64(signed) => decimal_units_from_i128(i128::from(*signed), scale),
-        Value::UInt64(unsigned) => decimal_units_from_i128(i128::from(*unsigned), scale),
         Value::Float64(_) => {
             let float = mysql_f64(value)?;
             if !float.is_finite() {
                 return Err(ExecError::NumericOverflow);
             }
-            pintail_types::parse_decimal_rounded(
-                &format!(
-                    "{float:.precision$}",
-                    precision = usize::from(scale).saturating_add(1)
-                ),
-                scale,
-            )
+            text(&format!(
+                "{float:.precision$}",
+                precision = usize::from(scale).saturating_add(1)
+            ))
         }
-        Value::Binary(bytes) => std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|text| pintail_types::parse_decimal_rounded(text, scale)),
+        Value::Binary(bytes) => std::str::from_utf8(bytes).ok().and_then(text),
         Value::Null => return Ok(Value::Null),
+    }
+    .ok_or(ExecError::NumericOverflow)?;
+    let ceiling = WideInt::pow10(u32::from(precision))
+        .and_then(|limit| limit.checked_sub(WideInt::from_i128(1)))
+        .ok_or(ExecError::NumericOverflow)?;
+    let units = if units > ceiling {
+        ceiling
+    } else if units < ceiling.negated() {
+        ceiling.negated()
+    } else {
+        units
     };
-    units
-        .map(|units| Value::Utf8(pintail_types::format_decimal_scaled(units, scale)))
-        .ok_or(ExecError::NumericOverflow)
+    Ok(Value::Utf8(match units.to_i128() {
+        Some(units) => pintail_types::format_decimal_scaled(units, scale),
+        None => pintail_types::format_decimal_wide(&units, scale),
+    }))
 }
 
-fn decimal_units_from_i128(value: i128, scale: u8) -> Option<i128> {
-    value.checked_mul(10_i128.checked_pow(u32::from(scale))?)
+/// The widest DECIMAL `MySQL` computes.
+const MAX_DECIMAL_DIGITS: usize = 65;
+
+/// An exact decimal value as units of `10^-scale`, past what `i128` holds.
+fn decimal_wide_of(value: &Value) -> Option<(WideInt, u8)> {
+    if let Some(text) = value.text() {
+        let fraction = text
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        let scale = u8::try_from(fraction).ok()?;
+        if scale > 30 {
+            return None;
+        }
+        return pintail_types::parse_decimal_wide(text, scale).map(|units| (units, scale));
+    }
+    decimal_units_of(value).map(|(units, scale)| (WideInt::from_i128(units), scale))
+}
+
+/// Units at scale `from` carried to the larger scale `to`.
+fn wide_rescale(units: WideInt, from: u8, to: u8) -> Option<WideInt> {
+    units.checked_mul(WideInt::pow10(u32::from(to.checked_sub(from)?))?)
+}
+
+/// Wide units as a DECIMAL result; one past 65 digits overflows, as it does
+/// in `MySQL`.
+fn wide_decimal_result(units: Option<WideInt>, scale: u8) -> Result<Value, ExecError> {
+    let units = units.ok_or(ExecError::NumericOverflow)?;
+    if units.digits() > MAX_DECIMAL_DIGITS {
+        return Err(ExecError::NumericOverflow);
+    }
+    Ok(Value::Utf8(pintail_types::format_decimal_wide(
+        &units, scale,
+    )))
+}
+
+/// `+`, `-` and `*` over exact decimals whose units overflow `i128`.
+fn decimal_add_sub_mul_wide(
+    op: BinaryOp,
+    left: &Value,
+    right: &Value,
+    target: u8,
+) -> Result<Value, ExecError> {
+    let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_wide_of(left), decimal_wide_of(right))
+    else {
+        return Err(ExecError::NumericOverflow);
+    };
+    let units = if op == BinaryOp::Multiply {
+        let natural = left_scale.saturating_add(right_scale);
+        left_units.checked_mul(right_units).and_then(|product| {
+            if natural <= target {
+                wide_rescale(product, natural, target)
+            } else {
+                product.div_round_half_up(WideInt::pow10(u32::from(natural - target))?)
+            }
+        })
+    } else {
+        wide_rescale(left_units, left_scale, target)
+            .zip(wide_rescale(right_units, right_scale, target))
+            .and_then(|(left, right)| {
+                if op == BinaryOp::Add {
+                    left.checked_add(right)
+                } else {
+                    left.checked_sub(right)
+                }
+            })
+    };
+    wide_decimal_result(units, target)
+}
+
+/// Exact decimal division whose scaled dividend overflows `i128`.
+fn divide_decimal_wide(left: &Value, right: &Value, target: u8) -> Result<Value, ExecError> {
+    let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_wide_of(left), decimal_wide_of(right))
+    else {
+        return Err(ExecError::NumericOverflow);
+    };
+    if right_units.is_zero() {
+        return Ok(Value::Null);
+    }
+    let units = u32::from(target)
+        .checked_add(u32::from(right_scale))
+        .and_then(|sum| sum.checked_sub(u32::from(left_scale)))
+        .and_then(WideInt::pow10)
+        .and_then(|factor| left_units.checked_mul(factor))
+        .and_then(|numerator| numerator.div_round_half_up(right_units));
+    wide_decimal_result(units, target)
+}
+
+/// Exact decimal `MOD` whose rescaled operands overflow `i128`.
+fn decimal_modulo_wide(left: &Value, right: &Value, target: u8) -> Result<Value, ExecError> {
+    let (Some((left_units, left_scale)), Some((right_units, right_scale))) =
+        (decimal_wide_of(left), decimal_wide_of(right))
+    else {
+        return Err(ExecError::NumericOverflow);
+    };
+    if right_units.is_zero() {
+        return Ok(Value::Null);
+    }
+    let units = wide_rescale(left_units, left_scale, target)
+        .zip(wide_rescale(right_units, right_scale, target))
+        .and_then(|(left, right)| left.checked_rem(right));
+    wide_decimal_result(units, target)
 }
 
 /// Compares exact decimal operands without crossing the f64 carrier. The

@@ -1,35 +1,4 @@
 {
   "schemaVersion": 1,
-  "entries": [
-    {
-      "id": "be968435d9f86cdf309be0433b1fd14bba36634b90ca3d8317a29e7b33e042fc",
-      "sql": "SELECT id, CASE WHEN id % 2 = 0 THEN frac ELSE 0 END FROM bounds ORDER BY id",
-      "limitation": "A `CASE`/`IF` branch value with a scale smaller than the unified DECIMAL",
-      "reason": "the integer branch renders at the DECIMAL(20,3) result scale, 0.000 where MySQL answers 0; the values are numerically equal"
-    },
-    {
-      "id": "3ae625104b0a0fd48d2b59ae2407f9969db8cffb95f6ebea09a1b9d7f2ce45e0",
-      "sql": "SELECT txt, COUNT(*) FROM bounds GROUP BY txt",
-      "limitation": "`GROUP BY` over a PAD SPACE collation puts two values in one group where",
-      "reason": "a trailing space and a trailing no-break space compare equal under utf8mb4_unicode_ci; MySQL still groups them apart, Pintail groups them together"
-    },
-    {
-      "id": "fa61465db02504b4e6376e5032075df5c2205a146b362fdc504eb26e1731b9c5",
-      "sql": "SELECT e.id, (SELECT CASE WHEN COUNT(*)=0 THEN NULL WHEN SUM(CASE WHEN b.frac IS NULL THEN NULL ELSE b.frac END)=0 THEN NULL ELSE COALESCE((SELECT MAX(b2.whole) FROM bounds b2 WHERE b2.id=1),0)/(SUM(CASE WHEN b.frac IS NULL THEN NULL ELSE b.frac END)*0.10) END FROM bounds b WHERE b.id BETWEEN 1 AND 3) AS q FROM events e WHERE e.id IN (1,2,3) ORDER BY e.id",
-      "limitation": "Numeric overflow returns an explicit error rather than supporting MySQL's",
-      "reason": "the quotient needs 41 significant digits; Pintail's DECIMAL stops at 38 and refuses with a numeric overflow error"
-    },
-    {
-      "id": "369515ec45e37b3b92f3db82b1b79364bf66a1b280c02816d4617a534b45e963",
-      "sql": "WITH x AS (SELECT e.id AS event_id, b.id AS bound_id, CAST(b.whole AS DECIMAL(38,3))+COALESCE(b.frac,0.000) AS amt FROM events e JOIN bounds b ON b.id=e.id WHERE e.id BETWEEN 1 AND 4) SELECT event_id, SUM(amt) OVER w AS running_sum FROM x WINDOW w AS (ORDER BY bound_id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY event_id",
-      "limitation": "Numeric overflow returns an explicit error rather than supporting MySQL's",
-      "reason": "a 38-digit value cast to DECIMAL(38,3) and a sum needing 39 digits pass MySQL's 65-digit range; Pintail refuses with a numeric overflow error"
-    },
-    {
-      "id": "6156b241ab9cbd93d5719732126e4450719b2f49aefc183e6d67042807c5668a",
-      "sql": "WITH x AS (SELECT e.id AS event_id, b.id AS bound_id, CASE WHEN b.approx IS NULL THEN NULL ELSE CAST(b.whole AS DECIMAL(38,3))+CAST(b.approx AS DECIMAL(38,3)) END AS amt FROM events e JOIN bounds b ON b.id=e.id WHERE e.id BETWEEN 1 AND 4) SELECT event_id, AVG(amt) OVER w AS peer_avg FROM x WINDOW w AS (PARTITION BY event_id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) ORDER BY event_id,bound_id",
-      "limitation": "Numeric overflow returns an explicit error rather than supporting MySQL's",
-      "reason": "the window average needs 43 significant digits; Pintail's DECIMAL stops at 38 and refuses with a numeric overflow error"
-    }
-  ]
+  "entries": []
 }

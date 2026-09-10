@@ -167,6 +167,23 @@ pub struct DecimalQuotient {
     pub scale: u8,
 }
 
+impl DecimalQuotient {
+    /// The value rendered at its scale, whatever the label shows: an
+    /// average's canonical text, or the exact value of a decimal whose label
+    /// keeps a narrower scale than its type. Keys and comparisons read this;
+    /// clients see the label.
+    #[must_use]
+    pub fn canonical(&self) -> String {
+        if self.count == 0 {
+            return self.label.clone();
+        }
+        crate::div_decimal_round_half_up(self.units, i128::from(self.count)).map_or_else(
+            || self.label.clone(),
+            |units| crate::format_decimal_scaled(units, self.scale),
+        )
+    }
+}
+
 /// A nullable scalar value stored in a table row.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub enum Value {

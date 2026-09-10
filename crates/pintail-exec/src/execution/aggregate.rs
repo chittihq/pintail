@@ -21,8 +21,8 @@ use rayon::prelude::*;
 use crate::BatchStream as _;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
-    normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
+    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state, normalized_group_hash_key,
+    normalized_group_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
 use super::two_pass::{
@@ -570,6 +570,88 @@ pub(super) struct AggregateState {
     extreme_units: Option<i128>,
 }
 
+/// Exact decimal units: `i128` while a running total fits one, 512-bit past
+/// it, so a SUM or AVG over DECIMAL values nearing 65 digits stays exact
+/// rather than overflowing the narrow carrier.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum ExactUnits {
+    Narrow(i128),
+    /// Boxed: a total rarely overflows i128, and inline the wide carrier
+    /// would grow every aggregate state, charged per group.
+    Wide(Box<pintail_types::WideInt>),
+}
+
+impl ExactUnits {
+    fn wide(&self) -> pintail_types::WideInt {
+        match self {
+            Self::Narrow(units) => pintail_types::WideInt::from_i128(*units),
+            Self::Wide(units) => **units,
+        }
+    }
+
+    /// `self + other`, widening where `i128` would overflow.
+    fn plus(&self, other: &Self) -> Result<Self, ExecError> {
+        if let (Self::Narrow(left), Self::Narrow(right)) = (self, other)
+            && let Some(sum) = left.checked_add(*right)
+        {
+            return Ok(Self::Narrow(sum));
+        }
+        self.wide()
+            .checked_add(other.wide())
+            .map(|units| Self::Wide(Box::new(units)))
+            .ok_or(ExecError::NumericOverflow)
+    }
+
+    /// Decimal text in units of `10^-scale`.
+    fn parse(text: &str, scale: u8) -> Option<Self> {
+        crate::batch::parse_decimal_scaled(text, scale)
+            .map(Self::Narrow)
+            .or_else(|| {
+                pintail_types::parse_decimal_wide(text, scale)
+                    .map(|units| Self::Wide(Box::new(units)))
+            })
+    }
+
+    /// An integer in units of `10^-scale`.
+    fn from_int(value: i128, scale: u8) -> Option<Self> {
+        decimal_units_from_int(value, scale)
+            .map(Self::Narrow)
+            .or_else(|| {
+                pintail_types::WideInt::from_i128(value)
+                    .checked_mul(pintail_types::WideInt::pow10(u32::from(scale))?)
+                    .map(|units| Self::Wide(Box::new(units)))
+            })
+    }
+
+    /// The units as decimal text at `scale`; a total past 65 digits
+    /// overflows, as it does in `MySQL`.
+    fn format(&self, scale: u8) -> Result<String, ExecError> {
+        match self {
+            Self::Narrow(units) => Ok(pintail_types::format_decimal_scaled(*units, scale)),
+            Self::Wide(units) if units.digits() > 65 => Err(ExecError::NumericOverflow),
+            Self::Wide(units) => Ok(pintail_types::format_decimal_wide(units, scale)),
+        }
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn to_f64(&self, scale: u8) -> f64 {
+        match self {
+            Self::Narrow(units) => *units as f64 / 10_f64.powi(i32::from(scale)),
+            Self::Wide(units) => pintail_types::format_decimal_wide(units, scale)
+                .parse()
+                .unwrap_or(f64::NAN),
+        }
+    }
+
+    /// The units as a plain integer, for a spill record.
+    fn spilled(&self) -> String {
+        match self {
+            Self::Narrow(units) => units.to_string(),
+            Self::Wide(units) => pintail_types::format_decimal_wide(units, 0),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum AggregateValue {
     Count(u64),
@@ -578,7 +660,7 @@ enum AggregateValue {
     /// i128 units replaces a parse-add-format round trip per row on the
     /// canonical text carrier (2026-08-02 phase-0 profile residue).
     DecimalSum {
-        units: i128,
+        units: ExactUnits,
         scale: u8,
         /// Emit Float64 at finish (the bound aggregate type): the exact
         /// total converts with ONE correct rounding, unlike per-row f64
@@ -594,7 +676,7 @@ enum AggregateValue {
     /// (input scale + `div_precision_increment`), so `finish` is a single
     /// half-away-from-zero division by the row count.
     DecimalAverage {
-        units: i128,
+        units: ExactUnits,
         scale: u8,
         count: u64,
     },
@@ -651,7 +733,7 @@ impl AggregateState {
             AggregateFunction::Sum => AggregateValue::Sum(None),
             AggregateFunction::Average => match decimal_average_scale(aggregate) {
                 Some(scale) => AggregateValue::DecimalAverage {
-                    units: 0,
+                    units: ExactUnits::Narrow(0),
                     scale,
                     count: 0,
                 },
@@ -805,18 +887,15 @@ impl AggregateState {
             && let Some(DataType::Decimal { scale, .. }) = aggregate.data_type
         {
             let units = match value {
-                Value::Utf8(text) => crate::batch::parse_decimal_scaled(text, scale),
-                Value::DecimalAverage(average) => {
-                    let text = &average.label;
-                    crate::batch::parse_decimal_scaled(text, scale)
-                }
-                Value::Boolean(flag) => decimal_units_from_int(i128::from(*flag), scale),
-                Value::Int64(signed) => decimal_units_from_int(i128::from(*signed), scale),
-                Value::UInt64(unsigned) => decimal_units_from_int(i128::from(*unsigned), scale),
+                Value::Utf8(text) => ExactUnits::parse(text, scale),
+                Value::DecimalAverage(average) => ExactUnits::parse(&average.label, scale),
+                Value::Boolean(flag) => ExactUnits::from_int(i128::from(*flag), scale),
+                Value::Int64(signed) => ExactUnits::from_int(i128::from(*signed), scale),
+                Value::UInt64(unsigned) => ExactUnits::from_int(i128::from(*unsigned), scale),
                 _ => None,
             }
             .ok_or(ExecError::NumericOverflow)?;
-            return self.update_decimal_sum_units(units, scale, false);
+            return self.update_decimal_sum_exact(units, scale, false);
         }
         match &mut self.value {
             // Handled by the early return above, before the NULL skip.
@@ -874,11 +953,8 @@ impl AggregateState {
                         ));
                     }
                 };
-                let scaled = crate::batch::parse_decimal_scaled(text, *scale)
-                    .ok_or(ExecError::NumericOverflow)?;
-                *units = units
-                    .checked_add(scaled)
-                    .ok_or(ExecError::NumericOverflow)?;
+                let scaled = ExactUnits::parse(text, *scale).ok_or(ExecError::NumericOverflow)?;
+                *units = units.plus(&scaled)?;
             }
             AggregateValue::Sum(sum) => {
                 *sum = Some(if let Some(number) = number {
@@ -906,26 +982,21 @@ impl AggregateState {
                 // Typed lanes deliver the row through `number` with a
                 // sentinel value; everything else arrives as the real Value.
                 let scaled = if let Some(number) = number {
-                    exact_decimal_units_from_f64(number, *scale)
+                    exact_decimal_units_from_f64(number, *scale).map(ExactUnits::Narrow)
                 } else {
                     match value {
-                        Value::Utf8(text) => crate::batch::parse_decimal_scaled(text, *scale),
-                        Value::DecimalAverage(average) => {
-                            let text = &average.label;
-                            crate::batch::parse_decimal_scaled(text, *scale)
-                        }
-                        Value::Boolean(flag) => decimal_units_from_int(i128::from(*flag), *scale),
-                        Value::Int64(signed) => decimal_units_from_int(i128::from(*signed), *scale),
+                        Value::Utf8(text) => ExactUnits::parse(text, *scale),
+                        Value::DecimalAverage(average) => ExactUnits::parse(&average.label, *scale),
+                        Value::Boolean(flag) => ExactUnits::from_int(i128::from(*flag), *scale),
+                        Value::Int64(signed) => ExactUnits::from_int(i128::from(*signed), *scale),
                         Value::UInt64(unsigned) => {
-                            decimal_units_from_int(i128::from(*unsigned), *scale)
+                            ExactUnits::from_int(i128::from(*unsigned), *scale)
                         }
                         _ => None,
                     }
                 };
                 let scaled = scaled.ok_or(ExecError::NumericOverflow)?;
-                *units = units
-                    .checked_add(scaled)
-                    .ok_or(ExecError::NumericOverflow)?;
+                *units = units.plus(&scaled)?;
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
             }
             AggregateValue::Minimum(minimum) => {
@@ -1039,7 +1110,7 @@ impl AggregateState {
                 AggregateValue::DecimalSum { units: left, .. },
                 AggregateValue::DecimalSum { units: right, .. },
             ) => {
-                *left = left.checked_add(right).ok_or(ExecError::NumericOverflow)?;
+                *left = left.plus(&right)?;
             }
             (
                 value @ AggregateValue::Sum(None),
@@ -1056,7 +1127,7 @@ impl AggregateState {
                 };
             }
             (AggregateValue::DecimalSum { units, scale, .. }, AggregateValue::Sum(Some(right))) => {
-                let scaled = crate::batch::parse_decimal_scaled(
+                let scaled = ExactUnits::parse(
                     match &right {
                         Value::Utf8(text) => text,
                         Value::DecimalAverage(average) => &average.label,
@@ -1069,9 +1140,7 @@ impl AggregateState {
                     *scale,
                 )
                 .ok_or(ExecError::NumericOverflow)?;
-                *units = units
-                    .checked_add(scaled)
-                    .ok_or(ExecError::NumericOverflow)?;
+                *units = units.plus(&scaled)?;
             }
             (
                 AggregateValue::DecimalAverage {
@@ -1090,9 +1159,7 @@ impl AggregateState {
                         "decimal average merged across scales",
                     ));
                 }
-                *left_units = left_units
-                    .checked_add(right_units)
-                    .ok_or(ExecError::NumericOverflow)?;
+                *left_units = left_units.plus(&right_units)?;
                 *left_count = left_count
                     .checked_add(right_count)
                     .ok_or(ExecError::NumericOverflow)?;
@@ -1280,13 +1347,22 @@ impl AggregateState {
         scale: u8,
         float_output: bool,
     ) -> Result<(), ExecError> {
+        self.update_decimal_sum_exact(ExactUnits::Narrow(units), scale, float_output)
+    }
+
+    fn update_decimal_sum_exact(
+        &mut self,
+        units: ExactUnits,
+        scale: u8,
+        float_output: bool,
+    ) -> Result<(), ExecError> {
         match &mut self.value {
             AggregateValue::DecimalSum {
                 units: total,
                 scale: existing,
                 ..
             } if *existing == scale => {
-                *total = total.checked_add(units).ok_or(ExecError::NumericOverflow)?;
+                *total = total.plus(&units)?;
                 Ok(())
             }
             value @ AggregateValue::Sum(None) => {
@@ -1344,7 +1420,7 @@ impl AggregateState {
                 scale: existing,
                 count,
             } if *existing == scale => {
-                *total = total.checked_add(units).ok_or(ExecError::NumericOverflow)?;
+                *total = total.plus(&ExactUnits::Narrow(units))?;
                 *count = count.checked_add(1).ok_or(ExecError::NumericOverflow)?;
                 Ok(())
             }
@@ -1485,9 +1561,9 @@ impl AggregateState {
             } => {
                 if float_output {
                     #[allow(clippy::cast_precision_loss)]
-                    Value::float64(units as f64 / 10_f64.powi(i32::from(scale)))
+                    Value::float64(units.to_f64(scale))
                 } else {
-                    Value::Utf8(pintail_types::format_decimal_scaled(units, scale))
+                    Value::Utf8(units.format(scale)?)
                 }
             }
             AggregateValue::Sum(value)
@@ -1501,16 +1577,29 @@ impl AggregateState {
                 units,
                 scale,
                 count,
-            } => {
-                let average = pintail_types::div_decimal_round_half_up(units, i128::from(count))
-                    .ok_or(ExecError::NumericOverflow)?;
-                Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
-                    label: pintail_types::format_decimal_scaled(average, scale),
-                    units,
-                    count,
-                    scale,
-                }))
-            }
+            } => match units {
+                ExactUnits::Narrow(units) => {
+                    let average =
+                        pintail_types::div_decimal_round_half_up(units, i128::from(count))
+                            .ok_or(ExecError::NumericOverflow)?;
+                    Value::DecimalAverage(Box::new(pintail_types::DecimalQuotient {
+                        label: pintail_types::format_decimal_scaled(average, scale),
+                        units,
+                        count,
+                        scale,
+                    }))
+                }
+                // A total past i128 renders its average as plain decimal
+                // text: the quotient carrier keeps its total in i128.
+                ExactUnits::Wide(total) => Value::Utf8(
+                    ExactUnits::Wide(Box::new(
+                        total
+                            .div_round_half_up(pintail_types::WideInt::from_i128(i128::from(count)))
+                            .ok_or(ExecError::NumericOverflow)?,
+                    ))
+                    .format(scale)?,
+                ),
+            },
             AggregateValue::JsonArrayAgg { items } if items.is_empty() => Value::Null,
             AggregateValue::JsonArrayAgg { items } => {
                 let joined_bytes = items.iter().map(String::len).fold(
@@ -2119,7 +2208,7 @@ fn merge_finished_aggregate_rows(
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .map(|value| normalized_group_value(value, collation))
             .collect::<Vec<_>>();
         index.insert(key, position);
     }
@@ -2127,7 +2216,7 @@ fn merge_finished_aggregate_rows(
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .map(|value| normalized_group_value(value, collation))
             .collect::<Vec<_>>();
         if let Some(position) = index.get(&key) {
             for (offset, aggregate) in aggregates.iter().enumerate() {
@@ -2625,7 +2714,7 @@ fn try_sma_fold(
                         }
                         pintail_store::SmaSum::DecimalUnits { units, scale } => {
                             Some(AggregateValue::DecimalSum {
-                                units,
+                                units: ExactUnits::Narrow(units),
                                 scale,
                                 float_output: aggregate_uses_float(aggregate),
                             })
@@ -2651,7 +2740,7 @@ fn try_sma_fold(
                                 return Ok(None);
                             };
                             Some(AggregateValue::DecimalAverage {
-                                units,
+                                units: ExactUnits::Narrow(units),
                                 scale: result_scale,
                                 count,
                             })
@@ -3017,7 +3106,7 @@ fn build_hash_aggregate_scan(
                 .cloned()
                 .zip(key_collations)
                 .map(|(value, collation)| {
-                    normalized_hash_key(value, *collation).unwrap_or(Value::Null)
+                    normalized_group_hash_key(value, *collation).unwrap_or(Value::Null)
                 })
                 .collect::<Vec<_>>();
             if groups.len() == groups.capacity() {
@@ -3643,7 +3732,7 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
             scale,
             float_output,
         } => SpilledAggregateValue::DecimalSum {
-            units: units.to_string(),
+            units: units.spilled(),
             scale,
             float_output,
         },
@@ -3653,7 +3742,7 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
             scale,
             count,
         } => SpilledAggregateValue::DecimalAverage {
-            units: units.to_string(),
+            units: units.spilled(),
             scale,
             count,
         },
@@ -3695,10 +3784,16 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
     })
 }
 
-fn spilled_units(units: &str) -> Result<i128, ExecError> {
+fn spilled_units(units: &str) -> Result<ExactUnits, ExecError> {
     units
         .parse::<i128>()
-        .map_err(|_| ExecError::Source("aggregate spill decode: bad decimal units".to_owned()))
+        .map(ExactUnits::Narrow)
+        .ok()
+        .or_else(|| {
+            pintail_types::parse_decimal_wide(units, 0)
+                .map(|units| ExactUnits::Wide(Box::new(units)))
+        })
+        .ok_or_else(|| ExecError::Source("aggregate spill decode: bad decimal units".to_owned()))
 }
 
 /// Rebuilds a live aggregate state from its spilled form. DISTINCT states
@@ -4576,7 +4671,7 @@ fn build_local_fused_join_groups(
             .values
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, group_collation))
+            .map(|value| normalized_group_value(value, group_collation))
             .collect();
         match folded.entry(key) {
             Entry::Vacant(entry) => {
@@ -4832,7 +4927,7 @@ fn build_local_dictionary_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect();
         let group = AggregateGroup {
             values,
@@ -4932,7 +5027,7 @@ fn build_local_direct_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect();
         match folded.entry(key) {
             Entry::Vacant(entry) => {
@@ -4977,7 +5072,7 @@ fn build_local_expression_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect::<Vec<_>>();
         let group = groups.entry(key).or_insert_with(|| AggregateGroup {
             values,
@@ -5031,7 +5126,9 @@ fn direct_groups_map(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_hash_key(value, *collation).unwrap_or(Value::Null))
+            .map(|(value, collation)| {
+                normalized_group_hash_key(value, *collation).unwrap_or(Value::Null)
+            })
             .collect::<Vec<_>>();
         map.insert(key, group);
     }

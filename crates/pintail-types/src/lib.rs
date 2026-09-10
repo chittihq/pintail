@@ -8,6 +8,7 @@ mod canonical;
 mod row;
 mod schema;
 mod value;
+mod wide;
 
 pub use canonical::{
     civil_from_days, div_decimal_round_half_up, format_date_days, format_datetime_micros,
@@ -18,3 +19,4 @@ pub use canonical::{
 pub use row::{KeyPart, PrimaryKey, StoredRow};
 pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
 pub use value::{DataType, DecimalQuotient, Float64, Value};
+pub use wide::{WideInt, format_decimal_wide, parse_decimal_wide, parse_decimal_wide_rounded};

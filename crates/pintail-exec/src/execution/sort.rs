@@ -738,7 +738,9 @@ pub(super) fn compare_sort_values(
                 && right.text().is_some()
                 && !matches!((left, right), (Value::Enum { .. }, Value::Enum { .. })) =>
         {
-            let (left, right) = (left.text().unwrap(), right.text().unwrap());
+            // A decimal carrying a narrower label compares as its value.
+            let (left, right) = (sort_text(left), sort_text(right));
+            let (left, right) = (left.as_ref(), right.as_ref());
             // Canonical decimal text orders numerically; lexical ordering
             // would put "9.00" after "10.00". Unparseable text (shouldn't
             // happen for decimal-typed keys) falls back to text order.
@@ -759,5 +761,14 @@ fn order_direction(ordering: Ordering, ascending: bool) -> Ordering {
         ordering
     } else {
         ordering.reverse()
+    }
+}
+
+/// A value's text as ordering reads it: a decimal carrying a narrower label
+/// compares as its value at its type's scale.
+fn sort_text(value: &Value) -> std::borrow::Cow<'_, str> {
+    match value {
+        Value::DecimalAverage(average) => std::borrow::Cow::Owned(average.canonical()),
+        other => std::borrow::Cow::Borrowed(other.text().expect("guarded text")),
     }
 }

@@ -5,7 +5,8 @@ use std::cmp::Ordering;
 use crate::collation::Collation;
 
 use pintail_sql::{
-    BoundColumn, BoundExpr, BoundExprKind, BoundOrderKey, BoundWindow, WindowFunction,
+    AggregateFunction, BoundColumn, BoundExpr, BoundExprKind, BoundOrderKey, BoundWindow,
+    WindowFunction,
 };
 use pintail_types::{DataType, Value};
 
@@ -855,20 +856,18 @@ fn compute_window_column(
             end += 1;
         }
         let partition = &order[start..end];
-        let peer_start = |from: usize| {
-            let mut first = from;
-            while first > 0 && same_peers(partition[first - 1], partition[from]) {
-                first -= 1;
-            }
-            first
+        // Each row's peer group, found once per partition: a RANGE bound at
+        // CURRENT ROW reads it for every row, and walking the group each
+        // time made a low-cardinality ordering key quadratic.
+        let (peer_firsts, peer_ends) = if window.frame.is_some() {
+            peer_groups(partition, &same_peers)
+        } else {
+            (Vec::new(), Vec::new())
         };
-        let peer_end = |from: usize| {
-            let mut last = from + 1;
-            while last < partition.len() && same_peers(partition[from], partition[last]) {
-                last += 1;
-            }
-            last
-        };
+        let peer_bytes = peer_firsts.len().saturating_mul(2 * size_of::<usize>());
+        memory.reserve(peer_bytes)?;
+        let peer_start = |from: usize| peer_firsts[from];
+        let peer_end = |from: usize| peer_ends[from];
         let frame_extent = |frame: pintail_sql::BoundWindowFrame,
                             index: usize|
          -> Result<(usize, usize), ExecError> {
@@ -1076,31 +1075,68 @@ fn compute_window_column(
                     // the start is anchored — peer-group ends are also
                     // non-decreasing across a sorted partition.
                     let running = matches!(frame.start, Edge::UnboundedPreceding);
+                    // A frame running to UNBOUNDED FOLLOWING is the mirror
+                    // image: its start only moves back as the rows do, so it
+                    // folds once from the partition's end, for aggregates
+                    // whose answer does not depend on the order rows arrive in.
+                    let trailing = !running
+                        && matches!(frame.end, Edge::UnboundedFollowing)
+                        && order_insensitive(aggregate);
                     let mut state = AggregateState::new(aggregate);
-                    let mut accumulated = 0_usize;
-                    for index in 0..partition.len() {
+                    let mut accumulated = if trailing { partition.len() } else { 0 };
+                    // A row whose frame is the previous row's shares its
+                    // value: under RANGE every peer has the same frame.
+                    let mut previous: Option<(usize, usize, Value)> = None;
+                    let indexes: Vec<usize> = if trailing {
+                        (0..partition.len()).rev().collect()
+                    } else {
+                        (0..partition.len()).collect()
+                    };
+                    for index in indexes {
                         // Under RANGE, CURRENT ROW covers the whole peer
                         // group rather than the single row: the frame is
                         // defined over the ordering key's values, and peers
                         // share one value.
                         let (start, end) = frame_extent(frame, index)?;
-                        let value = if running {
-                            while accumulated < end {
-                                state.update(
-                                    aggregate,
-                                    &keys[partition[accumulated]][argument_position],
-                                    memory,
-                                )?;
-                                accumulated += 1;
+                        let value = match &previous {
+                            Some((first, last, value)) if (*first, *last) == (start, end) => {
+                                value.clone()
                             }
-                            state.clone().finish(memory)?
-                        } else {
-                            let mut framed = AggregateState::new(aggregate);
-                            for row in partition.iter().take(end).skip(start) {
-                                framed.update(aggregate, &keys[*row][argument_position], memory)?;
+                            _ if running => {
+                                while accumulated < end {
+                                    state.update(
+                                        aggregate,
+                                        &keys[partition[accumulated]][argument_position],
+                                        memory,
+                                    )?;
+                                    accumulated += 1;
+                                }
+                                state.clone().finish(memory)?
                             }
-                            framed.finish(memory)?
+                            _ if trailing && start <= accumulated && end == partition.len() => {
+                                while accumulated > start {
+                                    accumulated -= 1;
+                                    state.update(
+                                        aggregate,
+                                        &keys[partition[accumulated]][argument_position],
+                                        memory,
+                                    )?;
+                                }
+                                state.clone().finish(memory)?
+                            }
+                            _ => {
+                                let mut framed = AggregateState::new(aggregate);
+                                for row in partition.iter().take(end).skip(start) {
+                                    framed.update(
+                                        aggregate,
+                                        &keys[*row][argument_position],
+                                        memory,
+                                    )?;
+                                }
+                                framed.finish(memory)?
+                            }
                         };
+                        previous = Some((start, end, value.clone()));
                         memory.reserve(value.heap_bytes())?;
                         results[partition[index]] = value;
                     }
@@ -1139,7 +1175,65 @@ fn compute_window_column(
                 }
             }
         }
+        memory.release(peer_bytes);
         start = end;
     }
     Ok(results)
+}
+
+/// The first position and the end of each row's peer group, by position in
+/// the sorted partition.
+fn peer_groups(
+    partition: &[usize],
+    same_peers: &impl Fn(usize, usize) -> bool,
+) -> (Vec<usize>, Vec<usize>) {
+    let len = partition.len();
+    let mut firsts = vec![0; len];
+    for (index, pair) in partition.windows(2).enumerate() {
+        firsts[index + 1] = if same_peers(pair[0], pair[1]) {
+            firsts[index]
+        } else {
+            index + 1
+        };
+    }
+    let mut ends = vec![len; len];
+    for (index, pair) in partition.windows(2).enumerate().rev() {
+        ends[index] = if same_peers(pair[0], pair[1]) {
+            ends[index + 1]
+        } else {
+            index + 1
+        };
+    }
+    (firsts, ends)
+}
+
+/// Whether folding a frame's rows in reverse gives the answer folding them
+/// forward does. Counts, bit folds, exact sums and averages, and extremes of
+/// anything but text do not depend on arrival order; a float sum rounds by
+/// it, a text extreme keeps the first of values that compare equal, and a
+/// concatenation reads back in it.
+fn order_insensitive(aggregate: &CompiledAggregate) -> bool {
+    let float = |data_type: Option<DataType>| {
+        matches!(
+            data_type,
+            None | Some(DataType::Float32 | DataType::Float64)
+        )
+    };
+    match aggregate.function {
+        AggregateFunction::Count
+        | AggregateFunction::BitAnd
+        | AggregateFunction::BitOr
+        | AggregateFunction::BitXor => true,
+        AggregateFunction::Sum | AggregateFunction::Average => {
+            !float(aggregate.input_type) && !float(aggregate.data_type)
+        }
+        AggregateFunction::Minimum | AggregateFunction::Maximum => {
+            !float(aggregate.input_type)
+                && !matches!(
+                    aggregate.input_type,
+                    Some(DataType::Utf8 | DataType::Json | DataType::Binary)
+                )
+        }
+        _ => false,
+    }
 }

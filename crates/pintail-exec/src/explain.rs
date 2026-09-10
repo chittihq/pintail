@@ -203,7 +203,10 @@ fn write_plan(
             inputs,
             estimated_rows,
         } => {
-            writeln!(output, "CrossJoin estimated_rows={estimated_rows}")?;
+            match estimated_rows {
+                Some(rows) => writeln!(output, "CrossJoin estimated_rows={rows}")?,
+                None => writeln!(output, "CrossJoin")?,
+            }
             write_inputs(inputs, depth, output, provider)
         }
         PhysicalPlan::UnionAll { inputs } => {
@@ -247,6 +250,13 @@ fn write_plan(
             left, right, kind, ..
         } => {
             writeln!(output, "HashJoin kind={}", join_name(*kind))?;
+            write_plan(left, depth + 1, output, provider)?;
+            write_plan(right, depth + 1, output, provider)
+        }
+        PhysicalPlan::KeyLookupJoin {
+            left, right, kind, ..
+        } => {
+            writeln!(output, "KeyLookupJoin kind={}", join_name(*kind))?;
             write_plan(left, depth + 1, output, provider)?;
             write_plan(right, depth + 1, output, provider)
         }
