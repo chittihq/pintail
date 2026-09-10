@@ -106,6 +106,7 @@ const ARTIFACTS: Artifact[] = [
     sources: [
       ...ENGINE,
       'benchmark/run-tpch.ts',
+      'benchmark/replay-tpch.ts',
       'benchmark/workloads/tpch-v1/queries',
       'benchmark/workloads/tpch-v1/schema.mysql.sql',
       'benchmark/workloads/tpch-v1/seed.ts',

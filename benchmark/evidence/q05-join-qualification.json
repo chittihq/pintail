@@ -77,7 +77,7 @@
     "q05-join-qualification/supplementary-target.json"
   ],
   "remaining_qualification": {
-    "eight_query_20m_candidate": "pending; setup attempts interrupted by overlapping harnesses"
+    "idle_host_20m_regression": "Not established. The requested alternate host had background services; Q4 median was 8.2% slower. No regression-free claim is made."
   },
   "eight_query_baseline": {
     "path": "q05-join-qualification/eight-query-baseline.json",
@@ -105,5 +105,107 @@
       "skipped": 44,
       "warned": 30
     }
+  },
+  "eight_query_benchmark": {
+    "correctness": "PASS",
+    "rows": {
+      "users": 100000,
+      "products": 10000,
+      "orders": 20000000
+    },
+    "baseline_checkout": "20ef46cc",
+    "candidate_checkout": "415aaa2c",
+    "baseline_engine_equivalent_to": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+    "candidate_engine_equivalent_to": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
+    "host_fingerprint": "263e0b0fc6a38da7f45d62ae48a30810b0f9e9bc763ab3bf951f65ebf5f33575",
+    "logical_cpus": 16,
+    "ram_gib": 30,
+    "placement": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse), 4 GiB per-query memory ceiling",
+    "mysql_reference_date": "2026-09-03T08:22:24.512Z",
+    "cache_validation": "Exact host and workload fingerprints match; Q1-Q5 canonical answers and SQL hashes also matched a fresh partial MySQL pass.",
+    "all_answers_exact": true,
+    "concurrency_errors_both_engines_both_arms": 0,
+    "comparison": [
+      {
+        "query": "Q1: Full table count",
+        "baseline_median_ms": 5,
+        "candidate_median_ms": 4,
+        "baseline_min_ms": 4,
+        "candidate_min_ms": 4,
+        "median_change_pct": -20.0
+      },
+      {
+        "query": "Q2: Filtered count",
+        "baseline_median_ms": 44,
+        "candidate_median_ms": 44,
+        "baseline_min_ms": 42,
+        "candidate_min_ms": 42,
+        "median_change_pct": 0.0
+      },
+      {
+        "query": "Q3: Group by status",
+        "baseline_median_ms": 133,
+        "candidate_median_ms": 131,
+        "baseline_min_ms": 121,
+        "candidate_min_ms": 120,
+        "median_change_pct": -1.5
+      },
+      {
+        "query": "Q4: Region \u00d7 status breakdown",
+        "baseline_median_ms": 146,
+        "candidate_median_ms": 158,
+        "baseline_min_ms": 141,
+        "candidate_min_ms": 148,
+        "median_change_pct": 8.22
+      },
+      {
+        "query": "Q5: Monthly revenue (2023)",
+        "baseline_median_ms": 99,
+        "candidate_median_ms": 94,
+        "baseline_min_ms": 91,
+        "candidate_min_ms": 86,
+        "median_change_pct": -5.05
+      },
+      {
+        "query": "Q6: Top 10 spenders",
+        "baseline_median_ms": 436,
+        "candidate_median_ms": 407,
+        "baseline_min_ms": 388,
+        "candidate_min_ms": 384,
+        "median_change_pct": -6.65
+      },
+      {
+        "query": "Q7: Regional analytics",
+        "baseline_median_ms": 376,
+        "candidate_median_ms": 370,
+        "baseline_min_ms": 314,
+        "candidate_min_ms": 356,
+        "median_change_pct": -1.6
+      },
+      {
+        "query": "Q8: Join users + orders",
+        "baseline_median_ms": 386,
+        "candidate_median_ms": 370,
+        "baseline_min_ms": 338,
+        "candidate_min_ms": 338,
+        "median_change_pct": -4.15
+      }
+    ],
+    "background_load": {
+      "samples": 169,
+      "background_container_counts": [
+        23,
+        24
+      ],
+      "mean_background_cpu_pct": 24.96,
+      "max_background_cpu_pct": 98.62,
+      "cpu_unit": "100% is one logical CPU; excludes the named benchmark engine containers. Setup helpers may be included.",
+      "includes_setup": true,
+      "raw_report": "q05-join-qualification/background-load.json"
+    },
+    "baseline_report": "q05-join-qualification/eight-query-shared-baseline.json",
+    "candidate_report": "q05-join-qualification/eight-query-shared-candidate.json",
+    "interpretation": "Seven medians held or improved. Q4 median increased 8.2% and its minimum increased 5.0%; this paired observation is retained, not dismissed as proven noise. Q7 median improved 1.6% while its minimum increased 13.4%. Background services prevent an idle-host regression-free claim.",
+    "harness_gate_scope": "Exact answers plus the memo-dashboard speed threshold; not a cross-revision engine regression gate."
   }
 }

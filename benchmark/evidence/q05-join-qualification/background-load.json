@@ -1,0 +1,851 @@
+{
+  "includes_setup": true,
+  "unit": "100% equals one logical CPU; named benchmark engine containers excluded; setup helpers may be included.",
+  "samples": [
+    {
+      "at": "2026-09-10T07:32:03.115883+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 4.98
+    },
+    {
+      "at": "2026-09-10T07:32:10.188810+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 26.56
+    },
+    {
+      "at": "2026-09-10T07:32:17.268258+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 10.17
+    },
+    {
+      "at": "2026-09-10T07:32:24.346635+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 10.28
+    },
+    {
+      "at": "2026-09-10T07:32:31.421571+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.97
+    },
+    {
+      "at": "2026-09-10T07:32:38.509944+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 9.54
+    },
+    {
+      "at": "2026-09-10T07:32:45.612352+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 31.2
+    },
+    {
+      "at": "2026-09-10T07:32:52.716784+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.02
+    },
+    {
+      "at": "2026-09-10T07:32:59.816171+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 21.81
+    },
+    {
+      "at": "2026-09-10T07:33:06.899792+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 58.27
+    },
+    {
+      "at": "2026-09-10T07:33:13.973652+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.36
+    },
+    {
+      "at": "2026-09-10T07:33:21.048274+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 37.73
+    },
+    {
+      "at": "2026-09-10T07:33:28.128511+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.47
+    },
+    {
+      "at": "2026-09-10T07:33:35.463922+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 43.88
+    },
+    {
+      "at": "2026-09-10T07:33:42.776768+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.43
+    },
+    {
+      "at": "2026-09-10T07:33:49.995387+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 19.86
+    },
+    {
+      "at": "2026-09-10T07:33:57.086560+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 31.17
+    },
+    {
+      "at": "2026-09-10T07:34:04.160943+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 9.12
+    },
+    {
+      "at": "2026-09-10T07:34:11.236283+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.41
+    },
+    {
+      "at": "2026-09-10T07:34:18.309594+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 26.5
+    },
+    {
+      "at": "2026-09-10T07:34:25.384871+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 10.0
+    },
+    {
+      "at": "2026-09-10T07:34:32.463828+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.97
+    },
+    {
+      "at": "2026-09-10T07:34:39.544214+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 7.29
+    },
+    {
+      "at": "2026-09-10T07:34:46.617955+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 30.16
+    },
+    {
+      "at": "2026-09-10T07:34:53.693906+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.03
+    },
+    {
+      "at": "2026-09-10T07:35:00.773820+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 51.58
+    },
+    {
+      "at": "2026-09-10T07:35:07.847404+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.14
+    },
+    {
+      "at": "2026-09-10T07:35:14.926220+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.44
+    },
+    {
+      "at": "2026-09-10T07:35:22.010513+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.97
+    },
+    {
+      "at": "2026-09-10T07:35:29.083918+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 5.24
+    },
+    {
+      "at": "2026-09-10T07:35:36.160598+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 38.66
+    },
+    {
+      "at": "2026-09-10T07:35:43.235880+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.79
+    },
+    {
+      "at": "2026-09-10T07:35:50.315624+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 5.34
+    },
+    {
+      "at": "2026-09-10T07:35:57.388906+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.18
+    },
+    {
+      "at": "2026-09-10T07:36:04.470551+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 7.16
+    },
+    {
+      "at": "2026-09-10T07:36:11.546594+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 33.45
+    },
+    {
+      "at": "2026-09-10T07:36:18.630240+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 37.18
+    },
+    {
+      "at": "2026-09-10T07:36:25.704199+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.79
+    },
+    {
+      "at": "2026-09-10T07:36:32.779395+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 8.1
+    },
+    {
+      "at": "2026-09-10T07:36:39.860749+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 9.14
+    },
+    {
+      "at": "2026-09-10T07:36:46.950794+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 33.16
+    },
+    {
+      "at": "2026-09-10T07:36:54.058668+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 98.62
+    },
+    {
+      "at": "2026-09-10T07:37:01.132778+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 55.1
+    },
+    {
+      "at": "2026-09-10T07:37:08.199015+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 27.49
+    },
+    {
+      "at": "2026-09-10T07:37:15.262083+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 7.08
+    },
+    {
+      "at": "2026-09-10T07:37:22.312153+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 46.76
+    },
+    {
+      "at": "2026-09-10T07:37:29.371325+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 21.66
+    },
+    {
+      "at": "2026-09-10T07:37:36.441961+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.52
+    },
+    {
+      "at": "2026-09-10T07:37:43.487952+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.48
+    },
+    {
+      "at": "2026-09-10T07:37:50.549925+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 12.87
+    },
+    {
+      "at": "2026-09-10T07:37:57.610296+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 37.26
+    },
+    {
+      "at": "2026-09-10T07:38:04.703710+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 29.16
+    },
+    {
+      "at": "2026-09-10T07:38:11.750535+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.28
+    },
+    {
+      "at": "2026-09-10T07:38:18.824636+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 70.89
+    },
+    {
+      "at": "2026-09-10T07:38:25.888883+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 25.9
+    },
+    {
+      "at": "2026-09-10T07:38:32.938196+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 37.34
+    },
+    {
+      "at": "2026-09-10T07:38:39.987031+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 21.32
+    },
+    {
+      "at": "2026-09-10T07:38:47.034741+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 13.15
+    },
+    {
+      "at": "2026-09-10T07:38:54.097006+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.29
+    },
+    {
+      "at": "2026-09-10T07:39:01.138336+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 19.02
+    },
+    {
+      "at": "2026-09-10T07:39:08.205133+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 49.52
+    },
+    {
+      "at": "2026-09-10T07:39:15.277244+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.5
+    },
+    {
+      "at": "2026-09-10T07:39:22.345780+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.39
+    },
+    {
+      "at": "2026-09-10T07:39:29.415541+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.76
+    },
+    {
+      "at": "2026-09-10T07:39:36.470228+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.93
+    },
+    {
+      "at": "2026-09-10T07:39:43.539845+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.76
+    },
+    {
+      "at": "2026-09-10T07:39:50.613197+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 26.53
+    },
+    {
+      "at": "2026-09-10T07:39:57.662439+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.32
+    },
+    {
+      "at": "2026-09-10T07:40:04.708845+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 36.71
+    },
+    {
+      "at": "2026-09-10T07:40:11.794035+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.02
+    },
+    {
+      "at": "2026-09-10T07:40:18.850360+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 84.47
+    },
+    {
+      "at": "2026-09-10T07:40:25.888308+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.5
+    },
+    {
+      "at": "2026-09-10T07:40:32.931712+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.29
+    },
+    {
+      "at": "2026-09-10T07:40:39.975830+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 23.59
+    },
+    {
+      "at": "2026-09-10T07:40:47.013240+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 7.24
+    },
+    {
+      "at": "2026-09-10T07:40:54.077943+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 30.54
+    },
+    {
+      "at": "2026-09-10T07:41:01.128038+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 34.46
+    },
+    {
+      "at": "2026-09-10T07:41:08.168908+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.42
+    },
+    {
+      "at": "2026-09-10T07:41:15.214152+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.89
+    },
+    {
+      "at": "2026-09-10T07:41:22.255933+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.68
+    },
+    {
+      "at": "2026-09-10T07:41:29.302057+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.29
+    },
+    {
+      "at": "2026-09-10T07:41:36.343568+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 30.78
+    },
+    {
+      "at": "2026-09-10T07:41:43.420031+00:00",
+      "background_containers": 24,
+      "background_cpu_pct": 50.4
+    },
+    {
+      "at": "2026-09-10T07:41:50.488504+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.3
+    },
+    {
+      "at": "2026-09-10T07:41:57.563090+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 45.62
+    },
+    {
+      "at": "2026-09-10T07:42:04.641155+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.76
+    },
+    {
+      "at": "2026-09-10T07:42:11.714639+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.81
+    },
+    {
+      "at": "2026-09-10T07:42:18.791350+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 61.22
+    },
+    {
+      "at": "2026-09-10T07:42:25.865701+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.54
+    },
+    {
+      "at": "2026-09-10T07:42:32.942118+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 8.39
+    },
+    {
+      "at": "2026-09-10T07:42:40.022188+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 13.93
+    },
+    {
+      "at": "2026-09-10T07:42:47.096017+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.48
+    },
+    {
+      "at": "2026-09-10T07:42:54.171085+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.3
+    },
+    {
+      "at": "2026-09-10T07:43:01.257958+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 38.72
+    },
+    {
+      "at": "2026-09-10T07:43:08.360637+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.1
+    },
+    {
+      "at": "2026-09-10T07:43:15.456260+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 10.61
+    },
+    {
+      "at": "2026-09-10T07:43:22.539282+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 19.01
+    },
+    {
+      "at": "2026-09-10T07:43:29.614282+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 24.68
+    },
+    {
+      "at": "2026-09-10T07:43:36.689538+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.8
+    },
+    {
+      "at": "2026-09-10T07:43:43.768213+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.84
+    },
+    {
+      "at": "2026-09-10T07:43:50.918573+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 56.9
+    },
+    {
+      "at": "2026-09-10T07:43:58.209891+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 9.13
+    },
+    {
+      "at": "2026-09-10T07:44:05.588054+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.72
+    },
+    {
+      "at": "2026-09-10T07:44:12.685110+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.55
+    },
+    {
+      "at": "2026-09-10T07:44:19.773365+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.39
+    },
+    {
+      "at": "2026-09-10T07:44:26.846391+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 12.51
+    },
+    {
+      "at": "2026-09-10T07:44:33.918070+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.4
+    },
+    {
+      "at": "2026-09-10T07:44:40.993624+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.16
+    },
+    {
+      "at": "2026-09-10T07:44:48.068632+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.85
+    },
+    {
+      "at": "2026-09-10T07:44:55.147861+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 29.78
+    },
+    {
+      "at": "2026-09-10T07:45:02.222301+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 34.78
+    },
+    {
+      "at": "2026-09-10T07:45:09.295892+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.42
+    },
+    {
+      "at": "2026-09-10T07:45:16.371261+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.4
+    },
+    {
+      "at": "2026-09-10T07:45:23.446119+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.29
+    },
+    {
+      "at": "2026-09-10T07:45:30.524177+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 22.25
+    },
+    {
+      "at": "2026-09-10T07:45:37.599893+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.53
+    },
+    {
+      "at": "2026-09-10T07:45:44.679913+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 30.28
+    },
+    {
+      "at": "2026-09-10T07:45:51.753747+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.23
+    },
+    {
+      "at": "2026-09-10T07:45:58.827467+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.93
+    },
+    {
+      "at": "2026-09-10T07:46:05.904771+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 29.83
+    },
+    {
+      "at": "2026-09-10T07:46:12.976989+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.2
+    },
+    {
+      "at": "2026-09-10T07:46:20.058435+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.6
+    },
+    {
+      "at": "2026-09-10T07:46:27.140243+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.14
+    },
+    {
+      "at": "2026-09-10T07:46:34.216740+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 21.15
+    },
+    {
+      "at": "2026-09-10T07:46:41.297215+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 25.72
+    },
+    {
+      "at": "2026-09-10T07:46:48.374047+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 19.76
+    },
+    {
+      "at": "2026-09-10T07:46:55.454848+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.27
+    },
+    {
+      "at": "2026-09-10T07:47:02.550715+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.64
+    },
+    {
+      "at": "2026-09-10T07:47:09.651902+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.04
+    },
+    {
+      "at": "2026-09-10T07:47:16.734171+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 29.01
+    },
+    {
+      "at": "2026-09-10T07:47:23.809919+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 39.52
+    },
+    {
+      "at": "2026-09-10T07:47:30.863851+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 44.59
+    },
+    {
+      "at": "2026-09-10T07:47:37.917801+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.66
+    },
+    {
+      "at": "2026-09-10T07:47:44.971499+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.04
+    },
+    {
+      "at": "2026-09-10T07:47:52.029222+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 13.89
+    },
+    {
+      "at": "2026-09-10T07:47:59.080919+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.32
+    },
+    {
+      "at": "2026-09-10T07:48:06.126986+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 38.59
+    },
+    {
+      "at": "2026-09-10T07:48:13.183311+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.88
+    },
+    {
+      "at": "2026-09-10T07:48:20.267431+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.37
+    },
+    {
+      "at": "2026-09-10T07:48:27.323719+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.1
+    },
+    {
+      "at": "2026-09-10T07:48:34.377663+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 12.53
+    },
+    {
+      "at": "2026-09-10T07:48:41.452501+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 58.14
+    },
+    {
+      "at": "2026-09-10T07:48:48.495241+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 23.94
+    },
+    {
+      "at": "2026-09-10T07:48:55.535892+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.89
+    },
+    {
+      "at": "2026-09-10T07:49:02.585566+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 40.8
+    },
+    {
+      "at": "2026-09-10T07:49:09.642871+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 23.42
+    },
+    {
+      "at": "2026-09-10T07:49:16.698712+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 35.91
+    },
+    {
+      "at": "2026-09-10T07:49:23.774191+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 25.76
+    },
+    {
+      "at": "2026-09-10T07:49:30.830067+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 33.08
+    },
+    {
+      "at": "2026-09-10T07:49:37.883892+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.35
+    },
+    {
+      "at": "2026-09-10T07:49:44.965027+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 18.87
+    },
+    {
+      "at": "2026-09-10T07:49:52.035957+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 33.14
+    },
+    {
+      "at": "2026-09-10T07:49:59.090197+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 16.64
+    },
+    {
+      "at": "2026-09-10T07:50:06.172943+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 34.26
+    },
+    {
+      "at": "2026-09-10T07:50:13.220662+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 14.65
+    },
+    {
+      "at": "2026-09-10T07:50:20.266797+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 8.21
+    },
+    {
+      "at": "2026-09-10T07:50:27.341550+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 47.33
+    },
+    {
+      "at": "2026-09-10T07:50:34.382780+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 24.98
+    },
+    {
+      "at": "2026-09-10T07:50:41.426109+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 28.65
+    },
+    {
+      "at": "2026-09-10T07:50:48.469009+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 55.47
+    },
+    {
+      "at": "2026-09-10T07:50:55.511216+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 11.42
+    },
+    {
+      "at": "2026-09-10T07:51:02.549684+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 25.6
+    },
+    {
+      "at": "2026-09-10T07:51:09.588973+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 20.19
+    },
+    {
+      "at": "2026-09-10T07:51:16.645619+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 27.32
+    },
+    {
+      "at": "2026-09-10T07:51:23.688889+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 10.28
+    },
+    {
+      "at": "2026-09-10T07:51:30.768442+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 32.09
+    },
+    {
+      "at": "2026-09-10T07:51:37.818475+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 32.52
+    },
+    {
+      "at": "2026-09-10T07:51:44.870775+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 15.19
+    },
+    {
+      "at": "2026-09-10T07:51:51.923969+00:00",
+      "background_containers": 23,
+      "background_cpu_pct": 17.43
+    }
+  ]
+}

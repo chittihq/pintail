@@ -15,7 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (0.99-second p95 over fifteen runs), with exact MySQL answers and no spill.
   The candidate uses a 4 GiB query-memory ceiling and default spill limits;
   the baseline needed a larger spill allowance to finish. This is a measured
-  workload result, not a one-second guarantee for arbitrary joins.
+  workload result, not a one-second guarantee for arbitrary joins. A paired
+  20M shared-host benchmark had one query median 8.2% slower; regression-free
+  performance is not established.
 
 - Cache immutable block offsets and retain decoded predicate columns when the
   output projection is identical. Dense text-predicate scans with that

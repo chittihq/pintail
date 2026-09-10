@@ -84,16 +84,59 @@ payloads. Estimates never authorize dropping a row. Membership rejection only
 uses a complete, budgeted set, and the final join still checks all keys and its
 residual predicate. Unsupported paths retain their original execution.
 
-## Qualification status
+## 20M paired comparison and qualification status
 
-The Q05 target, four-query TPC-H comparison, and [complete rc profile](q05-join-rc.md)
-passed. The 20M candidate benchmark remains blocked by overlapping harnesses;
-this evidence does not establish eight-query regression parity or a stable
-release gate. The 20M baseline's eight-query answers are exact.
-Another oracle started during the last two seconds of its final concurrency
-test, after the eight-query measurements, so that concurrency result is excluded.
-Candidate setup attempts interrupted by overlapping harnesses produced no
-usable timings. These are setup failures, not successful benchmark runs.
+The Q05 target, four-query TPC-H comparison, [complete rc profile](q05-join-rc.md),
+and 20M exact-answer benchmark passed. All eight canonical queries and the
+novel-query families matched their MySQL reference answers in both arms.
+Both engines reported zero concurrency errors at every tested client count.
+The harness PASS covers exact answers and its memo-dashboard speed threshold;
+it is not a cross-revision engine-regression gate. The explicit table below
+is the before/after engine comparison.
+
+The 20M pair used a different, 16-logical-CPU, 30 GiB host with background
+services, at the owner's request after repeated harness collisions on the
+first host. Each benchmark engine had the same eight-CPU / 8 GiB container
+limits; Pintail's query-memory ceiling was 4 GiB. This is **not an idle-host
+regression qualification**. MySQL references from 2026-09-03 were reused only
+after exact host and workload fingerprints matched. A fresh partial MySQL
+pass also confirmed the first five canonical answers and SQL hashes before
+cache reuse; both Pintail timing runs below are new.
+
+The control checkout is `20ef46cc`, with engine sources identical to the
+parent; the candidate checkout is `415aaa2c`, with engine sources identical
+to `b2cb6f5b`. Their additional commits only bank the matching MySQL reference.
+Raw reports: [baseline](q05-join-qualification/eight-query-shared-baseline.json)
+and [candidate](q05-join-qualification/eight-query-shared-candidate.json).
+The table uses the memo-disabled engine track, fifteen measured samples after
+two warmups, not the repeated-result memo track.
+
+| Query | Baseline median ms | Candidate median ms | Baseline minimum ms | Candidate minimum ms |
+|---|---:|---:|---:|---:|
+| Q1: Full table count | 5 | 4 | 4 | 4 |
+| Q2: Filtered count | 44 | 44 | 42 | 42 |
+| Q3: Group by status | 133 | 131 | 121 | 120 |
+| Q4: Region × status breakdown | 146 | 158 | 141 | 148 |
+| Q5: Monthly revenue (2023) | 99 | 94 | 91 | 86 |
+| Q6: Top 10 spenders | 436 | 407 | 388 | 384 |
+| Q7: Regional analytics | 376 | 370 | 314 | 356 |
+| Q8: Join users + orders | 386 | 370 | 338 | 338 |
+
+Seven medians held or improved. **Q4's median increased 8.2% (146 → 158 ms)**,
+and its minimum increased 5.0% (141 → 148 ms). Q7's median improved 1.6%,
+but its minimum increased 13.4%. These observations are retained rather than
+asserted to be noise. The shared host prevents attributing the differences
+confidently to the engine or claiming regression-free performance. The Q05
+one-second target is independently established on the idle host above.
+
+Background sampling recorded 169 observations, averaging 24.96% of one logical CPU outside the harness, with a maximum of 98.62%. This includes setup; named benchmark engine containers are excluded, while setup helpers may be included. [Load samples](q05-join-qualification/background-load.json) and the raw latency samples are banked.
+
+Earlier candidate setup attempts were interrupted by overlapping harnesses
+and produced no usable timings. An earlier baseline on the first host had
+exact eight-query answers, but another oracle started during the last two
+seconds of its final concurrency test; that concurrency result is excluded.
+The original [baseline report](q05-join-qualification/eight-query-baseline.json)
+is retained separately and is not the control for the table above.
 
 ## Correctness
 
