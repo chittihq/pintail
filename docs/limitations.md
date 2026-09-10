@@ -43,6 +43,14 @@ stays readable as a list of things to fix.
   statement as written, which is what MySQL returns with
   `optimizer_switch='semijoin=off'`, so on this shape Pintail's result
   differs from a default-configured MySQL's.
+- A table whose segments overlap after its source updates rows is read
+  through a merge on every scan until compaction removes the overlap, and
+  value pruning skips only segments older than everything overlapping them.
+  On 20,000,000 rows with one in a hundred updated, an unindexed full scan
+  took 33 s against 2.5 s in MySQL, and point or IN-list lookups on an
+  indexed column took 30-80 s against 1-2 ms, with every answer exact
+  (`benchmark/results-filters.md`). There are no secondary indexes: a point
+  lookup on a non-key column reads every segment its value might be in.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather
