@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.5-rc1] - 2026-09-10
+
+Outer-join ON subqueries answered in every shape, WHERE clauses matched to
+MySQL at their edges, every row of a large result returned over the wire,
+and range filters that keep pruning on a table taking updates.
+
 ### Added
 
 - `IS [NOT] TRUE`, `IS [NOT] FALSE` and `IS [NOT] UNKNOWN`; row-constructor
@@ -44,6 +50,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A DECIMAL compared with a string literal or inside BETWEEN was compared
+  as its text carrier: `balance > '100.5'` let `99.00` through, and
+  `BETWEEN -500 AND -0.01` sorted -12.50 below -500. A plain-number string
+  literal is read as a number against an exact number, and a DECIMAL BETWEEN
+  is bound as the two exact comparisons MySQL defines it to be, so every
+  execution path compares by value.
+- `NULL NOT IN` an empty list is true and `NULL IN` one false; the list
+  evaluator answered NULL, so an outer join scoped by a membership subquery
+  dropped rows whose list came back empty.
+- Result metadata follows MySQL 8.4: `TIMESTAMP_FLAG` only on a TIMESTAMP
+  that initializes or updates itself, and an integer of up to eleven digits
+  declared INT when a grouping or a materialized derived table stores it,
+  while wider integers and merged derived tables keep their types.
 - A MySQL-wire result stopped at 10,000 rows without an error. The client
   protocol has no way to say a result was cut, so a report over 43,000 rows
   arrived as a complete-looking 10,000. The wire now returns every row,
