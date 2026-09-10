@@ -603,9 +603,16 @@ impl PhysicalPlanner {
                     split_join_condition(condition, &left, &right, kind);
                 let Some(condition) = condition else {
                     // No conjunct spans the two inputs at all: a pure theta
-                    // shape like ON a.x > 5. The nested loop answers it by
-                    // testing every pair.
-                    return plan_theta_join(left, right, kind, original_condition, collation);
+                    // shape like ON a.x > 5, or an ON clause folded to a
+                    // constant. Each side's own conjuncts filter it first,
+                    // and the nested loop tests what is left pair by pair.
+                    return plan_theta_join(
+                        logically_filtered(left, left_filter),
+                        logically_filtered(right, right_filter),
+                        kind,
+                        original_condition,
+                        collation,
+                    );
                 };
                 // An ON clause may also compare the two inputs with something
                 // that is not equality. The hash join still runs on the
@@ -755,6 +762,29 @@ fn filtered(input: PhysicalPlan, predicate: Option<BoundExpr>) -> PhysicalPlan {
     }
 }
 
+fn logically_filtered(input: Box<LogicalPlan>, predicate: Option<BoundExpr>) -> Box<LogicalPlan> {
+    match predicate {
+        None => input,
+        Some(predicate) => Box::new(LogicalPlan::Filter { input, predicate }),
+    }
+}
+
+/// Whether an expression reads no row: literals combined by comparison,
+/// logic and NULL tests. Functions are left out, so a volatile one is still
+/// evaluated per candidate pair.
+fn constant_expression(expression: &BoundExpr) -> bool {
+    match &expression.kind {
+        BoundExprKind::Literal(_) => true,
+        BoundExprKind::Binary { left, right, .. } => {
+            constant_expression(left) && constant_expression(right)
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            constant_expression(expr)
+        }
+        _ => false,
+    }
+}
+
 /// Separates an ON clause into conjuncts that span both inputs and conjuncts
 /// confined to one of them, so an ordinary predicate sitting beside the join
 /// keys does not make the whole join unplannable.
@@ -788,7 +818,10 @@ fn split_join_condition(
     and_conjuncts(&condition, &mut conjuncts);
     let (mut spanning, mut left_only, mut right_only) = (Vec::new(), Vec::new(), Vec::new());
     for conjunct in conjuncts {
-        if expression_belongs_to(&conjunct, &right_tables) {
+        // A constant conjunct - `1 = 0`, or an ON clause folded to FALSE - reads
+        // neither input. Filtering the right one by it is what it means for
+        // every join kind: it decides whether any right row can match.
+        if expression_belongs_to(&conjunct, &right_tables) || constant_expression(&conjunct) {
             right_only.push(conjunct);
         } else if matches!(kind, BoundJoinKind::Inner)
             && expression_belongs_to(&conjunct, &left_tables)
