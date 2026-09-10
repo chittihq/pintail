@@ -305,6 +305,25 @@ pub fn unicode_ci_sort_key(text: &str) -> Vec<u8> {
     padded_sort_key(UnicodeCiWeights::new(text), UNICODE_CI_SPACE)
 }
 
+/// The key `MySQL`'s `GROUP BY` files a `unicode_ci` value under.
+///
+/// Comparison pads by weight, and a no-break space weighs a space here, so a
+/// value ending in one compares equal to the value without it: `=` and
+/// `COUNT(DISTINCT)` fold the two. `GROUP BY` trims trailing spaces by
+/// character instead and keeps every other weight, so it reports them as
+/// two groups. The space terminator goes back on, so among the values this
+/// key keeps apart it still orders the way the comparison does.
+#[must_use]
+pub fn unicode_ci_group_key(text: &str) -> Vec<u8> {
+    let mut key = UnicodeCiWeights::new(text.trim_end_matches(' ')).collect::<Vec<_>>();
+    key.push(UNICODE_CI_SPACE);
+    let mut bytes = Vec::with_capacity(key.len() * 2);
+    for weight in key {
+        bytes.extend_from_slice(&weight.to_be_bytes());
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

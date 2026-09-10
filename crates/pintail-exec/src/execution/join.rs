@@ -2090,6 +2090,42 @@ pub(super) fn normalized_hash_key(value: Value, collation: Collation) -> Option<
     (!matches!(value, Value::Null)).then(|| normalized_collation_value(value, collation))
 }
 
+/// [`normalized_collation_text`] for a `GROUP BY` key. The equivalence is the
+/// same except under `unicode_ci`, where `MySQL`'s grouping trims trailing
+/// spaces by character rather than by weight (see
+/// [`crate::collation::unicode_ci_group_key`]).
+pub(crate) fn normalized_group_text(text: &str, collation: Collation) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    if collation != Collation::Utf8mb4UnicodeCi {
+        return normalized_collation_text(text, collation);
+    }
+    let key = crate::collation::unicode_ci_group_key(text);
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+/// [`normalized_collation_value`] for a `GROUP BY` key.
+pub(super) fn normalized_group_value(value: Value, collation: Collation) -> Value {
+    match value {
+        Value::Utf8(text) | Value::Enum { label: text, .. } => {
+            Value::Utf8(normalized_group_text(&text, collation))
+        }
+        Value::DecimalAverage(average) => {
+            Value::Utf8(normalized_group_text(&average.label, collation))
+        }
+        value => value,
+    }
+}
+
+/// [`normalized_hash_key`] for a `GROUP BY` key.
+pub(super) fn normalized_group_hash_key(value: Value, collation: Collation) -> Option<Value> {
+    (!matches!(value, Value::Null)).then(|| normalized_group_value(value, collation))
+}
+
 #[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(super) enum JoinHashKey {
     NegativeInteger(i64),

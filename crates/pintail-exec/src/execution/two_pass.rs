@@ -11,7 +11,7 @@ use super::aggregate::{
     AggregateGroup, AggregateState, CompiledAggregate, aggregate_uses_float, decimal_average_scale,
     decimal_units_from_int, merge_spilled_aggregate_groups, write_aggregate_spill_run,
 };
-use super::join::{normalized_collation_text, normalized_hash_key};
+use super::join::{normalized_group_hash_key, normalized_group_text};
 use super::morsel::{Morsel, default_morsel_limit, morsel_plan};
 use super::{
     ExecError, HASH_ENTRY_OVERHEAD, MaterializedRows, MemoryTracker, PullOperator,
@@ -376,7 +376,7 @@ fn two_pass_groups_map(
             let key = values
                 .iter()
                 .cloned()
-                .map(|value| normalized_hash_key(value, collation).unwrap_or(Value::Null))
+                .map(|value| normalized_group_hash_key(value, collation).unwrap_or(Value::Null))
                 .collect::<Vec<_>>();
             groups.insert(key, AggregateGroup { values, states });
         }
@@ -1380,7 +1380,7 @@ impl StringIntern {
         // separately for MySQL-compatible GROUP BY output.
         let value = std::str::from_utf8(bytes)
             .map_err(|_| ExecError::InvalidBatch("string group key is not UTF-8"))?;
-        let folded = normalized_collation_text(value, self.collation).into_bytes();
+        let folded = normalized_group_text(value, self.collation).into_bytes();
         if let Some(id) = self.index.get(&folded) {
             return Ok(*id);
         }

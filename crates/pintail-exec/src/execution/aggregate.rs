@@ -21,8 +21,8 @@ use rayon::prelude::*;
 use crate::BatchStream as _;
 
 use super::join::{
-    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state,
-    normalized_collation_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
+    JoinGroupPlan, JoinHashKey, PartitionedBuild, build_hash_join_state, normalized_group_hash_key,
+    normalized_group_value, normalized_hash_key, normalized_join_key, resolve_join_group_plan,
 };
 use super::morsel::{Morsel, default_morsel_limit, split_into_morsels, split_into_morsels_bounded};
 use super::two_pass::{
@@ -2203,7 +2203,7 @@ fn merge_finished_aggregate_rows(
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .map(|value| normalized_group_value(value, collation))
             .collect::<Vec<_>>();
         index.insert(key, position);
     }
@@ -2211,7 +2211,7 @@ fn merge_finished_aggregate_rows(
         let key = row[..group_len]
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, collation))
+            .map(|value| normalized_group_value(value, collation))
             .collect::<Vec<_>>();
         if let Some(position) = index.get(&key) {
             for (offset, aggregate) in aggregates.iter().enumerate() {
@@ -3101,7 +3101,7 @@ fn build_hash_aggregate_scan(
                 .cloned()
                 .zip(key_collations)
                 .map(|(value, collation)| {
-                    normalized_hash_key(value, *collation).unwrap_or(Value::Null)
+                    normalized_group_hash_key(value, *collation).unwrap_or(Value::Null)
                 })
                 .collect::<Vec<_>>();
             if groups.len() == groups.capacity() {
@@ -4663,7 +4663,7 @@ fn build_local_fused_join_groups(
             .values
             .iter()
             .cloned()
-            .map(|value| normalized_collation_value(value, group_collation))
+            .map(|value| normalized_group_value(value, group_collation))
             .collect();
         match folded.entry(key) {
             Entry::Vacant(entry) => {
@@ -4919,7 +4919,7 @@ fn build_local_dictionary_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect();
         let group = AggregateGroup {
             values,
@@ -5019,7 +5019,7 @@ fn build_local_direct_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect();
         match folded.entry(key) {
             Entry::Vacant(entry) => {
@@ -5064,7 +5064,7 @@ fn build_local_expression_groups(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_collation_value(value, *collation))
+            .map(|(value, collation)| normalized_group_value(value, *collation))
             .collect::<Vec<_>>();
         let group = groups.entry(key).or_insert_with(|| AggregateGroup {
             values,
@@ -5118,7 +5118,9 @@ fn direct_groups_map(
             .iter()
             .cloned()
             .zip(key_collations)
-            .map(|(value, collation)| normalized_hash_key(value, *collation).unwrap_or(Value::Null))
+            .map(|(value, collation)| {
+                normalized_group_hash_key(value, *collation).unwrap_or(Value::Null)
+            })
             .collect::<Vec<_>>();
         map.insert(key, group);
     }
