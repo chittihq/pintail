@@ -4639,7 +4639,7 @@ fn batch_row(batch: &RecordBatch, row: usize) -> Result<Vec<Value>, ExecError> {
         .columns()
         .iter()
         .map(|column| {
-            column.value(row).cloned().ok_or(ExecError::InvalidBatch(
+            column.value_owned(row).ok_or(ExecError::InvalidBatch(
                 "join row is outside an input column",
             ))
         })
@@ -4879,10 +4879,10 @@ fn estimated_batch_row_bytes(batch: &RecordBatch, row: usize) -> Result<usize, E
         .columns()
         .iter()
         .try_fold(0_usize, |heap_bytes, column| {
-            let value = column
-                .value(row)
+            let bytes = column
+                .scalar_heap_bytes(row)
                 .ok_or(ExecError::InvalidBatch("row is outside an input column"))?;
-            Ok::<_, ExecError>(heap_bytes.saturating_add(value.heap_bytes()))
+            Ok::<_, ExecError>(heap_bytes.saturating_add(bytes))
         })?;
     Ok(size_of::<Vec<Value>>()
         .saturating_add(batch.columns().len().saturating_mul(size_of::<Value>()))

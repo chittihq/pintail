@@ -704,6 +704,72 @@ impl ColumnVector {
         self.values().get(row)
     }
 
+    /// Copies one scalar without requiring callers to borrow the full column.
+    pub(crate) fn value_owned(&self, row: usize) -> Option<Value> {
+        if row >= self.len {
+            return None;
+        }
+        if let Some(values) = self.values.get() {
+            return values.get(row).cloned();
+        }
+        let (typed, validity) = self.typed()?;
+        if !validity.is_valid(row) {
+            return Some(Value::Null);
+        }
+        Some(match typed {
+            TypedValues::Int64(values) => Value::Int64(values[row]),
+            TypedValues::UInt64(values) => Value::UInt64(values[row]),
+            TypedValues::Float64(values) => {
+                Value::Float64(pintail_types::Float64::new(values[row]))
+            }
+            TypedValues::Utf8(column) => {
+                let text = str_column_string(column, row);
+                match column.declared_ordinal(&text) {
+                    Some(index) => Value::Enum { index, label: text },
+                    None => Value::Utf8(text),
+                }
+            }
+            TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
+                if let Some(column) = text.built() {
+                    Value::Utf8(str_column_string(column, row))
+                } else if let Some(text) = typed.format_unit(row) {
+                    Value::Utf8(text)
+                } else {
+                    return self.value(row).cloned();
+                }
+            }
+        })
+    }
+
+    /// Heap allowance for copying one scalar, without formatting other rows.
+    pub(crate) fn scalar_heap_bytes(&self, row: usize) -> Option<usize> {
+        if row >= self.len {
+            return None;
+        }
+        if let Some(values) = self.values.get() {
+            return values.get(row).map(Value::heap_bytes);
+        }
+        let (typed, validity) = self.typed()?;
+        if !validity.is_valid(row) {
+            return Some(0);
+        }
+        let text = match typed {
+            TypedValues::Int64(_) | TypedValues::UInt64(_) | TypedValues::Float64(_) => {
+                return Some(0);
+            }
+            TypedValues::Utf8(column) => column,
+            TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
+                // i128 decimal and canonical temporal text fit in 64 bytes.
+                // Value-born text keeps its actual spelling and length.
+                let Some(column) = text.built() else {
+                    return Some(64);
+                };
+                column
+            }
+        };
+        Some(text.views()[row].with_bytes(text.heap(), <[u8]>::len))
+    }
+
     /// Returns the number of physical rows.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -1509,5 +1575,96 @@ mod selection_tests {
             .map(|piece| mask.count_in(piece * 400..(piece + 1) * 400))
             .sum();
         assert_eq!(counted, selected.len());
+    }
+}
+
+#[cfg(test)]
+mod scalar_copy_tests {
+    use super::*;
+
+    #[test]
+    fn copying_one_packed_scalar_preserves_values_without_expanding_the_column() {
+        let cases = [
+            (
+                DataType::UInt64,
+                vec![Value::UInt64(u64::MAX), Value::Null, Value::UInt64(7)],
+            ),
+            (
+                DataType::Int64,
+                vec![Value::Int64(i64::MIN), Value::Null, Value::Int64(7)],
+            ),
+            (
+                DataType::Float64,
+                vec![
+                    Value::Float64(pintail_types::Float64::new(1.5)),
+                    Value::Null,
+                    Value::Float64(pintail_types::Float64::new(-2.5)),
+                ],
+            ),
+            (
+                DataType::Utf8,
+                vec![
+                    Value::Utf8("Mixed Case ".into()),
+                    Value::Null,
+                    Value::Utf8("text".into()),
+                ],
+            ),
+            (
+                DataType::Decimal {
+                    precision: 18,
+                    scale: 2,
+                },
+                vec![
+                    Value::Utf8("-1.20".into()),
+                    Value::Null,
+                    Value::Utf8("9.1".into()),
+                ],
+            ),
+            (
+                DataType::Date32,
+                vec![
+                    Value::Utf8("2024-02-29".into()),
+                    Value::Null,
+                    Value::Utf8("1969-12-31".into()),
+                ],
+            ),
+        ];
+        for (data_type, values) in cases {
+            let source = ColumnVector::new(data_type, values.clone()).expect("source");
+            let (typed, validity) = source.typed().expect("packed");
+            let copy = ColumnVector::from_typed(data_type, typed.clone(), validity.clone());
+            for (row, expected) in values.iter().enumerate() {
+                assert_eq!(copy.value_owned(row).as_ref(), Some(expected));
+                assert!(
+                    copy.values.get().is_none(),
+                    "a single row must not expand every row"
+                );
+            }
+            assert_eq!(copy.value_owned(values.len()), None);
+            assert_eq!(copy.values(), values);
+        }
+        let native = ColumnVector::from_typed(
+            DataType::Decimal {
+                precision: 18,
+                scale: 2,
+            },
+            TypedValues::Decimal128 {
+                values: DecimalUnits::Narrow(vec![-120, 0, 910]),
+                scale: 2,
+                text: LazyText::decimal(2),
+            },
+            ValidityMask::from_bools(&[true, false, true]),
+        );
+        assert_eq!(native.value_owned(2), Some(Value::Utf8("9.10".into())));
+        assert!(native.values.get().is_none());
+        let (TypedValues::Decimal128 { text, .. }, _) = native.typed().expect("packed") else {
+            panic!("decimal");
+        };
+        assert!(
+            text.built().is_none(),
+            "copying a scalar must not format the entire decimal lane"
+        );
+        assert_eq!(native.value_owned(1), Some(Value::Null));
+        assert_eq!(native.value_owned(0), Some(Value::Utf8("-1.20".into())));
     }
 }
