@@ -90,6 +90,34 @@ fn alter_table_target(statement: &str) -> Option<(Option<String>, String)> {
     (!name.is_empty()).then_some((schema, name))
 }
 
+/// Parses one replicated DDL statement.
+///
+/// A source running with `ANSI_QUOTES` writes its identifiers in double
+/// quotes, which the default lexer reads as string literals - so a perfectly
+/// ordinary `CREATE TABLE "x"` did not parse, and the statement's database
+/// stopped replicating at that offset. The source's SQL mode is not carried
+/// with the statement, so the reading is settled the only way available:
+/// parse as written, and on failure parse again with double quotes
+/// delimiting identifiers.
+///
+/// Nothing loses a valid reading to that retry. The first parse rejects a
+/// double-quoted token outright - it wants a string literal and does not
+/// count one as such - so any statement carrying double quotes has already
+/// failed by the time the retry runs, and every statement that parsed as
+/// written returns before reaching it.
+fn parse_source_ddl(statement: &str) -> Result<Vec<Statement>, CdcError> {
+    let default = match Parser::parse_sql(&MySqlDialect {}, statement) {
+        Ok(statements) => return Ok(statements),
+        Err(error) => error,
+    };
+    let quoted = pintail_sql::ParseMode {
+        ansi_quotes: true,
+        ..pintail_sql::ParseMode::default()
+    };
+    pintail_sql::with_parse_mode(quoted, || pintail_sql::parse_statements(statement))
+        .map_err(|_| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {default}")))
+}
+
 #[allow(clippy::too_many_lines)] // linear DDL-statement classification table
 pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, CdcError> {
     let normalized = statement.trim_start().to_ascii_uppercase();
@@ -142,8 +170,7 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
             })
             .unwrap_or_default());
     }
-    let statements = Parser::parse_sql(&MySqlDialect {}, statement)
-        .map_err(|error| CdcError::Ddl(format!("cannot parse DDL `{statement}`: {error}")))?;
+    let statements = parse_source_ddl(statement)?;
     let mut parsed = ParsedDdl::default();
     for statement in statements {
         match statement {
@@ -379,6 +406,23 @@ mod convert_charset_tests {
 #[cfg(test)]
 mod tests {
     use super::{AlterKind, DdlAction, parse_ddl};
+
+    /// A source running `ANSI_QUOTES` writes identifiers in double quotes. The
+    /// default lexer reads those as string literals, so this statement did
+    /// not parse - and an unparseable DDL stopped its database replicating
+    /// at that offset until an operator intervened.
+    #[test]
+    fn a_source_using_ansi_quotes_has_its_identifiers_read_as_identifiers() {
+        let created = parse_ddl(
+            "CREATE TABLE \"CertificateTemplate\" (\"id\" INT NOT NULL, \"name\" VARCHAR(64))",
+            "app",
+        )
+        .expect("a double-quoted identifier parses");
+        assert!(
+            !created.actions.is_empty(),
+            "the statement is understood, not merely tolerated",
+        );
+    }
 
     #[test]
     fn classifies_supported_mysql_schema_changes() {

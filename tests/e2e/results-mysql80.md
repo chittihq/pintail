@@ -1,12 +1,12 @@
 # Pintail end-to-end differential gate
 
-Measured 2026-09-10T07:03:46.449Z.
+Measured 2026-09-10T13:39:34.195Z.
 
 Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh container.
 
-**5754 passed, 0 failed, 30 documented-gap warnings, 44 skipped.**
+**7014 passed, 0 failed, 30 documented-gap warnings, 44 skipped.**
 
-187 unique corpus queries produced 5236 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
+223 unique corpus queries produced 6244 corpus checks across phases; the remaining checks are convergence, battery, and control-plane assertions.
 
 | Phase | Check | Status | Detail |
 |---|---|---|---|
@@ -17,12 +17,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | converge:attendance | PASS |  |
 | snapshot | converge:audit_log | PASS |  |
 | snapshot | converge:badges | PASS |  |
+| snapshot | converge:bundle_products | PASS |  |
 | snapshot | converge:counters | PASS |  |
 | snapshot | converge:customers | PASS |  |
 | snapshot | converge:enrollments | PASS |  |
+| snapshot | converge:flash_sales | PASS |  |
+| snapshot | converge:listing_entries | PASS |  |
+| snapshot | converge:listing_groups | PASS |  |
+| snapshot | converge:marketplaces | PASS |  |
 | snapshot | converge:order_items | PASS |  |
 | snapshot | converge:orders | PASS |  |
+| snapshot | converge:product_reviews | PASS |  |
+| snapshot | converge:sellers | PASS |  |
 | snapshot | converge:staff | PASS |  |
+| snapshot | converge:storefront_followers | PASS |  |
+| snapshot | converge:storefronts | PASS |  |
 | snapshot | converge:information_schema.columns | PASS |  |
 | snapshot | query:composite: one first part, ordered by the second | PASS |  |
 | snapshot | query:composite: grouped by the first part | PASS |  |
@@ -211,6 +220,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | snapshot | query:shipments: carrier value through the items bridge | SKIP |  |
 | snapshot | query:json: distinct case variants survive a derived table | PASS |  |
+| snapshot | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| snapshot | query:storefront: the per-sale rows under the report | PASS |  |
+| snapshot | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| snapshot | query:storefront: the same membership written as EXISTS | PASS |  |
+| snapshot | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| snapshot | query:storefront: membership keyed on shopper and locale | PASS |  |
+| snapshot | query:storefront: locale membership across case variants | PASS |  |
+| snapshot | query:storefront: shopper and staff reviews side by side | PASS |  |
+| snapshot | query:storefront: membership correlated through the storefront alias | PASS |  |
+| snapshot | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| snapshot | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| snapshot | query:storefront: membership across a storefront range | PASS |  |
+| snapshot | query:storefront: membership from a grouped, joined list | PASS |  |
+| snapshot | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| snapshot | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| snapshot | query:where: a DATE range ending on a leap day | PASS |  |
+| snapshot | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| snapshot | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| snapshot | query:where: DATE() of a TIMESTAMP | PASS |  |
+| snapshot | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| snapshot | query:where: DECIMAL against a string literal | PASS |  |
+| snapshot | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| snapshot | query:where: NOT IN with a NULL in the list | PASS |  |
+| snapshot | query:where: null-safe equality on a nullable column | PASS |  |
+| snapshot | query:where: a filter on a virtual generated column | PASS |  |
+| snapshot | query:where: SET membership by FIND_IN_SET | PASS |  |
+| snapshot | query:where: SET equality to a member list | PASS |  |
+| snapshot | query:where: VARBINARY equality to a hex literal | PASS |  |
+| snapshot | query:where: JSON path comparisons | PASS |  |
+| snapshot | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| snapshot | query:where: OR with a NULL-testing branch | PASS |  |
+| snapshot | query:where: row constructor IN | PASS |  |
+| snapshot | query:where: ALL over a subquery | PASS |  |
+| snapshot | query:where: an unsigned column against a negative literal | PASS |  |
+| snapshot | query:where: a string number against an integer column | PASS |  |
+| snapshot | query:where: a general_ci column under PAD SPACE | PASS |  |
 | orm-compat | sequelize:metadata:result | PASS |  |
 | orm-compat | sequelize:metadata:generated-sql | PASS |  |
 | orm-compat | sequelize:point-and-filtered-reads:result | PASS |  |
@@ -242,12 +287,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | converge:attendance | PASS |  |
 | orm-compat | converge:audit_log | PASS |  |
 | orm-compat | converge:badges | PASS |  |
+| orm-compat | converge:bundle_products | PASS |  |
 | orm-compat | converge:counters | PASS |  |
 | orm-compat | converge:customers | PASS |  |
 | orm-compat | converge:enrollments | PASS |  |
+| orm-compat | converge:flash_sales | PASS |  |
+| orm-compat | converge:listing_entries | PASS |  |
+| orm-compat | converge:listing_groups | PASS |  |
+| orm-compat | converge:marketplaces | PASS |  |
 | orm-compat | converge:order_items | PASS |  |
 | orm-compat | converge:orders | PASS |  |
+| orm-compat | converge:product_reviews | PASS |  |
+| orm-compat | converge:sellers | PASS |  |
 | orm-compat | converge:staff | PASS |  |
+| orm-compat | converge:storefront_followers | PASS |  |
+| orm-compat | converge:storefronts | PASS |  |
 | orm-compat | converge:information_schema.columns | PASS |  |
 | orm-compat | query:composite: one first part, ordered by the second | PASS |  |
 | orm-compat | query:composite: grouped by the first part | PASS |  |
@@ -436,6 +490,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | orm-compat | query:order_items: product rollup without the orders table | PASS |  |
 | orm-compat | query:shipments: carrier value through the items bridge | SKIP |  |
 | orm-compat | query:json: distinct case variants survive a derived table | PASS |  |
+| orm-compat | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| orm-compat | query:storefront: the per-sale rows under the report | PASS |  |
+| orm-compat | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| orm-compat | query:storefront: the same membership written as EXISTS | PASS |  |
+| orm-compat | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| orm-compat | query:storefront: membership keyed on shopper and locale | PASS |  |
+| orm-compat | query:storefront: locale membership across case variants | PASS |  |
+| orm-compat | query:storefront: shopper and staff reviews side by side | PASS |  |
+| orm-compat | query:storefront: membership correlated through the storefront alias | PASS |  |
+| orm-compat | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| orm-compat | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| orm-compat | query:storefront: membership across a storefront range | PASS |  |
+| orm-compat | query:storefront: membership from a grouped, joined list | PASS |  |
+| orm-compat | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| orm-compat | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| orm-compat | query:where: a DATE range ending on a leap day | PASS |  |
+| orm-compat | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| orm-compat | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| orm-compat | query:where: DATE() of a TIMESTAMP | PASS |  |
+| orm-compat | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| orm-compat | query:where: DECIMAL against a string literal | PASS |  |
+| orm-compat | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| orm-compat | query:where: NOT IN with a NULL in the list | PASS |  |
+| orm-compat | query:where: null-safe equality on a nullable column | PASS |  |
+| orm-compat | query:where: a filter on a virtual generated column | PASS |  |
+| orm-compat | query:where: SET membership by FIND_IN_SET | PASS |  |
+| orm-compat | query:where: SET equality to a member list | PASS |  |
+| orm-compat | query:where: VARBINARY equality to a hex literal | PASS |  |
+| orm-compat | query:where: JSON path comparisons | PASS |  |
+| orm-compat | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| orm-compat | query:where: OR with a NULL-testing branch | PASS |  |
+| orm-compat | query:where: row constructor IN | PASS |  |
+| orm-compat | query:where: ALL over a subquery | PASS |  |
+| orm-compat | query:where: an unsigned column against a negative literal | PASS |  |
+| orm-compat | query:where: a string number against an integer column | PASS |  |
+| orm-compat | query:where: a general_ci column under PAD SPACE | PASS |  |
 | crud | converge:Dim | PASS |  |
 | crud | converge:Event | PASS |  |
 | crud | converge:Fact | PASS |  |
@@ -443,12 +533,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | converge:attendance | PASS |  |
 | crud | converge:audit_log | PASS |  |
 | crud | converge:badges | PASS |  |
+| crud | converge:bundle_products | PASS |  |
 | crud | converge:counters | PASS |  |
 | crud | converge:customers | PASS |  |
 | crud | converge:enrollments | PASS |  |
+| crud | converge:flash_sales | PASS |  |
+| crud | converge:listing_entries | PASS |  |
+| crud | converge:listing_groups | PASS |  |
+| crud | converge:marketplaces | PASS |  |
 | crud | converge:order_items | PASS |  |
 | crud | converge:orders | PASS |  |
+| crud | converge:product_reviews | PASS |  |
+| crud | converge:sellers | PASS |  |
 | crud | converge:staff | PASS |  |
+| crud | converge:storefront_followers | PASS |  |
+| crud | converge:storefronts | PASS |  |
 | crud | converge:information_schema.columns | PASS |  |
 | crud | query:composite: one first part, ordered by the second | PASS |  |
 | crud | query:composite: grouped by the first part | PASS |  |
@@ -637,6 +736,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | crud | query:order_items: product rollup without the orders table | PASS |  |
 | crud | query:shipments: carrier value through the items bridge | SKIP |  |
 | crud | query:json: distinct case variants survive a derived table | PASS |  |
+| crud | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| crud | query:storefront: the per-sale rows under the report | PASS |  |
+| crud | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| crud | query:storefront: the same membership written as EXISTS | PASS |  |
+| crud | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| crud | query:storefront: membership keyed on shopper and locale | PASS |  |
+| crud | query:storefront: locale membership across case variants | PASS |  |
+| crud | query:storefront: shopper and staff reviews side by side | PASS |  |
+| crud | query:storefront: membership correlated through the storefront alias | PASS |  |
+| crud | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| crud | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| crud | query:storefront: membership across a storefront range | PASS |  |
+| crud | query:storefront: membership from a grouped, joined list | PASS |  |
+| crud | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| crud | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| crud | query:where: a DATE range ending on a leap day | PASS |  |
+| crud | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| crud | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| crud | query:where: DATE() of a TIMESTAMP | PASS |  |
+| crud | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| crud | query:where: DECIMAL against a string literal | PASS |  |
+| crud | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| crud | query:where: NOT IN with a NULL in the list | PASS |  |
+| crud | query:where: null-safe equality on a nullable column | PASS |  |
+| crud | query:where: a filter on a virtual generated column | PASS |  |
+| crud | query:where: SET membership by FIND_IN_SET | PASS |  |
+| crud | query:where: SET equality to a member list | PASS |  |
+| crud | query:where: VARBINARY equality to a hex literal | PASS |  |
+| crud | query:where: JSON path comparisons | PASS |  |
+| crud | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| crud | query:where: OR with a NULL-testing branch | PASS |  |
+| crud | query:where: row constructor IN | PASS |  |
+| crud | query:where: ALL over a subquery | PASS |  |
+| crud | query:where: an unsigned column against a negative literal | PASS |  |
+| crud | query:where: a string number against an integer column | PASS |  |
+| crud | query:where: a general_ci column under PAD SPACE | PASS |  |
 | composite-keys | converge:Dim | PASS |  |
 | composite-keys | converge:Event | PASS |  |
 | composite-keys | converge:Fact | PASS |  |
@@ -644,12 +779,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | converge:attendance | PASS |  |
 | composite-keys | converge:audit_log | PASS |  |
 | composite-keys | converge:badges | PASS |  |
+| composite-keys | converge:bundle_products | PASS |  |
 | composite-keys | converge:counters | PASS |  |
 | composite-keys | converge:customers | PASS |  |
 | composite-keys | converge:enrollments | PASS |  |
+| composite-keys | converge:flash_sales | PASS |  |
+| composite-keys | converge:listing_entries | PASS |  |
+| composite-keys | converge:listing_groups | PASS |  |
+| composite-keys | converge:marketplaces | PASS |  |
 | composite-keys | converge:order_items | PASS |  |
 | composite-keys | converge:orders | PASS |  |
+| composite-keys | converge:product_reviews | PASS |  |
+| composite-keys | converge:sellers | PASS |  |
 | composite-keys | converge:staff | PASS |  |
+| composite-keys | converge:storefront_followers | PASS |  |
+| composite-keys | converge:storefronts | PASS |  |
 | composite-keys | converge:information_schema.columns | PASS |  |
 | composite-keys | query:composite: one first part, ordered by the second | PASS |  |
 | composite-keys | query:composite: grouped by the first part | PASS |  |
@@ -838,6 +982,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | composite-keys | query:order_items: product rollup without the orders table | PASS |  |
 | composite-keys | query:shipments: carrier value through the items bridge | SKIP |  |
 | composite-keys | query:json: distinct case variants survive a derived table | PASS |  |
+| composite-keys | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| composite-keys | query:storefront: the per-sale rows under the report | PASS |  |
+| composite-keys | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| composite-keys | query:storefront: the same membership written as EXISTS | PASS |  |
+| composite-keys | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| composite-keys | query:storefront: membership keyed on shopper and locale | PASS |  |
+| composite-keys | query:storefront: locale membership across case variants | PASS |  |
+| composite-keys | query:storefront: shopper and staff reviews side by side | PASS |  |
+| composite-keys | query:storefront: membership correlated through the storefront alias | PASS |  |
+| composite-keys | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| composite-keys | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| composite-keys | query:storefront: membership across a storefront range | PASS |  |
+| composite-keys | query:storefront: membership from a grouped, joined list | PASS |  |
+| composite-keys | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| composite-keys | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| composite-keys | query:where: a DATE range ending on a leap day | PASS |  |
+| composite-keys | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| composite-keys | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| composite-keys | query:where: DATE() of a TIMESTAMP | PASS |  |
+| composite-keys | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| composite-keys | query:where: DECIMAL against a string literal | PASS |  |
+| composite-keys | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| composite-keys | query:where: NOT IN with a NULL in the list | PASS |  |
+| composite-keys | query:where: null-safe equality on a nullable column | PASS |  |
+| composite-keys | query:where: a filter on a virtual generated column | PASS |  |
+| composite-keys | query:where: SET membership by FIND_IN_SET | PASS |  |
+| composite-keys | query:where: SET equality to a member list | PASS |  |
+| composite-keys | query:where: VARBINARY equality to a hex literal | PASS |  |
+| composite-keys | query:where: JSON path comparisons | PASS |  |
+| composite-keys | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| composite-keys | query:where: OR with a NULL-testing branch | PASS |  |
+| composite-keys | query:where: row constructor IN | PASS |  |
+| composite-keys | query:where: ALL over a subquery | PASS |  |
+| composite-keys | query:where: an unsigned column against a negative literal | PASS |  |
+| composite-keys | query:where: a string number against an integer column | PASS |  |
+| composite-keys | query:where: a general_ci column under PAD SPACE | PASS |  |
 | type-edges | converge:Dim | PASS |  |
 | type-edges | converge:Event | PASS |  |
 | type-edges | converge:Fact | PASS |  |
@@ -845,12 +1025,21 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | converge:attendance | PASS |  |
 | type-edges | converge:audit_log | PASS |  |
 | type-edges | converge:badges | PASS |  |
+| type-edges | converge:bundle_products | PASS |  |
 | type-edges | converge:counters | PASS |  |
 | type-edges | converge:customers | PASS |  |
 | type-edges | converge:enrollments | PASS |  |
+| type-edges | converge:flash_sales | PASS |  |
+| type-edges | converge:listing_entries | PASS |  |
+| type-edges | converge:listing_groups | PASS |  |
+| type-edges | converge:marketplaces | PASS |  |
 | type-edges | converge:order_items | PASS |  |
 | type-edges | converge:orders | PASS |  |
+| type-edges | converge:product_reviews | PASS |  |
+| type-edges | converge:sellers | PASS |  |
 | type-edges | converge:staff | PASS |  |
+| type-edges | converge:storefront_followers | PASS |  |
+| type-edges | converge:storefronts | PASS |  |
 | type-edges | converge:information_schema.columns | PASS |  |
 | type-edges | query:composite: one first part, ordered by the second | PASS |  |
 | type-edges | query:composite: grouped by the first part | PASS |  |
@@ -1039,6 +1228,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | type-edges | query:order_items: product rollup without the orders table | PASS |  |
 | type-edges | query:shipments: carrier value through the items bridge | SKIP |  |
 | type-edges | query:json: distinct case variants survive a derived table | PASS |  |
+| type-edges | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| type-edges | query:storefront: the per-sale rows under the report | PASS |  |
+| type-edges | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| type-edges | query:storefront: the same membership written as EXISTS | PASS |  |
+| type-edges | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| type-edges | query:storefront: membership keyed on shopper and locale | PASS |  |
+| type-edges | query:storefront: locale membership across case variants | PASS |  |
+| type-edges | query:storefront: shopper and staff reviews side by side | PASS |  |
+| type-edges | query:storefront: membership correlated through the storefront alias | PASS |  |
+| type-edges | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| type-edges | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| type-edges | query:storefront: membership across a storefront range | PASS |  |
+| type-edges | query:storefront: membership from a grouped, joined list | PASS |  |
+| type-edges | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| type-edges | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| type-edges | query:where: a DATE range ending on a leap day | PASS |  |
+| type-edges | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| type-edges | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| type-edges | query:where: DATE() of a TIMESTAMP | PASS |  |
+| type-edges | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| type-edges | query:where: DECIMAL against a string literal | PASS |  |
+| type-edges | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| type-edges | query:where: NOT IN with a NULL in the list | PASS |  |
+| type-edges | query:where: null-safe equality on a nullable column | PASS |  |
+| type-edges | query:where: a filter on a virtual generated column | PASS |  |
+| type-edges | query:where: SET membership by FIND_IN_SET | PASS |  |
+| type-edges | query:where: SET equality to a member list | PASS |  |
+| type-edges | query:where: VARBINARY equality to a hex literal | PASS |  |
+| type-edges | query:where: JSON path comparisons | PASS |  |
+| type-edges | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| type-edges | query:where: OR with a NULL-testing branch | PASS |  |
+| type-edges | query:where: row constructor IN | PASS |  |
+| type-edges | query:where: ALL over a subquery | PASS |  |
+| type-edges | query:where: an unsigned column against a negative literal | PASS |  |
+| type-edges | query:where: a string number against an integer column | PASS |  |
+| type-edges | query:where: a general_ci column under PAD SPACE | PASS |  |
 | ddl | a virtual column added mid-stream is recopied with its values | PASS |  |
 | ddl | a table created mid-stream is streaming before its rename | PASS |  |
 | ddl | a renamed table follows its new name under CDC | PASS |  |
@@ -1049,14 +1274,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | converge:attendance | PASS |  |
 | ddl | converge:audit_log | PASS |  |
 | ddl | converge:badges | PASS |  |
+| ddl | converge:bundle_products | PASS |  |
 | ddl | converge:counters | PASS |  |
 | ddl | converge:customers | PASS |  |
 | ddl | converge:enrollments | PASS |  |
+| ddl | converge:flash_sales | PASS |  |
+| ddl | converge:listing_entries | PASS |  |
+| ddl | converge:listing_groups | PASS |  |
+| ddl | converge:marketplaces | PASS |  |
 | ddl | converge:order_items | PASS |  |
 | ddl | converge:orders | PASS |  |
+| ddl | converge:product_reviews | PASS |  |
 | ddl | converge:renamed_target | PASS |  |
+| ddl | converge:sellers | PASS |  |
 | ddl | converge:shipments | PASS |  |
 | ddl | converge:staff | PASS |  |
+| ddl | converge:storefront_followers | PASS |  |
+| ddl | converge:storefronts | PASS |  |
 | ddl | converge:information_schema.columns | PASS |  |
 | ddl | query:composite: one first part, ordered by the second | PASS |  |
 | ddl | query:composite: grouped by the first part | PASS |  |
@@ -1245,6 +1479,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl | query:order_items: product rollup without the orders table | PASS |  |
 | ddl | query:shipments: carrier value through the items bridge | PASS |  |
 | ddl | query:json: distinct case variants survive a derived table | PASS |  |
+| ddl | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| ddl | query:storefront: the per-sale rows under the report | PASS |  |
+| ddl | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| ddl | query:storefront: the same membership written as EXISTS | PASS |  |
+| ddl | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| ddl | query:storefront: membership keyed on shopper and locale | PASS |  |
+| ddl | query:storefront: locale membership across case variants | PASS |  |
+| ddl | query:storefront: shopper and staff reviews side by side | PASS |  |
+| ddl | query:storefront: membership correlated through the storefront alias | PASS |  |
+| ddl | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| ddl | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| ddl | query:storefront: membership across a storefront range | PASS |  |
+| ddl | query:storefront: membership from a grouped, joined list | PASS |  |
+| ddl | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| ddl | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| ddl | query:where: a DATE range ending on a leap day | PASS |  |
+| ddl | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| ddl | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| ddl | query:where: DATE() of a TIMESTAMP | PASS |  |
+| ddl | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| ddl | query:where: DECIMAL against a string literal | PASS |  |
+| ddl | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| ddl | query:where: NOT IN with a NULL in the list | PASS |  |
+| ddl | query:where: null-safe equality on a nullable column | PASS |  |
+| ddl | query:where: a filter on a virtual generated column | PASS |  |
+| ddl | query:where: SET membership by FIND_IN_SET | PASS |  |
+| ddl | query:where: SET equality to a member list | PASS |  |
+| ddl | query:where: VARBINARY equality to a hex literal | PASS |  |
+| ddl | query:where: JSON path comparisons | PASS |  |
+| ddl | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| ddl | query:where: OR with a NULL-testing branch | PASS |  |
+| ddl | query:where: row constructor IN | PASS |  |
+| ddl | query:where: ALL over a subquery | PASS |  |
+| ddl | query:where: an unsigned column against a negative literal | PASS |  |
+| ddl | query:where: a string number against an integer column | PASS |  |
+| ddl | query:where: a general_ci column under PAD SPACE | PASS |  |
 | schema-drift-minimal | converge:Dim | PASS |  |
 | schema-drift-minimal | converge:Event | PASS |  |
 | schema-drift-minimal | converge:Fact | PASS |  |
@@ -1252,14 +1522,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | converge:attendance | PASS |  |
 | schema-drift-minimal | converge:audit_log | PASS |  |
 | schema-drift-minimal | converge:badges | PASS |  |
+| schema-drift-minimal | converge:bundle_products | PASS |  |
 | schema-drift-minimal | converge:counters | PASS |  |
 | schema-drift-minimal | converge:customers | PASS |  |
 | schema-drift-minimal | converge:enrollments | PASS |  |
+| schema-drift-minimal | converge:flash_sales | PASS |  |
+| schema-drift-minimal | converge:listing_entries | PASS |  |
+| schema-drift-minimal | converge:listing_groups | PASS |  |
+| schema-drift-minimal | converge:marketplaces | PASS |  |
 | schema-drift-minimal | converge:order_items | PASS |  |
 | schema-drift-minimal | converge:orders | PASS |  |
+| schema-drift-minimal | converge:product_reviews | PASS |  |
 | schema-drift-minimal | converge:renamed_target | PASS |  |
+| schema-drift-minimal | converge:sellers | PASS |  |
 | schema-drift-minimal | converge:shipments | PASS |  |
 | schema-drift-minimal | converge:staff | PASS |  |
+| schema-drift-minimal | converge:storefront_followers | PASS |  |
+| schema-drift-minimal | converge:storefronts | PASS |  |
 | schema-drift-minimal | converge:information_schema.columns | PASS |  |
 | schema-drift-minimal | query:composite: one first part, ordered by the second | PASS |  |
 | schema-drift-minimal | query:composite: grouped by the first part | PASS |  |
@@ -1448,6 +1727,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-minimal | query:order_items: product rollup without the orders table | PASS |  |
 | schema-drift-minimal | query:shipments: carrier value through the items bridge | PASS |  |
 | schema-drift-minimal | query:json: distinct case variants survive a derived table | PASS |  |
+| schema-drift-minimal | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| schema-drift-minimal | query:storefront: the per-sale rows under the report | PASS |  |
+| schema-drift-minimal | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| schema-drift-minimal | query:storefront: the same membership written as EXISTS | PASS |  |
+| schema-drift-minimal | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| schema-drift-minimal | query:storefront: membership keyed on shopper and locale | PASS |  |
+| schema-drift-minimal | query:storefront: locale membership across case variants | PASS |  |
+| schema-drift-minimal | query:storefront: shopper and staff reviews side by side | PASS |  |
+| schema-drift-minimal | query:storefront: membership correlated through the storefront alias | PASS |  |
+| schema-drift-minimal | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| schema-drift-minimal | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| schema-drift-minimal | query:storefront: membership across a storefront range | PASS |  |
+| schema-drift-minimal | query:storefront: membership from a grouped, joined list | PASS |  |
+| schema-drift-minimal | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| schema-drift-minimal | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| schema-drift-minimal | query:where: a DATE range ending on a leap day | PASS |  |
+| schema-drift-minimal | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| schema-drift-minimal | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| schema-drift-minimal | query:where: DATE() of a TIMESTAMP | PASS |  |
+| schema-drift-minimal | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| schema-drift-minimal | query:where: DECIMAL against a string literal | PASS |  |
+| schema-drift-minimal | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| schema-drift-minimal | query:where: NOT IN with a NULL in the list | PASS |  |
+| schema-drift-minimal | query:where: null-safe equality on a nullable column | PASS |  |
+| schema-drift-minimal | query:where: a filter on a virtual generated column | PASS |  |
+| schema-drift-minimal | query:where: SET membership by FIND_IN_SET | PASS |  |
+| schema-drift-minimal | query:where: SET equality to a member list | PASS |  |
+| schema-drift-minimal | query:where: VARBINARY equality to a hex literal | PASS |  |
+| schema-drift-minimal | query:where: JSON path comparisons | PASS |  |
+| schema-drift-minimal | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| schema-drift-minimal | query:where: OR with a NULL-testing branch | PASS |  |
+| schema-drift-minimal | query:where: row constructor IN | PASS |  |
+| schema-drift-minimal | query:where: ALL over a subquery | PASS |  |
+| schema-drift-minimal | query:where: an unsigned column against a negative literal | PASS |  |
+| schema-drift-minimal | query:where: a string number against an integer column | PASS |  |
+| schema-drift-minimal | query:where: a general_ci column under PAD SPACE | PASS |  |
 | schema-drift-unseen | converge:Dim | PASS |  |
 | schema-drift-unseen | converge:Event | PASS |  |
 | schema-drift-unseen | converge:Fact | PASS |  |
@@ -1455,14 +1770,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | converge:attendance | PASS |  |
 | schema-drift-unseen | converge:audit_log | PASS |  |
 | schema-drift-unseen | converge:badges | PASS |  |
+| schema-drift-unseen | converge:bundle_products | PASS |  |
 | schema-drift-unseen | converge:counters | PASS |  |
 | schema-drift-unseen | converge:customers | PASS |  |
 | schema-drift-unseen | converge:enrollments | PASS |  |
+| schema-drift-unseen | converge:flash_sales | PASS |  |
+| schema-drift-unseen | converge:listing_entries | PASS |  |
+| schema-drift-unseen | converge:listing_groups | PASS |  |
+| schema-drift-unseen | converge:marketplaces | PASS |  |
 | schema-drift-unseen | converge:order_items | PASS |  |
 | schema-drift-unseen | converge:orders | PASS |  |
+| schema-drift-unseen | converge:product_reviews | PASS |  |
 | schema-drift-unseen | converge:renamed_target | PASS |  |
+| schema-drift-unseen | converge:sellers | PASS |  |
 | schema-drift-unseen | converge:shipments | PASS |  |
 | schema-drift-unseen | converge:staff | PASS |  |
+| schema-drift-unseen | converge:storefront_followers | PASS |  |
+| schema-drift-unseen | converge:storefronts | PASS |  |
 | schema-drift-unseen | converge:information_schema.columns | PASS |  |
 | schema-drift-unseen | query:composite: one first part, ordered by the second | PASS |  |
 | schema-drift-unseen | query:composite: grouped by the first part | PASS |  |
@@ -1651,6 +1975,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | schema-drift-unseen | query:order_items: product rollup without the orders table | PASS |  |
 | schema-drift-unseen | query:shipments: carrier value through the items bridge | PASS |  |
 | schema-drift-unseen | query:json: distinct case variants survive a derived table | PASS |  |
+| schema-drift-unseen | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| schema-drift-unseen | query:storefront: the per-sale rows under the report | PASS |  |
+| schema-drift-unseen | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| schema-drift-unseen | query:storefront: the same membership written as EXISTS | PASS |  |
+| schema-drift-unseen | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| schema-drift-unseen | query:storefront: membership keyed on shopper and locale | PASS |  |
+| schema-drift-unseen | query:storefront: locale membership across case variants | PASS |  |
+| schema-drift-unseen | query:storefront: shopper and staff reviews side by side | PASS |  |
+| schema-drift-unseen | query:storefront: membership correlated through the storefront alias | PASS |  |
+| schema-drift-unseen | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| schema-drift-unseen | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| schema-drift-unseen | query:storefront: membership across a storefront range | PASS |  |
+| schema-drift-unseen | query:storefront: membership from a grouped, joined list | PASS |  |
+| schema-drift-unseen | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| schema-drift-unseen | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| schema-drift-unseen | query:where: a DATE range ending on a leap day | PASS |  |
+| schema-drift-unseen | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| schema-drift-unseen | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| schema-drift-unseen | query:where: DATE() of a TIMESTAMP | PASS |  |
+| schema-drift-unseen | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| schema-drift-unseen | query:where: DECIMAL against a string literal | PASS |  |
+| schema-drift-unseen | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| schema-drift-unseen | query:where: NOT IN with a NULL in the list | PASS |  |
+| schema-drift-unseen | query:where: null-safe equality on a nullable column | PASS |  |
+| schema-drift-unseen | query:where: a filter on a virtual generated column | PASS |  |
+| schema-drift-unseen | query:where: SET membership by FIND_IN_SET | PASS |  |
+| schema-drift-unseen | query:where: SET equality to a member list | PASS |  |
+| schema-drift-unseen | query:where: VARBINARY equality to a hex literal | PASS |  |
+| schema-drift-unseen | query:where: JSON path comparisons | PASS |  |
+| schema-drift-unseen | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| schema-drift-unseen | query:where: OR with a NULL-testing branch | PASS |  |
+| schema-drift-unseen | query:where: row constructor IN | PASS |  |
+| schema-drift-unseen | query:where: ALL over a subquery | PASS |  |
+| schema-drift-unseen | query:where: an unsigned column against a negative literal | PASS |  |
+| schema-drift-unseen | query:where: a string number against an integer column | PASS |  |
+| schema-drift-unseen | query:where: a general_ci column under PAD SPACE | PASS |  |
 | churn-live | live:composite: one first part, ordered by the second | PASS |  |
 | churn-live | live:composite: grouped by the first part | PASS |  |
 | churn-live | live:composite: exact key pairs, deleted and reinserted among them | PASS |  |
@@ -1664,14 +2024,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | converge:attendance | PASS |  |
 | churn | converge:audit_log | PASS |  |
 | churn | converge:badges | PASS |  |
+| churn | converge:bundle_products | PASS |  |
 | churn | converge:counters | PASS |  |
 | churn | converge:customers | PASS |  |
 | churn | converge:enrollments | PASS |  |
+| churn | converge:flash_sales | PASS |  |
+| churn | converge:listing_entries | PASS |  |
+| churn | converge:listing_groups | PASS |  |
+| churn | converge:marketplaces | PASS |  |
 | churn | converge:order_items | PASS |  |
 | churn | converge:orders | PASS |  |
+| churn | converge:product_reviews | PASS |  |
 | churn | converge:renamed_target | PASS |  |
+| churn | converge:sellers | PASS |  |
 | churn | converge:shipments | PASS |  |
 | churn | converge:staff | PASS |  |
+| churn | converge:storefront_followers | PASS |  |
+| churn | converge:storefronts | PASS |  |
 | churn | converge:information_schema.columns | PASS |  |
 | churn | query:composite: one first part, ordered by the second | PASS |  |
 | churn | query:composite: grouped by the first part | PASS |  |
@@ -1860,6 +2229,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | churn | query:order_items: product rollup without the orders table | PASS |  |
 | churn | query:shipments: carrier value through the items bridge | PASS |  |
 | churn | query:json: distinct case variants survive a derived table | PASS |  |
+| churn | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| churn | query:storefront: the per-sale rows under the report | PASS |  |
+| churn | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| churn | query:storefront: the same membership written as EXISTS | PASS |  |
+| churn | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| churn | query:storefront: membership keyed on shopper and locale | PASS |  |
+| churn | query:storefront: locale membership across case variants | PASS |  |
+| churn | query:storefront: shopper and staff reviews side by side | PASS |  |
+| churn | query:storefront: membership correlated through the storefront alias | PASS |  |
+| churn | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| churn | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| churn | query:storefront: membership across a storefront range | PASS |  |
+| churn | query:storefront: membership from a grouped, joined list | PASS |  |
+| churn | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| churn | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| churn | query:where: a DATE range ending on a leap day | PASS |  |
+| churn | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| churn | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| churn | query:where: DATE() of a TIMESTAMP | PASS |  |
+| churn | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| churn | query:where: DECIMAL against a string literal | PASS |  |
+| churn | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| churn | query:where: NOT IN with a NULL in the list | PASS |  |
+| churn | query:where: null-safe equality on a nullable column | PASS |  |
+| churn | query:where: a filter on a virtual generated column | PASS |  |
+| churn | query:where: SET membership by FIND_IN_SET | PASS |  |
+| churn | query:where: SET equality to a member list | PASS |  |
+| churn | query:where: VARBINARY equality to a hex literal | PASS |  |
+| churn | query:where: JSON path comparisons | PASS |  |
+| churn | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| churn | query:where: OR with a NULL-testing branch | PASS |  |
+| churn | query:where: row constructor IN | PASS |  |
+| churn | query:where: ALL over a subquery | PASS |  |
+| churn | query:where: an unsigned column against a negative literal | PASS |  |
+| churn | query:where: a string number against an integer column | PASS |  |
+| churn | query:where: a general_ci column under PAD SPACE | PASS |  |
 | contention | converge:Dim | PASS |  |
 | contention | converge:Event | PASS |  |
 | contention | converge:Fact | PASS |  |
@@ -1867,14 +2272,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | converge:attendance | PASS |  |
 | contention | converge:audit_log | PASS |  |
 | contention | converge:badges | PASS |  |
+| contention | converge:bundle_products | PASS |  |
 | contention | converge:counters | PASS |  |
 | contention | converge:customers | PASS |  |
 | contention | converge:enrollments | PASS |  |
+| contention | converge:flash_sales | PASS |  |
+| contention | converge:listing_entries | PASS |  |
+| contention | converge:listing_groups | PASS |  |
+| contention | converge:marketplaces | PASS |  |
 | contention | converge:order_items | PASS |  |
 | contention | converge:orders | PASS |  |
+| contention | converge:product_reviews | PASS |  |
 | contention | converge:renamed_target | PASS |  |
+| contention | converge:sellers | PASS |  |
 | contention | converge:shipments | PASS |  |
 | contention | converge:staff | PASS |  |
+| contention | converge:storefront_followers | PASS |  |
+| contention | converge:storefronts | PASS |  |
 | contention | converge:information_schema.columns | PASS |  |
 | contention | query:composite: one first part, ordered by the second | PASS |  |
 | contention | query:composite: grouped by the first part | PASS |  |
@@ -2063,6 +2477,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | contention | query:order_items: product rollup without the orders table | PASS |  |
 | contention | query:shipments: carrier value through the items bridge | PASS |  |
 | contention | query:json: distinct case variants survive a derived table | PASS |  |
+| contention | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| contention | query:storefront: the per-sale rows under the report | PASS |  |
+| contention | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| contention | query:storefront: the same membership written as EXISTS | PASS |  |
+| contention | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| contention | query:storefront: membership keyed on shopper and locale | PASS |  |
+| contention | query:storefront: locale membership across case variants | PASS |  |
+| contention | query:storefront: shopper and staff reviews side by side | PASS |  |
+| contention | query:storefront: membership correlated through the storefront alias | PASS |  |
+| contention | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| contention | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| contention | query:storefront: membership across a storefront range | PASS |  |
+| contention | query:storefront: membership from a grouped, joined list | PASS |  |
+| contention | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| contention | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| contention | query:where: a DATE range ending on a leap day | PASS |  |
+| contention | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| contention | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| contention | query:where: DATE() of a TIMESTAMP | PASS |  |
+| contention | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| contention | query:where: DECIMAL against a string literal | PASS |  |
+| contention | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| contention | query:where: NOT IN with a NULL in the list | PASS |  |
+| contention | query:where: null-safe equality on a nullable column | PASS |  |
+| contention | query:where: a filter on a virtual generated column | PASS |  |
+| contention | query:where: SET membership by FIND_IN_SET | PASS |  |
+| contention | query:where: SET equality to a member list | PASS |  |
+| contention | query:where: VARBINARY equality to a hex literal | PASS |  |
+| contention | query:where: JSON path comparisons | PASS |  |
+| contention | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| contention | query:where: OR with a NULL-testing branch | PASS |  |
+| contention | query:where: row constructor IN | PASS |  |
+| contention | query:where: ALL over a subquery | PASS |  |
+| contention | query:where: an unsigned column against a negative literal | PASS |  |
+| contention | query:where: a string number against an integer column | PASS |  |
+| contention | query:where: a general_ci column under PAD SPACE | PASS |  |
 | execution-budget | hint:interrupts a runaway join | PASS |  |
 | execution-budget | hint:interrupts promptly | PASS |  |
 | execution-budget | hint:a generous budget runs to completion | PASS |  |
@@ -2075,14 +2525,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | converge:attendance | PASS |  |
 | execution-budget | converge:audit_log | PASS |  |
 | execution-budget | converge:badges | PASS |  |
+| execution-budget | converge:bundle_products | PASS |  |
 | execution-budget | converge:counters | PASS |  |
 | execution-budget | converge:customers | PASS |  |
 | execution-budget | converge:enrollments | PASS |  |
+| execution-budget | converge:flash_sales | PASS |  |
+| execution-budget | converge:listing_entries | PASS |  |
+| execution-budget | converge:listing_groups | PASS |  |
+| execution-budget | converge:marketplaces | PASS |  |
 | execution-budget | converge:order_items | PASS |  |
 | execution-budget | converge:orders | PASS |  |
+| execution-budget | converge:product_reviews | PASS |  |
 | execution-budget | converge:renamed_target | PASS |  |
+| execution-budget | converge:sellers | PASS |  |
 | execution-budget | converge:shipments | PASS |  |
 | execution-budget | converge:staff | PASS |  |
+| execution-budget | converge:storefront_followers | PASS |  |
+| execution-budget | converge:storefronts | PASS |  |
 | execution-budget | converge:information_schema.columns | PASS |  |
 | execution-budget | query:composite: one first part, ordered by the second | PASS |  |
 | execution-budget | query:composite: grouped by the first part | PASS |  |
@@ -2271,6 +2730,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | execution-budget | query:order_items: product rollup without the orders table | PASS |  |
 | execution-budget | query:shipments: carrier value through the items bridge | PASS |  |
 | execution-budget | query:json: distinct case variants survive a derived table | PASS |  |
+| execution-budget | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| execution-budget | query:storefront: the per-sale rows under the report | PASS |  |
+| execution-budget | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| execution-budget | query:storefront: the same membership written as EXISTS | PASS |  |
+| execution-budget | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| execution-budget | query:storefront: membership keyed on shopper and locale | PASS |  |
+| execution-budget | query:storefront: locale membership across case variants | PASS |  |
+| execution-budget | query:storefront: shopper and staff reviews side by side | PASS |  |
+| execution-budget | query:storefront: membership correlated through the storefront alias | PASS |  |
+| execution-budget | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| execution-budget | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| execution-budget | query:storefront: membership across a storefront range | PASS |  |
+| execution-budget | query:storefront: membership from a grouped, joined list | PASS |  |
+| execution-budget | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| execution-budget | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| execution-budget | query:where: a DATE range ending on a leap day | PASS |  |
+| execution-budget | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| execution-budget | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| execution-budget | query:where: DATE() of a TIMESTAMP | PASS |  |
+| execution-budget | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| execution-budget | query:where: DECIMAL against a string literal | PASS |  |
+| execution-budget | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| execution-budget | query:where: NOT IN with a NULL in the list | PASS |  |
+| execution-budget | query:where: null-safe equality on a nullable column | PASS |  |
+| execution-budget | query:where: a filter on a virtual generated column | PASS |  |
+| execution-budget | query:where: SET membership by FIND_IN_SET | PASS |  |
+| execution-budget | query:where: SET equality to a member list | PASS |  |
+| execution-budget | query:where: VARBINARY equality to a hex literal | PASS |  |
+| execution-budget | query:where: JSON path comparisons | PASS |  |
+| execution-budget | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| execution-budget | query:where: OR with a NULL-testing branch | PASS |  |
+| execution-budget | query:where: row constructor IN | PASS |  |
+| execution-budget | query:where: ALL over a subquery | PASS |  |
+| execution-budget | query:where: an unsigned column against a negative literal | PASS |  |
+| execution-budget | query:where: a string number against an integer column | PASS |  |
+| execution-budget | query:where: a general_ci column under PAD SPACE | PASS |  |
 | spill | forced-spill:sort | PASS |  |
 | spill | forced-spill:aggregate | PASS |  |
 | spill | forced-spill:distinct | PASS |  |
@@ -2282,14 +2777,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | converge:attendance | PASS |  |
 | spill | converge:audit_log | PASS |  |
 | spill | converge:badges | PASS |  |
+| spill | converge:bundle_products | PASS |  |
 | spill | converge:counters | PASS |  |
 | spill | converge:customers | PASS |  |
 | spill | converge:enrollments | PASS |  |
+| spill | converge:flash_sales | PASS |  |
+| spill | converge:listing_entries | PASS |  |
+| spill | converge:listing_groups | PASS |  |
+| spill | converge:marketplaces | PASS |  |
 | spill | converge:order_items | PASS |  |
 | spill | converge:orders | PASS |  |
+| spill | converge:product_reviews | PASS |  |
 | spill | converge:renamed_target | PASS |  |
+| spill | converge:sellers | PASS |  |
 | spill | converge:shipments | PASS |  |
 | spill | converge:staff | PASS |  |
+| spill | converge:storefront_followers | PASS |  |
+| spill | converge:storefronts | PASS |  |
 | spill | converge:information_schema.columns | PASS |  |
 | spill | query:composite: one first part, ordered by the second | PASS |  |
 | spill | query:composite: grouped by the first part | PASS |  |
@@ -2478,6 +2982,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | spill | query:order_items: product rollup without the orders table | PASS |  |
 | spill | query:shipments: carrier value through the items bridge | PASS |  |
 | spill | query:json: distinct case variants survive a derived table | PASS |  |
+| spill | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| spill | query:storefront: the per-sale rows under the report | PASS |  |
+| spill | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| spill | query:storefront: the same membership written as EXISTS | PASS |  |
+| spill | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| spill | query:storefront: membership keyed on shopper and locale | PASS |  |
+| spill | query:storefront: locale membership across case variants | PASS |  |
+| spill | query:storefront: shopper and staff reviews side by side | PASS |  |
+| spill | query:storefront: membership correlated through the storefront alias | PASS |  |
+| spill | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| spill | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| spill | query:storefront: membership across a storefront range | PASS |  |
+| spill | query:storefront: membership from a grouped, joined list | PASS |  |
+| spill | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| spill | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| spill | query:where: a DATE range ending on a leap day | PASS |  |
+| spill | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| spill | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| spill | query:where: DATE() of a TIMESTAMP | PASS |  |
+| spill | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| spill | query:where: DECIMAL against a string literal | PASS |  |
+| spill | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| spill | query:where: NOT IN with a NULL in the list | PASS |  |
+| spill | query:where: null-safe equality on a nullable column | PASS |  |
+| spill | query:where: a filter on a virtual generated column | PASS |  |
+| spill | query:where: SET membership by FIND_IN_SET | PASS |  |
+| spill | query:where: SET equality to a member list | PASS |  |
+| spill | query:where: VARBINARY equality to a hex literal | PASS |  |
+| spill | query:where: JSON path comparisons | PASS |  |
+| spill | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| spill | query:where: OR with a NULL-testing branch | PASS |  |
+| spill | query:where: row constructor IN | PASS |  |
+| spill | query:where: ALL over a subquery | PASS |  |
+| spill | query:where: an unsigned column against a negative literal | PASS |  |
+| spill | query:where: a string number against an integer column | PASS |  |
+| spill | query:where: a general_ci column under PAD SPACE | PASS |  |
 | pooling | wire:multi-statement-setup-and-results | PASS |  |
 | pooling | pool:concurrent-borrows(40 over 4) | PASS |  |
 | pooling | pool:prepared-statements | PASS |  |
@@ -2489,14 +3029,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | converge:attendance | PASS |  |
 | pooling | converge:audit_log | PASS |  |
 | pooling | converge:badges | PASS |  |
+| pooling | converge:bundle_products | PASS |  |
 | pooling | converge:counters | PASS |  |
 | pooling | converge:customers | PASS |  |
 | pooling | converge:enrollments | PASS |  |
+| pooling | converge:flash_sales | PASS |  |
+| pooling | converge:listing_entries | PASS |  |
+| pooling | converge:listing_groups | PASS |  |
+| pooling | converge:marketplaces | PASS |  |
 | pooling | converge:order_items | PASS |  |
 | pooling | converge:orders | PASS |  |
+| pooling | converge:product_reviews | PASS |  |
 | pooling | converge:renamed_target | PASS |  |
+| pooling | converge:sellers | PASS |  |
 | pooling | converge:shipments | PASS |  |
 | pooling | converge:staff | PASS |  |
+| pooling | converge:storefront_followers | PASS |  |
+| pooling | converge:storefronts | PASS |  |
 | pooling | converge:information_schema.columns | PASS |  |
 | pooling | query:composite: one first part, ordered by the second | PASS |  |
 | pooling | query:composite: grouped by the first part | PASS |  |
@@ -2685,6 +3234,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | pooling | query:order_items: product rollup without the orders table | PASS |  |
 | pooling | query:shipments: carrier value through the items bridge | PASS |  |
 | pooling | query:json: distinct case variants survive a derived table | PASS |  |
+| pooling | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| pooling | query:storefront: the per-sale rows under the report | PASS |  |
+| pooling | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| pooling | query:storefront: the same membership written as EXISTS | PASS |  |
+| pooling | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| pooling | query:storefront: membership keyed on shopper and locale | PASS |  |
+| pooling | query:storefront: locale membership across case variants | PASS |  |
+| pooling | query:storefront: shopper and staff reviews side by side | PASS |  |
+| pooling | query:storefront: membership correlated through the storefront alias | PASS |  |
+| pooling | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| pooling | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| pooling | query:storefront: membership across a storefront range | PASS |  |
+| pooling | query:storefront: membership from a grouped, joined list | PASS |  |
+| pooling | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| pooling | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| pooling | query:where: a DATE range ending on a leap day | PASS |  |
+| pooling | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| pooling | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| pooling | query:where: DATE() of a TIMESTAMP | PASS |  |
+| pooling | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| pooling | query:where: DECIMAL against a string literal | PASS |  |
+| pooling | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| pooling | query:where: NOT IN with a NULL in the list | PASS |  |
+| pooling | query:where: null-safe equality on a nullable column | PASS |  |
+| pooling | query:where: a filter on a virtual generated column | PASS |  |
+| pooling | query:where: SET membership by FIND_IN_SET | PASS |  |
+| pooling | query:where: SET equality to a member list | PASS |  |
+| pooling | query:where: VARBINARY equality to a hex literal | PASS |  |
+| pooling | query:where: JSON path comparisons | PASS |  |
+| pooling | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| pooling | query:where: OR with a NULL-testing branch | PASS |  |
+| pooling | query:where: row constructor IN | PASS |  |
+| pooling | query:where: ALL over a subquery | PASS |  |
+| pooling | query:where: an unsigned column against a negative literal | PASS |  |
+| pooling | query:where: a string number against an integer column | PASS |  |
+| pooling | query:where: a general_ci column under PAD SPACE | PASS |  |
 | local-database | create table returns an OK packet | PASS |  |
 | local-database | insert reports its affected rows | PASS |  |
 | local-database | the rows read back through the same connection | PASS |  |
@@ -2711,14 +3296,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | converge:attendance | PASS |  |
 | local-database | converge:audit_log | PASS |  |
 | local-database | converge:badges | PASS |  |
+| local-database | converge:bundle_products | PASS |  |
 | local-database | converge:counters | PASS |  |
 | local-database | converge:customers | PASS |  |
 | local-database | converge:enrollments | PASS |  |
+| local-database | converge:flash_sales | PASS |  |
+| local-database | converge:listing_entries | PASS |  |
+| local-database | converge:listing_groups | PASS |  |
+| local-database | converge:marketplaces | PASS |  |
 | local-database | converge:order_items | PASS |  |
 | local-database | converge:orders | PASS |  |
+| local-database | converge:product_reviews | PASS |  |
 | local-database | converge:renamed_target | PASS |  |
+| local-database | converge:sellers | PASS |  |
 | local-database | converge:shipments | PASS |  |
 | local-database | converge:staff | PASS |  |
+| local-database | converge:storefront_followers | PASS |  |
+| local-database | converge:storefronts | PASS |  |
 | local-database | converge:information_schema.columns | PASS |  |
 | local-database | query:composite: one first part, ordered by the second | PASS |  |
 | local-database | query:composite: grouped by the first part | PASS |  |
@@ -2907,6 +3501,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | local-database | query:order_items: product rollup without the orders table | PASS |  |
 | local-database | query:shipments: carrier value through the items bridge | PASS |  |
 | local-database | query:json: distinct case variants survive a derived table | PASS |  |
+| local-database | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| local-database | query:storefront: the per-sale rows under the report | PASS |  |
+| local-database | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| local-database | query:storefront: the same membership written as EXISTS | PASS |  |
+| local-database | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| local-database | query:storefront: membership keyed on shopper and locale | PASS |  |
+| local-database | query:storefront: locale membership across case variants | PASS |  |
+| local-database | query:storefront: shopper and staff reviews side by side | PASS |  |
+| local-database | query:storefront: membership correlated through the storefront alias | PASS |  |
+| local-database | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| local-database | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| local-database | query:storefront: membership across a storefront range | PASS |  |
+| local-database | query:storefront: membership from a grouped, joined list | PASS |  |
+| local-database | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| local-database | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| local-database | query:where: a DATE range ending on a leap day | PASS |  |
+| local-database | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| local-database | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| local-database | query:where: DATE() of a TIMESTAMP | PASS |  |
+| local-database | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| local-database | query:where: DECIMAL against a string literal | PASS |  |
+| local-database | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| local-database | query:where: NOT IN with a NULL in the list | PASS |  |
+| local-database | query:where: null-safe equality on a nullable column | PASS |  |
+| local-database | query:where: a filter on a virtual generated column | PASS |  |
+| local-database | query:where: SET membership by FIND_IN_SET | PASS |  |
+| local-database | query:where: SET equality to a member list | PASS |  |
+| local-database | query:where: VARBINARY equality to a hex literal | PASS |  |
+| local-database | query:where: JSON path comparisons | PASS |  |
+| local-database | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| local-database | query:where: OR with a NULL-testing branch | PASS |  |
+| local-database | query:where: row constructor IN | PASS |  |
+| local-database | query:where: ALL over a subquery | PASS |  |
+| local-database | query:where: an unsigned column against a negative literal | PASS |  |
+| local-database | query:where: a string number against an integer column | PASS |  |
+| local-database | query:where: a general_ci column under PAD SPACE | PASS |  |
 | restart | local:rows survive a SIGKILL | PASS |  |
 | restart | converge:Dim | PASS |  |
 | restart | converge:Event | PASS |  |
@@ -2915,14 +3545,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | converge:attendance | PASS |  |
 | restart | converge:audit_log | PASS |  |
 | restart | converge:badges | PASS |  |
+| restart | converge:bundle_products | PASS |  |
 | restart | converge:counters | PASS |  |
 | restart | converge:customers | PASS |  |
 | restart | converge:enrollments | PASS |  |
+| restart | converge:flash_sales | PASS |  |
+| restart | converge:listing_entries | PASS |  |
+| restart | converge:listing_groups | PASS |  |
+| restart | converge:marketplaces | PASS |  |
 | restart | converge:order_items | PASS |  |
 | restart | converge:orders | PASS |  |
+| restart | converge:product_reviews | PASS |  |
 | restart | converge:renamed_target | PASS |  |
+| restart | converge:sellers | PASS |  |
 | restart | converge:shipments | PASS |  |
 | restart | converge:staff | PASS |  |
+| restart | converge:storefront_followers | PASS |  |
+| restart | converge:storefronts | PASS |  |
 | restart | converge:information_schema.columns | PASS |  |
 | restart | query:composite: one first part, ordered by the second | PASS |  |
 | restart | query:composite: grouped by the first part | PASS |  |
@@ -3111,12 +3750,48 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart | query:order_items: product rollup without the orders table | PASS |  |
 | restart | query:shipments: carrier value through the items bridge | PASS |  |
 | restart | query:json: distinct case variants survive a derived table | PASS |  |
-| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150028 sync_runs rows for db_9b2eedf000579bd39fa600da42401fd6 |
+| restart | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| restart | query:storefront: the per-sale rows under the report | PASS |  |
+| restart | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| restart | query:storefront: the same membership written as EXISTS | PASS |  |
+| restart | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| restart | query:storefront: membership keyed on shopper and locale | PASS |  |
+| restart | query:storefront: locale membership across case variants | PASS |  |
+| restart | query:storefront: shopper and staff reviews side by side | PASS |  |
+| restart | query:storefront: membership correlated through the storefront alias | PASS |  |
+| restart | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| restart | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| restart | query:storefront: membership across a storefront range | PASS |  |
+| restart | query:storefront: membership from a grouped, joined list | PASS |  |
+| restart | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| restart | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| restart | query:where: a DATE range ending on a leap day | PASS |  |
+| restart | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| restart | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| restart | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| restart | query:where: DECIMAL against a string literal | PASS |  |
+| restart | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| restart | query:where: NOT IN with a NULL in the list | PASS |  |
+| restart | query:where: null-safe equality on a nullable column | PASS |  |
+| restart | query:where: a filter on a virtual generated column | PASS |  |
+| restart | query:where: SET membership by FIND_IN_SET | PASS |  |
+| restart | query:where: SET equality to a member list | PASS |  |
+| restart | query:where: VARBINARY equality to a hex literal | PASS |  |
+| restart | query:where: JSON path comparisons | PASS |  |
+| restart | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| restart | query:where: OR with a NULL-testing branch | PASS |  |
+| restart | query:where: row constructor IN | PASS |  |
+| restart | query:where: ALL over a subquery | PASS |  |
+| restart | query:where: an unsigned column against a negative literal | PASS |  |
+| restart | query:where: a string number against an integer column | PASS |  |
+| restart | query:where: a general_ci column under PAD SPACE | PASS |  |
+| activity-history | activity-history:the history is in the control plane pintail reads | PASS | 150030 sync_runs rows for db_bb14d1bffea615933e97b4401dde618e |
 | activity-history | activity-history:the feed pages the full history | PASS | limit=200 returned 200 |
-| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 2ms p95 2ms over 150000 rows |
-| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 2ms p95 3ms |
-| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 28ms p99 36ms |
-| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 4ms |
+| activity-history | activity-history:scoped feed stays fast over a large history | PASS | p50 1ms p95 2ms over 150000 rows |
+| activity-history | activity-history:workspace feed stays fast over a large history | PASS | p50 1ms p95 2ms |
+| activity-history | activity-history:25 concurrent feed reads do not pile up | PASS | p50 27ms p99 30ms |
+| activity-history | activity-history:health answers while the feed is hammered | PASS | health p95 3ms |
 | activity-history | converge:Dim | PASS |  |
 | activity-history | converge:Event | PASS |  |
 | activity-history | converge:Fact | PASS |  |
@@ -3124,14 +3799,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | converge:attendance | PASS |  |
 | activity-history | converge:audit_log | PASS |  |
 | activity-history | converge:badges | PASS |  |
+| activity-history | converge:bundle_products | PASS |  |
 | activity-history | converge:counters | PASS |  |
 | activity-history | converge:customers | PASS |  |
 | activity-history | converge:enrollments | PASS |  |
+| activity-history | converge:flash_sales | PASS |  |
+| activity-history | converge:listing_entries | PASS |  |
+| activity-history | converge:listing_groups | PASS |  |
+| activity-history | converge:marketplaces | PASS |  |
 | activity-history | converge:order_items | PASS |  |
 | activity-history | converge:orders | PASS |  |
+| activity-history | converge:product_reviews | PASS |  |
 | activity-history | converge:renamed_target | PASS |  |
+| activity-history | converge:sellers | PASS |  |
 | activity-history | converge:shipments | PASS |  |
 | activity-history | converge:staff | PASS |  |
+| activity-history | converge:storefront_followers | PASS |  |
+| activity-history | converge:storefronts | PASS |  |
 | activity-history | converge:information_schema.columns | PASS |  |
 | activity-history | query:composite: one first part, ordered by the second | PASS |  |
 | activity-history | query:composite: grouped by the first part | PASS |  |
@@ -3320,10 +4004,46 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | activity-history | query:order_items: product rollup without the orders table | PASS |  |
 | activity-history | query:shipments: carrier value through the items bridge | PASS |  |
 | activity-history | query:json: distinct case variants survive a derived table | PASS |  |
-| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4908 |
-| poll-storm | poll-storm:latency stays bounded | PASS | 4908 requests: p50 1ms p99 19ms |
-| poll-storm | poll-storm:health never stalls | PASS | health p99 1ms |
-| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6864 vs source 6864 |
+| activity-history | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| activity-history | query:storefront: the per-sale rows under the report | PASS |  |
+| activity-history | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| activity-history | query:storefront: the same membership written as EXISTS | PASS |  |
+| activity-history | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| activity-history | query:storefront: membership keyed on shopper and locale | PASS |  |
+| activity-history | query:storefront: locale membership across case variants | PASS |  |
+| activity-history | query:storefront: shopper and staff reviews side by side | PASS |  |
+| activity-history | query:storefront: membership correlated through the storefront alias | PASS |  |
+| activity-history | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| activity-history | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| activity-history | query:storefront: membership across a storefront range | PASS |  |
+| activity-history | query:storefront: membership from a grouped, joined list | PASS |  |
+| activity-history | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| activity-history | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| activity-history | query:where: a DATE range ending on a leap day | PASS |  |
+| activity-history | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| activity-history | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| activity-history | query:where: DATE() of a TIMESTAMP | PASS |  |
+| activity-history | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| activity-history | query:where: DECIMAL against a string literal | PASS |  |
+| activity-history | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| activity-history | query:where: NOT IN with a NULL in the list | PASS |  |
+| activity-history | query:where: null-safe equality on a nullable column | PASS |  |
+| activity-history | query:where: a filter on a virtual generated column | PASS |  |
+| activity-history | query:where: SET membership by FIND_IN_SET | PASS |  |
+| activity-history | query:where: SET equality to a member list | PASS |  |
+| activity-history | query:where: VARBINARY equality to a hex literal | PASS |  |
+| activity-history | query:where: JSON path comparisons | PASS |  |
+| activity-history | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| activity-history | query:where: OR with a NULL-testing branch | PASS |  |
+| activity-history | query:where: row constructor IN | PASS |  |
+| activity-history | query:where: ALL over a subquery | PASS |  |
+| activity-history | query:where: an unsigned column against a negative literal | PASS |  |
+| activity-history | query:where: a string number against an integer column | PASS |  |
+| activity-history | query:where: a general_ci column under PAD SPACE | PASS |  |
+| poll-storm | poll-storm:no request fails under 25 open dashboards | PASS | 0 failed of 4925 |
+| poll-storm | poll-storm:latency stays bounded | PASS | 4925 requests: p50 1ms p99 9ms |
+| poll-storm | poll-storm:health never stalls | PASS | health p99 2ms |
+| poll-storm | poll-storm:replication keeps pace under the storm | PASS | orders replica 6962 vs source 6962 |
 | poll-storm | converge:Dim | PASS |  |
 | poll-storm | converge:Event | PASS |  |
 | poll-storm | converge:Fact | PASS |  |
@@ -3331,14 +4051,23 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | converge:attendance | PASS |  |
 | poll-storm | converge:audit_log | PASS |  |
 | poll-storm | converge:badges | PASS |  |
+| poll-storm | converge:bundle_products | PASS |  |
 | poll-storm | converge:counters | PASS |  |
 | poll-storm | converge:customers | PASS |  |
 | poll-storm | converge:enrollments | PASS |  |
+| poll-storm | converge:flash_sales | PASS |  |
+| poll-storm | converge:listing_entries | PASS |  |
+| poll-storm | converge:listing_groups | PASS |  |
+| poll-storm | converge:marketplaces | PASS |  |
 | poll-storm | converge:order_items | PASS |  |
 | poll-storm | converge:orders | PASS |  |
+| poll-storm | converge:product_reviews | PASS |  |
 | poll-storm | converge:renamed_target | PASS |  |
+| poll-storm | converge:sellers | PASS |  |
 | poll-storm | converge:shipments | PASS |  |
 | poll-storm | converge:staff | PASS |  |
+| poll-storm | converge:storefront_followers | PASS |  |
+| poll-storm | converge:storefronts | PASS |  |
 | poll-storm | converge:information_schema.columns | PASS |  |
 | poll-storm | query:composite: one first part, ordered by the second | PASS |  |
 | poll-storm | query:composite: grouped by the first part | PASS |  |
@@ -3527,6 +4256,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | poll-storm | query:order_items: product rollup without the orders table | PASS |  |
 | poll-storm | query:shipments: carrier value through the items bridge | PASS |  |
 | poll-storm | query:json: distinct case variants survive a derived table | PASS |  |
+| poll-storm | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| poll-storm | query:storefront: the per-sale rows under the report | PASS |  |
+| poll-storm | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| poll-storm | query:storefront: the same membership written as EXISTS | PASS |  |
+| poll-storm | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| poll-storm | query:storefront: membership keyed on shopper and locale | PASS |  |
+| poll-storm | query:storefront: locale membership across case variants | PASS |  |
+| poll-storm | query:storefront: shopper and staff reviews side by side | PASS |  |
+| poll-storm | query:storefront: membership correlated through the storefront alias | PASS |  |
+| poll-storm | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| poll-storm | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| poll-storm | query:storefront: membership across a storefront range | PASS |  |
+| poll-storm | query:storefront: membership from a grouped, joined list | PASS |  |
+| poll-storm | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| poll-storm | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| poll-storm | query:where: a DATE range ending on a leap day | PASS |  |
+| poll-storm | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| poll-storm | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| poll-storm | query:where: DATE() of a TIMESTAMP | PASS |  |
+| poll-storm | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| poll-storm | query:where: DECIMAL against a string literal | PASS |  |
+| poll-storm | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| poll-storm | query:where: NOT IN with a NULL in the list | PASS |  |
+| poll-storm | query:where: null-safe equality on a nullable column | PASS |  |
+| poll-storm | query:where: a filter on a virtual generated column | PASS |  |
+| poll-storm | query:where: SET membership by FIND_IN_SET | PASS |  |
+| poll-storm | query:where: SET equality to a member list | PASS |  |
+| poll-storm | query:where: VARBINARY equality to a hex literal | PASS |  |
+| poll-storm | query:where: JSON path comparisons | PASS |  |
+| poll-storm | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| poll-storm | query:where: OR with a NULL-testing branch | PASS |  |
+| poll-storm | query:where: row constructor IN | PASS |  |
+| poll-storm | query:where: ALL over a subquery | PASS |  |
+| poll-storm | query:where: an unsigned column against a negative literal | PASS |  |
+| poll-storm | query:where: a string number against an integer column | PASS |  |
+| poll-storm | query:where: a general_ci column under PAD SPACE | PASS |  |
 | control-plane | api:auth login issues a fresh token | PASS |  |
 | control-plane | api:auth setup status responds | PASS |  |
 | control-plane | api:health, status, and metrics respond | PASS |  |
@@ -3555,15 +4320,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | converge:attendance | PASS |  |
 | control-plane | converge:audit_log | PASS |  |
 | control-plane | converge:badges | PASS |  |
+| control-plane | converge:bundle_products | PASS |  |
 | control-plane | converge:counters | PASS |  |
 | control-plane | converge:customers | PASS |  |
 | control-plane | converge:enrollments | PASS |  |
+| control-plane | converge:flash_sales | PASS |  |
 | control-plane | converge:keyless_log | PASS |  |
+| control-plane | converge:listing_entries | PASS |  |
+| control-plane | converge:listing_groups | PASS |  |
+| control-plane | converge:marketplaces | PASS |  |
 | control-plane | converge:order_items | PASS |  |
 | control-plane | converge:orders | PASS |  |
+| control-plane | converge:product_reviews | PASS |  |
 | control-plane | converge:renamed_target | PASS |  |
+| control-plane | converge:sellers | PASS |  |
 | control-plane | converge:shipments | PASS |  |
 | control-plane | converge:staff | PASS |  |
+| control-plane | converge:storefront_followers | PASS |  |
+| control-plane | converge:storefronts | PASS |  |
 | control-plane | converge:information_schema.columns | PASS |  |
 | control-plane | query:composite: one first part, ordered by the second | PASS |  |
 | control-plane | query:composite: grouped by the first part | PASS |  |
@@ -3752,6 +4526,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | control-plane | query:order_items: product rollup without the orders table | PASS |  |
 | control-plane | query:shipments: carrier value through the items bridge | PASS |  |
 | control-plane | query:json: distinct case variants survive a derived table | PASS |  |
+| control-plane | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| control-plane | query:storefront: the per-sale rows under the report | PASS |  |
+| control-plane | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| control-plane | query:storefront: the same membership written as EXISTS | PASS |  |
+| control-plane | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| control-plane | query:storefront: membership keyed on shopper and locale | PASS |  |
+| control-plane | query:storefront: locale membership across case variants | PASS |  |
+| control-plane | query:storefront: shopper and staff reviews side by side | PASS |  |
+| control-plane | query:storefront: membership correlated through the storefront alias | PASS |  |
+| control-plane | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| control-plane | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| control-plane | query:storefront: membership across a storefront range | PASS |  |
+| control-plane | query:storefront: membership from a grouped, joined list | PASS |  |
+| control-plane | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| control-plane | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| control-plane | query:where: a DATE range ending on a leap day | PASS |  |
+| control-plane | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| control-plane | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| control-plane | query:where: DATE() of a TIMESTAMP | PASS |  |
+| control-plane | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| control-plane | query:where: DECIMAL against a string literal | PASS |  |
+| control-plane | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| control-plane | query:where: NOT IN with a NULL in the list | PASS |  |
+| control-plane | query:where: null-safe equality on a nullable column | PASS |  |
+| control-plane | query:where: a filter on a virtual generated column | PASS |  |
+| control-plane | query:where: SET membership by FIND_IN_SET | PASS |  |
+| control-plane | query:where: SET equality to a member list | PASS |  |
+| control-plane | query:where: VARBINARY equality to a hex literal | PASS |  |
+| control-plane | query:where: JSON path comparisons | PASS |  |
+| control-plane | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| control-plane | query:where: OR with a NULL-testing branch | PASS |  |
+| control-plane | query:where: row constructor IN | PASS |  |
+| control-plane | query:where: ALL over a subquery | PASS |  |
+| control-plane | query:where: an unsigned column against a negative literal | PASS |  |
+| control-plane | query:where: a string number against an integer column | PASS |  |
+| control-plane | query:where: a general_ci column under PAD SPACE | PASS |  |
 | snapshot-ddl-window | a table created just before a forced snapshot is still adopted | PASS |  |
 | snapshot-ddl-window | converge:Dim | PASS |  |
 | snapshot-ddl-window | converge:Event | PASS |  |
@@ -3760,15 +4570,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | converge:attendance | PASS |  |
 | snapshot-ddl-window | converge:audit_log | PASS |  |
 | snapshot-ddl-window | converge:badges | PASS |  |
+| snapshot-ddl-window | converge:bundle_products | PASS |  |
 | snapshot-ddl-window | converge:counters | PASS |  |
 | snapshot-ddl-window | converge:customers | PASS |  |
 | snapshot-ddl-window | converge:enrollments | PASS |  |
+| snapshot-ddl-window | converge:flash_sales | PASS |  |
 | snapshot-ddl-window | converge:keyless_log | PASS |  |
+| snapshot-ddl-window | converge:listing_entries | PASS |  |
+| snapshot-ddl-window | converge:listing_groups | PASS |  |
+| snapshot-ddl-window | converge:marketplaces | PASS |  |
 | snapshot-ddl-window | converge:order_items | PASS |  |
 | snapshot-ddl-window | converge:orders | PASS |  |
+| snapshot-ddl-window | converge:product_reviews | PASS |  |
 | snapshot-ddl-window | converge:renamed_target | PASS |  |
+| snapshot-ddl-window | converge:sellers | PASS |  |
 | snapshot-ddl-window | converge:shipments | PASS |  |
 | snapshot-ddl-window | converge:staff | PASS |  |
+| snapshot-ddl-window | converge:storefront_followers | PASS |  |
+| snapshot-ddl-window | converge:storefronts | PASS |  |
 | snapshot-ddl-window | converge:information_schema.columns | PASS |  |
 | snapshot-ddl-window | query:composite: one first part, ordered by the second | PASS |  |
 | snapshot-ddl-window | query:composite: grouped by the first part | PASS |  |
@@ -3957,6 +4776,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | snapshot-ddl-window | query:order_items: product rollup without the orders table | PASS |  |
 | snapshot-ddl-window | query:shipments: carrier value through the items bridge | PASS |  |
 | snapshot-ddl-window | query:json: distinct case variants survive a derived table | PASS |  |
+| snapshot-ddl-window | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| snapshot-ddl-window | query:storefront: the per-sale rows under the report | PASS |  |
+| snapshot-ddl-window | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| snapshot-ddl-window | query:storefront: the same membership written as EXISTS | PASS |  |
+| snapshot-ddl-window | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| snapshot-ddl-window | query:storefront: membership keyed on shopper and locale | PASS |  |
+| snapshot-ddl-window | query:storefront: locale membership across case variants | PASS |  |
+| snapshot-ddl-window | query:storefront: shopper and staff reviews side by side | PASS |  |
+| snapshot-ddl-window | query:storefront: membership correlated through the storefront alias | PASS |  |
+| snapshot-ddl-window | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| snapshot-ddl-window | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| snapshot-ddl-window | query:storefront: membership across a storefront range | PASS |  |
+| snapshot-ddl-window | query:storefront: membership from a grouped, joined list | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| snapshot-ddl-window | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| snapshot-ddl-window | query:where: a DATE range ending on a leap day | PASS |  |
+| snapshot-ddl-window | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| snapshot-ddl-window | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| snapshot-ddl-window | query:where: DATE() of a TIMESTAMP | PASS |  |
+| snapshot-ddl-window | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| snapshot-ddl-window | query:where: DECIMAL against a string literal | PASS |  |
+| snapshot-ddl-window | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| snapshot-ddl-window | query:where: NOT IN with a NULL in the list | PASS |  |
+| snapshot-ddl-window | query:where: null-safe equality on a nullable column | PASS |  |
+| snapshot-ddl-window | query:where: a filter on a virtual generated column | PASS |  |
+| snapshot-ddl-window | query:where: SET membership by FIND_IN_SET | PASS |  |
+| snapshot-ddl-window | query:where: SET equality to a member list | PASS |  |
+| snapshot-ddl-window | query:where: VARBINARY equality to a hex literal | PASS |  |
+| snapshot-ddl-window | query:where: JSON path comparisons | PASS |  |
+| snapshot-ddl-window | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| snapshot-ddl-window | query:where: OR with a NULL-testing branch | PASS |  |
+| snapshot-ddl-window | query:where: row constructor IN | PASS |  |
+| snapshot-ddl-window | query:where: ALL over a subquery | PASS |  |
+| snapshot-ddl-window | query:where: an unsigned column against a negative literal | PASS |  |
+| snapshot-ddl-window | query:where: a string number against an integer column | PASS |  |
+| snapshot-ddl-window | query:where: a general_ci column under PAD SPACE | PASS |  |
 | drop-table-cdc | drop-table:replicates before the drop | PASS |  |
 | drop-table-cdc | drop-table:source drop marks the table orphaned | PASS |  |
 | drop-table-cdc | drop-table:the rest of the database keeps replicating | PASS |  |
@@ -3969,15 +4824,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | converge:attendance | PASS |  |
 | drop-table-cdc | converge:audit_log | PASS |  |
 | drop-table-cdc | converge:badges | PASS |  |
+| drop-table-cdc | converge:bundle_products | PASS |  |
 | drop-table-cdc | converge:counters | PASS |  |
 | drop-table-cdc | converge:customers | PASS |  |
 | drop-table-cdc | converge:enrollments | PASS |  |
+| drop-table-cdc | converge:flash_sales | PASS |  |
 | drop-table-cdc | converge:keyless_log | PASS |  |
+| drop-table-cdc | converge:listing_entries | PASS |  |
+| drop-table-cdc | converge:listing_groups | PASS |  |
+| drop-table-cdc | converge:marketplaces | PASS |  |
 | drop-table-cdc | converge:order_items | PASS |  |
 | drop-table-cdc | converge:orders | PASS |  |
+| drop-table-cdc | converge:product_reviews | PASS |  |
 | drop-table-cdc | converge:renamed_target | PASS |  |
+| drop-table-cdc | converge:sellers | PASS |  |
 | drop-table-cdc | converge:shipments | PASS |  |
 | drop-table-cdc | converge:staff | PASS |  |
+| drop-table-cdc | converge:storefront_followers | PASS |  |
+| drop-table-cdc | converge:storefronts | PASS |  |
 | drop-table-cdc | converge:information_schema.columns | PASS |  |
 | drop-table-cdc | query:composite: one first part, ordered by the second | PASS |  |
 | drop-table-cdc | query:composite: grouped by the first part | PASS |  |
@@ -4166,6 +5030,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-cdc | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-cdc | query:shipments: carrier value through the items bridge | PASS |  |
 | drop-table-cdc | query:json: distinct case variants survive a derived table | PASS |  |
+| drop-table-cdc | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| drop-table-cdc | query:storefront: the per-sale rows under the report | PASS |  |
+| drop-table-cdc | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| drop-table-cdc | query:storefront: the same membership written as EXISTS | PASS |  |
+| drop-table-cdc | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| drop-table-cdc | query:storefront: membership keyed on shopper and locale | PASS |  |
+| drop-table-cdc | query:storefront: locale membership across case variants | PASS |  |
+| drop-table-cdc | query:storefront: shopper and staff reviews side by side | PASS |  |
+| drop-table-cdc | query:storefront: membership correlated through the storefront alias | PASS |  |
+| drop-table-cdc | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| drop-table-cdc | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| drop-table-cdc | query:storefront: membership across a storefront range | PASS |  |
+| drop-table-cdc | query:storefront: membership from a grouped, joined list | PASS |  |
+| drop-table-cdc | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| drop-table-cdc | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| drop-table-cdc | query:where: a DATE range ending on a leap day | PASS |  |
+| drop-table-cdc | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| drop-table-cdc | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| drop-table-cdc | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-cdc | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| drop-table-cdc | query:where: DECIMAL against a string literal | PASS |  |
+| drop-table-cdc | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| drop-table-cdc | query:where: NOT IN with a NULL in the list | PASS |  |
+| drop-table-cdc | query:where: null-safe equality on a nullable column | PASS |  |
+| drop-table-cdc | query:where: a filter on a virtual generated column | PASS |  |
+| drop-table-cdc | query:where: SET membership by FIND_IN_SET | PASS |  |
+| drop-table-cdc | query:where: SET equality to a member list | PASS |  |
+| drop-table-cdc | query:where: VARBINARY equality to a hex literal | PASS |  |
+| drop-table-cdc | query:where: JSON path comparisons | PASS |  |
+| drop-table-cdc | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| drop-table-cdc | query:where: OR with a NULL-testing branch | PASS |  |
+| drop-table-cdc | query:where: row constructor IN | PASS |  |
+| drop-table-cdc | query:where: ALL over a subquery | PASS |  |
+| drop-table-cdc | query:where: an unsigned column against a negative literal | PASS |  |
+| drop-table-cdc | query:where: a string number against an integer column | PASS |  |
+| drop-table-cdc | query:where: a general_ci column under PAD SPACE | PASS |  |
 | drop-table-recreate | recreate:first generation replicates | PASS |  |
 | drop-table-recreate | recreate:a table recreated under the same name replicates as a new table | WARN | the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks |
 | drop-table-recreate | recreate:the rest of the database keeps replicating | PASS |  |
@@ -4176,15 +5076,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | converge:attendance | PASS |  |
 | drop-table-recreate | converge:audit_log | PASS |  |
 | drop-table-recreate | converge:badges | PASS |  |
+| drop-table-recreate | converge:bundle_products | PASS |  |
 | drop-table-recreate | converge:counters | PASS |  |
 | drop-table-recreate | converge:customers | PASS |  |
 | drop-table-recreate | converge:enrollments | PASS |  |
+| drop-table-recreate | converge:flash_sales | PASS |  |
 | drop-table-recreate | converge:keyless_log | PASS |  |
+| drop-table-recreate | converge:listing_entries | PASS |  |
+| drop-table-recreate | converge:listing_groups | PASS |  |
+| drop-table-recreate | converge:marketplaces | PASS |  |
 | drop-table-recreate | converge:order_items | PASS |  |
 | drop-table-recreate | converge:orders | PASS |  |
+| drop-table-recreate | converge:product_reviews | PASS |  |
 | drop-table-recreate | converge:renamed_target | PASS |  |
+| drop-table-recreate | converge:sellers | PASS |  |
 | drop-table-recreate | converge:shipments | PASS |  |
 | drop-table-recreate | converge:staff | PASS |  |
+| drop-table-recreate | converge:storefront_followers | PASS |  |
+| drop-table-recreate | converge:storefronts | PASS |  |
 | drop-table-recreate | converge:information_schema.columns | PASS |  |
 | drop-table-recreate | query:composite: one first part, ordered by the second | PASS |  |
 | drop-table-recreate | query:composite: grouped by the first part | PASS |  |
@@ -4373,10 +5282,46 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-recreate | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-recreate | query:shipments: carrier value through the items bridge | PASS |  |
 | drop-table-recreate | query:json: distinct case variants survive a derived table | PASS |  |
+| drop-table-recreate | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| drop-table-recreate | query:storefront: the per-sale rows under the report | PASS |  |
+| drop-table-recreate | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| drop-table-recreate | query:storefront: the same membership written as EXISTS | PASS |  |
+| drop-table-recreate | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| drop-table-recreate | query:storefront: membership keyed on shopper and locale | PASS |  |
+| drop-table-recreate | query:storefront: locale membership across case variants | PASS |  |
+| drop-table-recreate | query:storefront: shopper and staff reviews side by side | PASS |  |
+| drop-table-recreate | query:storefront: membership correlated through the storefront alias | PASS |  |
+| drop-table-recreate | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| drop-table-recreate | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| drop-table-recreate | query:storefront: membership across a storefront range | PASS |  |
+| drop-table-recreate | query:storefront: membership from a grouped, joined list | PASS |  |
+| drop-table-recreate | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| drop-table-recreate | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| drop-table-recreate | query:where: a DATE range ending on a leap day | PASS |  |
+| drop-table-recreate | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| drop-table-recreate | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| drop-table-recreate | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-recreate | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| drop-table-recreate | query:where: DECIMAL against a string literal | PASS |  |
+| drop-table-recreate | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| drop-table-recreate | query:where: NOT IN with a NULL in the list | PASS |  |
+| drop-table-recreate | query:where: null-safe equality on a nullable column | PASS |  |
+| drop-table-recreate | query:where: a filter on a virtual generated column | PASS |  |
+| drop-table-recreate | query:where: SET membership by FIND_IN_SET | PASS |  |
+| drop-table-recreate | query:where: SET equality to a member list | PASS |  |
+| drop-table-recreate | query:where: VARBINARY equality to a hex literal | PASS |  |
+| drop-table-recreate | query:where: JSON path comparisons | PASS |  |
+| drop-table-recreate | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| drop-table-recreate | query:where: OR with a NULL-testing branch | PASS |  |
+| drop-table-recreate | query:where: row constructor IN | PASS |  |
+| drop-table-recreate | query:where: ALL over a subquery | PASS |  |
+| drop-table-recreate | query:where: an unsigned column against a negative literal | PASS |  |
+| drop-table-recreate | query:where: a string number against an integer column | PASS |  |
+| drop-table-recreate | query:where: a general_ci column under PAD SPACE | PASS |  |
 | drop-table-polling | polling:fixtures replicate before the mode switch | PASS |  |
 | drop-table-polling | polling:database is healthy before the drop | PASS |  |
 | drop-table-polling | polling:TRUNCATE empties the replica | PASS |  |
-| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_9b2eedf000579bd39fa600da42401fd6","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-10T06:56:40.276148221+00:00","updated_at":"2026-09-10T07:02:37.311231669+00:00"},"tables":21,"rows":9589} |
+| drop-table-polling | polling:one dropped table does not stop the other tables | WARN | the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {"database":{"restored_backup_created_at":null,"data_age_seconds":null,"id":"db_bb14d1bffea615933e97b4401dde618e","name":"e2e_db","mode":"polling","effective_mode":"polling","state":"error","include_tables":[],"exclude_tables":[],"poll_interval_seconds":5,"reconcile_interval_seconds":600,"keyless_policy":"quarantine","created_at":"2026-09-10T13:32:16.478918051+00:00","updated_at":"2026-09-10T13:38:21.712209376+00:00"},"tables":30,"rows":10875} |
 | drop-table-polling | polling:re-probe restores replication for the surviving tables | PASS |  |
 | drop-table-polling | converge:Dim | PASS |  |
 | drop-table-polling | converge:Event | PASS |  |
@@ -4385,15 +5330,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | converge:attendance | PASS |  |
 | drop-table-polling | converge:audit_log | PASS |  |
 | drop-table-polling | converge:badges | PASS |  |
+| drop-table-polling | converge:bundle_products | PASS |  |
 | drop-table-polling | converge:counters | PASS |  |
 | drop-table-polling | converge:customers | PASS |  |
 | drop-table-polling | converge:enrollments | PASS |  |
+| drop-table-polling | converge:flash_sales | PASS |  |
 | drop-table-polling | converge:keyless_log | PASS |  |
+| drop-table-polling | converge:listing_entries | PASS |  |
+| drop-table-polling | converge:listing_groups | PASS |  |
+| drop-table-polling | converge:marketplaces | PASS |  |
 | drop-table-polling | converge:order_items | PASS |  |
 | drop-table-polling | converge:orders | PASS |  |
+| drop-table-polling | converge:product_reviews | PASS |  |
 | drop-table-polling | converge:renamed_target | PASS |  |
+| drop-table-polling | converge:sellers | PASS |  |
 | drop-table-polling | converge:shipments | PASS |  |
 | drop-table-polling | converge:staff | PASS |  |
+| drop-table-polling | converge:storefront_followers | PASS |  |
+| drop-table-polling | converge:storefronts | PASS |  |
 | drop-table-polling | converge:information_schema.columns | PASS |  |
 | drop-table-polling | query:composite: one first part, ordered by the second | PASS |  |
 | drop-table-polling | query:composite: grouped by the first part | PASS |  |
@@ -4582,6 +5536,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-table-polling | query:order_items: product rollup without the orders table | PASS |  |
 | drop-table-polling | query:shipments: carrier value through the items bridge | PASS |  |
 | drop-table-polling | query:json: distinct case variants survive a derived table | PASS |  |
+| drop-table-polling | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| drop-table-polling | query:storefront: the per-sale rows under the report | PASS |  |
+| drop-table-polling | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| drop-table-polling | query:storefront: the same membership written as EXISTS | PASS |  |
+| drop-table-polling | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| drop-table-polling | query:storefront: membership keyed on shopper and locale | PASS |  |
+| drop-table-polling | query:storefront: locale membership across case variants | PASS |  |
+| drop-table-polling | query:storefront: shopper and staff reviews side by side | PASS |  |
+| drop-table-polling | query:storefront: membership correlated through the storefront alias | PASS |  |
+| drop-table-polling | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| drop-table-polling | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| drop-table-polling | query:storefront: membership across a storefront range | PASS |  |
+| drop-table-polling | query:storefront: membership from a grouped, joined list | PASS |  |
+| drop-table-polling | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| drop-table-polling | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| drop-table-polling | query:where: a DATE range ending on a leap day | PASS |  |
+| drop-table-polling | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| drop-table-polling | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| drop-table-polling | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-table-polling | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| drop-table-polling | query:where: DECIMAL against a string literal | PASS |  |
+| drop-table-polling | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| drop-table-polling | query:where: NOT IN with a NULL in the list | PASS |  |
+| drop-table-polling | query:where: null-safe equality on a nullable column | PASS |  |
+| drop-table-polling | query:where: a filter on a virtual generated column | PASS |  |
+| drop-table-polling | query:where: SET membership by FIND_IN_SET | PASS |  |
+| drop-table-polling | query:where: SET equality to a member list | PASS |  |
+| drop-table-polling | query:where: VARBINARY equality to a hex literal | PASS |  |
+| drop-table-polling | query:where: JSON path comparisons | PASS |  |
+| drop-table-polling | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| drop-table-polling | query:where: OR with a NULL-testing branch | PASS |  |
+| drop-table-polling | query:where: row constructor IN | PASS |  |
+| drop-table-polling | query:where: ALL over a subquery | PASS |  |
+| drop-table-polling | query:where: an unsigned column against a negative literal | PASS |  |
+| drop-table-polling | query:where: a string number against an integer column | PASS |  |
+| drop-table-polling | query:where: a general_ci column under PAD SPACE | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:interrupts a copy in flight | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:the database resumes replicating on its own | PASS |  |
 | restart-during-snapshot | restart-during-snapshot:every row arrives after the resume | PASS | big: 300000 of 300000 |
@@ -4593,15 +5583,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | converge:attendance | PASS |  |
 | restart-during-snapshot | converge:audit_log | PASS |  |
 | restart-during-snapshot | converge:badges | PASS |  |
+| restart-during-snapshot | converge:bundle_products | PASS |  |
 | restart-during-snapshot | converge:counters | PASS |  |
 | restart-during-snapshot | converge:customers | PASS |  |
 | restart-during-snapshot | converge:enrollments | PASS |  |
+| restart-during-snapshot | converge:flash_sales | PASS |  |
 | restart-during-snapshot | converge:keyless_log | PASS |  |
+| restart-during-snapshot | converge:listing_entries | PASS |  |
+| restart-during-snapshot | converge:listing_groups | PASS |  |
+| restart-during-snapshot | converge:marketplaces | PASS |  |
 | restart-during-snapshot | converge:order_items | PASS |  |
 | restart-during-snapshot | converge:orders | PASS |  |
+| restart-during-snapshot | converge:product_reviews | PASS |  |
 | restart-during-snapshot | converge:renamed_target | PASS |  |
+| restart-during-snapshot | converge:sellers | PASS |  |
 | restart-during-snapshot | converge:shipments | PASS |  |
 | restart-during-snapshot | converge:staff | PASS |  |
+| restart-during-snapshot | converge:storefront_followers | PASS |  |
+| restart-during-snapshot | converge:storefronts | PASS |  |
 | restart-during-snapshot | converge:information_schema.columns | PASS |  |
 | restart-during-snapshot | query:composite: one first part, ordered by the second | PASS |  |
 | restart-during-snapshot | query:composite: grouped by the first part | PASS |  |
@@ -4790,6 +5789,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-snapshot | query:order_items: product rollup without the orders table | PASS |  |
 | restart-during-snapshot | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-snapshot | query:json: distinct case variants survive a derived table | PASS |  |
+| restart-during-snapshot | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| restart-during-snapshot | query:storefront: the per-sale rows under the report | PASS |  |
+| restart-during-snapshot | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| restart-during-snapshot | query:storefront: the same membership written as EXISTS | PASS |  |
+| restart-during-snapshot | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| restart-during-snapshot | query:storefront: membership keyed on shopper and locale | PASS |  |
+| restart-during-snapshot | query:storefront: locale membership across case variants | PASS |  |
+| restart-during-snapshot | query:storefront: shopper and staff reviews side by side | PASS |  |
+| restart-during-snapshot | query:storefront: membership correlated through the storefront alias | PASS |  |
+| restart-during-snapshot | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| restart-during-snapshot | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| restart-during-snapshot | query:storefront: membership across a storefront range | PASS |  |
+| restart-during-snapshot | query:storefront: membership from a grouped, joined list | PASS |  |
+| restart-during-snapshot | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| restart-during-snapshot | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| restart-during-snapshot | query:where: a DATE range ending on a leap day | PASS |  |
+| restart-during-snapshot | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| restart-during-snapshot | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| restart-during-snapshot | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart-during-snapshot | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| restart-during-snapshot | query:where: DECIMAL against a string literal | PASS |  |
+| restart-during-snapshot | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| restart-during-snapshot | query:where: NOT IN with a NULL in the list | PASS |  |
+| restart-during-snapshot | query:where: null-safe equality on a nullable column | PASS |  |
+| restart-during-snapshot | query:where: a filter on a virtual generated column | PASS |  |
+| restart-during-snapshot | query:where: SET membership by FIND_IN_SET | PASS |  |
+| restart-during-snapshot | query:where: SET equality to a member list | PASS |  |
+| restart-during-snapshot | query:where: VARBINARY equality to a hex literal | PASS |  |
+| restart-during-snapshot | query:where: JSON path comparisons | PASS |  |
+| restart-during-snapshot | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| restart-during-snapshot | query:where: OR with a NULL-testing branch | PASS |  |
+| restart-during-snapshot | query:where: row constructor IN | PASS |  |
+| restart-during-snapshot | query:where: ALL over a subquery | PASS |  |
+| restart-during-snapshot | query:where: an unsigned column against a negative literal | PASS |  |
+| restart-during-snapshot | query:where: a string number against an integer column | PASS |  |
+| restart-during-snapshot | query:where: a general_ci column under PAD SPACE | PASS |  |
 | restart-during-resync | restart-during-resync:interrupts a resync in flight | PASS |  |
 | restart-during-resync | restart-during-resync:the interrupted table comes back on its own | PASS |  |
 | restart-during-resync | restart-during-resync:the other table never leaves streaming | PASS |  |
@@ -4803,15 +5838,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | converge:attendance | PASS |  |
 | restart-during-resync | converge:audit_log | PASS |  |
 | restart-during-resync | converge:badges | PASS |  |
+| restart-during-resync | converge:bundle_products | PASS |  |
 | restart-during-resync | converge:counters | PASS |  |
 | restart-during-resync | converge:customers | PASS |  |
 | restart-during-resync | converge:enrollments | PASS |  |
+| restart-during-resync | converge:flash_sales | PASS |  |
 | restart-during-resync | converge:keyless_log | PASS |  |
+| restart-during-resync | converge:listing_entries | PASS |  |
+| restart-during-resync | converge:listing_groups | PASS |  |
+| restart-during-resync | converge:marketplaces | PASS |  |
 | restart-during-resync | converge:order_items | PASS |  |
 | restart-during-resync | converge:orders | PASS |  |
+| restart-during-resync | converge:product_reviews | PASS |  |
 | restart-during-resync | converge:renamed_target | PASS |  |
+| restart-during-resync | converge:sellers | PASS |  |
 | restart-during-resync | converge:shipments | PASS |  |
 | restart-during-resync | converge:staff | PASS |  |
+| restart-during-resync | converge:storefront_followers | PASS |  |
+| restart-during-resync | converge:storefronts | PASS |  |
 | restart-during-resync | converge:information_schema.columns | PASS |  |
 | restart-during-resync | query:composite: one first part, ordered by the second | PASS |  |
 | restart-during-resync | query:composite: grouped by the first part | PASS |  |
@@ -5000,14 +6044,50 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | restart-during-resync | query:order_items: product rollup without the orders table | PASS |  |
 | restart-during-resync | query:shipments: carrier value through the items bridge | PASS |  |
 | restart-during-resync | query:json: distinct case variants survive a derived table | PASS |  |
+| restart-during-resync | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| restart-during-resync | query:storefront: the per-sale rows under the report | PASS |  |
+| restart-during-resync | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| restart-during-resync | query:storefront: the same membership written as EXISTS | PASS |  |
+| restart-during-resync | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| restart-during-resync | query:storefront: membership keyed on shopper and locale | PASS |  |
+| restart-during-resync | query:storefront: locale membership across case variants | PASS |  |
+| restart-during-resync | query:storefront: shopper and staff reviews side by side | PASS |  |
+| restart-during-resync | query:storefront: membership correlated through the storefront alias | PASS |  |
+| restart-during-resync | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| restart-during-resync | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| restart-during-resync | query:storefront: membership across a storefront range | PASS |  |
+| restart-during-resync | query:storefront: membership from a grouped, joined list | PASS |  |
+| restart-during-resync | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| restart-during-resync | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| restart-during-resync | query:where: a DATE range ending on a leap day | PASS |  |
+| restart-during-resync | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| restart-during-resync | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| restart-during-resync | query:where: DATE() of a TIMESTAMP | PASS |  |
+| restart-during-resync | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| restart-during-resync | query:where: DECIMAL against a string literal | PASS |  |
+| restart-during-resync | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| restart-during-resync | query:where: NOT IN with a NULL in the list | PASS |  |
+| restart-during-resync | query:where: null-safe equality on a nullable column | PASS |  |
+| restart-during-resync | query:where: a filter on a virtual generated column | PASS |  |
+| restart-during-resync | query:where: SET membership by FIND_IN_SET | PASS |  |
+| restart-during-resync | query:where: SET equality to a member list | PASS |  |
+| restart-during-resync | query:where: VARBINARY equality to a hex literal | PASS |  |
+| restart-during-resync | query:where: JSON path comparisons | PASS |  |
+| restart-during-resync | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| restart-during-resync | query:where: OR with a NULL-testing branch | PASS |  |
+| restart-during-resync | query:where: row constructor IN | PASS |  |
+| restart-during-resync | query:where: ALL over a subquery | PASS |  |
+| restart-during-resync | query:where: an unsigned column against a negative literal | PASS |  |
+| restart-during-resync | query:where: a string number against an integer column | PASS |  |
+| restart-during-resync | query:where: a general_ci column under PAD SPACE | PASS |  |
 | memory-pressure | memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling | PASS | pintail 40, source 40 |
-| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 72 ok, dashboards 90 ok; no errors |
+| memory-pressure | memory-pressure:the process survives the storm | PASS | wire 240 ok, http 76 ok, dashboards 102 ok; no errors |
 | memory-pressure | memory-pressure:every failure is a designed refusal | PASS | only refusals; 0 dashboard requests failed |
-| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 72 |
-| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 173ms p99 853ms over 240 queries |
-| memory-pressure | memory-pressure:health never stalls | PASS | health p99 20ms over 6 samples |
-| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 174MB with a 256MB budget |
-| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200600 vs source 200600 |
+| memory-pressure | memory-pressure:work still gets done | PASS | wire 240 of 240, http 76 |
+| memory-pressure | memory-pressure:wire queries are not starved by the HTTP surface | PASS | wire p50 213ms p99 874ms over 240 queries |
+| memory-pressure | memory-pressure:health never stalls | PASS | health p99 20ms over 7 samples |
+| memory-pressure | memory-pressure:the process stays inside its ceiling | PASS | peak RSS 180MB with a 256MB budget |
+| memory-pressure | memory-pressure:the replica catches up after the storm | PASS | big 200700 vs source 200700 |
 | memory-pressure | memory-pressure:queries recover once the storm passes | PASS | 3 of 3 sequential queries succeeded |
 | memory-pressure | converge:Dim | PASS |  |
 | memory-pressure | converge:Event | PASS |  |
@@ -5016,15 +6096,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | converge:attendance | PASS |  |
 | memory-pressure | converge:audit_log | PASS |  |
 | memory-pressure | converge:badges | PASS |  |
+| memory-pressure | converge:bundle_products | PASS |  |
 | memory-pressure | converge:counters | PASS |  |
 | memory-pressure | converge:customers | PASS |  |
 | memory-pressure | converge:enrollments | PASS |  |
+| memory-pressure | converge:flash_sales | PASS |  |
 | memory-pressure | converge:keyless_log | PASS |  |
+| memory-pressure | converge:listing_entries | PASS |  |
+| memory-pressure | converge:listing_groups | PASS |  |
+| memory-pressure | converge:marketplaces | PASS |  |
 | memory-pressure | converge:order_items | PASS |  |
 | memory-pressure | converge:orders | PASS |  |
+| memory-pressure | converge:product_reviews | PASS |  |
 | memory-pressure | converge:renamed_target | PASS |  |
+| memory-pressure | converge:sellers | PASS |  |
 | memory-pressure | converge:shipments | PASS |  |
 | memory-pressure | converge:staff | PASS |  |
+| memory-pressure | converge:storefront_followers | PASS |  |
+| memory-pressure | converge:storefronts | PASS |  |
 | memory-pressure | converge:information_schema.columns | PASS |  |
 | memory-pressure | query:composite: one first part, ordered by the second | PASS |  |
 | memory-pressure | query:composite: grouped by the first part | PASS |  |
@@ -5213,11 +6302,47 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | memory-pressure | query:order_items: product rollup without the orders table | PASS |  |
 | memory-pressure | query:shipments: carrier value through the items bridge | PASS |  |
 | memory-pressure | query:json: distinct case variants survive a derived table | PASS |  |
+| memory-pressure | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| memory-pressure | query:storefront: the per-sale rows under the report | PASS |  |
+| memory-pressure | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| memory-pressure | query:storefront: the same membership written as EXISTS | PASS |  |
+| memory-pressure | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| memory-pressure | query:storefront: membership keyed on shopper and locale | PASS |  |
+| memory-pressure | query:storefront: locale membership across case variants | PASS |  |
+| memory-pressure | query:storefront: shopper and staff reviews side by side | PASS |  |
+| memory-pressure | query:storefront: membership correlated through the storefront alias | PASS |  |
+| memory-pressure | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| memory-pressure | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| memory-pressure | query:storefront: membership across a storefront range | PASS |  |
+| memory-pressure | query:storefront: membership from a grouped, joined list | PASS |  |
+| memory-pressure | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| memory-pressure | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| memory-pressure | query:where: a DATE range ending on a leap day | PASS |  |
+| memory-pressure | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| memory-pressure | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| memory-pressure | query:where: DATE() of a TIMESTAMP | PASS |  |
+| memory-pressure | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| memory-pressure | query:where: DECIMAL against a string literal | PASS |  |
+| memory-pressure | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| memory-pressure | query:where: NOT IN with a NULL in the list | PASS |  |
+| memory-pressure | query:where: null-safe equality on a nullable column | PASS |  |
+| memory-pressure | query:where: a filter on a virtual generated column | PASS |  |
+| memory-pressure | query:where: SET membership by FIND_IN_SET | PASS |  |
+| memory-pressure | query:where: SET equality to a member list | PASS |  |
+| memory-pressure | query:where: VARBINARY equality to a hex literal | PASS |  |
+| memory-pressure | query:where: JSON path comparisons | PASS |  |
+| memory-pressure | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| memory-pressure | query:where: OR with a NULL-testing branch | PASS |  |
+| memory-pressure | query:where: row constructor IN | PASS |  |
+| memory-pressure | query:where: ALL over a subquery | PASS |  |
+| memory-pressure | query:where: an unsigned column against a negative literal | PASS |  |
+| memory-pressure | query:where: a string number against an integer column | PASS |  |
+| memory-pressure | query:where: a general_ci column under PAD SPACE | PASS |  |
 | reconcile-memory | reconcile-memory:the source holds the large child table | PASS | 2000000 rows |
 | reconcile-memory | reconcile-memory:every child row arrives | PASS | 2000000 of 2000000 |
 | reconcile-memory | reconcile-memory:the cascade removed the deleted parents' children | PASS | 1800000 remain |
 | reconcile-memory | reconcile-memory:reconciliation converges the replica on the source | PASS | child 1800000 vs source 1800000 after 4.4s |
-| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 56MB before, peak 215MB during (margin 768MB) |
+| reconcile-memory | reconcile-memory:reconciliation is bounded in memory | PASS | RSS 59MB before, peak 218MB during (margin 768MB) |
 | reconcile-memory | converge:Dim | PASS |  |
 | reconcile-memory | converge:Event | PASS |  |
 | reconcile-memory | converge:Fact | PASS |  |
@@ -5225,15 +6350,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | converge:attendance | PASS |  |
 | reconcile-memory | converge:audit_log | PASS |  |
 | reconcile-memory | converge:badges | PASS |  |
+| reconcile-memory | converge:bundle_products | PASS |  |
 | reconcile-memory | converge:counters | PASS |  |
 | reconcile-memory | converge:customers | PASS |  |
 | reconcile-memory | converge:enrollments | PASS |  |
+| reconcile-memory | converge:flash_sales | PASS |  |
 | reconcile-memory | converge:keyless_log | PASS |  |
+| reconcile-memory | converge:listing_entries | PASS |  |
+| reconcile-memory | converge:listing_groups | PASS |  |
+| reconcile-memory | converge:marketplaces | PASS |  |
 | reconcile-memory | converge:order_items | PASS |  |
 | reconcile-memory | converge:orders | PASS |  |
+| reconcile-memory | converge:product_reviews | PASS |  |
 | reconcile-memory | converge:renamed_target | PASS |  |
+| reconcile-memory | converge:sellers | PASS |  |
 | reconcile-memory | converge:shipments | PASS |  |
 | reconcile-memory | converge:staff | PASS |  |
+| reconcile-memory | converge:storefront_followers | PASS |  |
+| reconcile-memory | converge:storefronts | PASS |  |
 | reconcile-memory | converge:information_schema.columns | PASS |  |
 | reconcile-memory | query:composite: one first part, ordered by the second | PASS |  |
 | reconcile-memory | query:composite: grouped by the first part | PASS |  |
@@ -5422,6 +6556,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | reconcile-memory | query:order_items: product rollup without the orders table | PASS |  |
 | reconcile-memory | query:shipments: carrier value through the items bridge | PASS |  |
 | reconcile-memory | query:json: distinct case variants survive a derived table | PASS |  |
+| reconcile-memory | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| reconcile-memory | query:storefront: the per-sale rows under the report | PASS |  |
+| reconcile-memory | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| reconcile-memory | query:storefront: the same membership written as EXISTS | PASS |  |
+| reconcile-memory | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| reconcile-memory | query:storefront: membership keyed on shopper and locale | PASS |  |
+| reconcile-memory | query:storefront: locale membership across case variants | PASS |  |
+| reconcile-memory | query:storefront: shopper and staff reviews side by side | PASS |  |
+| reconcile-memory | query:storefront: membership correlated through the storefront alias | PASS |  |
+| reconcile-memory | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| reconcile-memory | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| reconcile-memory | query:storefront: membership across a storefront range | PASS |  |
+| reconcile-memory | query:storefront: membership from a grouped, joined list | PASS |  |
+| reconcile-memory | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| reconcile-memory | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| reconcile-memory | query:where: a DATE range ending on a leap day | PASS |  |
+| reconcile-memory | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| reconcile-memory | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| reconcile-memory | query:where: DATE() of a TIMESTAMP | PASS |  |
+| reconcile-memory | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| reconcile-memory | query:where: DECIMAL against a string literal | PASS |  |
+| reconcile-memory | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| reconcile-memory | query:where: NOT IN with a NULL in the list | PASS |  |
+| reconcile-memory | query:where: null-safe equality on a nullable column | PASS |  |
+| reconcile-memory | query:where: a filter on a virtual generated column | PASS |  |
+| reconcile-memory | query:where: SET membership by FIND_IN_SET | PASS |  |
+| reconcile-memory | query:where: SET equality to a member list | PASS |  |
+| reconcile-memory | query:where: VARBINARY equality to a hex literal | PASS |  |
+| reconcile-memory | query:where: JSON path comparisons | PASS |  |
+| reconcile-memory | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| reconcile-memory | query:where: OR with a NULL-testing branch | PASS |  |
+| reconcile-memory | query:where: row constructor IN | PASS |  |
+| reconcile-memory | query:where: ALL over a subquery | PASS |  |
+| reconcile-memory | query:where: an unsigned column against a negative literal | PASS |  |
+| reconcile-memory | query:where: a string number against an integer column | PASS |  |
+| reconcile-memory | query:where: a general_ci column under PAD SPACE | PASS |  |
 | drop-database | cross-schema:same-named table replicates first | PASS |  |
 | drop-database | cross-schema:dropping another schema's table leaves this one replicating | PASS |  |
 | drop-database | drop-database:second database snapshots | PASS |  |
@@ -5437,15 +6607,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | converge:attendance | PASS |  |
 | drop-database | converge:audit_log | PASS |  |
 | drop-database | converge:badges | PASS |  |
+| drop-database | converge:bundle_products | PASS |  |
 | drop-database | converge:counters | PASS |  |
 | drop-database | converge:customers | PASS |  |
 | drop-database | converge:enrollments | PASS |  |
+| drop-database | converge:flash_sales | PASS |  |
 | drop-database | converge:keyless_log | PASS |  |
+| drop-database | converge:listing_entries | PASS |  |
+| drop-database | converge:listing_groups | PASS |  |
+| drop-database | converge:marketplaces | PASS |  |
 | drop-database | converge:order_items | PASS |  |
 | drop-database | converge:orders | PASS |  |
+| drop-database | converge:product_reviews | PASS |  |
 | drop-database | converge:renamed_target | PASS |  |
+| drop-database | converge:sellers | PASS |  |
 | drop-database | converge:shipments | PASS |  |
 | drop-database | converge:staff | PASS |  |
+| drop-database | converge:storefront_followers | PASS |  |
+| drop-database | converge:storefronts | PASS |  |
 | drop-database | converge:information_schema.columns | PASS |  |
 | drop-database | query:composite: one first part, ordered by the second | PASS |  |
 | drop-database | query:composite: grouped by the first part | PASS |  |
@@ -5634,6 +6813,42 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | drop-database | query:order_items: product rollup without the orders table | PASS |  |
 | drop-database | query:shipments: carrier value through the items bridge | PASS |  |
 | drop-database | query:json: distinct case variants survive a derived table | PASS |  |
+| drop-database | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| drop-database | query:storefront: the per-sale rows under the report | PASS |  |
+| drop-database | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| drop-database | query:storefront: the same membership written as EXISTS | PASS |  |
+| drop-database | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| drop-database | query:storefront: membership keyed on shopper and locale | PASS |  |
+| drop-database | query:storefront: locale membership across case variants | PASS |  |
+| drop-database | query:storefront: shopper and staff reviews side by side | PASS |  |
+| drop-database | query:storefront: membership correlated through the storefront alias | PASS |  |
+| drop-database | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| drop-database | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| drop-database | query:storefront: membership across a storefront range | PASS |  |
+| drop-database | query:storefront: membership from a grouped, joined list | PASS |  |
+| drop-database | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| drop-database | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| drop-database | query:where: a DATE range ending on a leap day | PASS |  |
+| drop-database | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| drop-database | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| drop-database | query:where: DATE() of a TIMESTAMP | PASS |  |
+| drop-database | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| drop-database | query:where: DECIMAL against a string literal | PASS |  |
+| drop-database | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| drop-database | query:where: NOT IN with a NULL in the list | PASS |  |
+| drop-database | query:where: null-safe equality on a nullable column | PASS |  |
+| drop-database | query:where: a filter on a virtual generated column | PASS |  |
+| drop-database | query:where: SET membership by FIND_IN_SET | PASS |  |
+| drop-database | query:where: SET equality to a member list | PASS |  |
+| drop-database | query:where: VARBINARY equality to a hex literal | PASS |  |
+| drop-database | query:where: JSON path comparisons | PASS |  |
+| drop-database | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| drop-database | query:where: OR with a NULL-testing branch | PASS |  |
+| drop-database | query:where: row constructor IN | PASS |  |
+| drop-database | query:where: ALL over a subquery | PASS |  |
+| drop-database | query:where: an unsigned column against a negative literal | PASS |  |
+| drop-database | query:where: a string number against an integer column | PASS |  |
+| drop-database | query:where: a general_ci column under PAD SPACE | PASS |  |
 | ddl-documented-gaps | converge:Dim | PASS |  |
 | ddl-documented-gaps | converge:Event | PASS |  |
 | ddl-documented-gaps | converge:Fact | PASS |  |
@@ -5641,15 +6856,24 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | converge:attendance | PASS |  |
 | ddl-documented-gaps | converge:audit_history | WARN | pintail query failed: Error: unknown table e2e_db.audit_history |
 | ddl-documented-gaps | converge:badges | PASS |  |
+| ddl-documented-gaps | converge:bundle_products | PASS |  |
 | ddl-documented-gaps | converge:counters | PASS |  |
 | ddl-documented-gaps | converge:customers | PASS |  |
 | ddl-documented-gaps | converge:enrollments | PASS |  |
+| ddl-documented-gaps | converge:flash_sales | PASS |  |
 | ddl-documented-gaps | converge:keyless_log | PASS |  |
+| ddl-documented-gaps | converge:listing_entries | PASS |  |
+| ddl-documented-gaps | converge:listing_groups | PASS |  |
+| ddl-documented-gaps | converge:marketplaces | PASS |  |
 | ddl-documented-gaps | converge:order_items | WARN | row 0: |
 | ddl-documented-gaps | converge:orders | PASS |  |
+| ddl-documented-gaps | converge:product_reviews | PASS |  |
 | ddl-documented-gaps | converge:renamed_target | PASS |  |
+| ddl-documented-gaps | converge:sellers | PASS |  |
 | ddl-documented-gaps | converge:shipments | PASS |  |
 | ddl-documented-gaps | converge:staff | PASS |  |
+| ddl-documented-gaps | converge:storefront_followers | PASS |  |
+| ddl-documented-gaps | converge:storefronts | PASS |  |
 | ddl-documented-gaps | converge:information_schema.columns | WARN | row 24: |
 | ddl-documented-gaps | query:composite: one first part, ordered by the second | PASS |  |
 | ddl-documented-gaps | query:composite: grouped by the first part | PASS |  |
@@ -5838,37 +7062,73 @@ Source: `mysql:8.0` (server 8.0.46), `binlog_row_metadata=MINIMAL`, fresh contai
 | ddl-documented-gaps | query:order_items: product rollup without the orders table | SKIP |  |
 | ddl-documented-gaps | query:shipments: carrier value through the items bridge | SKIP |  |
 | ddl-documented-gaps | query:json: distinct case variants survive a derived table | PASS |  |
+| ddl-documented-gaps | query:storefront: monthly reviewed and expected per seller | PASS |  |
+| ddl-documented-gaps | query:storefront: the per-sale rows under the report | PASS |  |
+| ddl-documented-gaps | query:storefront: rows, matches and rating sum per sale | PASS |  |
+| ddl-documented-gaps | query:storefront: the same membership written as EXISTS | PASS |  |
+| ddl-documented-gaps | query:storefront: membership under a RIGHT JOIN | PASS |  |
+| ddl-documented-gaps | query:storefront: membership keyed on shopper and locale | PASS |  |
+| ddl-documented-gaps | query:storefront: locale membership across case variants | PASS |  |
+| ddl-documented-gaps | query:storefront: shopper and staff reviews side by side | PASS |  |
+| ddl-documented-gaps | query:storefront: membership correlated through the storefront alias | PASS |  |
+| ddl-documented-gaps | query:storefront: reviews from outside the storefront (NOT IN) | PASS |  |
+| ddl-documented-gaps | query:storefront: reviews from outside the storefront (NOT EXISTS) | PASS |  |
+| ddl-documented-gaps | query:storefront: membership across a storefront range | PASS |  |
+| ddl-documented-gaps | query:storefront: membership from a grouped, joined list | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column against a datetime literal at midnight | PASS |  |
+| ddl-documented-gaps | query:where: a DATE column against a datetime literal with a time | PASS |  |
+| ddl-documented-gaps | query:where: a DATE range ending on a leap day | PASS |  |
+| ddl-documented-gaps | query:where: TIMESTAMP(6) at a microsecond boundary | PASS |  |
+| ddl-documented-gaps | query:where: TIMESTAMP BETWEEN a date and a datetime | PASS |  |
+| ddl-documented-gaps | query:where: DATE() of a TIMESTAMP | PASS |  |
+| ddl-documented-gaps | query:where: DATETIME(6) against a fractional literal | PASS |  |
+| ddl-documented-gaps | query:where: DECIMAL against a string literal | PASS |  |
+| ddl-documented-gaps | query:where: DECIMAL BETWEEN two negatives | PASS |  |
+| ddl-documented-gaps | query:where: NOT IN with a NULL in the list | PASS |  |
+| ddl-documented-gaps | query:where: null-safe equality on a nullable column | PASS |  |
+| ddl-documented-gaps | query:where: a filter on a virtual generated column | PASS |  |
+| ddl-documented-gaps | query:where: SET membership by FIND_IN_SET | PASS |  |
+| ddl-documented-gaps | query:where: SET equality to a member list | PASS |  |
+| ddl-documented-gaps | query:where: VARBINARY equality to a hex literal | PASS |  |
+| ddl-documented-gaps | query:where: JSON path comparisons | PASS |  |
+| ddl-documented-gaps | query:where: ENUM IN beside an ENUM LIKE | PASS |  |
+| ddl-documented-gaps | query:where: OR with a NULL-testing branch | PASS |  |
+| ddl-documented-gaps | query:where: row constructor IN | PASS |  |
+| ddl-documented-gaps | query:where: ALL over a subquery | PASS |  |
+| ddl-documented-gaps | query:where: an unsigned column against a negative literal | PASS |  |
+| ddl-documented-gaps | query:where: a string number against an integer column | PASS |  |
+| ddl-documented-gaps | query:where: a general_ci column under PAD SPACE | PASS |  |
 
 ## Timing
 
 | Phase | run s | converge s | corpus s |
 |---|---|---|---|
-| snapshot | 0.0 | 0.1 | 0.2 |
-| orm-compat | 1.9 | 0.0 | 0.1 |
-| crud | 0.0 | 1.1 | 0.1 |
-| composite-keys | 0.0 | 2.4 | 0.1 |
-| type-edges | 0.0 | 2.4 | 0.1 |
-| ddl | 7.4 | 2.6 | 0.1 |
-| schema-drift-minimal | 0.0 | 2.3 | 0.1 |
-| schema-drift-unseen | 0.0 | 2.3 | 0.2 |
-| churn | 0.2 | 2.1 | 0.2 |
-| contention | 13.6 | 0.1 | 0.9 |
-| execution-budget | 0.0 | 0.1 | 0.8 |
-| spill | 5.8 | 0.4 | 0.7 |
-| pooling | 0.1 | 1.3 | 0.8 |
-| local-database | 0.0 | 0.1 | 0.8 |
-| restart | 0.5 | 2.8 | 0.7 |
-| activity-history | 1.0 | 0.4 | 0.8 |
-| poll-storm | 21.4 | 0.1 | 0.9 |
-| control-plane | 31.8 | 0.1 | 0.4 |
-| snapshot-ddl-window | 5.1 | 0.1 | 0.5 |
-| drop-table-cdc | 8.1 | 0.1 | 0.9 |
-| drop-table-recreate | 128.8 | 0.1 | 0.8 |
-| drop-table-polling | 104.2 | 0.1 | 0.4 |
-| restart-during-snapshot | 2.3 | 0.1 | 0.4 |
-| restart-during-resync | 3.8 | 0.1 | 0.4 |
-| memory-pressure | 10.7 | 0.1 | 0.4 |
-| reconcile-memory | 31.7 | 0.1 | 0.4 |
-| drop-database | 12.0 | 0.1 | 0.4 |
-| ddl-documented-gaps | 0.0 | 0.1 | 0.4 |
-| total | 390.6 | 21.5 | 13.0 |
+| snapshot | 0.0 | 0.1 | 0.9 |
+| orm-compat | 1.9 | 0.0 | 0.9 |
+| crud | 0.0 | 1.9 | 0.9 |
+| composite-keys | 0.0 | 1.6 | 0.9 |
+| type-edges | 0.0 | 1.3 | 1.0 |
+| ddl | 6.6 | 2.9 | 0.8 |
+| schema-drift-minimal | 0.0 | 1.3 | 0.8 |
+| schema-drift-unseen | 0.0 | 1.6 | 0.8 |
+| churn | 0.2 | 1.3 | 0.8 |
+| contention | 13.1 | 0.1 | 1.5 |
+| execution-budget | 0.0 | 0.1 | 1.5 |
+| spill | 5.7 | 0.4 | 1.5 |
+| pooling | 0.1 | 0.4 | 1.5 |
+| local-database | 0.0 | 0.1 | 1.5 |
+| restart | 0.5 | 2.8 | 1.5 |
+| activity-history | 1.0 | 0.4 | 1.4 |
+| poll-storm | 20.6 | 0.1 | 1.5 |
+| control-plane | 31.2 | 0.1 | 1.0 |
+| snapshot-ddl-window | 5.1 | 0.1 | 1.0 |
+| drop-table-cdc | 9.4 | 0.1 | 1.4 |
+| drop-table-recreate | 128.6 | 0.1 | 1.4 |
+| drop-table-polling | 103.6 | 0.1 | 1.0 |
+| restart-during-snapshot | 2.2 | 0.1 | 1.0 |
+| restart-during-resync | 3.8 | 0.1 | 1.0 |
+| memory-pressure | 10.7 | 0.1 | 1.1 |
+| reconcile-memory | 31.8 | 0.1 | 1.0 |
+| drop-database | 10.6 | 0.1 | 1.0 |
+| ddl-documented-gaps | 0.0 | 0.1 | 1.0 |
+| total | 386.9 | 17.9 | 31.8 |

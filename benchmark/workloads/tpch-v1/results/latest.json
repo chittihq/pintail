@@ -1,79 +1,55 @@
 {
   "workload": "tpch-v1",
-  "profile": "sf1",
-  "scale": 1,
-  "startedAt": "2026-09-10T06:46:25.187Z",
-  "finishedAt": "2026-09-10T06:47:34.432Z",
+  "profile": "smoke",
+  "scale": 0.0005,
+  "startedAt": "2026-09-10T07:31:15.362Z",
+  "finishedAt": "2026-09-10T07:31:23.552Z",
   "counts": {
     "region": 5,
     "nation": 25,
-    "supplier": 10000,
-    "part": 200000,
-    "partsupp": 800000,
-    "customer": 150000,
-    "orders": 1500000,
-    "lineitem": 6000749
+    "supplier": 5,
+    "part": 100,
+    "partsupp": 400,
+    "customer": 75,
+    "orders": 750,
+    "lineitem": 3017
   },
   "queries": [
     {
       "id": "q01-pricing-summary",
       "class": "scan-aggregate",
       "status": "ok",
-      "mysqlMs": 8244,
-      "pintailMs": 2360,
-      "rows": 6,
-      "pintailP95Ms": 2368,
-      "sqlSha256": "f25fec72249795cc6b88e882ab685266635f18d6406b444b94dfe9fe9d361d7c",
-      "answerSha256": "64bdfb09291c3685765bd6e5fc66c8a4b85a60b9f3f537290c0f975b8a39409f"
+      "mysqlMs": 6,
+      "pintailMs": 15,
+      "rows": 6
     },
     {
       "id": "q03-shipping-priority",
       "class": "join-topn",
       "status": "ok",
-      "mysqlMs": 946,
-      "pintailMs": 564,
-      "rows": 10,
-      "pintailP95Ms": 624,
-      "sqlSha256": "e817335ed44aa5c55c81db1ff31dae8a5ebaf3dbe512cf5767fcc77be18dce76",
-      "answerSha256": "e7bdcab16a9136b0f48fcd4f2161e3f660395cedd73b4628049a1006015cefe0"
+      "mysqlMs": 1,
+      "pintailMs": 5,
+      "rows": 2
     },
     {
       "id": "q05-local-supplier-volume",
       "class": "join-wide",
       "status": "ok",
-      "mysqlMs": 799,
-      "pintailMs": 906,
-      "rows": 5,
-      "pintailP95Ms": 932,
-      "sqlSha256": "e47443c2fad86ce86e785fafc0a4685cefa82f57991c0a6d9ca38c331442f139",
-      "answerSha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08"
+      "mysqlMs": 2,
+      "pintailMs": 6,
+      "rows": 2
     },
     {
       "id": "q10-returned-item-reporting",
       "class": "join-high-cardinality",
       "status": "ok",
-      "mysqlMs": 394,
-      "pintailMs": 953,
-      "rows": 20,
-      "pintailP95Ms": 964,
-      "sqlSha256": "ae73bdb3715b0dc6f7ab574df8a59ee82711ee8aa27cdad9489228c62ce242bd",
-      "answerSha256": "b992bdd579523c78bcb64198ce409612057e5f8d1483493b723f3c26d96cdc93"
+      "mysqlMs": 2,
+      "pintailMs": 4,
+      "rows": 13
     }
   ],
   "gate": {
     "exactResults": true,
     "passed": true
-  },
-  "measurement": {
-    "runner": "benchmark/replay-tpch.ts",
-    "summary": "Medians of three measured runs after one warmup; every execution checked against live MySQL.",
-    "rawReport": "benchmark/evidence/q05-join-qualification/tpch-candidate.json",
-    "revision": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
-    "binarySha256": "c6d07a43a8771985bdfd079112a700001f8cb485b68952be5b827eab08312776",
-    "settledMemo": false,
-    "queryMemoryBytes": "4294967296",
-    "querySpillBytes": "17179869184",
-    "globalSpillBytes": "34359738368",
-    "mysqlBufferPoolBytes": "4294967296"
   }
 }

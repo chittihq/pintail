@@ -27,23 +27,35 @@ stays readable as a list of things to fix.
   requires both membership sides to be provably non-nullable: with a possible
   NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
   shapes reject.
-- A subquery in an OUTER join's ON condition that is correlated to the
-  join's LEFT side is refused. Dependent resolution exists only at Filter
-  level, so in a join condition the subquery ran without the outer context
-  it needs and the join matched too few rows - measured against MySQL 8.4,
-  three matches reported as one and two reported as none, with no error to
-  notice. Refusing is not the fix; it is what the engine can honestly say
-  until the rewrite lands, and a wrong count is worse than a rejection.
-  Correlating to the join's RIGHT side alone answers correctly and is
-  unaffected, as is an uncorrelated subquery, which is materialized during
-  planning. An INNER join's ON filters the rows WHERE filters, so a
-  correlated `IN` or `EXISTS` there is moved to WHERE and decorrelates into
-  a semi-join.
-  The rewrite that would lift the restriction cannot plant a semi-join
-  under the right input, because the correlation reaches the LEFT side and a
-  semi-join's inner rows are not visible outside it; it has to widen the
-  right side into a derived input carrying the correlation column, distinct
-  over that side's columns.
+- A subquery in a LEFT (or RIGHT) join's ON condition that reaches the
+  join's preserved side, and is not a non-negated `IN` or `EXISTS` over one
+  table correlated by equalities, runs on the dependent join path: the
+  subquery resolves once per distinct correlation value and each candidate
+  pair is tested row by row. The ON condition's plain equalities bucket the
+  candidates, so the cost follows the pairs those keys reach; with no such
+  equality every pair is tested. `NOT IN`, `NOT EXISTS`, inequality
+  correlations and subqueries with their own joins or grouping answer
+  there, slower than a hash join.
+- MySQL 8.4 with its default optimizer switches answers a correlated `IN`
+  or `EXISTS` in an outer join's ON condition wrongly when the subquery
+  carries filters of its own: its semi-join materialization drops them, so
+  the join matches rows the subquery excludes. Pintail answers the
+  statement as written, which is what MySQL returns with
+  `optimizer_switch='semijoin=off'`, so on this shape Pintail's result
+  differs from a default-configured MySQL's.
+- A table whose segments overlap after its source updates rows is read
+  through a merge on every scan until compaction removes the overlap, and
+  value pruning skips only segments older than everything overlapping them.
+  On 20,000,000 rows with one in a hundred updated, an unindexed full scan
+  took 33 s against 2.5 s in MySQL, and point or IN-list lookups on an
+  indexed column took 30-80 s against 1-2 ms, with every answer exact
+  (`benchmark/results-filters.md`). There are no secondary indexes: a point
+  lookup on a non-key column reads every segment its value might be in.
+- `x op ANY` and `x op ALL` compare a number with text values as numbers,
+  as MySQL 8.4 does over a table column. MySQL answers lexically when the
+  subquery reads string constants through a derived table (`3 < ANY (SELECT v
+  FROM (SELECT '2' AS v UNION ALL SELECT '10') t)` is 0 there), and Pintail
+  does not reproduce that form.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather

@@ -25,6 +25,240 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   1.26–1.51× SQL improvements on scan-bound shapes, with no material gain for wide aggregates. The
   benefit is workload-specific.
 
+### Fixed
+
+- `EXISTS` and `NOT EXISTS` over an ungrouped aggregate subquery - `EXISTS
+  (SELECT COUNT(*) FROM ... WHERE ...)` - held only where input rows
+  existed; the aggregate yields its one row regardless, as MySQL answers.
+- Two temporal operands of different types compared their texts: a DATE
+  never equalled the DATETIME at its midnight, nor a DATETIME the same
+  instant at another fractional precision. They now compare as instants in
+  comparisons, `<=>`, IN, BETWEEN, row IN and join keys, and `<=>` reads a
+  temporal literal as the other comparisons do.
+- BETWEEN with a NULL bound answered NULL where its other comparison
+  decides: `1 BETWEEN 2 AND NULL` is false, and `NOT BETWEEN ... AND NULL`
+  keeps the rows below the lower bound.
+- A DECIMAL compared with text compares as a double, the text read by its
+  numeric prefix or exponent: `total > '100.5x'` and `> '2e1'` compared
+  strings.
+- JSON integers past 2^53 no longer collide in comparison, grouping and
+  DISTINCT keys; `1` still equals `1.0`.
+- `x op ANY` and `x op ALL` over text values take their extremes as numbers
+  when `x` is a number, as MySQL does over a table column.
+- An exact number compared with a string compares as a double however the
+  string is spelled, so `'9007199254740992'` and `'9007199254740992x'` agree.
+- IN and BETWEEN compare their whole list under one type: a DECIMAL sharing
+  it with text or a float compares as a double, where DECIMAL members had
+  met each other as text; a text subject meets DECIMAL bounds the same way.
+- A DATE member of an `IN (SELECT ...)` or `= ANY` list of DATETIME values,
+  decorrelated or not, matches the instant at its midnight.
+- SUBSTRING with a negative start reaching past the first character answers
+  an empty string instead of the whole string, and LPAD or RPAD that must
+  pad with an empty pad string answers an empty string instead of NULL.
+- Binary strings go through SUBSTRING, TRIM, LPAD, RPAD, CONCAT_WS and LIKE
+  byte by byte, and return bytes, where bytes that were not UTF-8 raised an
+  error.
+- DATE_ADD and DATE_SUB keep a DATETIME's fractional seconds.
+- TIME values compare as times, not as text, so `-100:00:00` sorts below
+  `-00:00:01`; `TIME + 0` and numeric casts read the `HHMMSS.ffffff`
+  number, and ADDTIME and SUBTIME clamp at the TIME range.
+- An ENUM in a numeric context - `status = 3`, `status + 0`,
+  `CAST(status AS UNSIGNED)` - reads its declaration index, not its label.
+- COALESCE, IF and CASE over signed and unsigned BIGINT branches stay exact
+  instead of passing through a double, and JSON_LENGTH is a signed integer,
+  so `COALESCE(JSON_LENGTH(doc), -1)` stays an integer.
+- JSON_TYPE names a non-negative integer past 2^32 - 1 `UNSIGNED INTEGER`.
+- Equality between DECIMALs whose common type would need more than 38
+  digits compares by value instead of failing with a numeric overflow.
+- `x op ALL` and `x op ANY` accept a UNION subquery.
+- A query with a window function may sort by a column it does not select.
+
+### Tests
+
+- The MySQL differential oracle grew to 1,895 cases: typed result
+  comparison, a boundary fixture across integer, decimal, float, string,
+  binary and temporal limits, reviewed and seed-minimized regressions, and
+  a replay across storage layouts. Cases that diverge through a documented
+  limitation sit on a reviewed known-failure ledger that warns while they
+  fail and fails the run once they pass.
+
+## [0.1.5-rc1] - 2026-09-10
+
+Outer-join ON subqueries answered in every shape, WHERE clauses matched to
+MySQL at their edges, every row of a large result returned over the wire,
+and range filters that keep pruning on a table taking updates.
+
+### Added
+
+- `IS [NOT] TRUE`, `IS [NOT] FALSE` and `IS [NOT] UNKNOWN`; row-constructor
+  comparisons (`(a, b) = (1, 2)`, and `<>`, `<`, `<=`, `>`, `>=` decided by
+  the first pair that differs); `x op ANY (subquery)`, `SOME` and `ALL`,
+  answered from the subquery's count, non-NULL count and extremes so
+  three-valued logic and an empty subquery come out as `MySQL` has them;
+  and a JSON value compared with a number, which compares as JSON.
+
+- A range filter keeps pruning segments after a table takes updates. Value
+  pruning let a segment go only when it overlapped no other segment at all,
+  so the first flush of updated rows over a table's base switched pruning
+  off for every base segment, and a filter on a timestamp column read the
+  whole table - on a replicated table taking updates, always. A segment now
+  prunes when every segment overlapping it is newer: each row it holds is
+  current and fails the filter, or stale behind a newer version that
+  decides for itself. A segment overlapping an older one is still read, so
+  no stale version comes back.
+
+- A correlated `IN` or `EXISTS` in a LEFT or RIGHT join's ON condition that
+  reaches the join's preserved side is answered instead of refused. The
+  subquery's rows do not depend on the outer row - only which of them a
+  row asks for does - so the joined side is widened by the subquery's
+  DISTINCT rows on the equality it names, and the correlation becomes one
+  more join key. DISTINCT keeps the answer exact: a joined row meets at most
+  one subquery row per preserved row, so no match is duplicated and an
+  unmatched row stays null-extended. It runs as hash joins with no per-row
+  subquery executions.
+- The shapes that widening does not take - `NOT IN`, `NOT EXISTS`,
+  inequality correlations, subqueries with their own joins or grouping -
+  are answered on the dependent join path instead of refused. Each
+  candidate pair of rows resolves the subquery with both rows in scope,
+  memoized per distinct correlation value, and the ON condition's plain
+  equalities bucket the candidates: a left row meets only the right rows
+  its keys reach, where the path used to test every pair.
+
+### Fixed
+
+- A DECIMAL compared with a string literal or inside BETWEEN was compared
+  as its text carrier: `balance > '100.5'` let `99.00` through, and
+  `BETWEEN -500 AND -0.01` sorted -12.50 below -500. A plain-number string
+  literal is read as a number against an exact number, and a DECIMAL BETWEEN
+  is bound as the two exact comparisons MySQL defines it to be, so every
+  execution path compares by value.
+- `NULL NOT IN` an empty list is true and `NULL IN` one false; the list
+  evaluator answered NULL, so an outer join scoped by a membership subquery
+  dropped rows whose list came back empty.
+- Result metadata follows MySQL 8.4: `TIMESTAMP_FLAG` only on a TIMESTAMP
+  that initializes or updates itself, and an integer of up to eleven digits
+  declared INT when a grouping or a materialized derived table stores it,
+  while wider integers and merged derived tables keep their types.
+- A MySQL-wire result stopped at 10,000 rows without an error. The client
+  protocol has no way to say a result was cut, so a report over 43,000 rows
+  arrived as a complete-looking 10,000. The wire now returns every row,
+  bounded by the per-query memory ceiling as before, and
+  `PINTAIL_MAX_RESULT_ROWS` sets an optional row ceiling that refuses a
+  larger result instead of truncating it. The HTTP query API keeps its
+  preview cap, which it reports as truncated.
+- A DATETIME or DATE compared with a literal written any way but its
+  canonical text answered wrongly, silently: `created_at = '2024-03-01'`
+  matched nothing, a date-only upper bound in `BETWEEN` or `IN` dropped the
+  rows at that midnight, `> 20240301` and `>= '2024-3-1'` compared as
+  strings, and `'...56.000'` missed its own value. The literal is now read
+  as `MySQL` reads it and rewritten into the column's canonical form before
+  comparing; an impossible date like `'2024-02-30'` is refused, as `MySQL`
+  refuses it.
+- `NOT EXISTS` or `IN` decorrelated into a semi- or anti-join left the
+  inner table's columns visible to the outer query, so an outer column the
+  inner table shared by name - `SELECT id ... WHERE NOT EXISTS (SELECT 1
+  FROM users u ...)` - was reported ambiguous.
+- MySQL 8.4 with default optimizer switches drops a subquery's own filters
+  when it materializes a correlated `IN` or `EXISTS` from an outer join's ON
+  condition, so it matches rows the subquery excludes. The refusal shipped
+  in 0.1.3-rc1 was built on that answer: the differential suite compared
+  against it and read Pintail's correct count as too low. Pintail's answer
+  is what MySQL itself returns with `semijoin=off`, which is now the
+  reference the suites compare these shapes against.
+
+### Fixed
+
+- Browser exceptions and Nuxt errors are reported to the configured Sentry
+  project with deployment release tags. Reporting excludes component props,
+  request details and navigation breadcrumbs; source maps can be uploaded
+  during the dashboard build.
+- The SQL console renders 100 result rows per page instead of mounting the
+  entire result set. Large results no longer create thousands of offscreen
+  components, and changing pages keeps every returned row accessible.
+- Chart tooltip HTML rendering releases detached Vue components and no
+  longer caches an unlimited history of payloads.
+
+## [0.1.4] - 2026-09-10
+
+Everything in 0.1.3-rc1, gated with the full stable chain, plus the two
+replication fixes below.
+
+### Fixed
+
+- A source's double-quoted identifiers are read as identifiers. A source
+  running with `ANSI_QUOTES` writes them that way, and the DDL lexer read
+  them as string literals, so an ordinary `CREATE TABLE` did not parse. The
+  source's SQL mode does not travel with the statement, so it is parsed as
+  written and, on failure, parsed again with double quotes delimiting
+  identifiers. Nothing loses a valid reading to that retry: the first parse
+  rejects a double-quoted token outright, so any statement carrying one has
+  already failed by the time the retry runs.
+
+- A DDL nobody can parse no longer stops a database replicating. The
+  replication pass returned on an unreadable statement and the next pass
+  resumed at the same offset and failed identically, so one such statement
+  froze every table in that database at one binlog position indefinitely.
+  The tables the statement NAMES are now quarantined for resync and the
+  stream moves on: a DDL that alters a table cannot avoid naming it, so
+  nothing that changed is missed, while a name appearing in a comment costs
+  a resync rather than a wrong answer.
+
+- The dashboard reports browser errors through its runtime Sentry
+  configuration, so a failure in the page reaches the same place a failure
+  in the server does.
+
+- The dashboard bounds how much of a SQL result it renders, and releases
+  its chart tooltip components, so a large answer or a long session no
+  longer grows the page without limit.
+
+## [0.1.3-rc1] - 2026-09-10
+
+### Fixed
+
+- A subquery in an OUTER join's ON condition correlated to the join's LEFT
+  side is refused rather than answered. Dependent resolution exists only at
+  Filter level, so in a join condition the subquery ran without the outer
+  context it needs and the join matched too few rows: measured against
+  MySQL 8.4, three matches reported as one and two reported as none, with
+  no error to notice. Refusing is not the fix - the rewrite that would lift
+  the restriction has to widen the join's right input, because a semi-join
+  under it cannot see the left side - but a wrong count is worse than a
+  rejection. Correlating to the join's RIGHT side alone answers correctly
+  and is unaffected, as is an uncorrelated subquery.
+
+- A failed query no longer holds a worker for as long as the client allows.
+  The refused shape above resolved once per correlation value on a single
+  thread, so a report that carried it consumed a core until the client's
+  deadline elapsed; under several concurrent readers that starves the
+  queries that would have answered.
+
+- The resumed replication position is reported when something about it
+  changes - a new binlog file, a different target count, a table newly
+  blocked or paused - rather than on every supervised pass. A pass is
+  non-blocking and runs every few seconds per database, so the line printed
+  hundreds of times an hour and buried the log it was meant to clarify.
+
+- Telemetry reports the release a deployment is running. Every event
+  carried the workspace crate version, which does not track the released
+  version, so an issue named a build nobody deployed. A deployment's
+  PINTAIL_BUILD_VERSION is used when PINTAIL_RELEASE is unset.
+
+- A deployment can set its spill limits. The engine reads a per-query and a
+  process-wide spill quota and the compose file named neither, so setting
+  them had no effect. A query that exceeds its quota fails rather than
+  falling back to a slower plan, and the per-query default of one gibibyte
+  is small for a multi-table join.
+
+### Performance
+
+- A correlated `IN` or `EXISTS` in an INNER join's ON condition decorrelates
+  into a semi-join. An INNER join's ON filters the rows WHERE filters, so
+  the same predicate asked the same question from either place, but only
+  WHERE reached the rewrites: the ON placement resolved once per distinct
+  correlation value instead. Measured on a three-table fixture, that
+  placement went from one inner execution per correlation value to none,
+  answering identically.
+
 ## [0.1.2] - 2026-09-09
 
 The release candidate's contents plus the entries below, gated with the

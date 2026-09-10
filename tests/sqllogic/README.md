@@ -1,41 +1,80 @@
 # SQL logic corpus
 
-The ignored `mysql_oracle` integration test runs 874 deterministic queries
-against MySQL 8.4 and Pintail over pinned storage snapshots, then compares
-normalized ordered rows.
+The ignored `mysql_oracle` integration test runs 1,714 deterministic queries
+against MySQL 8.4 and Pintail over pinned storage snapshots. It compares
+normalized rows in query order when ordering is specified, and as multisets
+otherwise. Exact values compare byte-for-byte; floating-point results use the
+harness's tolerance.
 
 Coverage layers:
 
-1. **Parametric loops** (~557) — scalar templates with a varying integer.
-2. **Hand-written edges** (~265) — windows, decimals, JSON, set ops, review fixes.
-3. **Typed diversify** (40) — `orders` seed with `DECIMAL` / `DATETIME` / `JSON`
-   columns and joins against `users`.
+1. **Parametric loops** — scalar templates with varying inputs.
+2. **Hand-written edges** — windows, decimals, JSON, set operations, SQL modes,
+   collations, and optimizer regressions.
+3. **Typed tables and interactions** — decimal, datetime, enum, and JSON
+   columns, plus joins against nullable text fixtures.
+
+The first interaction expansion adds 64 distinct query shapes across eight families:
+NULL truth tables, outer joins with NULLs, empty/all-NULL aggregates,
+conditional decimal aggregates, nullable window frames, aggregate subqueries,
+calendar boundaries, and collation-sensitive expressions. Outer-join cases
+exercise predicate placement in both `ON` and `WHERE`; window cases include
+empty frames and NULL values beside out-of-partition defaults. Every multirow
+case has a deterministic ordering or uses multiset comparison.
+
+A second expansion adds 80 distinct shapes across ten more families: JSON
+missing values versus JSON/SQL NULL, set multiplicities, derived-table limits,
+CTE reuse, ordered concatenation, window peers and partitions, enum operations,
+NULL-safe joins, string boundaries, and numeric/temporal NULL propagation.
+Set-operation cases compare multisets so duplicate counts matter without
+assuming an unspecified row order.
+
+The oracle evaluates every case even after a Pintail execution error or a
+mismatch. Its failure summary counts all failed cases and prints the first ten;
+passing evidence is exported only when the entire corpus passes. MySQL must
+successfully execute the queries before Pintail results are compared.
+
+This corpus tests planner/executor semantics over snapshots. It does not by
+itself prove snapshot ingestion, CDC, schema-change, or wire-protocol parity;
+those paths need the separate end-to-end gates. The case count is a regression
+inventory, not a claim of complete MySQL compatibility.
 
 A non-Docker unit test (`documented_rejects_stay_explicit`) pins limitation
 shapes that must fail closed. Inventory:
 
 ```sh
+PINTAIL_ORACLE_INVENTORY=validate-out/oracle-inventory.json CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test mysql_oracle oracle_case_inventory_matches_the_declared_gate
 bun run scripts/oracle-coverage.ts
 ```
 
-The harness starts a uniquely named MySQL container, batches the queries
-through one client process, and removes the container even when a comparison
-fails.
+The harness resolves the selected MySQL image to an immutable digest, starts a
+uniquely named container, and queries it through a typed MySQL connection. It
+removes the container even when a comparison fails. SQL NULL is separate from
+text and binary bytes are lossless. Float tolerance requires approximate types
+on both sides. Every run writes `validate-out/oracle-outcomes.json`, including
+all failures; passing evidence remains conditional on a complete PASS.
 
-Run the explicit Docker-backed gate with:
+Run these commands on the configured build host. Run the fixed-corpus
+Docker-backed gate with:
 
 ```sh
-cargo test -p pintail-sqllogic --test mysql_oracle -- --ignored --nocapture
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test mysql_oracle matches_configured_mysql_for_fixed_corpus -- --ignored --nocapture
 ```
 
 Run inventory / reject unit tests without Docker:
 
 ```sh
-cargo test -p pintail-sqllogic --test mysql_oracle
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test mysql_oracle
 ```
 
 Run the physical pruning gate with:
 
 ```sh
-cargo test -p pintail-sqllogic --test plan_quality
+CARGO_TARGET_DIR=target ~/.cargo/bin/cargo test -p pintail-sqllogic --test plan_quality
 ```
+
+The boundary fixture adds signed/unsigned extremes, precision-38 and scaled
+decimals, approximate numbers, nullable Unicode and binary strings, CHAR, DATE,
+TIME, DATETIME precision 0/3/6, and UTC TIMESTAMP values. Its 341 query shapes
+exercise conversion contexts, quantified subqueries, storage-dependent string
+behavior, temporal precision, windows, and JSON identity.

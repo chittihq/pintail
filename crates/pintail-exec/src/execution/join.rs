@@ -2378,6 +2378,7 @@ pub(super) fn execute_nested_loop_join(
     left_columns: &[BoundColumn],
     right_columns: &[BoundColumn],
     kind: BoundJoinKind,
+    keys: &[(BoundExpr, BoundExpr)],
     condition: &BoundExpr,
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
@@ -2389,13 +2390,45 @@ pub(super) fn execute_nested_loop_join(
         .iter()
         .map(|column| column.data_type)
         .collect::<Vec<_>>();
+    let loop_keys = LoopKeys::compile(keys, left_columns, right_columns, collation)?;
     let mut right_rows = LoopRows::new();
+    // Each in-memory right row's key, in row order. A right side that
+    // spills is replayed whole instead, so its keys are dropped.
+    let mut right_keys: Vec<Option<JoinHashKey>> = Vec::new();
+    let mut keys_reserved = 0_usize;
     while let Some(batch) = right_input.next_batch(memory)? {
         for row in batch.selection().selected_rows() {
             right_rows.push(batch_row(&batch, row)?, memory)?;
+            let Some(loop_keys) = &loop_keys else {
+                continue;
+            };
+            if right_rows.writer.is_some() {
+                memory.release(keys_reserved);
+                keys_reserved = 0;
+                right_keys = Vec::new();
+                continue;
+            }
+            let key = LoopKeys::key(&loop_keys.right, &batch, row)?;
+            let bytes = std::mem::size_of::<Option<JoinHashKey>>()
+                .saturating_add(key.as_ref().map_or(0, JoinHashKey::heap_bytes));
+            memory.reserve(bytes)?;
+            keys_reserved = keys_reserved.saturating_add(bytes);
+            right_keys.push(key);
         }
     }
     right_rows.seal()?;
+    let buckets = match &loop_keys {
+        Some(_) if right_rows.run.is_none() => {
+            let mut buckets: HashMap<JoinHashKey, Vec<usize>> = HashMap::new();
+            for (index, key) in right_keys.into_iter().enumerate() {
+                if let Some(key) = key {
+                    buckets.entry(key).or_default().push(index);
+                }
+            }
+            Some(buckets)
+        }
+        _ => None,
+    };
     let mut output = LoopRows::new();
     // One memo for the whole join: the ON condition's subqueries are keyed
     // by the (left, right) values they substitute, and a nested loop
@@ -2410,8 +2443,38 @@ pub(super) fn execute_nested_loop_join(
             memory.reserve(left_bytes)?;
             memory.check_interruption()?;
             let mut matches = 0_usize;
-            let mut replay = right_rows.reader()?;
-            while let Some(right) = replay.next_row()? {
+            // With buckets, only the right rows sharing this row's key are
+            // candidates, and a NULL key reaches none; without, every row.
+            let bucket = match (&loop_keys, &buckets) {
+                (Some(loop_keys), Some(buckets)) => Some(
+                    LoopKeys::key(&loop_keys.left, &left_batch, row)?
+                        .and_then(|key| buckets.get(&key))
+                        .map_or(&[][..], Vec::as_slice),
+                ),
+                _ => None,
+            };
+            let mut replay = match bucket {
+                Some(_) => None,
+                None => Some(right_rows.reader()?),
+            };
+            let mut position = 0_usize;
+            loop {
+                let right = match (bucket, &mut replay) {
+                    (Some(bucket), _) => {
+                        let Some(index) = bucket.get(position) else {
+                            break;
+                        };
+                        position += 1;
+                        right_rows.rows[*index].clone()
+                    }
+                    (None, Some(replay)) => {
+                        let Some(right) = replay.next_row()? else {
+                            break;
+                        };
+                        right
+                    }
+                    (None, None) => unreachable!("an unbucketed row replays the right side"),
+                };
                 memory.ensure_transient(
                     estimated_row_payload_bytes(&left)
                         .saturating_add(estimated_row_payload_bytes(&right)),
@@ -2501,9 +2564,71 @@ pub(super) fn execute_nested_loop_join(
     }
     super::record_dependent_memo(memo.finish(memory));
     let retained = right_rows.reserved;
+    drop(buckets);
     drop(right_rows);
-    memory.release(retained);
+    memory.release(retained.saturating_add(keys_reserved));
     output.finish(memory, collation)
+}
+
+/// The compiled equality keys a dependent join buckets its right input by,
+/// each side with the key mode its pair hashes under - the same
+/// normalization a hash join applies, so two values the equality calls equal
+/// land in one bucket.
+struct LoopKeys {
+    left: Vec<(CompiledExpr, JoinKeyMode)>,
+    right: Vec<(CompiledExpr, JoinKeyMode)>,
+}
+
+impl LoopKeys {
+    /// `None` when there are no keys, or a pair has no hashable mode - the
+    /// join then tests every pair, which is always correct.
+    fn compile(
+        keys: &[(BoundExpr, BoundExpr)],
+        left_columns: &[BoundColumn],
+        right_columns: &[BoundColumn],
+        collation: Collation,
+    ) -> Result<Option<Self>, ExecError> {
+        if keys.is_empty() {
+            return Ok(None);
+        }
+        let mut left = Vec::with_capacity(keys.len());
+        let mut right = Vec::with_capacity(keys.len());
+        for (left_key, right_key) in keys {
+            let Some(mode) = super::hash_join_key_mode(
+                left_key.data_type,
+                right_key.data_type,
+                super::key_collation_of(left_key, collation),
+            ) else {
+                return Ok(None);
+            };
+            left.push((
+                CompiledExpr::compile(left_key, left_columns, collation)?,
+                mode,
+            ));
+            right.push((
+                CompiledExpr::compile(right_key, right_columns, collation)?,
+                mode,
+            ));
+        }
+        Ok(Some(Self { left, right }))
+    }
+
+    /// One side's key for a row, or `None` when any part is NULL: an
+    /// equality with NULL is never true, so such a row meets no candidate.
+    fn key(
+        side: &[(CompiledExpr, JoinKeyMode)],
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<Option<JoinHashKey>, ExecError> {
+        let mut parts = Vec::with_capacity(side.len());
+        for (expr, mode) in side {
+            let Some(part) = normalized_join_key(expr.evaluate(batch, row)?, *mode)? else {
+                return Ok(None);
+            };
+            parts.push(part);
+        }
+        Ok(Some(JoinHashKey::Composite(parts)))
+    }
 }
 
 #[cfg(test)]

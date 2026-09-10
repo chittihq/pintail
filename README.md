@@ -154,14 +154,14 @@ and joined shapes.
 
 | Query | MySQL | Pintail (no memo) | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Full table count | 1,437 ms | 4 ms | 5 ms | 1.25× |
-| Filtered count | 587 ms | 44 ms | 16 ms | 0.36× |
-| Group by status | 34,398 ms | 131 ms | 51 ms | 0.39× |
-| Region × status breakdown | 13,054 ms | 158 ms | 185 ms | 1.17× |
-| Monthly revenue (2023) | 5,462 ms | 94 ms | 36 ms | 0.38× |
-| Top 10 spenders | 889,417 ms | 407 ms | 136 ms | 0.33× |
-| Regional analytics | 53,410 ms | 370 ms | 127 ms | 0.34× |
-| Join users + orders | 796,769 ms | 370 ms | 149 ms | 0.40× |
+| Full table count | 1,454 ms | 5 ms | 5 ms | 1.00× |
+| Filtered count | 586 ms | 50 ms | 16 ms | 0.32× |
+| Group by status | 34,866 ms | 129 ms | 51 ms | 0.40× |
+| Region × status breakdown | 13,144 ms | 155 ms | 234 ms | 1.51× |
+| Monthly revenue (2023) | 5,525 ms | 107 ms | 37 ms | 0.35× |
+| Top 10 spenders | 897,953 ms | 446 ms | 181 ms | 0.41× |
+| Regional analytics | 54,231 ms | 398 ms | 158 ms | 0.40× |
+| Join users + orders | 894,286 ms | 360 ms | 166 ms | 0.46× |
 
 **Repeated queries — memo hit vs execution.** Pintail keeps an exact-result
 memo for aggregates over a settled snapshot, invalidated by any ingest, so
@@ -172,14 +172,14 @@ and not a measure of engine speed.
 
 | Query | MySQL | Pintail (memo) | CH RMT+FINAL |
 |---|---:|---:|---:|
-| Full table count | 1,437 ms | 4 ms | 5 ms |
-| Filtered count | 587 ms | 4 ms | 14 ms |
-| Group by status | 34,398 ms | 5 ms | 47 ms |
-| Region × status breakdown | 13,054 ms | 4 ms | 178 ms |
-| Monthly revenue (2023) | 5,462 ms | 5 ms | 36 ms |
-| Top 10 spenders | 889,417 ms | 67 ms | 133 ms |
-| Regional analytics | 53,410 ms | 7 ms | 128 ms |
-| Join users + orders | 796,769 ms | 4 ms | 145 ms |
+| Full table count | 1,454 ms | 5 ms | 5 ms |
+| Filtered count | 586 ms | 5 ms | 16 ms |
+| Group by status | 34,866 ms | 5 ms | 48 ms |
+| Region × status breakdown | 13,144 ms | 5 ms | 230 ms |
+| Monthly revenue (2023) | 5,525 ms | 5 ms | 36 ms |
+| Top 10 spenders | 897,953 ms | 68 ms | 176 ms |
+| Regional analytics | 54,231 ms | 5 ms | 154 ms |
+| Join users + orders | 894,286 ms | 5 ms | 168 ms |
 
 **Novel queries — memo-cold constants.** Distinct predicate variants the
 memo has never seen, run once per engine with no warmup, so neither the
@@ -188,10 +188,10 @@ engine-speed question above.
 
 | Query | MySQL | Pintail | CH RMT+FINAL | vs CH |
 |---|---:|---:|---:|---:|
-| Filtered count, novel constant | 1,125 ms | 4 ms | 40 ms | 10.00× |
-| Group by region (novel group column) | 12,949 ms | 307 ms | 79 ms | 0.26× |
-| Monthly revenue, novel year | 8,226 ms | 4 ms | 36 ms | 9.00× |
-| Regional analytics, novel range | 56,145 ms | 369 ms | 138 ms | 0.37× |
+| Filtered count, novel constant | 1,074 ms | 5 ms | 41 ms | 8.20× |
+| Group by region (novel group column) | 13,455 ms | 303 ms | 75 ms | 0.25× |
+| Monthly revenue, novel year | 8,582 ms | 6 ms | 39 ms | 6.50× |
+| Regional analytics, novel range | 55,518 ms | 414 ms | 171 ms | 0.41× |
 
 **Concurrency — mixed Q2–Q8.** Simultaneous clients, each call taking the
 next of Q2 through Q8 in turn, against both engines executing (memo off,
@@ -200,10 +200,10 @@ together show whether an engine holds its latency while it adds throughput.
 
 | Clients | Pintail /s | Pintail p95 | CH /s | CH p95 |
 |---:|---:|---:|---:|---:|
-| 1 | 4.2 | 449 ms | 10 | 184 ms |
-| 4 | 6.6 | 1319 ms | 4.6 | 1507 ms |
-| 8 | 10.5 | 1721 ms | 4.3 | 3025 ms |
-| 16 | 19.5 | 1857 ms | 4 | 8362 ms |
+| 1 | 4.1 | 456 ms | 8.3 | 235 ms |
+| 4 | 4.9 | 1520 ms | 3.5 | 2091 ms |
+| 8 | 9.4 | 1851 ms | 3.2 | 4215 ms |
+| 16 | 17.3 | 2032 ms | 2.9 | 10662 ms |
 
 ClickHouse is measured in both configurations: plain `MergeTree` for its
 raw-speed ceiling, and `ReplacingMergeTree` read with `final = 1`, which is
@@ -218,12 +218,12 @@ them with:
 
 Caveats worth stating plainly: one synthetic dataset and eight query shapes,
 on a shared host, measured as
-`warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-09-03T08:22:24.512Z`. Enough to characterise these
+`warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-09-09T13:34:50.971Z`. Enough to characterise these
 queries and not enough to support a general claim about either engine. MySQL
 runs with a 1 GB buffer pool, so its column is a baseline being escaped
 rather than a tuned competitor.
 
-<sub>Generated from `benchmark/results.json` (2026-09-10T07:51:56.721Z) by
+<sub>Generated from `benchmark/results.json` (2026-09-10T07:30:19.953Z) by
 `benchmark/render-readme-table.ts` — do not edit by hand.</sub>
 
 <!-- benchmark:end -->

@@ -4,8 +4,9 @@
 //! correlated `IN` or `EXISTS` written in either is offered to the
 //! decorrelation rewrites and becomes a semi-join. An OUTER join's ON does
 //! not filter the same rows - it decides which right rows match, while the
-//! left row survives either way - so a subquery there still resolves per
-//! distinct correlation value on the dependent path.
+//! left row survives either way - so a subquery there that reaches the
+//! join's left side widens the right input instead, and one correlated to
+//! the right side alone resolves per correlation value on the dependent path.
 //!
 //! The statements here ask the SAME question of the same rows and differ
 //! only in where the correlated `IN` is written. Inner executions are
@@ -192,16 +193,6 @@ fn catalog_of(_fixture: &Fixture) -> CatalogSnapshot {
     CatalogSnapshot::new([database]).expect("catalog")
 }
 
-/// Binds one statement and returns the error text it is refused with.
-fn plan_error(fixture: &Fixture, sql: &str) -> String {
-    let statement = parse_statement(sql).expect("parse");
-    let catalog = catalog_of(fixture);
-    match Binder::new(&catalog, Some("app")).bind(&statement) {
-        Ok(_) => panic!("expected the statement to be refused"),
-        Err(error) => error.to_string(),
-    }
-}
-
 /// Runs one statement, returning its rows and the inner executions it took.
 fn measure(fixture: &Fixture, sql: &str) -> (usize, u64) {
     let _counter = COUNTER
@@ -281,16 +272,105 @@ fn a_correlated_in_decorrelates_from_where_and_from_an_inner_join_condition() {
     );
 }
 
-/// An OUTER join's ON is a different question. A subquery correlated to the
-/// join's LEFT side is refused there: dependent resolution exists only at
-/// Filter level, so it ran without the outer context it needs and the join
-/// matched too few rows - measured against `MySQL`, three matches reported as
-/// one. Correlating to the RIGHT side alone still answers, on the dependent
-/// path.
-#[test]
-fn an_outer_join_condition_refuses_a_subquery_correlated_to_its_left_side() {
-    let fixture = fixture();
+/// Left rows, and matched right rows, that an outer join scoped by a
+/// membership list returns: each class's submissions for its item whose
+/// member holds one of the first `limit` memberships in the class's own
+/// section. Computed from the fixture's formulas, not by the engine.
+fn scoped_join_answer(limit: u64) -> (usize, usize) {
+    let people = SECTIONS * MEMBERS_PER_SECTION;
+    let member = |submission: u64| submission % people;
+    let mut rows = 0;
+    let mut matched = 0;
+    for class in 1..=CLASSES {
+        let found = (1..=people)
+            .filter(|submission| submission % 60 == class % 60)
+            .filter(|submission| {
+                (1..=limit).any(|membership| {
+                    membership % people == member(*submission)
+                        && membership % SECTIONS == class % SECTIONS
+                })
+            })
+            .count();
+        rows += found.max(1);
+        matched += found;
+    }
+    (rows, matched)
+}
 
+/// An OUTER join's ON is a different question: the left row survives
+/// whether or not the membership holds. A subquery correlated to the
+/// join's LEFT side is answered by widening the right input with the
+/// DISTINCT membership pairs, so it runs no dependent executions, and it
+/// must return exactly the rows the fixture's formulas say - including the
+/// null-extended classes no membership reaches.
+#[test]
+fn an_outer_join_condition_correlated_to_its_left_side_widens_the_right_input() {
+    let fixture = fixture();
+    let (rows, matched) = scoped_join_answer(100);
+    assert!(
+        rows > matched && matched > 0,
+        "the fixture leaves some classes unmatched and matches others",
+    );
+    let membership_in = "s.member_id IN ( \
+           SELECT m.member_id FROM memberships m \
+           WHERE m.section_id = c.section_id AND m.membership_id <= 100)";
+    let membership_exists = "EXISTS ( \
+           SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
+           AND c.section_id = m.section_id AND m.membership_id <= 100)";
+    for predicate in [membership_in, membership_exists] {
+        let (all_rows, executions) = measure(
+            &fixture,
+            &format!(
+                "SELECT c.class_id, s.submission_id FROM classes c \
+                 LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate}"
+            ),
+        );
+        assert_eq!(
+            all_rows, rows,
+            "every class, null-extended when unmatched: {predicate}"
+        );
+        assert_eq!(
+            executions, 0,
+            "the widened join runs no dependent executions: {predicate}"
+        );
+        let (matched_rows, _) = measure(
+            &fixture,
+            &format!(
+                "SELECT c.class_id, s.submission_id FROM classes c \
+                 LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate} \
+                 WHERE s.submission_id IS NOT NULL"
+            ),
+        );
+        assert_eq!(
+            matched_rows, matched,
+            "only the scoped submissions match: {predicate}"
+        );
+    }
+
+    // The pair table is the rewrite's, not the query's: `*` shows the two
+    // tables the statement names and nothing else.
+    let catalog = catalog_of(&fixture);
+    let statement = parse_statement(&format!(
+        "SELECT * FROM classes c LEFT JOIN submissions s \
+         ON s.item_id = c.item_id AND {membership_in}"
+    ))
+    .expect("parse");
+    let bound = Binder::new(&catalog, Some("app"))
+        .bind(&statement)
+        .expect("bind");
+    assert_eq!(
+        bound.projection.len(),
+        6,
+        "classes' three columns and submissions' three"
+    );
+}
+
+/// Correlating to the RIGHT side alone needs nothing from the left, so it
+/// answers on the dependent path, one execution per correlation value, as
+/// it did before the widening existed.
+#[test]
+fn an_outer_join_condition_correlated_to_its_right_side_stays_dependent() {
+    let fixture = fixture();
     let (rows, executions) = measure(
         &fixture,
         "SELECT COUNT(*) AS n FROM classes c \
@@ -304,17 +384,107 @@ fn an_outer_join_condition_refuses_a_subquery_correlated_to_its_left_side() {
         executions > 0,
         "and does so on the dependent path, one execution per correlation value",
     );
+}
 
-    let refused = plan_error(
-        &fixture,
-        "SELECT COUNT(*) AS n FROM classes c \
-         LEFT JOIN submissions s ON s.item_id = c.item_id \
-         AND s.member_id IN ( \
-           SELECT m.member_id FROM memberships m WHERE m.section_id = c.section_id \
-         )",
-    );
-    assert!(
-        refused.contains("left side"),
-        "correlating to the join's left side is refused, not answered: {refused}",
-    );
+/// Left rows, and matched right rows, of `classes LEFT JOIN submissions` on
+/// the item plus `accepts`, over the classes in `classes`. Computed from the
+/// fixture's formulas, not by the engine.
+fn outer_join_answer(
+    classes: std::ops::RangeInclusive<u64>,
+    accepts: impl Fn(u64, u64) -> bool,
+) -> (usize, usize) {
+    let people = SECTIONS * MEMBERS_PER_SECTION;
+    let mut rows = 0;
+    let mut matched = 0;
+    for class in classes {
+        let found = (1..=people)
+            .filter(|submission| submission % 60 == class % 60)
+            .filter(|submission| accepts(class, *submission))
+            .count();
+        rows += found.max(1);
+        matched += found;
+    }
+    (rows, matched)
+}
+
+/// Whether a class accepts a submission, by the fixture's formulas.
+type Accepts<'a> = dyn Fn(u64, u64) -> bool + 'a;
+
+/// Whether the submission's member holds one of the first `limit`
+/// memberships in a section `section` accepts.
+fn holds_membership(submission: u64, limit: u64, section: impl Fn(u64) -> bool) -> bool {
+    let people = SECTIONS * MEMBERS_PER_SECTION;
+    (1..=limit).any(|membership| {
+        membership % people == submission % people && section(membership % SECTIONS)
+    })
+}
+
+/// The shapes the widening does not take run on the dependent join path,
+/// which resolves the subquery against each candidate pair. Each must
+/// return the rows the fixture's formulas say, null-extended classes
+/// included: classes 100 to 123 mix sections no early membership reaches
+/// with sections it does.
+#[test]
+fn an_outer_join_condition_answers_what_it_cannot_widen() {
+    let fixture = fixture();
+    let classes = 100..=123;
+    let in_section = |class: u64, submission: u64| {
+        holds_membership(submission, 100, |section| section == class % SECTIONS)
+    };
+    let below_section = |class: u64, submission: u64| {
+        holds_membership(submission, 100, |section| section < class % SECTIONS)
+    };
+    let shapes: [(&str, &Accepts<'_>); 6] = [
+        (
+            "s.member_id NOT IN (SELECT m.member_id FROM memberships m \
+             WHERE m.section_id = c.section_id AND m.membership_id <= 100)",
+            &|class, submission| !in_section(class, submission),
+        ),
+        (
+            "NOT EXISTS (SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
+             AND m.section_id = c.section_id AND m.membership_id <= 100)",
+            &|class, submission| !in_section(class, submission),
+        ),
+        (
+            "EXISTS (SELECT 1 FROM memberships m WHERE m.member_id = s.member_id \
+             AND m.section_id < c.section_id AND m.membership_id <= 100)",
+            &below_section,
+        ),
+        (
+            "s.member_id IN (SELECT m.member_id FROM memberships m \
+             JOIN classes c2 ON c2.section_id = m.section_id \
+             WHERE c2.class_id = c.class_id AND m.membership_id <= 100)",
+            &in_section,
+        ),
+        (
+            "s.member_id IN (SELECT m.member_id FROM memberships m \
+             WHERE m.section_id = c.section_id AND m.membership_id <= 100 \
+             GROUP BY m.member_id HAVING COUNT(*) >= 1)",
+            &in_section,
+        ),
+        (
+            "s.member_id NOT IN (SELECT m.member_id FROM memberships m \
+             WHERE m.section_id < c.section_id AND m.membership_id <= 100)",
+            &|class, submission| !below_section(class, submission),
+        ),
+    ];
+    for (predicate, accepts) in shapes {
+        let (rows, matched) = outer_join_answer(classes.clone(), accepts);
+        let join = format!(
+            "SELECT c.class_id, s.submission_id FROM classes c \
+             LEFT JOIN submissions s ON s.item_id = c.item_id AND {predicate} \
+             WHERE c.class_id BETWEEN 100 AND 123"
+        );
+        let (all_rows, _) = measure(&fixture, &join);
+        assert_eq!(
+            all_rows, rows,
+            "every class, null-extended when unmatched: {predicate}"
+        );
+        let (matched_rows, _) =
+            measure(&fixture, &format!("{join} AND s.submission_id IS NOT NULL"));
+        assert_eq!(
+            matched_rows, matched,
+            "exactly the accepted submissions: {predicate}"
+        );
+    }
 }

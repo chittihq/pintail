@@ -1,0 +1,139 @@
+{
+  "cases": [
+    {
+      "sql": "SELECT SUBSTRING(txt, -8, 2) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 21,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -8, 2) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -5, 1) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 51,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -5, 1) FROM bounds WHERE id >= 6 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -6, 6) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 80,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -6, 6) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT approx IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 130,
+      "originalSQL": "SELECT id, approx IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -9, 10) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 132,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -9, 10) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -3, 1) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 135,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -3, 1) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -7, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 275,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -7, 9) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -12, 5) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 286,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -12, 5) FROM bounds WHERE id >= 3 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -2, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 297,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -2, 9) FROM bounds WHERE id >= 3 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -10, 10) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 298,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -10, 10) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -5, 4) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 12648430,
+      "index": 324,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -5, 4) FROM bounds WHERE id >= 2 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -12, 9) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "NO_UNSIGNED_SUBTRACTION",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 2703025502,
+      "index": 43,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -12, 9) FROM bounds WHERE id >= 4 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT SUBSTRING(txt, -12, 8) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 2703025502,
+      "index": 80,
+      "originalSQL": "SELECT id, SUBSTRING(txt, -12, 8) FROM bounds WHERE id >= 1 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 2703025502,
+      "index": 240,
+      "originalSQL": "SELECT id, n IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 5 ORDER BY 1 LIMIT 8"
+    },
+    {
+      "sql": "SELECT u IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds ORDER BY 1 LIMIT 8",
+      "sqlMode": "",
+      "family": "seed-minimized",
+      "ordered": true,
+      "seed": 2703025502,
+      "index": 356,
+      "originalSQL": "SELECT id, u IN (SELECT n FROM bounds WHERE id <= 0) FROM bounds WHERE id >= 6 ORDER BY 1 LIMIT 8"
+    }
+  ]
+}

@@ -252,6 +252,16 @@ fn rebalance_integer_divide(expr: &mut sqlparser::ast::Expr) {
     }
 }
 
+/// Parses one expression under the session's dialect, for rewrites that
+/// read more clearly written as SQL than assembled node by node.
+pub(crate) fn parse_expression(sql: &str) -> Result<sqlparser::ast::Expr, ParseError> {
+    let dialect = PintailDialect(MySqlDialect {}, session_parse_mode());
+    Parser::new(&dialect)
+        .try_with_sql(sql)
+        .and_then(|mut parser| parser.parse_expr())
+        .map_err(ParseError::from)
+}
+
 /// Parse exactly one MySQL-dialect statement.
 ///
 /// # Errors

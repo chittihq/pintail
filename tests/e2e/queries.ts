@@ -19,7 +19,66 @@ export interface DifferentialQuery {
   /// Divergence is a documented limitation (docs/limitations.md), reported
   /// as WARN so regressions stay visible and a fix flips it to PASS.
   documentedGap?: string
+  /// MySQL optimizer switches the SOURCE side runs this query under, where
+  /// MySQL's defaults answer it wrongly. Pintail runs the statement as
+  /// written; the reference is MySQL answering the same statement correctly.
+  mysqlOptimizerSwitch?: string
 }
+
+/// The storefront report (seedStorefrontSales in run.ts): flash sales
+/// joined through their bundles and listings, reviews OUTER-joined with a
+/// correlated IN in the ON that scopes them to the shoppers following the
+/// sale's own storefront. The subquery reaches the LEFT side of its join,
+/// so it is answered by widening the join's right input.
+///
+/// MySQL 8.4's semi-join transformation materializes such a subquery
+/// without its own non-correlated filters - the role and status tests
+/// vanish, so shoppers who left and staff are counted as members - so the
+/// source answers these with semi-joins off, which is MySQL answering the
+/// statement as written.
+const storefrontSwitch = 'semijoin=off'
+const storefrontTables = [
+  'flash_sales',
+  'sellers',
+  'storefronts',
+  'marketplaces',
+  'bundle_products',
+  'listing_entries',
+  'listing_groups',
+  'product_reviews',
+  'storefront_followers',
+]
+const storefrontSellers =
+  '8800000000037,8800000000074,8800000000111,8800000000148,' +
+  '8800000000185,8800000000222,8800000000259,8800000000296,8800000000999'
+/// One row per sale: products offered, reviews from the storefront's own
+/// active shoppers, bucketed by the month the sale starts in after a
+/// half-hour time zone shift.
+const storefrontPerSale =
+  'SELECT fs.sale_id, fs.seller_id, fs.storefront_id, ' +
+  "YEAR(CONVERT_TZ(fs.starts_at, '+00:00', '+09:30')) AS year, " +
+  "MONTH(CONVERT_TZ(fs.starts_at, '+00:00', '+09:30')) AS month, " +
+  'COUNT(DISTINCT bp.product_id) AS product_count, ' +
+  'COUNT(DISTINCT pr.review_id) AS reviewed_count ' +
+  'FROM flash_sales fs ' +
+  'JOIN sellers se ON se.seller_id = fs.seller_id ' +
+  'JOIN storefronts sf ON sf.storefront_id = fs.storefront_id ' +
+  'JOIN marketplaces mp ON mp.marketplace_id = sf.marketplace_id ' +
+  "JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id AND bp.status = 'live' " +
+  'JOIN listing_entries le ON le.product_id = bp.product_id ' +
+  "AND le.status = 'live' AND le.entry_type = 'product' " +
+  'JOIN listing_groups lg ON lg.listing_group_id = le.listing_group_id ' +
+  'AND lg.collection_id = fs.collection_id ' +
+  'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+  "AND pr.status NOT IN ('flagged', 'withdrawn') " +
+  'AND pr.shopper_id IN (' +
+  'SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+  'WHERE sfo.storefront_id = fs.storefront_id ' +
+  "AND sfo.role = 'shopper' AND sfo.status = 'active') " +
+  "WHERE fs.status = 'completed' AND fs.channel IN ('web','app','popup','partner','other') " +
+  "AND fs.starts_at >= '2025-12-31 14:30:00' AND fs.starts_at < '2026-09-30 14:30:00' " +
+  `AND fs.seller_id IN (${storefrontSellers}) ` +
+  'GROUP BY fs.sale_id, fs.seller_id, fs.storefront_id, year, month'
 
 export const differentialQueries: DifferentialQuery[] = [
   // composite keys: an all-integer pair (overlay path) and a text-led triple
@@ -1486,6 +1545,309 @@ export const differentialQueries: DifferentialQuery[] = [
     sql:
       "SELECT COUNT(DISTINCT s) AS variants FROM " +
       "(SELECT meta->>'$.lang' AS s FROM customers WHERE meta IS NOT NULL) d",
+    tables: ['customers'],
+  },
+  // Outer-join ON membership: a correlated IN or EXISTS in a LEFT or RIGHT
+  // join's ON that reaches the join's preserved side. The first is the
+  // whole report; the rest take it apart so a divergence names its cause.
+  {
+    name: 'storefront: monthly reviewed and expected per seller',
+    sql:
+      'SELECT t.seller_id AS sellerId, t.year, t.month, ' +
+      'SUM(t.reviewed_count) AS reviewed, SUM(t.product_count * fol.cnt) AS expected ' +
+      `FROM (${storefrontPerSale}) t ` +
+      'JOIN (SELECT storefront_id, COUNT(*) AS cnt FROM storefront_followers ' +
+      "WHERE role = 'shopper' AND status = 'active' GROUP BY storefront_id) fol " +
+      'ON fol.storefront_id = t.storefront_id ' +
+      'GROUP BY t.seller_id, t.year, t.month ORDER BY t.seller_id, t.year, t.month',
+    tables: storefrontTables,
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    name: 'storefront: the per-sale rows under the report',
+    sql: `SELECT * FROM (${storefrontPerSale}) t ORDER BY t.sale_id`,
+    tables: storefrontTables,
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // Null-extended rows against matched ones, and a SUM beside them:
+    // COUNT(DISTINCT) hides a duplicated match, the SUM does not.
+    name: 'storefront: rows, matches and rating sum per sale',
+    sql:
+      'SELECT fs.sale_id, COUNT(*) AS row_count, COUNT(pr.review_id) AS matched, ' +
+      'SUM(pr.rating) AS rating_sum FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    name: 'storefront: the same membership written as EXISTS',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND EXISTS (SELECT 1 FROM storefront_followers sfo ' +
+      'WHERE sfo.shopper_id = pr.shopper_id AND sfo.storefront_id = fs.storefront_id ' +
+      "AND sfo.role = 'shopper' AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // RIGHT JOIN is the LEFT JOIN with its inputs swapped; the preserved
+    // side is now the one written second.
+    name: 'storefront: membership under a RIGHT JOIN',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM product_reviews pr RIGHT JOIN flash_sales fs ' +
+      'ON pr.product_id = fs.bundle_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
+      'GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // Two equalities anchor the membership to the reviews: the shopper,
+    // and the locale under the source's case-insensitive, no-pad collation
+    // ('EN' matches 'en'; 'de ' does not match 'de').
+    name: 'storefront: membership keyed on shopper and locale',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      'WHERE sfo.storefront_id = fs.storefront_id AND sfo.locale = pr.locale) ' +
+      'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // A text membership: the DISTINCT that widens the join must keep what
+    // the collation calls one value as one, or 'en' and 'EN' both match.
+    name: 'storefront: locale membership across case variants',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.locale IN (SELECT sfo.locale FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 60 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // Two outer joins, each scoped by its own membership list.
+    name: 'storefront: shopper and staff reviews side by side',
+    sql:
+      'SELECT fs.sale_id, COUNT(DISTINCT pr.review_id) AS shopper_reviews, ' +
+      'COUNT(DISTINCT st.review_id) AS staff_reviews FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.role = 'shopper') " +
+      'LEFT JOIN product_reviews st ON st.product_id = bp.product_id ' +
+      'AND st.shopper_id IN (SELECT sfs.shopper_id FROM storefront_followers sfs ' +
+      "WHERE sfs.storefront_id = fs.storefront_id AND sfs.role = 'staff') " +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // Correlated to a different table of the preserved side: the
+    // storefront reached through the join chain, not the sale itself.
+    name: 'storefront: membership correlated through the storefront alias',
+    sql:
+      'SELECT sf.marketplace_id, COUNT(DISTINCT pr.review_id) AS reviewed, ' +
+      'COUNT(DISTINCT fs.sale_id) AS sales FROM flash_sales fs ' +
+      'JOIN storefronts sf ON sf.storefront_id = fs.storefront_id ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      "AND pr.status = 'published' " +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = sf.storefront_id AND sfo.status = 'active') " +
+      'GROUP BY sf.marketplace_id ORDER BY sf.marketplace_id',
+    tables: ['flash_sales', 'storefronts', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  // Shapes the widening does not take: they run on the dependent join path.
+  {
+    // Reviews from anyone NOT following the storefront. A review with no
+    // shopper makes NOT IN unknown, which the ON reads as no match.
+    name: 'storefront: reviews from outside the storefront (NOT IN)',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id NOT IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      "WHERE sfo.storefront_id = fs.storefront_id AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    name: 'storefront: reviews from outside the storefront (NOT EXISTS)',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched, SUM(pr.rating) AS rating_sum ' +
+      'FROM flash_sales fs JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND NOT EXISTS (SELECT 1 FROM storefront_followers sfo ' +
+      'WHERE sfo.shopper_id = pr.shopper_id AND sfo.storefront_id = fs.storefront_id ' +
+      "AND sfo.status = 'active') " +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // An inequality correlation: followers of any storefront numbered at
+    // or below the sale's own.
+    name: 'storefront: membership across a storefront range',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND EXISTS (SELECT 1 FROM storefront_followers sfo ' +
+      'WHERE sfo.shopper_id = pr.shopper_id AND sfo.storefront_id <= fs.storefront_id) ' +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  {
+    // A membership list with its own join and grouping.
+    name: 'storefront: membership from a grouped, joined list',
+    sql:
+      'SELECT fs.sale_id, COUNT(pr.review_id) AS matched FROM flash_sales fs ' +
+      'JOIN bundle_products bp ON bp.bundle_id = fs.bundle_id ' +
+      'LEFT JOIN product_reviews pr ON pr.product_id = bp.product_id ' +
+      'AND pr.shopper_id IN (SELECT sfo.shopper_id FROM storefront_followers sfo ' +
+      'JOIN storefronts sf2 ON sf2.storefront_id = sfo.storefront_id ' +
+      "WHERE sf2.storefront_id = fs.storefront_id AND sfo.status = 'active' " +
+      'GROUP BY sfo.shopper_id HAVING COUNT(*) >= 1) ' +
+      'WHERE fs.sale_id <= 40 GROUP BY fs.sale_id ORDER BY fs.sale_id',
+    tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers', 'storefronts'],
+    mysqlOptimizerSwitch: storefrontSwitch,
+  },
+  // WHERE clauses at their edges, over replicated rows that CRUD has
+  // updated and deleted: temporal literals against DATE, DATETIME(6) and
+  // TIMESTAMP(6) columns, implicit casts, NULL in IN lists, SET, binary,
+  // latin1, generated and JSON columns, and PAD SPACE.
+  {
+    name: 'where: a DATE column against a datetime literal at midnight',
+    sql: 'SELECT id FROM orders WHERE placed_on = \'2024-03-05 00:00:00\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE column against a datetime literal with a time',
+    sql: 'SELECT id FROM orders WHERE placed_on > \'2024-06-15 12:00:00\' ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE range ending on a leap day',
+    sql: 'SELECT id FROM orders WHERE placed_on BETWEEN \'2024-02-01\' AND \'2024-02-29\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: TIMESTAMP(6) at a microsecond boundary',
+    sql: 'SELECT id, updated_at FROM orders WHERE updated_at >= \'2025-03-15 08:05:00.000001\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: TIMESTAMP BETWEEN a date and a datetime',
+    sql: 'SELECT id FROM orders WHERE updated_at BETWEEN \'2025-02-01\' AND \'2025-06-01 12:00:00\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATE() of a TIMESTAMP',
+    sql: 'SELECT id FROM orders WHERE DATE(updated_at) = \'2025-06-01\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATETIME(6) against a fractional literal',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE created_at > \'2020-01-01 00:00:00.000001\'',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: DECIMAL against a string literal',
+    sql: 'SELECT id FROM customers WHERE balance > \'100.5\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: DECIMAL BETWEEN two negatives',
+    sql: 'SELECT id FROM customers WHERE balance BETWEEN -500 AND -0.01 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: NOT IN with a NULL in the list',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE tier NOT IN (\'free\', NULL)',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: null-safe equality on a nullable column',
+    sql: 'SELECT id FROM customers WHERE email <=> NULL ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: a filter on a virtual generated column',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE email_domain = \'example.com\'',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: SET membership by FIND_IN_SET',
+    sql: 'SELECT id FROM customers WHERE FIND_IN_SET(\'vip\', tags) > 0 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: SET equality to a member list',
+    sql: 'SELECT id FROM customers WHERE tags = \'alpha,vip\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: VARBINARY equality to a hex literal',
+    sql: 'SELECT id FROM customers WHERE avatar = X\'0001beef\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: JSON path comparisons',
+    sql: 'SELECT id FROM customers WHERE meta->>\'$.lang\' = \'en\' AND JSON_EXTRACT(meta, \'$.score\') >= 50 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: ENUM IN beside an ENUM LIKE',
+    sql: 'SELECT id FROM orders WHERE status IN (\'shipped\', \'delivered\') AND status LIKE \'%ed\' ORDER BY id LIMIT 50',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: OR with a NULL-testing branch',
+    sql: 'SELECT id FROM orders WHERE updated_at IS NULL OR total > 900 ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: row constructor IN',
+    sql: 'SELECT id FROM orders WHERE (customer_id, status) IN ((2, \'pending\'), (3, \'shipped\')) ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: ALL over a subquery',
+    sql: 'SELECT id FROM orders WHERE total > ALL (SELECT total FROM orders WHERE customer_id = 2) ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: an unsigned column against a negative literal',
+    sql: 'SELECT COUNT(*) AS n FROM counters WHERE u8 > -1',
+    tables: ['counters'],
+  },
+  {
+    name: 'where: a string number against an integer column',
+    sql: 'SELECT id FROM orders WHERE customer_id = \'7\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a general_ci column under PAD SPACE',
+    sql: 'SELECT id FROM customers WHERE legacy_label = \'pending \' ORDER BY id',
     tables: ['customers'],
   },
 ]

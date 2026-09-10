@@ -1,4 +1,5 @@
 import tailwindcss from '@tailwindcss/vite'
+import { sentryVitePlugin } from '@sentry/vite-plugin'
 
 // `nuxt dev` serves the app on its own origin, but the dashboard calls the
 // API with relative paths (`/api/...`, `/status`) because in production
@@ -9,6 +10,7 @@ import tailwindcss from '@tailwindcss/vite'
 // server runs on a remote docker host, open a tunnel first so the port is
 // local — see the dashboard section of docs/development.md.
 const pintailApi = process.env.PINTAIL_API_URL ?? 'http://127.0.0.1:8080'
+const uploadSentryMaps = Boolean(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT)
 
 export default defineNuxtConfig({
   $development: {
@@ -24,6 +26,23 @@ export default defineNuxtConfig({
   compatibilityDate: '2026-07-30',
   css: ['~/assets/css/main.css'],
   devtools: { enabled: false },
+  sourcemap: { client: uploadSentryMaps ? 'hidden' : false, server: false },
+  hooks: {
+    'vite:extendConfig'(config, { isClient }) {
+      if (!isClient || !uploadSentryMaps) return
+      config.plugins?.push(sentryVitePlugin({
+        org: process.env.SENTRY_ORG,
+        project: process.env.SENTRY_PROJECT,
+        authToken: process.env.SENTRY_AUTH_TOKEN,
+        telemetry: false,
+        release: { inject: false },
+        sourcemaps: {
+          assets: '.nuxt/dist/client/**',
+          filesToDeleteAfterUpload: '.nuxt/dist/client/**/*.map',
+        },
+      }))
+    },
+  },
   modules: ['shadcn-nuxt'],
   shadcn: {
     prefix: '',

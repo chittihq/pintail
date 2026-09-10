@@ -20,6 +20,7 @@ mysql_async.workspace = true
 pintail-meta.workspace = true
 pintail-probe = { path = "../pintail-probe" }
 pintail-snapshot = { path = "../pintail-snapshot" }
+pintail-sql = { path = "../pintail-sql" }
 pintail-store.workspace = true
 pintail-types.workspace = true
 serde.workspace = true

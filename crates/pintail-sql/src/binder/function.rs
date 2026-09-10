@@ -763,6 +763,21 @@ pub(super) fn bind_in_list(
             value, tables, aggregates, windows, subqueries,
         )?);
     }
+    let args = super::unify_temporal_list(args);
+    let args = super::unify_time_list(args);
+    let subject = args[0].clone();
+    let args = args
+        .into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if index == 0 {
+                Ok(argument)
+            } else {
+                super::canonical_literal_operand(&subject, argument)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
@@ -784,16 +799,58 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let args = vec![
+    let args = super::unify_temporal_list(vec![
         bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
-    ];
+    ]);
+    let args = super::unify_time_list(args);
+    let [subject, low, high]: [BoundExpr; 3] = args
+        .try_into()
+        .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+    let low = super::canonical_literal_operand(&subject, low)?;
+    let high = super::canonical_literal_operand(&subject, high)?;
+    let args = super::numeric_list_as_double(vec![subject, low, high]);
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
     {
         return Err(BindError::InvalidScalarFunction("BETWEEN".to_owned()));
+    }
+    // A DECIMAL travels as text, and the row-level BETWEEN compared that text
+    // with its bounds: -12.50 sorted below -0.01. Written as the two exact
+    // comparisons MySQL defines BETWEEN to be, every path - vectorized
+    // masks, pruning, the row loop - compares by value.
+    if super::is_exact_decimal_comparison(BinaryOp::GreaterOrEqual, &args[0], &args[1])
+        && super::is_exact_decimal_comparison(BinaryOp::LessOrEqual, &args[0], &args[2])
+    {
+        let [value, low, high]: [BoundExpr; 3] = args
+            .try_into()
+            .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+        let lower =
+            super::bind_exact_decimal_comparison(BinaryOp::GreaterOrEqual, value.clone(), low);
+        let upper = super::bind_exact_decimal_comparison(BinaryOp::LessOrEqual, value, high);
+        let range = BoundExpr {
+            nullable: lower.nullable || upper.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::And,
+                left: Box::new(lower),
+                right: Box::new(upper),
+            },
+        };
+        return Ok(if negated {
+            BoundExpr {
+                nullable: range.nullable,
+                data_type: Some(DataType::Boolean),
+                kind: BoundExprKind::Unary {
+                    op: crate::bound::UnaryOp::Not,
+                    expr: Box::new(range),
+                },
+            }
+        } else {
+            range
+        });
     }
     bind_scalar(ScalarFunction::Between { negated }, args)
 }
@@ -1197,6 +1254,33 @@ pub(super) fn bind_scalar(
                 args.iter().any(|argument| argument.nullable),
             )
         }
+        // Over a binary string these work in bytes and return bytes; declared
+        // as text, the output column refused a value that is not UTF-8.
+        ScalarFunction::Substring | ScalarFunction::Trim
+            if args.first().and_then(|argument| argument.data_type) == Some(DataType::Binary) =>
+        {
+            (
+                Some(DataType::Binary),
+                args.iter().any(|argument| argument.nullable),
+            )
+        }
+        ScalarFunction::Lpad | ScalarFunction::Rpad
+            if [0, 2]
+                .iter()
+                .any(|position| args[*position].data_type == Some(DataType::Binary)) =>
+        {
+            (
+                Some(DataType::Binary),
+                args.iter().any(|argument| argument.nullable),
+            )
+        }
+        ScalarFunction::ConcatWs
+            if args
+                .iter()
+                .any(|argument| argument.data_type == Some(DataType::Binary)) =>
+        {
+            (Some(DataType::Binary), args[0].nullable)
+        }
         ScalarFunction::Concat
         | ScalarFunction::Substring
         | ScalarFunction::Lower
@@ -1459,14 +1543,14 @@ pub(super) fn bind_scalar(
         // NULL arguments become JSON nulls, never a NULL result.
         ScalarFunction::JsonObject | ScalarFunction::JsonArray => (Some(DataType::Json), false),
         // JSON_VALID answers 0/1 for any input, so it is the one predicate
-        // here that never yields NULL for a non-NULL argument.
-        ScalarFunction::JsonValid => (Some(DataType::Int64), true),
+        // here that never yields NULL for a non-NULL argument. MySQL declares
+        // JSON_LENGTH a signed integer, so COALESCE with a negative default
+        // stays an integer.
+        ScalarFunction::JsonValid | ScalarFunction::JsonLength => (Some(DataType::Int64), true),
         ScalarFunction::JsonContains | ScalarFunction::JsonContainsPath => {
             (Some(DataType::Int64), true)
         }
-        ScalarFunction::JsonLength
-        | ScalarFunction::Crc32
-        | ScalarFunction::InetAton => (Some(DataType::UInt64), true),
+        ScalarFunction::Crc32 | ScalarFunction::InetAton => (Some(DataType::UInt64), true),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
@@ -1519,9 +1603,10 @@ pub(super) fn bind_scalar(
                 {
                     DataType::Date32
                 }
-                Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
-                    DataType::DateTime64 { fsp: 0 }
-                }
+                // Fractional seconds survive the arithmetic at the input's
+                // precision; a DATE moved by a time unit becomes DATETIME.
+                Some(DataType::DateTime64 { fsp }) => DataType::DateTime64 { fsp },
+                Some(DataType::Date32) => DataType::DateTime64 { fsp: 0 },
                 _ => DataType::Utf8,
             }),
             args.iter().any(|argument| argument.nullable),
@@ -1725,8 +1810,25 @@ fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError>
                     .min(MAX_DECIMAL_PRECISION),
                 scale,
             }))
-        } else if types.contains(&DataType::Int64) && types.contains(&DataType::UInt64) {
-            Ok(Some(DataType::Float64))
+        } else if types.contains(&DataType::UInt64)
+            && args.iter().any(|argument| {
+                matches!(
+                    argument.data_type,
+                    Some(DataType::Int8 | DataType::Int16 | DataType::Int32 | DataType::Int64)
+                ) && !matches!(
+                    argument.kind,
+                    BoundExprKind::Literal(Value::Int64(literal)) if literal >= 0
+                )
+            })
+        {
+            // Signed and unsigned BIGINT branches meet in an exact
+            // DECIMAL(20,0), as in MySQL: both ranges fit, and nothing is
+            // rounded through a double. A non-negative literal is no signed
+            // branch: COALESCE(unsigned, 0) stays unsigned.
+            Ok(Some(DataType::Decimal {
+                precision: 20,
+                scale: 0,
+            }))
         } else if types.contains(&DataType::UInt64) {
             Ok(Some(DataType::UInt64))
         } else {
@@ -1828,6 +1930,10 @@ pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
 }
 
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+    let (left, right) = super::unify_temporal_operands(left, right);
+    let right = super::canonical_literal_operand(&left, right)?;
+    let left = super::canonical_literal_operand(&right, left)?;
+    let (left, right) = super::text_as_number(left, right);
     let (left, right) = super::rewrite_json_comparison(left, right);
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {

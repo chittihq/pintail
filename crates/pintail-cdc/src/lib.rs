@@ -710,7 +710,50 @@ async fn run_cdc_inner(
                     if normalized == "ROLLBACK" {
                         pending = PendingTransaction::default();
                     }
-                    let parsed = parse_ddl(&statement, &report.database)?;
+                    // A statement nobody can parse must not stop the
+                    // database. Returning here aborts the pass, and the next
+                    // pass resumes at the same offset and fails the same way:
+                    // one unreadable DDL and that database never replicates
+                    // again, which is how a source running ANSI_QUOTES took
+                    // eighty-seven tables offline until an operator noticed.
+                    //
+                    // Skipping it outright would be worse in the other
+                    // direction, because a schema change this missed leaves
+                    // the replica quietly disagreeing with its source. So
+                    // every tracked table the statement NAMES is quarantined
+                    // for resync - a DDL that alters a table cannot avoid
+                    // naming it, so this misses none, and over-quarantining
+                    // costs a resync rather than a wrong answer - and the
+                    // stream moves on.
+                    let parsed = match parse_ddl(&statement, &report.database) {
+                        Ok(parsed) => parsed,
+                        Err(error) => {
+                            pintail_log::log_error!(
+                                "cdc unreadable ddl db={database_id} \
+                                 quarantining the tables it names: {error}"
+                            );
+                            let named = targets
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, target)| {
+                                    statement_names_table(&statement, &target.source.name)
+                                })
+                                .map(|(index, _)| index)
+                                .collect::<Vec<_>>();
+                            for index in named {
+                                quarantine_schema_change(
+                                    &mut metadata,
+                                    database_id,
+                                    &targets[index],
+                                    index,
+                                    &mut blocked_targets,
+                                    &statement,
+                                    None,
+                                )?;
+                            }
+                            continue;
+                        }
+                    };
                     // Session schema is the default routing; an explicit
                     // qualifier on the statement overrides it in both
                     // directions - `other_db.t` from a tracked session was
@@ -1508,6 +1551,29 @@ fn find_source_table<'a>(report: &'a ProbeReport, table: &str) -> Option<&'a Sou
         .tables
         .iter()
         .find(|source| source.name.eq_ignore_ascii_case(table))
+}
+
+/// Whether a statement names a table, ignoring case and any quoting around
+/// it.
+///
+/// Used only when a statement could not be parsed, to decide which tracked
+/// tables to quarantine. It errs toward saying yes: a name appearing in a
+/// comment or a value quarantines a table that did not change, which costs a
+/// resync, where missing one would leave the replica disagreeing with its
+/// source and nobody the wiser.
+fn statement_names_table(statement: &str, table: &str) -> bool {
+    if table.is_empty() {
+        return false;
+    }
+    let statement = statement.to_ascii_lowercase();
+    let table = table.to_ascii_lowercase();
+    statement.match_indices(&table).any(|(at, _)| {
+        let before = statement[..at].chars().next_back();
+        let after = statement[at + table.len()..].chars().next();
+        let boundary =
+            |ch: Option<char>| ch.is_none_or(|ch| !ch.is_alphanumeric() && ch != '_' && ch != '$');
+        boundary(before) && boundary(after)
+    })
 }
 
 fn quarantine_schema_change(
@@ -2529,6 +2595,30 @@ fn generated_server_id(database_id: &str) -> u32 {
 
 #[cfg(test)]
 mod tests {
+
+    /// Which tables an unreadable DDL quarantines. Saying yes too often
+    /// costs a resync; saying no too rarely leaves the replica disagreeing
+    /// with its source, so the boundary check errs toward yes.
+    #[test]
+    fn an_unreadable_statement_names_the_tables_it_mentions() {
+        use super::statement_names_table;
+        let create = "CREATE TABLE \"CertificateTemplate\" (\"id\" INT)";
+        assert!(statement_names_table(create, "CertificateTemplate"));
+        assert!(statement_names_table(create, "certificatetemplate"));
+        // A different table of similar spelling is not named.
+        assert!(!statement_names_table(create, "Certificate"));
+        assert!(!statement_names_table(create, "TemplateVersion"));
+        // Backticks, qualifiers and trailing punctuation still delimit it.
+        assert!(statement_names_table(
+            "ALTER TABLE `app`.`events` ADD COLUMN x INT",
+            "events"
+        ));
+        assert!(!statement_names_table(
+            "ALTER TABLE `app`.`events2` ADD x INT",
+            "events"
+        ));
+        assert!(!statement_names_table("CREATE TABLE t (id INT)", ""));
+    }
     use super::{
         CdcOptions, CdcTarget, PendingMutation, PendingTransaction, StreamPosition,
         generated_server_id, new_table_matches, push_mutations, sanitize_binlog_filename,
