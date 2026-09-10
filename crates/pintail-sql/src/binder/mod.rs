@@ -3659,8 +3659,8 @@ fn bind_binary(
             | BinaryOperator::Gt
             | BinaryOperator::GtEq
     ) {
-        let right = canonical_temporal_operand(left.data_type, right)?;
-        let left = canonical_temporal_operand(right.data_type, left)?;
+        let right = canonical_temporal_operand(&left, right)?;
+        let left = canonical_temporal_operand(&right, left)?;
         rewrite_json_comparison(left, right)
     } else {
         (left, right)
@@ -5323,12 +5323,12 @@ fn as_json(expr: BoundExpr) -> BoundExpr {
 /// arrive in that form, or the comparison silently asks about a different
 /// string and answers wrongly. Anything that is not such a literal comes
 /// back unchanged; a literal shaped like a date that names an impossible
-/// one is refused, as `MySQL` refuses it.
+/// one is refused against a column, as `MySQL` refuses it.
 fn canonical_temporal_operand(
-    target: Option<DataType>,
+    target: &BoundExpr,
     operand: BoundExpr,
 ) -> Result<BoundExpr, BindError> {
-    let date_only = match target {
+    let date_only = match target.data_type {
         Some(DataType::Date32) => true,
         Some(DataType::DateTime64 { .. }) => false,
         _ => return Ok(operand),
@@ -5343,12 +5343,18 @@ fn canonical_temporal_operand(
         return Ok(operand);
     };
     if !parsed.is_valid() {
+        // Refused against a column, where `MySQL` raises ERROR 1525; against
+        // an expression such as `DATE(c)` it compares and matches nothing,
+        // which the literal left as written already does.
+        if !matches!(target.kind, BoundExprKind::Column(_)) {
+            return Ok(operand);
+        }
         return Err(BindError::UnsupportedExpression(format!(
             "incorrect {} value: '{text}'",
             if date_only { "DATE" } else { "DATETIME" }
         )));
     }
-    let fsp = match target {
+    let fsp = match target.data_type {
         Some(DataType::DateTime64 { fsp }) => usize::from(fsp),
         _ => 0,
     };
