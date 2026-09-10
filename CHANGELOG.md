@@ -4,6 +4,16 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- The SQL console renders 100 result rows per page instead of mounting the
+  entire result set. Large results no longer create thousands of offscreen
+  components, and changing pages keeps every returned row accessible.
+- Chart tooltip HTML rendering releases detached Vue components and no
+  longer caches an unlimited history of payloads.
+
 ## [0.1.3-rc1] - 2026-09-10
 
 ### Fixed
