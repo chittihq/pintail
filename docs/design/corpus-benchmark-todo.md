@@ -33,7 +33,7 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    accepted but literal comparisons ignore it: 7 cases (`'A' = 'a'`,
    `'É' = 'e'`, `'ß' = 'ss'`) answer differently over the MySQL protocol
    than in-process.
-2. [ ] **Uncorrelated subqueries.** `SELECT id, (SELECT MAX(id) FROM users),
+2. [x] **Uncorrelated subqueries.** `SELECT id, (SELECT MAX(id) FROM users),
    id IN (SELECT id FROM users …) FROM events WHERE id = 1` takes about 6 s
    against 0.4 ms on MySQL, for one outer row: 77.5 s of Pintail's 154.7 s
    total excess.

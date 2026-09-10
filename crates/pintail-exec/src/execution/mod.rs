@@ -2473,20 +2473,34 @@ fn resolve_expr_subqueries(
                 .projection
                 .first()
                 .and_then(|projection| projection.expr.data_type);
-            let values = match membership::materialize_membership(
+            let member_collation = expr
+                .text_collation()
+                .and_then(Collation::from_mysql_name)
+                .unwrap_or(collation);
+            // Answered once for the whole query, so a large set is worth
+            // indexing: each probe then costs a hash lookup rather than a
+            // comparison per member.
+            let materialized = match membership::materialize_membership(
                 (**query).clone(),
                 provider,
                 memory_limit.saturating_sub(*retained_bytes),
                 deadline,
-                expr.text_collation()
-                    .and_then(Collation::from_mysql_name)
-                    .unwrap_or(collation),
+                member_collation,
                 query_spill,
                 expr.data_type,
                 projection_type,
             )? {
+                membership::MaterializedMembership::Memory(values) => membership::index_members(
+                    values,
+                    member_collation,
+                    expr.data_type,
+                    projection_type,
+                ),
+                prepared @ membership::MaterializedMembership::Prepared(..) => prepared,
+            };
+            let values = match materialized {
                 membership::MaterializedMembership::Memory(values) => values,
-                membership::MaterializedMembership::External(membership, bytes) => {
+                membership::MaterializedMembership::Prepared(membership, bytes) => {
                     if retained_bytes.saturating_add(bytes) > memory_limit {
                         return Err(ExecError::MemoryLimitExceeded {
                             used: *retained_bytes,
@@ -2963,7 +2977,7 @@ pub(super) fn resolve_dependent_expr_subqueries(
                         memo.insert(context.memory, slot, key, &values);
                         values
                     }
-                    membership::MaterializedMembership::External(membership, bytes) => {
+                    membership::MaterializedMembership::Prepared(membership, bytes) => {
                         context.memory.reserve(bytes)?;
                         let needle =
                             CompiledExpr::compile(expr, context.columns, context.collation)?
@@ -4814,7 +4828,15 @@ fn reserve_vec_elements<T>(
         return Ok(0);
     }
     let old_capacity = values.capacity();
-    let growth = required.saturating_sub(old_capacity).max(minimum_growth);
+    // Grow geometrically. Growing by exactly the requested slot asked the
+    // allocator for a larger block on every push, and only in-place
+    // reallocation kept that from copying the whole vector each time. The
+    // charge below already assumed a power-of-two capacity, so doubling
+    // spends nothing the budget did not already count.
+    let growth = required
+        .saturating_sub(old_capacity)
+        .max(minimum_growth)
+        .max(old_capacity.max(4));
     let capacity_bound = old_capacity
         .saturating_add(growth)
         .checked_next_power_of_two()
