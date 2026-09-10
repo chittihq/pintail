@@ -187,9 +187,17 @@ pub fn init() -> String {
         "environment".to_owned(),
         variable("PINTAIL_ENVIRONMENT").unwrap_or_else(|| "unknown".to_owned()),
     );
+    // PINTAIL_BUILD_VERSION is what a deployment already sets to the tag it
+    // pulled, so a release that never set PINTAIL_RELEASE still says which
+    // build it is. The crate version is the last resort and the least
+    // informative: it is the workspace's, which does not track the released
+    // version, so every deployment reported the same release and an issue
+    // could not be attributed to the build that raised it.
     context.insert(
         "release".to_owned(),
-        variable("PINTAIL_RELEASE").unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned()),
+        variable("PINTAIL_RELEASE")
+            .or_else(|| variable("PINTAIL_BUILD_VERSION"))
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned()),
     );
     context.insert(
         "server_name".to_owned(),

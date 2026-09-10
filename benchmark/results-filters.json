@@ -1,0 +1,855 @@
+{
+  "measuredAt": "2026-09-10T10:18:39.068Z",
+  "commit": "47cfd1e5",
+  "dirty": false,
+  "rows": 20000000,
+  "variantsPerFilter": 5,
+  "results": [
+    {
+      "name": "created_at, one hour: count",
+      "access": "idx_activity_created (range)",
+      "rows": 1,
+      "mysqlMedianMs": 0.9928689999505877,
+      "mysqlMinMs": 0.9045209999894723,
+      "pintailMedianMs": 466.23867199989036,
+      "pintailMinMs": 460.3558019999182,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 0.9045209999894723,
+          "pintailMs": 604.6369880000129,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1.4115039999596775,
+          "pintailMs": 604.9010640000924,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 0.9255620000185445,
+          "pintailMs": 466.23867199989036,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1.2180750000989065,
+          "pintailMs": 462.0463059999747,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 0.9928689999505877,
+          "pintailMs": 460.3558019999182,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at, one day: count and sum",
+      "access": "idx_activity_created (range)",
+      "rows": 1,
+      "mysqlMedianMs": 49.94323199999053,
+      "mysqlMinMs": 49.3680699999677,
+      "pintailMedianMs": 872.034040999948,
+      "pintailMinMs": 864.3504849999445,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 49.94323199999053,
+          "pintailMs": 878.151668000035,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 49.814606000087224,
+          "pintailMs": 864.3504849999445,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 49.3680699999677,
+          "pintailMs": 871.7753709999379,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 51.86325600009877,
+          "pintailMs": 874.1123270000098,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 50.52532299992163,
+          "pintailMs": 872.034040999948,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at, one day: newest 50 rows",
+      "access": "idx_activity_created (range)",
+      "rows": 50,
+      "mysqlMedianMs": 1.3125879999715835,
+      "mysqlMinMs": 1.0490530000533909,
+      "pintailMedianMs": 1272.0223600000609,
+      "pintailMinMs": 1264.4176649999572,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 1.5255330000072718,
+          "pintailMs": 1264.4176649999572,
+          "rows": 50,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1.4855390000157058,
+          "pintailMs": 1290.653537999955,
+          "rows": 50,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 1.3125879999715835,
+          "pintailMs": 1285.2595389999915,
+          "rows": 50,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1.1944360000779852,
+          "pintailMs": 1268.5509199999506,
+          "rows": 50,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 1.0490530000533909,
+          "pintailMs": 1272.0223600000609,
+          "rows": 50,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at, one day: every row, three columns",
+      "access": "idx_activity_created (range)",
+      "rows": 43156,
+      "mysqlMedianMs": 70.23015899991151,
+      "mysqlMinMs": 66.17191599996295,
+      "pintailMedianMs": 1030.4780800000299,
+      "pintailMinMs": 1014.9521490000188,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 70.24338399991393,
+          "pintailMs": 1030.6874610000523,
+          "rows": 43157,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 66.17191599996295,
+          "pintailMs": 1023.0110049999785,
+          "rows": 43157,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 66.36474400002044,
+          "pintailMs": 1014.9521490000188,
+          "rows": 43156,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 78.9226829999825,
+          "pintailMs": 1030.4780800000299,
+          "rows": 43156,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 70.23015899991151,
+          "pintailMs": 1039.249775000033,
+          "rows": 43156,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at, thirty days: per state",
+      "access": "idx_activity_created (range)",
+      "rows": 6,
+      "mysqlMedianMs": 1887.9328319999622,
+      "mysqlMinMs": 1875.252799000009,
+      "pintailMedianMs": 3912.9180920000654,
+      "pintailMinMs": 3856.947512999992,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 1892.443377000047,
+          "pintailMs": 3862.8369660000317,
+          "rows": 6,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1901.9310719999485,
+          "pintailMs": 3913.417678000056,
+          "rows": 6,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 1887.3510940000415,
+          "pintailMs": 3918.1692299999995,
+          "rows": 6,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1887.9328319999622,
+          "pintailMs": 3856.947512999992,
+          "rows": 6,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 1875.252799000009,
+          "pintailMs": 3912.9180920000654,
+          "rows": 6,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at, one day, and a state",
+      "access": "idx_activity_created (range)",
+      "rows": 1,
+      "mysqlMedianMs": 48.69451499998104,
+      "mysqlMinMs": 48.26344199990854,
+      "pintailMedianMs": 701.1777990000555,
+      "pintailMinMs": 695.9355610000202,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 49.00775600003544,
+          "pintailMs": 705.0168969999067,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 48.69451499998104,
+          "pintailMs": 699.9680190000217,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 48.26344199990854,
+          "pintailMs": 702.5164889999432,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 50.94551300001331,
+          "pintailMs": 701.1777990000555,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 48.41681199998129,
+          "pintailMs": 695.9355610000202,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "created_at from a moment: first 100 rows",
+      "access": "idx_activity_created (range)",
+      "rows": 100,
+      "mysqlMedianMs": 1.1667769998311996,
+      "mysqlMinMs": 1.0367160001769662,
+      "pintailMedianMs": 31401.356741999974,
+      "pintailMinMs": 10972.985253999941,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 1.091162999975495,
+          "pintailMs": 57208.913760000025,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1.177871000021696,
+          "pintailMs": 43916.96086400002,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 1.0367160001769662,
+          "pintailMs": 31401.356741999974,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1.3962740001734346,
+          "pintailMs": 20715.741297000088,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 1.1667769998311996,
+          "pintailMs": 10972.985253999941,
+          "rows": 100,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "scheduled_at (scattered), one day: count",
+      "access": "idx_activity_scheduled (range)",
+      "rows": 1,
+      "mysqlMedianMs": 6.728201999794692,
+      "mysqlMinMs": 6.490315000060946,
+      "pintailMedianMs": 48033.04155700002,
+      "pintailMinMs": 47916.83244299982,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 6.753834999864921,
+          "pintailMs": 48435.617466999916,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 6.9418320001568645,
+          "pintailMs": 47937.88845800003,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 6.490315000060946,
+          "pintailMs": 48033.04155700002,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 6.728201999794692,
+          "pintailMs": 48693.769707000116,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 6.675379999913275,
+          "pintailMs": 47916.83244299982,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "account_id point: every row",
+      "access": "idx_activity_account (ref)",
+      "rows": 100,
+      "mysqlMedianMs": 0.9876059999223799,
+      "mysqlMinMs": 0.6575339999981225,
+      "pintailMedianMs": 66490.01786600007,
+      "pintailMinMs": 29026.776793000055,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 0.9876059999223799,
+          "pintailMs": 29026.776793000055,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1.0412540000397712,
+          "pintailMs": 66450.68855500012,
+          "rows": 100,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 0.6575339999981225,
+          "pintailMs": 66490.01786600007,
+          "rows": 101,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1.1920679998584092,
+          "pintailMs": 66844.96740299975,
+          "rows": 101,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 0.9583859997801483,
+          "pintailMs": 66814.98813399998,
+          "rows": 100,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "account_id IN 100 ids: count",
+      "access": "idx_activity_account (range)",
+      "rows": 1,
+      "mysqlMedianMs": 2.253200000151992,
+      "mysqlMinMs": 2.219452999997884,
+      "pintailMedianMs": 80944.17280300008,
+      "pintailMinMs": 80836.29624899989,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 2.253200000151992,
+          "pintailMs": 81024.24910100037,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 2.219452999997884,
+          "pintailMs": 80843.68824200006,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 2.2315070000477135,
+          "pintailMs": 80836.29624899989,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 2.258155000396073,
+          "pintailMs": 80944.17280300008,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 2.5189959998242557,
+          "pintailMs": 80962.02975700004,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "primary key point",
+      "access": "PRIMARY (const)",
+      "rows": 1,
+      "mysqlMedianMs": 0.3799080001190305,
+      "mysqlMinMs": 0.3149969996884465,
+      "pintailMedianMs": 6.741640999913216,
+      "pintailMinMs": 6.198429000098258,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 0.3799080001190305,
+          "pintailMs": 7.393301000352949,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 0.47277200035750866,
+          "pintailMs": 6.198429000098258,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 0.3149969996884465,
+          "pintailMs": 6.596481999848038,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 0.601437000092119,
+          "pintailMs": 7.345923000015318,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 0.34662199998274446,
+          "pintailMs": 6.741640999913216,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "primary key range of 10,000: sum",
+      "access": "PRIMARY (range)",
+      "rows": 1,
+      "mysqlMedianMs": 2.420378999784589,
+      "mysqlMinMs": 2.393802999984473,
+      "pintailMedianMs": 22.737401000224054,
+      "pintailMinMs": 20.15587900020182,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 2.393802999984473,
+          "pintailMs": 20.15587900020182,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 2.645780000369996,
+          "pintailMs": 22.983243000227958,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 2.420378999784589,
+          "pintailMs": 21.841593000106514,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 2.411646999884397,
+          "pintailMs": 22.737401000224054,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 2.4227420003153384,
+          "pintailMs": 22.876064999960363,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "state = an updated value: count",
+      "access": "idx_activity_state (ref)",
+      "rows": 1,
+      "mysqlMedianMs": 302.6412959997542,
+      "mysqlMinMs": 300.98458299972117,
+      "pintailMedianMs": 27727.44362200005,
+      "pintailMinMs": 27635.486605000217,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 307.9488959996961,
+          "pintailMs": 28279.211182000116,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 300.98458299972117,
+          "pintailMs": 27635.486605000217,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 304.38838999997824,
+          "pintailMs": 27727.44362200005,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 302.6412959997542,
+          "pintailMs": 28011.585808999836,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 301.2810290004127,
+          "pintailMs": 27703.680144000333,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "amount range, no index anywhere: count",
+      "access": "full scan",
+      "rows": 1,
+      "mysqlMedianMs": 2469.2448559999466,
+      "mysqlMinMs": 2434.5742410002276,
+      "pintailMedianMs": 33565.69187000021,
+      "pintailMinMs": 33400.37063999986,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 2499.344399999827,
+          "pintailMs": 33892.54463399993,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 2489.549354000017,
+          "pintailMs": 33864.08280300023,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 2469.2448559999466,
+          "pintailMs": 33565.69187000021,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 2455.20027999999,
+          "pintailMs": 33504.364546000026,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 2434.5742410002276,
+          "pintailMs": 33400.37063999986,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "DATE(created_at) = a day: count",
+      "access": "idx_activity_created (index)",
+      "rows": 1,
+      "mysqlMedianMs": 2114.357108999975,
+      "mysqlMinMs": 2110.1711289999075,
+      "pintailMedianMs": 604.7401079996489,
+      "pintailMinMs": 455.0209209998138,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 2116.4397629997693,
+          "pintailMs": 605.9653669996187,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 2110.1711289999075,
+          "pintailMs": 604.7401079996489,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 2114.357108999975,
+          "pintailMs": 607.568237000145,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 2112.9294010000303,
+          "pintailMs": 455.0209209998138,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 2114.910552999936,
+          "pintailMs": 463.86252800002694,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "note LIKE a prefix, and a channel: count",
+      "access": "full scan",
+      "rows": 1,
+      "mysqlMedianMs": 3074.433233999647,
+      "mysqlMinMs": 3067.7892780001275,
+      "pintailMedianMs": 36244.929445000365,
+      "pintailMinMs": 36168.02877000021,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 3071.990933999885,
+          "pintailMs": 36422.933062999975,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 3074.433233999647,
+          "pintailMs": 36168.02877000021,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 3078.2799649997614,
+          "pintailMs": 36244.929445000365,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 3076.429512999952,
+          "pintailMs": 36360.70949300006,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 3067.7892780001275,
+          "pintailMs": 36194.78889199998,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "note IS NULL within a week: count",
+      "access": "idx_activity_created (range)",
+      "rows": 1,
+      "mysqlMedianMs": 327.50663700001314,
+      "mysqlMinMs": 326.4234980000183,
+      "pintailMedianMs": 1083.6557749998756,
+      "pintailMinMs": 1072.26176400017,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 327.50663700001314,
+          "pintailMs": 1091.0128719997592,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 326.7756249997765,
+          "pintailMs": 1077.790198000148,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 327.76720600016415,
+          "pintailMs": 1085.8673689998686,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 332.7202730001882,
+          "pintailMs": 1072.26176400017,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 326.4234980000183,
+          "pintailMs": 1083.6557749998756,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    },
+    {
+      "name": "states, amount and a month together: count",
+      "access": "idx_activity_created (range)",
+      "rows": 1,
+      "mysqlMedianMs": 1517.8228649999946,
+      "mysqlMinMs": 1504.612895000726,
+      "pintailMedianMs": 4212.4086279999465,
+      "pintailMinMs": 4186.602299000137,
+      "exact": true,
+      "samples": [
+        {
+          "variant": 0,
+          "mysqlMs": 1507.3776930002496,
+          "pintailMs": 4210.770261999685,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 1,
+          "mysqlMs": 1517.8228649999946,
+          "pintailMs": 4238.755367999896,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 2,
+          "mysqlMs": 1525.2459439998493,
+          "pintailMs": 4212.4086279999465,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 3,
+          "mysqlMs": 1523.7628410002217,
+          "pintailMs": 4219.979963000864,
+          "rows": 1,
+          "exact": true
+        },
+        {
+          "variant": 4,
+          "mysqlMs": 1504.612895000726,
+          "pintailMs": 4186.602299000137,
+          "rows": 1,
+          "exact": true
+        }
+      ]
+    }
+  ]
+}

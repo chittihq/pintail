@@ -6,7 +6,8 @@
     "test": "bun test",
     "smoke": "bun run run.ts",
     "auth": "bun run auth.ts",
-    "gate": "bun test && bun run auth && bun run smoke"
+    "dashboard": "bun run dashboard.ts",
+    "gate": "bun test && bun run auth && bun run smoke && bun run dashboard"
   },
   "dependencies": {
     "mysql2": "^3.15.3",

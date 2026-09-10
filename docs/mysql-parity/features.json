@@ -37,7 +37,7 @@
       "crates/pintail-sql/src/binder/mod.rs",
       "docs/limitations.md"
     ],
-    "note": "Core joins exist; nested RIGHT and some grouped shapes remain restricted.",
+    "note": "Core joins exist; a correlated subquery in an outer join's ON answers in every shape (widened hash joins, or a dependent join bucketed by the ON equalities); nested RIGHT and some grouped shapes remain restricted.",
     "acceptance": "Differential cases for USING/NATURAL, null extension, multi-key, theta, nested and bushy joins; repeat with spill."
   },
   {
@@ -56,9 +56,11 @@
     ],
     "evidence": [
       "crates/pintail-sql/src/binder/mod.rs",
+      "crates/pintail-exec/tests/join_condition_subquery.rs",
+      "tests/sqllogic/tests/mysql_oracle.rs",
       "docs/limitations.md"
     ],
-    "note": "Decorrelation and bounded dependent execution exist; wider forms are restricted.",
+    "note": "Decorrelation and bounded dependent execution exist, including IN, EXISTS, NOT IN and NOT EXISTS in an outer join's ON, and ANY/SOME/ALL over a subquery with MySQL's empty-set and NULL results; a correlated ANY/ALL and some wider forms are restricted. MySQL 8.4's default semi-join transformation drops a subquery's own filters in an outer join's ON, so the oracle compares those shapes with semijoin=off.",
     "acceptance": "Check empty/multi-row results, NULL-sensitive NOT IN, depth, alias scoping, memory ceilings and planner alternatives."
   },
   {
@@ -403,7 +405,7 @@
     "evidence": [
       "crates/pintail-exec/src/expression/temporal.rs"
     ],
-    "note": "Temporal carriers and functions exist with documented zero-date, TIME and parsing restrictions.",
+    "note": "Temporal carriers and functions exist with documented zero-date, TIME and parsing restrictions. A literal compared with a DATE or DATETIME column is read as MySQL reads it (date-only, relaxed separators, fractions, YYYYMMDD integers) and an impossible date against a column is refused as MySQL refuses it.",
     "acceptance": "Check negative/extended TIME, zero/partial dates, all fractional precisions, epoch limits and snapshot/CDC equivalence."
   },
   {
@@ -526,7 +528,7 @@
     "evidence": [
       "crates/pintail-exec/src/json_order.rs"
     ],
-    "note": "JSON ordering and identity exist; typed members, mixed comparison and several key contexts remain restricted.",
+    "note": "JSON ordering and identity exist, and a JSON value compared with a number compares as JSON; typed members, comparison with text and several key contexts remain restricted.",
     "acceptance": "Compare JSON versus text/null, duplicate keys, numeric scale, temporal members, binary encoding and metadata."
   },
   {
@@ -607,7 +609,7 @@
     "evidence": [
       "crates/pintail-exec/src/expression/mod.rs"
     ],
-    "note": "Core NULL predicates and expression evaluation exist.",
+    "note": "Core NULL predicates and expression evaluation exist, including IS [NOT] TRUE/FALSE/UNKNOWN, null-safe equality, NOT IN with a NULL in the list, and row-constructor comparisons decided pair by pair.",
     "acceptance": "Truth-table tests for all predicates, null-safe equality, CASE/IF short circuit, IN/NOT IN and aggregates."
   },
   {
@@ -973,7 +975,7 @@
     "evidence": [
       "crates/pintail-wire/src/server.rs"
     ],
-    "note": "Both encodings exist with documented metadata residuals.",
+    "note": "Both encodings exist with documented metadata residuals. A result carries every row, bounded by the per-query memory ceiling; an operator-set PINTAIL_MAX_RESULT_ROWS refuses a larger result rather than truncating it.",
     "acceptance": "Compare type codes, flags, charset IDs, length, scale, NULL bitmap, empty results, EOF/OK and errors."
   },
   {

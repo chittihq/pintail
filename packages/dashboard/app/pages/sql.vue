@@ -13,9 +13,15 @@ const sqlDatabaseId = computed({
   set: (value) => router.replace({ query: { ...route.query, db: value } }),
 })
 const sqlText = ref('SELECT *\nFROM events\nLIMIT 100')
-const sqlResult = ref<QueryResponse | null>(null)
+// Results are replaced as a whole; cells do not need deep reactive proxies.
+const sqlResult = shallowRef<QueryResponse | null>(null)
 const sqlRunning = ref(false)
 const sqlError = ref('')
+const resultPage = ref(0)
+const RESULT_PAGE_SIZE = 100
+const resultPageCount = computed(() => Math.max(1, Math.ceil((sqlResult.value?.rows.length ?? 0) / RESULT_PAGE_SIZE)))
+const resultOffset = computed(() => resultPage.value * RESULT_PAGE_SIZE)
+const visibleRows = computed(() => sqlResult.value?.rows.slice(resultOffset.value, resultOffset.value + RESULT_PAGE_SIZE) ?? [])
 
 /// Completion metadata for the selected database, as table -> columns.
 ///
@@ -68,6 +74,7 @@ async function runSql() {
       method: 'POST',
       body: JSON.stringify({ db: sqlDatabaseId.value, sql: sqlText.value }),
     })
+    resultPage.value = 0
     const history = JSON.parse(window.localStorage.getItem('pintail.sqlHistory') || '[]')
     window.localStorage.setItem(
       'pintail.sqlHistory',
@@ -123,12 +130,24 @@ async function runSql() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              <TableRow v-for="(row, rowIndex) in sqlResult.rows" :key="rowIndex">
+              <TableRow v-for="(row, rowIndex) in visibleRows" :key="resultOffset + rowIndex">
                 <TableCell v-for="(value, valueIndex) in row" :key="valueIndex" class="text-nowrap font-mono text-xs" :class="{ 'text-muted-foreground italic': value === null }">{{ displayValue(value) }}</TableCell>
               </TableRow>
             </TableBody>
           </Table>
         </div>
+        <nav v-if="sqlResult" aria-label="Result pages" class="flex flex-wrap items-center justify-between gap-3 border-t p-3">
+          <p class="text-muted-foreground text-sm" aria-live="polite">
+            Rows {{ sqlResult.rows.length ? resultOffset + 1 : 0 }}–{{ Math.min(resultOffset + RESULT_PAGE_SIZE, sqlResult.rows.length) }} of {{ sqlResult.rows.length }}
+          </p>
+          <div class="flex items-center gap-2">
+            <Button variant="outline" size="sm" aria-label="First page" :disabled="resultPage === 0" @click="resultPage = 0">First</Button>
+            <Button variant="outline" size="sm" aria-label="Previous page" :disabled="resultPage === 0" @click="resultPage -= 1">Previous</Button>
+            <span class="text-muted-foreground text-sm tabular-nums">{{ resultPage + 1 }} / {{ resultPageCount }}</span>
+            <Button variant="outline" size="sm" aria-label="Next page" :disabled="resultPage >= resultPageCount - 1" @click="resultPage += 1">Next</Button>
+            <Button variant="outline" size="sm" aria-label="Last page" :disabled="resultPage >= resultPageCount - 1" @click="resultPage = resultPageCount - 1">Last</Button>
+          </div>
+        </nav>
       </Card>
     </template>
   </section>

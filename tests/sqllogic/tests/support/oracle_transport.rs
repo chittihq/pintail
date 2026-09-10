@@ -116,12 +116,25 @@ pub fn execute_all(
             conn.query_drop(format!("SET sql_mode='{mode}'"))
                 .await
                 .map_err(|e| e.to_string())?;
+            // A family whose shapes MySQL's default optimizer answers wrongly
+            // runs under the switch that makes it answer the statement as written.
+            let switch = super::mysql_optimizer_switch(case.family);
+            if let Some(switch) = switch {
+                conn.query_drop(format!("SET SESSION optimizer_switch='{switch}'"))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
             let rows: Result<Vec<Row>, String> = conn.query(&case.sql).await.map_err(|e| {
                 format!(
                     "MySQL rejected case {index} ({}) `{}`: {e}",
                     case.family, case.sql
                 )
             });
+            if switch.is_some() {
+                conn.query_drop("SET SESSION optimizer_switch='default'")
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
             results.push(rows.and_then(|rows| rows.iter().map(row).collect::<Result<Vec<_>, _>>()));
         }
         conn.disconnect().await.map_err(|e| e.to_string())?;
@@ -209,7 +222,7 @@ fn inventory(cases: &[OracleCase]) -> serde_json::Value {
         "schemaVersion": 1, "expectedCases": cases.len(),
         "fixtureSha256": hash(format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL).as_bytes()),
         "sourceSha256": hash(include_bytes!("../mysql_oracle.rs")),
-        "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")), "tests/sqllogic/tests/support/oracle_llm_cases.json": hash(include_bytes!("oracle_llm_cases.json")), "tests/sqllogic/tests/support/oracle_seed_cases.json": hash(include_bytes!("oracle_seed_cases.json")) },
+        "sourceFiles": { "tests/sqllogic/tests/support/oracle_boundaries.rs": hash(include_bytes!("oracle_boundaries.rs")), "tests/sqllogic/tests/support/oracle_reviewed_cases.json": hash(include_bytes!("oracle_reviewed_cases.json")), "tests/sqllogic/tests/support/oracle_seed_cases.json": hash(include_bytes!("oracle_seed_cases.json")) },
         "fixtureSQL": format!("{}{}", super::FIXTURE_SQL, super::oracle_boundaries::SQL),
         "cases": cases.iter().map(|c| serde_json::json!({
             "id": case_id(c), "family": c.family, "sql": c.sql, "ordered": c.ordered,

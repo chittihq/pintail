@@ -982,8 +982,12 @@ memory tracker, and streaming rows to the socket as they are encoded would
 remove that copy. Refused, on the measurement rather than on principle.
 Session state at the default ceilings is tens of megabytes
 (`tests/load/results-sessions.md`), and the encoded copy is already bounded
-by the 10,000-row result cap; it is now also held to the per-query memory
-ceiling. Streaming would trade that bounded copy for an unbounded hold: the
+by the per-query memory ceiling. (It was also held to a 10,000-row cap
+until 2026-09-10, which the wire applied by cutting the result short: a
+MySQL client has no way to see that a result stopped, so a 43,000-row
+report read as a complete 10,000-row one. The wire now carries the whole
+result, and an operator-set `PINTAIL_MAX_RESULT_ROWS` refuses a result
+that reaches it rather than truncating it.) Streaming would trade that bounded copy for an unbounded hold: the
 socket write moves inside the execution window, so a slow client reading a
 large result keeps the query's admission permit and its memory for the
 length of the read, converting its network into occupied engine capacity -

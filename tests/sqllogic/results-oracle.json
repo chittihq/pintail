@@ -5155,2172 +5155,2970 @@
       "status": "PASS"
     },
     {
-      "name": "0859:rejected constructs",
+      "name": "0859:join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u JOIN orders o ON o.user_id = u.id AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0860:join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u JOIN orders o ON o.user_id = u.id WHERE o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0861:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(o.id) AS n, SUM(o.total) AS s FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0862:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total AND o2.user_id = u.id) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0863:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.id IN (SELECT o2.id FROM orders o2 WHERE o2.user_id = u.id + 1) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0864:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, e.id, e.note FROM users u LEFT JOIN events e ON e.id = u.id AND e.note IN (SELECT e2.note FROM events e2 WHERE e2.score = (u.id + 1) * 10) ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0865:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id FROM orders o RIGHT JOIN users u ON o.user_id = u.id AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total < 50) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0866:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id, e.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total > 20) LEFT JOIN events e ON e.id = u.id AND e.score IN (SELECT e2.score FROM events e2 WHERE e2.id = u.id AND e2.active = 1) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0867:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT t.uid, SUM(t.n) AS n FROM ( SELECT u.id AS uid, COUNT(DISTINCT o.id) AS n FROM users u JOIN events ev ON ev.id = u.id LEFT JOIN orders o ON o.user_id = u.id AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.user_id = ev.id AND o2.status <> 'cancelled') GROUP BY u.id) t GROUP BY t.uid ORDER BY t.uid",
+      "status": "PASS"
+    },
+    {
+      "name": "0868:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(o.id) AS n, SUM(o.total) AS s FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0869:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, e.id FROM users u LEFT JOIN events e ON e.id = u.id AND e.note NOT IN (SELECT e2.note FROM events e2 WHERE e2.score > u.id * 10) ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0870:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND NOT EXISTS (SELECT 1 FROM orders o2 WHERE o2.user_id = u.id AND o2.total > o.total) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0871:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id <> u.id AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.user_id = u.id AND o2.placed_at > o.placed_at) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0872:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.id IN (SELECT o2.id FROM orders o2 JOIN users u2 ON u2.id = o2.user_id WHERE u2.id = u.id AND o2.total > 20) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0873:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, COUNT(o.id) AS n FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total IN (SELECT MAX(o2.total) FROM orders o2 WHERE o2.user_id = u.id GROUP BY o2.status) GROUP BY u.id ORDER BY u.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0874:outer join-condition subquery",
+      "ordered": true,
+      "sql": "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > (SELECT AVG(o2.total) FROM orders o2 WHERE o2.user_id = u.id) ORDER BY u.id, o.id",
+      "status": "PASS"
+    },
+    {
+      "name": "0875:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at = '2024-03-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0876:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at BETWEEN '2024-02-29' AND '2024-03-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0877:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at > '2024-02-29 12:34:56' AND placed_at < '2024-03-08 06:30:00' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0878:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at >= '2025-02-28 23:59:59.5' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0879:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at <= '2025-02-28 23:59:59.999999' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0880:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at < '2025-01-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0881:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE DATE(placed_at) = '2024-03-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0882:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at LIKE '2024-03%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0883:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE YEAR(placed_at) = 2024 AND MONTH(placed_at) IN (2, 3) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0884:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at IN ('2024-01-15 10:00:00', '2025-01-01') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0885:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at > 20240301 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0886:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at >= '2024-3-1' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0887:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at BETWEEN '2025-03-01' AND '2025-02-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0888:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at NOT BETWEEN '2024-03-01' AND '2025-01-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0889:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at = '2024-02-29 12:34:56.000' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0890:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at >= DATE_SUB('2025-03-01', INTERVAL 1 DAY) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0891:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at >= '2024-12-31 23:59:59' + INTERVAL 1 SECOND ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0892:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at < CAST('2024-06-15 18:00:00' AS DATETIME) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0893:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at BETWEEN '2024-11-01 01:30' AND '2025-01-01 00:00:00' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0894:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total = 10.5 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0895:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total = '10.50' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0896:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total IN (0.01, 50, 7) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0897:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total BETWEEN 0 AND 0.01 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0898:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total > 99999999.98 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0899:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total = 0 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0900:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total < 0.005 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0901:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id = '3' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0902:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id = 3.0 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0903:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id = '3abc' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0904:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id IN ('1', 2, 3.5) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0905:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id > -1 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0906:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id BETWEEN 5 AND 3 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0907:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id NOT BETWEEN 3 AND 11 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0908:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id % 4 = 1 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0909:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE -total < -100 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0910:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total * 100 = 1050 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0911:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE user_id <> 1 AND user_id != 2 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0912:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE user_id NOT IN (1, 2, 3) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0913:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE user_id IN (SELECT id FROM users WHERE name LIKE 'user-0%') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0914:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note = NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0915:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note <=> NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0916:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE NOT (note = 'Alpha') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0917:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note NOT IN ('Alpha', NULL) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0918:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note IN ('Beta', NULL) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0919:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE COALESCE(note, 'none') = 'none' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0920:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note IS NOT NULL AND note <> 'beta' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0921:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE (note = 'Alpha') IS NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0922:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE IFNULL(note, 'x') > 'b' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0923:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE meta IS NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0924:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name = 'EVENT-01' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0925:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note = 'Alpha ' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0926:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE tag = 'red' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0927:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE tag = 'red  ' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0928:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name LIKE 'event\\_0%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0929:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name LIKE 'event_0%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0930:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name LIKE '%1' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0931:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name NOT LIKE 'event-0%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0932:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE note LIKE 'a%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0933:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE BINARY note LIKE 'a%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0934:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name > 'event-05' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0935:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name BETWEEN 'event-02' AND 'event-04' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0936:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE label = 'straße' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0937:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE label LIKE 'stra%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0938:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE tag COLLATE utf8mb4_bin = 'red' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0939:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE name IN ('EVENT-03', 'event-04 ') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0940:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE LENGTH(note) = 5 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0941:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE SUBSTRING(name, 7) = '05' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0942:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE CONCAT(note, '') = 'beta' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0943:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0944:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE NOT active ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0945:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active = TRUE ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0946:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active IS TRUE ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0947:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active IS NOT FALSE ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0948:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE score AND active ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0949:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active XOR (score > 50) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0950:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE 1 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0951:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE 0 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0952:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0953:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE score / 0 IS NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0954:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE score % 3 = 0 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0955:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE CASE WHEN active THEN score > 50 ELSE score < 30 END ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0956:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE active = 1 OR score > 50 AND note IS NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0957:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE (active = 1 OR score > 50) AND note IS NULL ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0958:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE (user_id, total) = (1, 10.50) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0959:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE (user_id, status) IN ((1, 'shipped'), (2, 'pending')) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0960:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE NOT (user_id = 1 OR total > 100) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0961:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id = (SELECT MAX(id) FROM orders WHERE status = 'shipped') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0962:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total > ALL (SELECT total FROM orders WHERE user_id = 1) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0963:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total >= ANY (SELECT total FROM orders WHERE user_id = 3) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0964:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total < SOME (SELECT 20) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0965:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE EXISTS (SELECT 1 FROM users WHERE id = 99) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0966:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0967:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE user_id NOT IN (SELECT id FROM users) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0968:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total IN (SELECT total FROM orders WHERE status = 'pending') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0969:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE JSON_EXTRACT(meta, '$.score') > 2 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0970:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE meta->>'$.tags[0]' = 'premium' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0971:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE JSON_CONTAINS(meta->'$.tags', '\"premium\"') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0972:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') >= 4 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0973:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE status IN ('shipped', 'delivered') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0974:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE status <> 'pending' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0975:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE status LIKE 'p%' ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0976:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id IN (1, 1, 2, 2, NULL) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0977:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE id NOT IN (1, 2, NULL) ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0978:where edge cases",
+      "ordered": true,
+      "sql": "SELECT COUNT(*) FROM orders WHERE placed_at >= '2025-01-01'",
+      "status": "PASS"
+    },
+    {
+      "name": "0979:where edge cases",
+      "ordered": true,
+      "sql": "SELECT user_id, SUM(total) FROM orders WHERE status <> 'cancelled' GROUP BY user_id HAVING SUM(total) > 50 ORDER BY user_id",
+      "status": "PASS"
+    },
+    {
+      "name": "0980:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE total > 10 ORDER BY placed_at DESC LIMIT 3",
+      "status": "PASS"
+    },
+    {
+      "name": "0981:where edge cases",
+      "ordered": true,
+      "sql": "SELECT id FROM orders WHERE placed_at >= '2024-06-01' AND placed_at < '2025-03-01' AND status <> 'cancelled' AND total BETWEEN 10 AND 200 ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0982:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT id, label FROM events ORDER BY label, id",
+      "status": "PASS"
+    },
+    {
+      "name": "0983:unicode_ci collation",
+      "ordered": false,
+      "sql": "SELECT label, COUNT(*) AS n FROM events GROUP BY label",
+      "status": "PASS"
+    },
+    {
+      "name": "0984:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT COUNT(DISTINCT label) FROM events",
+      "status": "PASS"
+    },
+    {
+      "name": "0985:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT COUNT(*) FROM events WHERE label = 'strasse'",
+      "status": "PASS"
+    },
+    {
+      "name": "0986:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT COUNT(*) FROM events WHERE label = 'a'",
+      "status": "PASS"
+    },
+    {
+      "name": "0987:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT MIN(label), MAX(label) FROM events",
+      "status": "PASS"
+    },
+    {
+      "name": "0988:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT id FROM events WHERE label IN ('arger','STRASSE') ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0989:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT id, label < 'b' AS below, label > 'a' AS above FROM events ORDER BY id",
+      "status": "PASS"
+    },
+    {
+      "name": "0990:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT 'straße' = 'strasse' COLLATE utf8mb4_unicode_ci, 'a' = 'a ' COLLATE utf8mb4_unicode_ci, 'æ' = 'ae' COLLATE utf8mb4_unicode_ci, 'á' = 'á' COLLATE utf8mb4_unicode_ci",
+      "status": "PASS"
+    },
+    {
+      "name": "0991:unicode_ci collation",
+      "ordered": true,
+      "sql": "SELECT 'a' > 'a\t' COLLATE utf8mb4_unicode_ci, 'a' > 'a\t' COLLATE utf8mb4_general_ci, 'a' = 'a ' COLLATE utf8mb4_unicode_ci",
+      "status": "PASS"
+    },
+    {
+      "name": "0992:rejected constructs",
       "ordered": false,
       "sql": "SELECT note COLLATE utf8mb4_bin AS k, COUNT(*) FROM events WHERE note IS NOT NULL GROUP BY note COLLATE utf8mb4_bin",
       "status": "PASS"
     },
     {
-      "name": "0860:json bin collation",
+      "name": "0993:json bin collation",
       "ordered": true,
       "sql": "SELECT JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')) AS t, COUNT(*) FROM events WHERE note IS NOT NULL GROUP BY JSON_UNQUOTE(JSON_EXTRACT(CONCAT('{\\\"k\\\":\\\"', note, '\\\"}'), '$.k')) ORDER BY t",
       "status": "PASS"
     },
     {
-      "name": "0861:coercion matrix",
+      "name": "0994:coercion matrix",
       "ordered": true,
       "sql": "SELECT '1' = 1, '1.0' = 1, ' 1' = 1, '1x' = 1, 'x' = 0, 1.0 = 1, '0.5' = 0.5, TRUE = 1, TRUE = '1', FALSE = ''",
       "status": "PASS"
     },
     {
-      "name": "0862:coercion matrix",
+      "name": "0995:coercion matrix",
       "ordered": true,
       "sql": "SELECT 1 < '2', '10' < 9, 'abc' = 0, '' = 0, NULL = '', '2025-01-01' = DATE('2025-01-01')",
       "status": "PASS"
     },
     {
-      "name": "0863:prefix precedence",
+      "name": "0996:prefix precedence",
       "ordered": true,
       "sql": "SELECT BINARY 'a' LIKE 'A', BINARY 'a' LIKE 'a', BINARY 'a' IS NULL, BINARY NULL IS NULL, NOT 'a' = 'a', NOT 1 > 2, -1 < 0",
       "status": "PASS"
     },
     {
-      "name": "0864:prefix precedence",
+      "name": "0997:prefix precedence",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events WHERE BINARY note LIKE 'Alpha'",
       "status": "PASS"
     },
     {
-      "name": "0865:prefix precedence",
+      "name": "0998:prefix precedence",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events WHERE BINARY note BETWEEN 'A' AND 'B'",
       "status": "PASS"
     },
     {
-      "name": "0866:pad space matrix",
+      "name": "0999:pad space matrix",
       "ordered": true,
       "sql": "SELECT 'a' = 'a ' COLLATE utf8mb4_general_ci, 'a' LIKE 'a ', 'a ' LIKE 'a', 'a' IN ('a ' COLLATE utf8mb4_general_ci), 'a' IN ('a ', 'b')",
       "status": "PASS"
     },
     {
-      "name": "0867:pad space matrix",
+      "name": "1000:pad space matrix",
       "ordered": false,
       "sql": "SELECT tag, COUNT(*) FROM events GROUP BY tag",
       "status": "PASS"
     },
     {
-      "name": "0868:like escape corners",
+      "name": "1001:like escape corners",
       "ordered": true,
       "sql": "SELECT '50%' LIKE '50\\%', '50x' LIKE '50\\%', 'a\\\\b' LIKE 'a\\\\\\\\b', '_' LIKE '\\_', 'x' LIKE '\\_', 'a\\\\' LIKE 'a%', 'a%' LIKE 'a|%' ESCAPE '|', 'a\\\\b' LIKE 'a\\\\b' ESCAPE '|'",
       "status": "PASS"
     },
     {
-      "name": "0869:null-safe matrix",
+      "name": "1002:null-safe matrix",
       "ordered": true,
       "sql": "SELECT 0 <=> 0, 0 <=> NULL, '' <=> '', 'a' <=> 'A', NULL <=> '', 1.5 <=> 1.5, DATE('2025-01-01') <=> DATE('2025-01-01')",
       "status": "PASS"
     },
     {
-      "name": "0870:null-safe matrix",
+      "name": "1003:null-safe matrix",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events WHERE NOT (note <=> NULL)",
       "status": "PASS"
     },
     {
-      "name": "0871:collate positions",
+      "name": "1004:collate positions",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events WHERE note = 'ALPHA' COLLATE utf8mb4_bin",
       "status": "PASS"
     },
     {
-      "name": "0872:collate positions",
+      "name": "1005:collate positions",
       "ordered": true,
       "sql": "SELECT note FROM events WHERE note IS NOT NULL ORDER BY note COLLATE utf8mb4_bin, id",
       "status": "PASS"
     },
     {
-      "name": "0873:collate positions",
+      "name": "1006:collate positions",
       "ordered": false,
       "sql": "SELECT DISTINCT note COLLATE utf8mb4_bin FROM events WHERE note IS NOT NULL",
       "status": "PASS"
     },
     {
-      "name": "0874:unsigned wrap",
+      "name": "1007:unsigned wrap",
       "ordered": true,
       "sql": "SELECT CAST(-2 AS UNSIGNED), CAST('-3' AS UNSIGNED) + 0, CAST(18446744073709551615 AS UNSIGNED), CAST(CAST(-1 AS UNSIGNED) AS SIGNED)",
       "status": "PASS"
     },
     {
-      "name": "0875:json comparison",
+      "name": "1008:json comparison",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('{\"a\":1}','$.a') = JSON_EXTRACT('{\"b\":1.0}','$.b'), JSON_EXTRACT('{\"a\":1,\"b\":2}','$') = JSON_EXTRACT('{\"b\":2,\"a\":1}','$'), JSON_EXTRACT('[1,2]','$') = JSON_EXTRACT('[1,2]','$'), JSON_EXTRACT('[1,2]','$') < JSON_EXTRACT('[1,3]','$')",
       "status": "PASS"
     },
     {
-      "name": "0876:json comparison",
+      "name": "1009:json comparison",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('[9]','$') > JSON_EXTRACT('{\"n\":99}','$.n'), JSON_EXTRACT('true','$') > JSON_EXTRACT('[9]','$'), JSON_EXTRACT('null','$') < JSON_EXTRACT('0','$'), JSON_EXTRACT('\"a\"','$') > JSON_EXTRACT('9','$'), JSON_EXTRACT('false','$') < JSON_EXTRACT('true','$')",
       "status": "PASS"
     },
     {
-      "name": "0877:json comparison",
+      "name": "1010:json comparison",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events WHERE JSON_EXTRACT(CONCAT('{\"n\":', id, '}'), '$.n') IN (JSON_EXTRACT('[1,3]','$[0]'), JSON_EXTRACT('[1,3]','$[1]'))",
       "status": "PASS"
     },
     {
-      "name": "0878:json comparison",
+      "name": "1011:json comparison",
       "ordered": true,
       "sql": "SELECT id FROM events ORDER BY JSON_EXTRACT(CONCAT('{\"n\":', id * 7 % 5, '}'), '$.n'), id",
       "status": "PASS"
     },
     {
-      "name": "0879:json comparison",
+      "name": "1012:json comparison",
       "ordered": false,
       "sql": "SELECT JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n') AS k, COUNT(*) FROM events GROUP BY JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n')",
       "status": "PASS"
     },
     {
-      "name": "0880:json comparison",
+      "name": "1013:json comparison",
       "ordered": true,
       "sql": "SELECT COUNT(DISTINCT JSON_EXTRACT(CONCAT('{\"n\":', id % 3, '}'), '$.n')) FROM events",
       "status": "PASS"
     },
     {
-      "name": "0881:json path wildcards",
+      "name": "1014:json path wildcards",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('{\"b\":2,\"aa\":1}','$.*'), JSON_EXTRACT('[1,2,3]','$[*]'), JSON_EXTRACT('{\"a\":{\"b\":1},\"c\":{\"b\":2}}','$**.b'), JSON_EXTRACT('[1,2,3,4]','$[1 to 2]'), JSON_EXTRACT('[1,2,3,4]','$[last-2 to last]')",
       "status": "PASS"
     },
     {
-      "name": "0882:json path wildcards",
+      "name": "1015:json path wildcards",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('[1,2,3]','$[last]'), JSON_EXTRACT('[1,2,3]','$[last-1]'), JSON_EXTRACT('3','$[0]'), JSON_EXTRACT('{\"a\":1}','$[*]'), JSON_EXTRACT('{}','$.*') IS NULL",
       "status": "PASS"
     },
     {
-      "name": "0883:json path wildcards",
+      "name": "1016:json path wildcards",
       "ordered": true,
       "sql": "SELECT JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','one','$**.b'), JSON_CONTAINS_PATH('{\"a\":{\"b\":1}}','all','$**.b','$.a.*'), JSON_CONTAINS_PATH('{\"a\":1}','one','$**.zz'), JSON_EXTRACT('{\"a\":[{\"b\":1},{\"b\":2}]}','$.a[*].b')",
       "status": "PASS"
     },
     {
-      "name": "0884:json modification",
+      "name": "1017:json modification",
       "ordered": true,
       "sql": "SELECT JSON_SET('{\"a\":1}','$.b',2), JSON_SET('{\"a\":1}','$.a','x'), JSON_INSERT('{\"a\":1}','$.a',9,'$.b',2), JSON_REPLACE('{\"a\":1}','$.a',9,'$.b',2), JSON_REMOVE('{\"a\":1,\"b\":2}','$.b'), JSON_REMOVE('[1,2,3]','$[1]'), JSON_SET('[1,2]','$[5]',3), JSON_SET('1','$[1]',2)",
       "status": "PASS"
     },
     {
-      "name": "0885:json modification",
+      "name": "1018:json modification",
       "ordered": true,
       "sql": "SELECT JSON_MERGE_PATCH('{\"a\":1,\"b\":2}','{\"b\":null,\"c\":3}'), JSON_MERGE_PATCH('{\"a\":{\"x\":1}}','{\"a\":{\"y\":2}}'), JSON_MERGE_PATCH('{\"a\":1}','[1]'), JSON_SET('{}','$.s','[1]'), JSON_SET('{}','$.j',JSON_EXTRACT('[1]','$'))",
       "status": "PASS"
     },
     {
-      "name": "0886:json modification",
+      "name": "1019:json modification",
       "ordered": true,
       "sql": "SELECT JSON_DEPTH('{}'), JSON_DEPTH('[1,[2,3]]'), JSON_QUOTE('a\"b'), MD5(JSON_PRETTY('{\"b\":[1,{}],\"a\":2}')), JSON_OVERLAPS('[1,2]','[2,9]'), JSON_OVERLAPS('[1,2]','[8,9]'), JSON_OVERLAPS('{\"a\":1,\"b\":2}','{\"a\":9,\"b\":2}'), 1 MEMBER OF('[1.0, 2]'), 'x' MEMBER OF('[\"x\"]'), 3 MEMBER OF('[1,2]')",
       "status": "PASS"
     },
     {
-      "name": "0887:hash and net scalars",
+      "name": "1020:hash and net scalars",
       "ordered": true,
       "sql": "SELECT SHA1(''), SHA1('abc'), SHA2('abc', 256), SHA2('abc', 224), SHA2('abc', 384), SHA2('abc', 512), SHA2('abc', 0), SHA2('abc', 7), MD5('abc'), CRC32('MySQL'), CRC32('')",
       "status": "PASS"
     },
     {
-      "name": "0888:hash and net scalars",
+      "name": "1021:hash and net scalars",
       "ordered": true,
       "sql": "SELECT BIN(12), BIN(-1), BIN(0), OCT(64), OCT(-1), INET_ATON('10.0.5.9'), INET_ATON('255.255.255.255'), INET_ATON('10.0.5.256'), INET_ATON('1.2.3'), INET_NTOA(167773449), INET_NTOA(0), INET_NTOA(4294967296)",
       "status": "PASS"
     },
     {
-      "name": "0889:hash and net scalars",
+      "name": "1022:hash and net scalars",
       "ordered": true,
       "sql": "SELECT SHA1(note), CRC32(note) FROM events WHERE id = 1",
       "status": "PASS"
     },
     {
-      "name": "0890:extract composite units",
+      "name": "1023:extract composite units",
       "ordered": true,
       "sql": "SELECT EXTRACT(YEAR_MONTH FROM '2025-07-21 10:40:50'), EXTRACT(DAY_HOUR FROM '2025-07-21 10:40:50'), EXTRACT(DAY_MINUTE FROM '2025-07-21 10:40:50'), EXTRACT(DAY_SECOND FROM '2025-07-21 10:40:50'), EXTRACT(HOUR_MINUTE FROM '2025-07-21 10:40:50'), EXTRACT(HOUR_SECOND FROM '2025-07-21 10:40:50'), EXTRACT(MINUTE_SECOND FROM '2025-07-21 10:40:50'), EXTRACT(YEAR_MONTH FROM '2025-01-05'), EXTRACT(MINUTE_SECOND FROM '2025-01-05 00:00:07')",
       "status": "PASS"
     },
     {
-      "name": "0891:theta joins",
+      "name": "1024:theta joins",
       "ordered": false,
       "sql": "SELECT a.id, COUNT(b.id) FROM events a JOIN events b ON b.id < a.id GROUP BY a.id",
       "status": "PASS"
     },
     {
-      "name": "0892:theta joins",
+      "name": "1025:theta joins",
       "ordered": false,
       "sql": "SELECT a.id, COUNT(b.id) FROM events a LEFT JOIN events b ON b.id < a.id AND b.id > 2 GROUP BY a.id",
       "status": "PASS"
     },
     {
-      "name": "0893:theta joins",
+      "name": "1026:theta joins",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a JOIN events b ON a.id <> b.id",
       "status": "PASS"
     },
     {
-      "name": "0894:theta joins",
+      "name": "1027:theta joins",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a JOIN events b ON a.id = b.id AND b.id BETWEEN 2 AND 4",
       "status": "PASS"
     },
     {
-      "name": "0895:correlated ranges",
+      "name": "1028:correlated ranges",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a WHERE EXISTS (SELECT 1 FROM events b WHERE b.id < a.id)",
       "status": "PASS"
     },
     {
-      "name": "0896:correlated ranges",
+      "name": "1029:correlated ranges",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a WHERE NOT EXISTS (SELECT 1 FROM events b WHERE b.id = a.id AND b.id > 3)",
       "status": "PASS"
     },
     {
-      "name": "0897:correlated ranges",
+      "name": "1030:correlated ranges",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a WHERE a.id IN (SELECT b.id FROM events b WHERE b.id >= a.id AND b.id > 2)",
       "status": "PASS"
     },
     {
-      "name": "0898:correlated ranges",
+      "name": "1031:correlated ranges",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.id <> e.id)",
       "status": "PASS"
     },
     {
-      "name": "0899:chained right joins",
+      "name": "1032:chained right joins",
       "ordered": false,
       "sql": "SELECT c.id, a.id FROM events a JOIN events b ON a.id = b.id AND a.id < 3 RIGHT JOIN events c ON c.id = a.id",
       "status": "PASS"
     },
     {
-      "name": "0900:chained right joins",
+      "name": "1033:chained right joins",
       "ordered": false,
       "sql": "SELECT e.id, u.id FROM events e LEFT JOIN (users u JOIN events x ON u.id = x.id) ON e.id = u.id",
       "status": "PASS"
     },
     {
-      "name": "0901:chained right joins",
+      "name": "1034:chained right joins",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM events a RIGHT JOIN users u ON u.id = a.id RIGHT JOIN events c ON c.id = u.id",
       "status": "PASS"
     },
     {
-      "name": "0902:hand-written distinct",
+      "name": "1035:hand-written distinct",
       "ordered": false,
       "sql": "SELECT DISTINCT note FROM events",
       "status": "PASS"
     },
     {
-      "name": "0903:hand-written distinct",
+      "name": "1036:hand-written distinct",
       "ordered": false,
       "sql": "SELECT DISTINCT active, note FROM events",
       "status": "PASS"
     },
     {
-      "name": "0904:hand-written left join",
+      "name": "1037:hand-written left join",
       "ordered": true,
       "sql": "SELECT e.id, u.name FROM events e LEFT JOIN users u ON e.id = u.id WHERE e.id >= 7 ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0905:hand-written left join",
+      "name": "1038:hand-written left join",
       "ordered": true,
       "sql": "SELECT e.id FROM events e LEFT JOIN users u ON e.id = u.id WHERE u.id IS NULL ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0906:hand-written cross join",
+      "name": "1039:hand-written cross join",
       "ordered": true,
       "sql": "SELECT e.id AS event_id, u.id AS user_id FROM events e CROSS JOIN users u WHERE e.id >= 9 AND u.id <= 2 ORDER BY event_id, user_id",
       "status": "PASS"
     },
     {
-      "name": "0907:hand-written using join",
+      "name": "1040:hand-written using join",
       "ordered": true,
       "sql": "SELECT id, e.name, u.name FROM events e JOIN users u USING (id) WHERE id >= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0908:hand-written using join",
+      "name": "1041:hand-written using join",
       "ordered": true,
       "sql": "SELECT * FROM events e JOIN users u USING (id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0909:hand-written using join",
+      "name": "1042:hand-written using join",
       "ordered": true,
       "sql": "SELECT * FROM events e LEFT JOIN users u USING (id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0910:hand-written using join",
+      "name": "1043:hand-written using join",
       "ordered": true,
       "sql": "SELECT id, u.id FROM events e LEFT JOIN users u USING (id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0911:hand-written using join",
+      "name": "1044:hand-written using join",
       "ordered": true,
       "sql": "SELECT * FROM events RIGHT JOIN users USING (id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0912:hand-written using join",
+      "name": "1045:hand-written using join",
       "ordered": true,
       "sql": "SELECT * FROM events e JOIN users u USING (id, name) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0913:hand-written natural join",
+      "name": "1046:hand-written natural join",
       "ordered": true,
       "sql": "SELECT * FROM events NATURAL JOIN users ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0914:hand-written natural join",
+      "name": "1047:hand-written natural join",
       "ordered": true,
       "sql": "SELECT id, name FROM events NATURAL LEFT JOIN users ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0915:hand-written parenthesized inner join",
+      "name": "1048:hand-written parenthesized inner join",
       "ordered": true,
       "sql": "SELECT e.id, e.name, u.name FROM (events e INNER JOIN users u ON e.id = u.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0916:hand-written scalar subquery",
+      "name": "1049:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT COUNT(*) FROM users u WHERE u.id = e.id) AS n FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0917:hand-written scalar subquery",
+      "name": "1050:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT COUNT(*) FROM users u WHERE u.id = e.id AND u.id >= 3) AS n FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0918:hand-written scalar subquery",
+      "name": "1051:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT SUM(u.id) FROM users u WHERE u.id = e.id) AS total FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0919:hand-written scalar subquery",
+      "name": "1052:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT MIN(u.name) FROM users u WHERE u.id = e.id) AS lo FROM events e WHERE e.active = TRUE ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0920:hand-written scalar subquery",
+      "name": "1053:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT AVG(u.id) FROM users u WHERE u.id = e.id) AS mean FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0921:hand-written scalar subquery unique lookup",
+      "name": "1054:hand-written scalar subquery unique lookup",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT u.name FROM users u WHERE u.id = e.id) AS user_name FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "0922:hand-written convert_tz",
+      "name": "1055:hand-written convert_tz",
       "ordered": true,
       "sql": "SELECT CONVERT_TZ('2026-03-08 06:30:00','+00:00','+05:30'), CONVERT_TZ('2026-03-08 06:30:00','+05:30','-08:00'), CONVERT_TZ('2026-06-15 10:00:00.250','+00:00','+02:00')",
       "status": "PASS"
     },
     {
-      "name": "0923:hand-written convert_tz",
+      "name": "1056:hand-written convert_tz",
       "ordered": true,
       "sql": "SELECT CONVERT_TZ('2026-01-15 12:00:00','UTC','Asia/Kolkata'), CONVERT_TZ('2026-01-15 12:00:00','Asia/Kolkata','UTC'), CONVERT_TZ('2026-07-04 18:00:00','America/New_York','Europe/Paris')",
       "status": "PASS"
     },
     {
-      "name": "0924:hand-written convert_tz",
+      "name": "1057:hand-written convert_tz",
       "ordered": true,
       "sql": "SELECT CONVERT_TZ('2026-11-01 05:30:00','UTC','America/New_York'), CONVERT_TZ('2026-11-01 01:30:00','America/New_York','UTC')",
       "status": "PASS"
     },
     {
-      "name": "0925:hand-written convert_tz",
+      "name": "1058:hand-written convert_tz",
       "ordered": true,
       "sql": "SELECT CONVERT_TZ('2026-06-15 10:00:00','Bad/Zone','UTC'), CONVERT_TZ(NULL,'+00:00','+01:00'), CONVERT_TZ('not a datetime','+00:00','+01:00')",
       "status": "PASS"
     },
     {
-      "name": "0926:hand-written char and rand",
+      "name": "1059:hand-written char and rand",
       "ordered": true,
       "sql": "SELECT CHAR(77,121,83,81,76), CHAR(256), CHAR(77,NULL,121), CHAR(id + 64) FROM events WHERE id <= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0927:hand-written char and rand",
+      "name": "1060:hand-written char and rand",
       "ordered": true,
       "sql": "SELECT RAND() >= 0 AND RAND() < 1, RAND() <> RAND() OR RAND() <> RAND()",
       "status": "PASS"
     },
     {
-      "name": "0928:hand-written cross join",
+      "name": "1061:hand-written cross join",
       "ordered": false,
       "sql": "SELECT e.name, u.name FROM events e, users u WHERE e.id = 10 AND u.id >= 7",
       "status": "PASS"
     },
     {
-      "name": "0929:hand-written null predicates",
+      "name": "1062:hand-written null predicates",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE note IS NULL OR active = TRUE ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0930:hand-written null predicates",
+      "name": "1063:hand-written null predicates",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE NOT (note = 'alpha') ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0931:hand-written null predicates",
+      "name": "1064:hand-written null predicates",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE note = 'alpha' OR note IS NULL ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0932:hand-written null predicates",
+      "name": "1065:hand-written null predicates",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE note <> 'alpha' AND note IS NOT NULL ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0933:hand-written logic",
+      "name": "1066:hand-written logic",
       "ordered": true,
       "sql": "SELECT TRUE OR NULL, FALSE AND NULL, NOT NULL, NULL XOR TRUE",
       "status": "PASS"
     },
     {
-      "name": "0934:hand-written logic",
+      "name": "1067:hand-written logic",
       "ordered": true,
       "sql": "SELECT id, (id = 1 AND active) OR id = 3 FROM events WHERE id <= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0935:hand-written strings",
+      "name": "1068:hand-written strings",
       "ordered": true,
       "sql": "SELECT UPPER('Pintáil'), LOWER('MiXeD'), LENGTH('Pintáil'), CHAR_LENGTH('Pintáil')",
       "status": "PASS"
     },
     {
-      "name": "0936:hand-written hashes",
+      "name": "1069:hand-written hashes",
       "ordered": true,
       "sql": "SELECT MD5(''), MD5('abc'), MD5(42), MD5(NULL)",
       "status": "PASS"
     },
     {
-      "name": "0937:hand-written strings",
+      "name": "1070:hand-written strings",
       "ordered": true,
       "sql": "SELECT 'Pintail' LIKE 'pin%', 'Pintail' NOT LIKE '%sql', 'a_b' LIKE 'a_b'",
       "status": "PASS"
     },
     {
-      "name": "0938:hand-written date and time",
+      "name": "1071:hand-written date and time",
       "ordered": true,
       "sql": "SELECT HOUR('2024-02-29 12:34:56'), MINUTE('2024-02-29 12:34:56'), SECOND('2024-02-29 12:34:56')",
       "status": "PASS"
     },
     {
-      "name": "0939:hand-written date and time",
+      "name": "1072:hand-written date and time",
       "ordered": true,
       "sql": "SELECT UNIX_TIMESTAMP(FROM_UNIXTIME(1704067200)), FROM_UNIXTIME(UNIX_TIMESTAMP('2024-01-01 12:34:56'))",
       "status": "PASS"
     },
     {
-      "name": "0940:hand-written date and time",
+      "name": "1073:hand-written date and time",
       "ordered": true,
       "sql": "SELECT DATE(NOW()) = CURDATE(), LENGTH(NOW()), CHAR_LENGTH(CURDATE())",
       "status": "PASS"
     },
     {
-      "name": "0941:hand-written date and time",
+      "name": "1074:hand-written date and time",
       "ordered": true,
       "sql": "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%c/%e/%Y %k:%i:%s'), DATE('2024-02-29 12:34:56')",
       "status": "PASS"
     },
     {
-      "name": "0942:hand-written date format directives",
+      "name": "1075:hand-written date format directives",
       "ordered": true,
       "sql": "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%a|%b|%c|%D|%d|%e|%H|%h|%I|%i|%j|%k|%l|%M|%m|%p|%r|%S|%s|%T|%W|%w|%Y|%y')",
       "status": "PASS"
     },
     {
-      "name": "0943:hand-written date format week numbering",
+      "name": "1076:hand-written date format week numbering",
       "ordered": true,
       "sql": "SELECT DATE_FORMAT('2024-02-29 12:34:56', '%U|%u|%V|%v|%X|%x'), DATE_FORMAT('2021-01-01 00:00:00', '%U|%u|%V|%v|%X|%x'), DATE_FORMAT('2023-01-01 00:00:00', '%U|%u|%V|%v|%X|%x'), DATE_FORMAT('2019-12-30 00:00:00', '%U|%u|%V|%v|%X|%x')",
       "status": "PASS"
     },
     {
-      "name": "0944:hand-written date format edges",
+      "name": "1077:hand-written date format edges",
       "ordered": true,
       "sql": "SELECT DATE_FORMAT('2024-01-01 00:05:00', '%h %l %p %k %H'), DATE_FORMAT('2024-01-11 12:00:00', '%D %p'), DATE_FORMAT('2024-01-21 23:59:59', '%D %r'), DATE_FORMAT('2024-02-29 12:34:56', '%q'), DATE_FORMAT('2024-02-29 12:34:56', '100%%'), DATE_FORMAT('2024-02-29 12:34:56', 'no directives')",
       "status": "PASS"
     },
     {
-      "name": "0945:hand-written statistical aggregates",
+      "name": "1078:hand-written statistical aggregates",
       "ordered": true,
       "sql": "SELECT STDDEV(score), STDDEV_POP(score), STDDEV_SAMP(score), VARIANCE(score), VAR_POP(score), VAR_SAMP(score), STD(score) FROM events",
       "status": "PASS"
     },
     {
-      "name": "0946:hand-written statistical aggregates grouped",
+      "name": "1079:hand-written statistical aggregates grouped",
       "ordered": true,
       "sql": "SELECT active, STDDEV_POP(score), VAR_SAMP(score) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "0947:hand-written statistical aggregate single row",
+      "name": "1080:hand-written statistical aggregate single row",
       "ordered": true,
       "sql": "SELECT STDDEV_POP(score), STDDEV_SAMP(score), VAR_POP(score), VAR_SAMP(score) FROM events WHERE id = 1",
       "status": "PASS"
     },
     {
-      "name": "0948:hand-written statistical aggregate empty group",
+      "name": "1081:hand-written statistical aggregate empty group",
       "ordered": true,
       "sql": "SELECT STDDEV_POP(score), STDDEV_SAMP(score), VARIANCE(score) FROM events WHERE id > 1000",
       "status": "PASS"
     },
     {
-      "name": "0949:hand-written bit aggregates",
+      "name": "1082:hand-written bit aggregates",
       "ordered": true,
       "sql": "SELECT BIT_AND(score), BIT_OR(score), BIT_XOR(score) FROM events",
       "status": "PASS"
     },
     {
-      "name": "0950:hand-written bit aggregates grouped",
+      "name": "1083:hand-written bit aggregates grouped",
       "ordered": true,
       "sql": "SELECT active, BIT_AND(id), BIT_OR(id), BIT_XOR(id) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "0951:hand-written bit aggregates empty group",
+      "name": "1084:hand-written bit aggregates empty group",
       "ordered": true,
       "sql": "SELECT BIT_AND(score), BIT_OR(score), BIT_XOR(score) FROM events WHERE id > 1000",
       "status": "PASS"
     },
     {
-      "name": "0952:hand-written any_value",
+      "name": "1085:hand-written any_value",
       "ordered": true,
       "sql": "SELECT id, ANY_VALUE(name), ANY_VALUE(score) FROM events GROUP BY id ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0953:hand-written any_value empty group",
+      "name": "1086:hand-written any_value empty group",
       "ordered": true,
       "sql": "SELECT ANY_VALUE(name) FROM events WHERE id > 1000",
       "status": "PASS"
     },
     {
-      "name": "0954:hand-written any_value ungrouped",
+      "name": "1087:hand-written any_value ungrouped",
       "ordered": true,
       "sql": "SELECT ANY_VALUE(name) FROM events ORDER BY 1",
       "status": "PASS"
     },
     {
-      "name": "0955:hand-written any_value ungrouped expression",
+      "name": "1088:hand-written any_value ungrouped expression",
       "ordered": true,
       "sql": "SELECT ANY_VALUE(score) + 1 FROM events WHERE id <= 3 ORDER BY 1",
       "status": "PASS"
     },
     {
-      "name": "0956:hand-written cast temporal",
+      "name": "1089:hand-written cast temporal",
       "ordered": true,
       "sql": "SELECT CAST('2024-02-29 12:34:56' AS DATE), CAST('2024-02-29' AS DATETIME), CAST('2024-02-29 12:34:56' AS DATETIME), CAST('2024-02-29 12:34:56.789' AS DATETIME(3)), CAST('12:34:56.7896' AS TIME(3)), CAST('-12:34:56.123456' AS TIME(6)), CAST('1 02:03:04' AS TIME), CAST('1112' AS TIME), CAST('2026-08-06 07:08:09.987654' AS TIME(3)), CAST('850:00:00' AS TIME)",
       "status": "PASS"
     },
     {
-      "name": "0957:hand-written cast temporal invalid",
+      "name": "1090:hand-written cast temporal invalid",
       "ordered": true,
       "sql": "SELECT CAST('not-a-date' AS DATE), CAST('' AS DATE), CAST('2024-13-45' AS DATE)",
       "status": "PASS"
     },
     {
-      "name": "0958:hand-written cast targets",
+      "name": "1091:hand-written cast targets",
       "ordered": true,
       "sql": "SELECT CAST(42 AS CHAR), CAST('42' AS SIGNED), CAST('42' AS UNSIGNED), CAST(-1 AS SIGNED), CAST('3.7' AS DECIMAL(10,2)), CAST(1 AS CHAR(4)), CAST('{\"aa\":1,\"b\":[true,null]}' AS JSON), JSON_TYPE(CAST('[1,2]' AS JSON)), CAST(0 AS YEAR), CAST('0' AS YEAR), CAST(69 AS YEAR), CAST(70 AS YEAR), CAST(1944.5 AS YEAR), CAST(2156 AS YEAR), CAST(CAST('2024-02-29' AS DATE) AS YEAR), CAST('11:35:00' AS YEAR), CAST('1979aaa' AS YEAR), CAST('not-a-year' AS YEAR)",
       "status": "PASS"
     },
     {
-      "name": "0959:hand-written json contains",
+      "name": "1092:hand-written json contains",
       "ordered": true,
       "sql": "SELECT JSON_CONTAINS('[1,2,3]', '2'), JSON_CONTAINS('[1,2,3]', '[1,3]'), JSON_CONTAINS('[1,2,3]', '[1,4]'), JSON_CONTAINS('{\"a\":1,\"b\":2}', '{\"a\":1}'), JSON_CONTAINS('{\"a\":1}', '{\"a\":2}'), JSON_CONTAINS('1', '1'), JSON_CONTAINS('[[1,2]]', '[[1]]')",
       "status": "PASS"
     },
     {
-      "name": "0960:hand-written json contains path",
+      "name": "1093:hand-written json contains path",
       "ordered": true,
       "sql": "SELECT JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'one', '$.a', '$.z'), JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'all', '$.a', '$.z'), JSON_CONTAINS_PATH('{\"a\":1,\"b\":2}', 'all', '$.a', '$.b')",
       "status": "PASS"
     },
     {
-      "name": "0961:hand-written json length keys type",
+      "name": "1094:hand-written json length keys type",
       "ordered": true,
       "sql": "SELECT JSON_LENGTH('[1,2,3]'), JSON_LENGTH('{\"a\":1,\"b\":2}'), JSON_LENGTH('7'), JSON_LENGTH('{\"a\":[1,2,3]}', '$.a'), JSON_KEYS('{\"b\":1,\"a\":2}'), JSON_KEYS('[1,2]'), JSON_TYPE('[1]'), JSON_TYPE('{}'), JSON_TYPE('\"x\"'), JSON_TYPE('1'), JSON_TYPE('1.5'), JSON_TYPE('true'), JSON_TYPE('null')",
       "status": "PASS"
     },
     {
-      "name": "0962:hand-written json valid",
+      "name": "1095:hand-written json valid",
       "ordered": true,
       "sql": "SELECT JSON_VALID('{\"a\":1}'), JSON_VALID('not json'), JSON_VALID('[1,2]'), JSON_VALID('')",
       "status": "PASS"
     },
     {
-      "name": "0963:hand-written substring_index",
+      "name": "1096:hand-written substring_index",
       "ordered": true,
       "sql": "SELECT SUBSTRING_INDEX('a/b/c', '/', 1), SUBSTRING_INDEX('a/b/c', '/', 2), SUBSTRING_INDEX('a/b/c', '/', -1), SUBSTRING_INDEX('a/b/c', '/', -2), SUBSTRING_INDEX('a/b/c', '/', 9), SUBSTRING_INDEX('a/b/c', '/', -9), SUBSTRING_INDEX('a/b/c', '/', 0), SUBSTRING_INDEX('abc', '/', 1), SUBSTRING_INDEX('a::b::c', '::', 2), SUBSTRING_INDEX('', '/', 1)",
       "status": "PASS"
     },
     {
-      "name": "0964:hand-written conv",
+      "name": "1097:hand-written conv",
       "ordered": true,
       "sql": "SELECT CONV('a', 16, 2), CONV('6E', 18, 8), CONV(-17, 10, -18), CONV('ff', 16, 10), CONV('1111', 2, 16), CONV('zz', 36, 10), CONV('0', 10, 10), CONV('7fffffffffffffff', 16, 10)",
       "status": "PASS"
     },
     {
-      "name": "0965:hand-written maketime",
+      "name": "1098:hand-written maketime",
       "ordered": true,
       "sql": "SELECT MAKETIME(12, 15, 30), MAKETIME(0, 0, 0), MAKETIME(-1, 30, 0), MAKETIME(1, 60, 0), MAKETIME(1, 0, 60)",
       "status": "PASS"
     },
     {
-      "name": "0966:hand-written lag lead",
+      "name": "1099:hand-written lag lead",
       "ordered": true,
       "sql": "SELECT id, LAG(score) OVER (ORDER BY id), LEAD(score) OVER (ORDER BY id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0967:hand-written lag lead offset default",
+      "name": "1100:hand-written lag lead offset default",
       "ordered": true,
       "sql": "SELECT id, LAG(score, 2, -1) OVER (ORDER BY id), LEAD(score, 3, -1) OVER (ORDER BY id), LAG(score, 0) OVER (ORDER BY id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0968:hand-written lag lead partitioned",
+      "name": "1101:hand-written lag lead partitioned",
       "ordered": true,
       "sql": "SELECT id, active, LAG(score) OVER (PARTITION BY active ORDER BY id), LEAD(score) OVER (PARTITION BY active ORDER BY id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0969:hand-written ntile",
+      "name": "1102:hand-written ntile",
       "ordered": true,
       "sql": "SELECT id, NTILE(3) OVER (ORDER BY id), NTILE(4) OVER (ORDER BY id), NTILE(1) OVER (ORDER BY id), NTILE(20) OVER (ORDER BY id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0970:hand-written first last value unique order",
+      "name": "1103:hand-written first last value unique order",
       "ordered": true,
       "sql": "SELECT id, FIRST_VALUE(score) OVER (ORDER BY id), LAST_VALUE(score) OVER (ORDER BY id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0971:hand-written first last value peer groups",
+      "name": "1104:hand-written first last value peer groups",
       "ordered": true,
       "sql": "SELECT id, active, FIRST_VALUE(score) OVER (ORDER BY active), LAST_VALUE(score) OVER (ORDER BY active) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0972:hand-written first last value no order",
+      "name": "1105:hand-written first last value no order",
       "ordered": true,
       "sql": "SELECT id, FIRST_VALUE(score) OVER (PARTITION BY active), LAST_VALUE(score) OVER (PARTITION BY active) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0973:hand-written window rows frames",
+      "name": "1106:hand-written window rows frames",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), SUM(score) OVER (ORDER BY id ROWS BETWEEN 2 PRECEDING AND CURRENT ROW), SUM(score) OVER (ORDER BY id ROWS 2 PRECEDING), SUM(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0974:hand-written window rows frames unbounded",
+      "name": "1107:hand-written window rows frames unbounded",
       "ordered": true,
       "sql": "SELECT id, MAX(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), COUNT(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), SUM(score) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0975:repaired trim whitespace class",
+      "name": "1108:repaired trim whitespace class",
       "ordered": true,
       "sql": "SELECT HEX(TRIM(CHAR(9))), HEX(TRIM(' a ')), HEX(TRIM(CONCAT(CHAR(9), 'a')))",
       "status": "PASS"
     },
     {
-      "name": "0976:repaired base64 wrapping",
+      "name": "1109:repaired base64 wrapping",
       "ordered": true,
       "sql": "SELECT LENGTH(TO_BASE64(REPEAT('a', 58))), REPLACE(TO_BASE64(REPEAT('a', 58)), CHAR(10), '|'), LENGTH(TO_BASE64(REPEAT('a', 10))), TO_BASE64(REPEAT('a', 10))",
       "status": "PASS"
     },
     {
-      "name": "0977:repaired sec_to_time fraction",
+      "name": "1110:repaired sec_to_time fraction",
       "ordered": true,
       "sql": "SELECT SEC_TO_TIME(1.5), SEC_TO_TIME(1), SEC_TO_TIME(90)",
       "status": "PASS"
     },
     {
-      "name": "0978:hand-written window range frames",
+      "name": "1111:hand-written window range frames",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), SUM(score) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0979:hand-written window range peer groups",
+      "name": "1112:hand-written window range peer groups",
       "ordered": true,
       "sql": "SELECT id, active, SUM(score) OVER (ORDER BY active RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), SUM(score) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0980:hand-written window numeric range offsets",
+      "name": "1113:hand-written window numeric range offsets",
       "ordered": true,
       "sql": "SELECT id, score, SUM(score) OVER (ORDER BY score RANGE BETWEEN 10 PRECEDING AND CURRENT ROW), COUNT(*) OVER (ORDER BY score DESC RANGE BETWEEN 5 PRECEDING AND 5 FOLLOWING), SUM(score) OVER (ORDER BY score RANGE BETWEEN 0.5 PRECEDING AND CURRENT ROW) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0981:hand-written window temporal range offsets",
+      "name": "1114:hand-written window temporal range offsets",
       "ordered": true,
       "sql": "SELECT id, COUNT(*) OVER (ORDER BY CAST(CONCAT('2024-01-', LPAD(id, 2, '0')) AS DATE) RANGE BETWEEN INTERVAL 2 DAY PRECEDING AND CURRENT ROW) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0982:hand-written named windows",
+      "name": "1115:hand-written named windows",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER w, ROW_NUMBER() OVER w FROM events WINDOW w AS (ORDER BY id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0983:hand-written named windows with frame",
+      "name": "1116:hand-written named windows with frame",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER w FROM events WINDOW w AS (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0984:hand-written named windows partitioned",
+      "name": "1117:hand-written named windows partitioned",
       "ordered": true,
       "sql": "SELECT id, active, SUM(score) OVER w, LAG(score) OVER w FROM events WINDOW w AS (PARTITION BY active ORDER BY id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0985:hand-written named window extension",
+      "name": "1118:hand-written named window extension",
       "ordered": true,
       "sql": "SELECT id, active, SUM(score) OVER (w ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM events WINDOW w AS (PARTITION BY active) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0986:hand-written chained named windows",
+      "name": "1119:hand-written chained named windows",
       "ordered": true,
       "sql": "SELECT id, active, SUM(score) OVER rolling FROM events WINDOW base AS (PARTITION BY active), ordered AS (base ORDER BY id), rolling AS (ordered ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0987:repaired from_base64 whitespace set",
+      "name": "1120:repaired from_base64 whitespace set",
       "ordered": true,
       "sql": "SELECT HEX(CHAR(11)), HEX(CONCAT('YQ==', CHAR(11))), HEX(FROM_BASE64('YQ==')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(11)))), HEX(FROM_BASE64('YQ== ')), HEX(FROM_BASE64(CONCAT('YQ==', CHAR(9))))",
       "status": "PASS"
     },
     {
-      "name": "0988:repaired exact literal rounding",
+      "name": "1121:repaired exact literal rounding",
       "ordered": true,
       "sql": "SELECT ROUND(1.005, 2), ROUND(25E-1), ROUND(2.5), ROUND(-2.5), ROUND(1.005E0, 2), CEIL(1.2), FLOOR(-1.2), 1 + 2.5, ROUND(12.345, 2), TRUNCATE(1.999, 2)",
       "status": "PASS"
     },
     {
-      "name": "0989:reviewed conv edges",
+      "name": "1122:reviewed conv edges",
       "ordered": true,
       "sql": "SELECT CONV('10000000000000000', 16, 10), CONV('ff', 16, 10), CONV('zz', 36, 10), CONV('-17', 10, -18), CONV('1', 1, 10), CONV('1', 37, 10)",
       "status": "PASS"
     },
     {
-      "name": "0990:reviewed maketime fraction",
+      "name": "1123:reviewed maketime fraction",
       "ordered": true,
       "sql": "SELECT MAKETIME(12, 15, 30.5), MAKETIME(12, 15, 30), MAKETIME(1, 60, 0)",
       "status": "PASS"
     },
     {
-      "name": "0991:json search",
+      "name": "1124:json search",
       "ordered": true,
       "sql": "SELECT JSON_SEARCH('{\"a\":\"x\",\"b\":\"y\"}', 'one', 'x'), JSON_SEARCH('{\"a\":\"x\",\"b\":\"x\"}', 'all', 'x'), JSON_SEARCH('{\"a\":\"x\"}', 'one', 'zzz'), JSON_SEARCH('[\"abc\",\"abd\"]', 'all', 'ab%'), JSON_SEARCH('{\"a\":{\"b\":\"deep\"}}', 'one', 'deep'), JSON_SEARCH('{\"a\":1}', 'one', '1')",
       "status": "PASS"
     },
     {
-      "name": "0992:json value",
+      "name": "1125:json value",
       "ordered": true,
       "sql": "SELECT JSON_VALUE('{\"a\":\"x\"}', '$.a'), JSON_VALUE('{\"a\":42}', '$.a'), JSON_VALUE('{\"a\":42}', '$.zz'), JSON_VALUE('{\"a\":\"7\"}', '$.a' RETURNING SIGNED), JSON_VALUE('{\"a\":[1,2]}', '$.a[1]')",
       "status": "PASS"
     },
     {
-      "name": "0993:json objectagg",
+      "name": "1126:json objectagg",
       "ordered": true,
       "sql": "SELECT JSON_OBJECTAGG(name, score) FROM events",
       "status": "PASS"
     },
     {
-      "name": "0994:json objectagg grouped",
+      "name": "1127:json objectagg grouped",
       "ordered": true,
       "sql": "SELECT active, JSON_OBJECTAGG(name, score), JSON_ARRAYAGG(score) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "0995:reviewed json keys ordering",
+      "name": "1128:reviewed json keys ordering",
       "ordered": true,
       "sql": "SELECT JSON_KEYS('{\"aa\":1,\"b\":2}'), JSON_KEYS('{\"b\":1,\"aa\":2}'), JSON_KEYS('{\"c\":1,\"a\":2,\"bb\":3}')",
       "status": "PASS"
     },
     {
-      "name": "0996:reviewed frame on extremes",
+      "name": "1129:reviewed frame on extremes",
       "ordered": true,
       "sql": "SELECT id, LAST_VALUE(score) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING), FIRST_VALUE(score) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0997:reviewed named window in arguments",
+      "name": "1130:reviewed named window in arguments",
       "ordered": true,
       "sql": "SELECT id, COALESCE(LAG(score) OVER w, 0) FROM events WINDOW w AS (ORDER BY id) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "0998:reviewed grouped statistical aggregates",
+      "name": "1131:reviewed grouped statistical aggregates",
       "ordered": true,
       "sql": "SELECT active, STDDEV_POP(score), VAR_POP(score), BIT_OR(id), ANY_VALUE(active) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "0999:repaired binary case sensitivity",
+      "name": "1132:repaired binary case sensitivity",
       "ordered": true,
       "sql": "SELECT LOWER(CAST('ABC' AS BINARY)), UPPER(CAST('abc' AS BINARY)), INSTR(CAST('A' AS BINARY), 'a'), LOCATE('a', CAST('A' AS BINARY)), INSTR('A', 'a'), LOCATE('a', 'A'), INSTR(CAST('Aa' AS BINARY), 'a')",
       "status": "PASS"
     },
     {
-      "name": "1000:repaired regexp unicode classes",
+      "name": "1133:repaired regexp unicode classes",
       "ordered": true,
       "sql": "SELECT REGEXP_LIKE('é', '[[:alpha:]]'), REGEXP_LIKE('a', '[[:alpha:]]'), REGEXP_LIKE('1', '[[:alpha:]]'), REGEXP_LIKE('1', '[[:digit:]]')",
       "status": "PASS"
     },
     {
-      "name": "1001:hand-written conditionals",
+      "name": "1134:hand-written conditionals",
       "ordered": true,
       "sql": "SELECT IF(NULL, 'yes', 'no'), COALESCE(NULL, 'first', 'second'), NULLIF('Alpha', 'alpha'), IF(1, CAST('1.25' AS DECIMAL(3,2)), 0), CASE WHEN 0 THEN 0 ELSE CAST('2.50' AS DECIMAL(3,2)) END, IFNULL(NULL, CAST('3.75' AS DECIMAL(3,2))), COALESCE(NULL, CAST('4.50' AS DECIMAL(3,2)), 0), NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740992), NULLIF(CAST('9007199254740993' AS DECIMAL(16,0)), 9007199254740993)",
       "status": "PASS"
     },
     {
-      "name": "1002:hand-written derived table",
+      "name": "1135:hand-written derived table",
       "ordered": true,
       "sql": "SELECT d.active, COUNT(*) FROM (SELECT id, active FROM events WHERE id >= 5) d GROUP BY d.active ORDER BY d.active",
       "status": "PASS"
     },
     {
-      "name": "1003:hand-written common table expression",
+      "name": "1136:hand-written common table expression",
       "ordered": true,
       "sql": "WITH missing AS (SELECT e.id FROM events e LEFT JOIN users u ON e.id = u.id WHERE u.id IS NULL) SELECT id FROM missing ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1004:hand-written distinct aggregate",
+      "name": "1137:hand-written distinct aggregate",
       "ordered": true,
       "sql": "SELECT COUNT(note), COUNT(DISTINCT note), COUNT(DISTINCT active, note), GROUP_CONCAT(note), GROUP_CONCAT(id, ':', name ORDER BY id SEPARATOR '|') FROM events",
       "status": "PASS"
     },
     {
-      "name": "1005:hand-written null membership",
+      "name": "1138:hand-written null membership",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE note NOT IN ('missing', NULL) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1006:hand-written null membership",
+      "name": "1139:hand-written null membership",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE note IN ('alpha', NULL) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1007:hand-written null membership",
+      "name": "1140:hand-written null membership",
       "ordered": true,
       "sql": "SELECT 1 IN (1, NULL), 2 IN (1, NULL), 2 NOT IN (1, NULL), NULL IN (1, 2)",
       "status": "PASS"
     },
     {
-      "name": "1008:hand-written grouping",
+      "name": "1141:hand-written grouping",
       "ordered": true,
       "sql": "SELECT note, COUNT(*), MIN(name), MAX(name) FROM events GROUP BY note ORDER BY note",
       "status": "PASS"
     },
     {
-      "name": "1009:hand-written collation",
+      "name": "1142:hand-written collation",
       "ordered": true,
       "sql": "SELECT MIN(note), MAX(note), 'a' = 'a ', 'a' COLLATE utf8mb4_0900_ai_ci = 'A' FROM events",
       "status": "PASS"
     },
     {
-      "name": "1010:collation unicode equality",
+      "name": "1143:collation unicode equality",
       "ordered": true,
       "sql": "SELECT 'A' = 'a', 'É' = 'e', 'é' = 'é', 'ß' = 'ss'",
       "status": "PASS"
     },
     {
-      "name": "1011:collation locale-sensitive equality",
+      "name": "1144:collation locale-sensitive equality",
       "ordered": true,
       "sql": "SELECT 'İ' = 'i', 'ı' = 'i', 'Æ' = 'ae', 'Œ' = 'oe'",
       "status": "PASS"
     },
     {
-      "name": "1012:collation supplementary equality and order",
+      "name": "1145:collation supplementary equality and order",
       "ordered": true,
       "sql": "SELECT '😀' < '😁', '🪿' = '🪿', '𝔄' = 'A'",
       "status": "PASS"
     },
     {
-      "name": "1013:collation no-pad and binary",
+      "name": "1146:collation no-pad and binary",
       "ordered": true,
       "sql": "SELECT 'a' = 'a ', CAST('A' AS BINARY) = CAST('a' AS BINARY), CAST('é' AS BINARY) = CAST('e' AS BINARY)",
       "status": "PASS"
     },
     {
-      "name": "1014:collation explicit profile",
+      "name": "1147:collation explicit profile",
       "ordered": true,
       "sql": "SELECT 'É' COLLATE utf8mb4_0900_ai_ci = 'e' COLLATE utf8mb4_0900_ai_ci",
       "status": "PASS"
     },
     {
-      "name": "1015:collation grouping",
+      "name": "1148:collation grouping",
       "ordered": true,
       "sql": "SELECT value, COUNT(*) FROM (SELECT 'É' AS value UNION ALL SELECT 'e' UNION ALL SELECT 'z') c GROUP BY value ORDER BY value",
       "status": "PASS"
     },
     {
-      "name": "1016:collation distinct",
+      "name": "1149:collation distinct",
       "ordered": true,
       "sql": "SELECT COUNT(DISTINCT value) FROM (SELECT 'É' AS value UNION ALL SELECT 'e' UNION ALL SELECT 'z') c",
       "status": "PASS"
     },
     {
-      "name": "1017:collation join",
+      "name": "1150:collation join",
       "ordered": true,
       "sql": "SELECT COUNT(*) FROM (SELECT 'É' AS value) l JOIN (SELECT 'e' AS value) r ON l.value = r.value",
       "status": "PASS"
     },
     {
-      "name": "1018:collation membership",
+      "name": "1151:collation membership",
       "ordered": true,
       "sql": "SELECT 'É' IN ('e', 'z'), 'ß' IN ('ss'), 'x' IN ('y')",
       "status": "PASS"
     },
     {
-      "name": "1019:collation pattern matching",
+      "name": "1152:collation pattern matching",
       "ordered": true,
       "sql": "SELECT 'Éclair' LIKE 'e%', LOCATE('SS', 'straße'), 'straße' LIKE 'stra_e'",
       "status": "PASS"
     },
     {
-      "name": "1020:collation extrema",
+      "name": "1153:collation extrema",
       "ordered": true,
       "sql": "SELECT MIN(value), MAX(value) FROM (SELECT 'Zulu' AS value UNION ALL SELECT 'alpha') c",
       "status": "PASS"
     },
     {
-      "name": "1021:collation ordering",
+      "name": "1154:collation ordering",
       "ordered": true,
       "sql": "SELECT value FROM (SELECT 'éclair' AS value UNION ALL SELECT 'Elephant' UNION ALL SELECT 'zebra') c ORDER BY value",
       "status": "PASS"
     },
     {
-      "name": "1022:hand-written left join aggregate",
+      "name": "1155:hand-written left join aggregate",
       "ordered": true,
       "sql": "SELECT u.id IS NULL, COUNT(*) FROM events e LEFT JOIN users u ON e.id = u.id GROUP BY u.id IS NULL ORDER BY u.id IS NULL",
       "status": "PASS"
     },
     {
-      "name": "1023:hand-written relational subquery",
+      "name": "1156:hand-written relational subquery",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE id NOT IN (SELECT id FROM users) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1024:hand-written relational subquery",
+      "name": "1157:hand-written relational subquery",
       "ordered": true,
       "sql": "SELECT (SELECT MAX(id) FROM users), 10 IN (SELECT id FROM users), 8 IN (SELECT id FROM users)",
       "status": "PASS"
     },
     {
-      "name": "1025:hand-written union all",
+      "name": "1158:hand-written union all",
       "ordered": false,
       "sql": "SELECT 3 AS value UNION ALL SELECT 1 UNION ALL SELECT 2",
       "status": "PASS"
     },
     {
-      "name": "1026:hand-written union all",
+      "name": "1159:hand-written union all",
       "ordered": true,
       "sql": "SELECT note FROM events WHERE id <= 2 UNION ALL SELECT note FROM events WHERE id >= 9 ORDER BY note",
       "status": "PASS"
     },
     {
-      "name": "1027:hand-written left join distinct",
+      "name": "1160:hand-written left join distinct",
       "ordered": false,
       "sql": "SELECT DISTINCT u.name FROM events e LEFT JOIN users u ON e.id = u.id",
       "status": "PASS"
     },
     {
-      "name": "1028:hand-written limit offset",
+      "name": "1161:hand-written limit offset",
       "ordered": true,
       "sql": "SELECT id, name FROM events ORDER BY id LIMIT 3 OFFSET 4",
       "status": "PASS"
     },
     {
-      "name": "1029:hand-written reversed comparison",
+      "name": "1162:hand-written reversed comparison",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE 8 <= id AND 10 > id ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1030:hand-written between",
+      "name": "1163:hand-written between",
       "ordered": true,
       "sql": "SELECT id, id NOT BETWEEN 3 AND 7 FROM events WHERE id IN (1, 3, 7, 10) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1031:hand-written arithmetic",
+      "name": "1164:hand-written arithmetic",
       "ordered": true,
       "sql": "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2",
       "status": "PASS"
     },
     {
-      "name": "1032:hand-written aggregate empty input",
+      "name": "1165:hand-written aggregate empty input",
       "ordered": true,
       "sql": "SELECT COUNT(*), SUM(score), AVG(score), MIN(note), MAX(note) FROM events WHERE id > 100",
       "status": "PASS"
     },
     {
-      "name": "1033:hand-written scalar subquery",
+      "name": "1166:hand-written scalar subquery",
       "ordered": true,
       "sql": "SELECT id, (SELECT name FROM users WHERE id = 8) FROM events WHERE id IN (1, 8) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1034:hand-written case expression",
+      "name": "1167:hand-written case expression",
       "ordered": true,
       "sql": "SELECT id, CASE WHEN note IS NULL THEN 'none' WHEN note = 'alpha' THEN 'a' ELSE 'b' END FROM events WHERE id >= 7 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1035:hand-written exact mixed integers",
+      "name": "1168:hand-written exact mixed integers",
       "ordered": true,
       "sql": "SELECT CAST(9007199254740993 AS UNSIGNED) > CAST(9007199254740992 AS SIGNED), CAST(-1 AS SIGNED) < CAST(0 AS UNSIGNED)",
       "status": "PASS"
     },
     {
-      "name": "1036:hand-written mixed scalar join",
+      "name": "1169:hand-written mixed scalar join",
       "ordered": true,
       "sql": "SELECT e.id AS event_id, u.id AS user_id FROM events e INNER JOIN users u ON CAST(e.id AS DOUBLE) = CAST(u.id AS CHAR) ORDER BY event_id, user_id",
       "status": "PASS"
     },
     {
-      "name": "1037:hand-written large mixed scalar join",
+      "name": "1170:hand-written large mixed scalar join",
       "ordered": true,
       "sql": "SELECT l.id, r.id FROM (SELECT CAST(9007199254740993 AS UNSIGNED) AS id) l INNER JOIN (SELECT CAST(9007199254740993 AS CHAR) AS id) r ON l.id = r.id",
       "status": "PASS"
     },
     {
-      "name": "1038:window ranking",
+      "name": "1171:window ranking",
       "ordered": true,
       "sql": "SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC) AS rn FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1039:window ranking",
+      "name": "1172:window ranking",
       "ordered": true,
       "sql": "SELECT id, RANK() OVER (ORDER BY note) AS r, DENSE_RANK() OVER (ORDER BY note) AS d FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1040:window ranking",
+      "name": "1173:window ranking",
       "ordered": true,
       "sql": "SELECT id, ROW_NUMBER() OVER (PARTITION BY active ORDER BY score DESC) AS rn FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1041:window ranking",
+      "name": "1174:window ranking",
       "ordered": true,
       "sql": "SELECT id, RANK() OVER (PARTITION BY note ORDER BY id) AS r FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1042:window aggregate",
+      "name": "1175:window aggregate",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER (PARTITION BY active) AS t FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1043:window aggregate",
+      "name": "1176:window aggregate",
       "ordered": true,
       "sql": "SELECT id, COUNT(*) OVER (PARTITION BY note) AS n FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1044:window aggregate",
+      "name": "1177:window aggregate",
       "ordered": true,
       "sql": "SELECT id, AVG(score) OVER (PARTITION BY active) AS a FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1045:window aggregate",
+      "name": "1178:window aggregate",
       "ordered": true,
       "sql": "SELECT id, MIN(score) OVER (PARTITION BY note) AS lo, MAX(score) OVER (PARTITION BY note) AS hi FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1046:window running frame",
+      "name": "1179:window running frame",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER (ORDER BY id) AS running FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1047:window running frame",
+      "name": "1180:window running frame",
       "ordered": true,
       "sql": "SELECT id, SUM(score) OVER (ORDER BY note) AS peers FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1048:window running frame",
+      "name": "1181:window running frame",
       "ordered": true,
       "sql": "SELECT id, COUNT(*) OVER (PARTITION BY active ORDER BY id) AS c FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1049:window nested in expression",
+      "name": "1182:window nested in expression",
       "ordered": true,
       "sql": "SELECT id, ROUND(score * 100 / SUM(score) OVER (PARTITION BY active), 2) AS share FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1050:window nested in expression",
+      "name": "1183:window nested in expression",
       "ordered": true,
       "sql": "SELECT id, CASE WHEN ROW_NUMBER() OVER (ORDER BY score DESC) <= 3 THEN 'top' ELSE 'rest' END AS bucket FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1051:window nested in expression",
+      "name": "1184:window nested in expression",
       "ordered": true,
       "sql": "SELECT id, score - AVG(score) OVER (PARTITION BY active) AS deviation FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1052:window over grouped output",
+      "name": "1185:window over grouped output",
       "ordered": true,
       "sql": "SELECT note, SUM(score) AS total, SUM(SUM(score)) OVER () AS grand, ROW_NUMBER() OVER (ORDER BY SUM(score) DESC, note) AS heaviest FROM events GROUP BY note ORDER BY heaviest",
       "status": "PASS"
     },
     {
-      "name": "1053:window over grouped output",
+      "name": "1186:window over grouped output",
       "ordered": true,
       "sql": "SELECT active, COUNT(*) AS n, COUNT(*) * 100 / SUM(COUNT(*)) OVER () AS pct FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1054:window over grouped output",
+      "name": "1187:window over grouped output",
       "ordered": true,
       "sql": "SELECT note, MAX(score) AS best, RANK() OVER (ORDER BY MAX(score) DESC) AS r FROM events GROUP BY note HAVING COUNT(*) >= 1 ORDER BY r, note",
       "status": "PASS"
     },
     {
-      "name": "1055:window in cte",
+      "name": "1188:window in cte",
       "ordered": true,
       "sql": "WITH seq AS (SELECT id, active, score, ROW_NUMBER() OVER (PARTITION BY active ORDER BY id) AS pos, MIN(score) OVER (PARTITION BY active) AS floor_score FROM events) SELECT active, COUNT(*) AS n, SUM(CASE WHEN pos > 1 THEN 1 ELSE 0 END) AS repeats, MIN(floor_score) AS lo FROM seq GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1056:window in cte",
+      "name": "1189:window in cte",
       "ordered": true,
       "sql": "WITH ranked AS (SELECT id, note, score, ROW_NUMBER() OVER (PARTITION BY note ORDER BY score DESC) AS rn, COUNT(*) OVER (PARTITION BY note) AS n FROM events) SELECT id, note, rn, n FROM ranked WHERE rn <= 2 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1057:window multiple in one query",
+      "name": "1190:window multiple in one query",
       "ordered": true,
       "sql": "SELECT id, ROW_NUMBER() OVER (ORDER BY score) AS by_score, ROW_NUMBER() OVER (ORDER BY id DESC) AS by_id, SUM(score) OVER (PARTITION BY active) AS group_total FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1058:decimal division",
+      "name": "1191:decimal division",
       "ordered": true,
       "sql": "SELECT id, score / 7, score / 3, id / score FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1059:decimal division",
+      "name": "1192:decimal division",
       "ordered": true,
       "sql": "SELECT active, SUM(CASE WHEN score > 40 THEN 1 ELSE 0 END) / COUNT(*) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1060:decimal division",
+      "name": "1193:decimal division",
       "ordered": true,
       "sql": "SELECT id, score * 100 / SUM(score) OVER () FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1061:decimal division",
+      "name": "1194:decimal division",
       "ordered": true,
       "sql": "SELECT score / 0, 100 / 7, 10 / 4 FROM events WHERE id = 1",
       "status": "PASS"
     },
     {
-      "name": "1062:decimal division intermediates",
+      "name": "1195:decimal division intermediates",
       "ordered": true,
       "sql": "SELECT (14620 / 9432456) / (24250 / 9432456), (1 / 3) * 3, 1 / 3 / 3",
       "status": "PASS"
     },
     {
-      "name": "1063:json",
+      "name": "1196:json",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('{\"a\": {\"b\": [10, 20]}, \"c\": \"x\"}', '$.a.b[1]'), JSON_EXTRACT('{\"c\": \"x\"}', '$.c'), JSON_EXTRACT('{\"c\": \"x\"}', '$.missing'), JSON_UNQUOTE(JSON_EXTRACT('{\"c\": \"x\"}', '$.c'))",
       "status": "PASS"
     },
     {
-      "name": "1064:json",
+      "name": "1197:json",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('[1, 2, 3]', '$[2]'), JSON_UNQUOTE(JSON_EXTRACT('{\"b\": \"two\"}', '$.b')), JSON_EXTRACT('{\"a\": {\"deep key\": true}}', '$.a.\"deep key\"')",
       "status": "PASS"
     },
     {
-      "name": "1065:json",
+      "name": "1198:json",
       "ordered": true,
       "sql": "SELECT id, JSON_OBJECT('name', name, 'score', score, 'note', note) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1066:json",
+      "name": "1199:json",
       "ordered": true,
       "sql": "SELECT id, JSON_ARRAY(id, name, active, note, score + 5) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1067:json",
+      "name": "1200:json",
       "ordered": true,
       "sql": "SELECT JSON_OBJECT('bb', 1, 'a', 2, 'a', 3), JSON_OBJECT(), JSON_ARRAY(), JSON_ARRAY(NULL, 'x')",
       "status": "PASS"
     },
     {
-      "name": "1068:json aggregate",
+      "name": "1201:json aggregate",
       "ordered": true,
       "sql": "SELECT id, JSON_ARRAYAGG(score) FROM events GROUP BY id ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1069:json aggregate",
+      "name": "1202:json aggregate",
       "ordered": false,
       "sql": "SELECT active, JSON_ARRAYAGG(note) FROM events GROUP BY active",
       "status": "PASS"
     },
     {
-      "name": "1070:json aggregate",
+      "name": "1203:json aggregate",
       "ordered": true,
       "sql": "SELECT JSON_ARRAYAGG(name) FROM events WHERE id > 100",
       "status": "PASS"
     },
     {
-      "name": "1071:json aggregate",
+      "name": "1204:json aggregate",
       "ordered": true,
       "sql": "SELECT JSON_ARRAYAGG(note) FROM events",
       "status": "PASS"
     },
     {
-      "name": "1072:json",
+      "name": "1205:json",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('{\"a\": {\"b\": [10, 20], \"c\": \"x\"}}', '$.a'), JSON_EXTRACT('[{\"k\": 1}, {\"k\": 2}]', '$[1]')",
       "status": "PASS"
     },
     {
-      "name": "1073:right join",
+      "name": "1206:right join",
       "ordered": true,
       "sql": "SELECT u.id, u.name, e.name FROM events e RIGHT JOIN users u ON e.id = u.id ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1074:right join",
+      "name": "1207:right join",
       "ordered": true,
       "sql": "SELECT e.id, u.name FROM users u RIGHT JOIN events e ON e.id = u.id WHERE u.id IS NULL ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1075:bushy outer join",
+      "name": "1208:bushy outer join",
       "ordered": true,
       "sql": "SELECT e.id, u.name, marker.name FROM events e LEFT JOIN (users u LEFT JOIN (SELECT 1 AS id, 'flag' AS name) marker ON marker.id = u.id) ON u.id = e.id ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1076:join predicate subquery",
+      "name": "1209:join predicate subquery",
       "ordered": true,
       "sql": "SELECT e.id, u.name FROM events e LEFT JOIN users u ON u.id = e.id AND EXISTS (SELECT 1 FROM users probe WHERE probe.id > u.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1077:set operations",
+      "name": "1210:set operations",
       "ordered": false,
       "sql": "SELECT id FROM events WHERE id <= 6 INTERSECT SELECT id FROM events WHERE id >= 4",
       "status": "PASS"
     },
     {
-      "name": "1078:set operations",
+      "name": "1211:set operations",
       "ordered": false,
       "sql": "SELECT id FROM events WHERE id <= 6 EXCEPT SELECT id FROM events WHERE id >= 4",
       "status": "PASS"
     },
     {
-      "name": "1079:set operations",
+      "name": "1212:set operations",
       "ordered": false,
       "sql": "SELECT UPPER(note) FROM events INTERSECT SELECT UPPER(note) FROM events WHERE active = 1",
       "status": "PASS"
     },
     {
-      "name": "1080:set operations",
+      "name": "1213:set operations",
       "ordered": false,
       "sql": "SELECT note FROM events EXCEPT SELECT note FROM events WHERE active = 1",
       "status": "PASS"
     },
     {
-      "name": "1081:set operations",
+      "name": "1214:set operations",
       "ordered": false,
       "sql": "SELECT active FROM events INTERSECT SELECT active FROM events WHERE id <= 3",
       "status": "PASS"
     },
     {
-      "name": "1082:set operations",
+      "name": "1215:set operations",
       "ordered": false,
       "sql": "SELECT active FROM events INTERSECT ALL SELECT active FROM events WHERE id <= 3",
       "status": "PASS"
     },
     {
-      "name": "1083:set operations",
+      "name": "1216:set operations",
       "ordered": false,
       "sql": "SELECT active FROM events EXCEPT ALL SELECT active FROM events WHERE id <= 3",
       "status": "PASS"
     },
     {
-      "name": "1084:set operations",
+      "name": "1217:set operations",
       "ordered": false,
       "sql": "SELECT id % 3 FROM events INTERSECT ALL SELECT id % 4 FROM events WHERE id <= 8",
       "status": "PASS"
     },
     {
-      "name": "1085:set operations",
+      "name": "1218:set operations",
       "ordered": false,
       "sql": "SELECT id % 3 FROM events EXCEPT ALL SELECT id % 4 FROM events WHERE id <= 8",
       "status": "PASS"
     },
     {
-      "name": "1086:set operation scoping",
+      "name": "1219:set operation scoping",
       "ordered": true,
       "sql": "SELECT 1 AS n UNION SELECT 1 UNION ALL SELECT 1 ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1087:set operation scoping",
+      "name": "1220:set operation scoping",
       "ordered": true,
       "sql": "(SELECT 2 AS n ORDER BY n DESC LIMIT 1) UNION ALL SELECT 9 AS n ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1088:set operation precedence",
+      "name": "1221:set operation precedence",
       "ordered": true,
       "sql": "SELECT 1 AS n EXCEPT SELECT 1 UNION ALL SELECT 2 ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1089:set operation precedence",
+      "name": "1222:set operation precedence",
       "ordered": true,
       "sql": "SELECT 1 AS n UNION ALL SELECT 2 INTERSECT SELECT 2 ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1090:set operation scoping",
+      "name": "1223:set operation scoping",
       "ordered": true,
       "sql": "SELECT 1 AS n UNION ALL (SELECT 2 UNION SELECT 2) ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1091:union mixed numeric",
+      "name": "1224:union mixed numeric",
       "ordered": false,
       "sql": "SELECT id FROM events UNION SELECT id FROM users",
       "status": "PASS"
     },
     {
-      "name": "1092:union mixed numeric",
+      "name": "1225:union mixed numeric",
       "ordered": false,
       "sql": "SELECT score - 100 FROM events UNION ALL SELECT id FROM events WHERE id <= 3",
       "status": "PASS"
     },
     {
-      "name": "1093:union mixed numeric",
+      "name": "1226:union mixed numeric",
       "ordered": false,
       "sql": "SELECT CAST(score AS DECIMAL(7,2)) FROM events WHERE id <= 5 UNION SELECT score FROM events",
       "status": "PASS"
     },
     {
-      "name": "1094:union mixed numeric",
+      "name": "1227:union mixed numeric",
       "ordered": false,
       "sql": "SELECT id FROM events INTERSECT SELECT id FROM users",
       "status": "PASS"
     },
     {
-      "name": "1095:regexp",
+      "name": "1228:regexp",
       "ordered": true,
       "sql": "SELECT id, name REGEXP '^event-0[1-5]$', name NOT REGEXP '0[89]', note REGEXP 'alpha' FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1096:regexp",
+      "name": "1229:regexp",
       "ordered": true,
       "sql": "SELECT id, REGEXP_LIKE(name, 'EVENT'), REGEXP_SUBSTR(name, '[0-9]+'), REGEXP_INSTR(name, '-'), REGEXP_REPLACE(name, '-0', '#') FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1097:regexp match type",
+      "name": "1230:regexp match type",
       "ordered": true,
       "sql": "SELECT REGEXP_LIKE('Abc', 'abc', 'c'), REGEXP_LIKE('Abc', 'abc', 'ci'), REGEXP_LIKE(CONCAT('a', CONVERT(CHAR(10) USING utf8mb4), 'b'), '^b$', 'm'), REGEXP_LIKE(CONCAT('a', CONVERT(CHAR(10) USING utf8mb4), 'b'), 'a.b', 'n')",
       "status": "PASS"
     },
     {
-      "name": "1098:json extract multiple paths",
+      "name": "1231:json extract multiple paths",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('{\"a\":1,\"b\":\"x\"}', '$.a', '$.b')",
       "status": "PASS"
     },
     {
-      "name": "1099:json typed constructor input",
+      "name": "1232:json typed constructor input",
       "ordered": true,
       "sql": "SELECT JSON_OBJECT('json', JSON_EXTRACT('{\"x\":1}', '$'), 'text', '{\"x\":1}'), JSON_ARRAY(JSON_EXTRACT('{\"x\":1}', '$'), '{\"x\":1}')",
       "status": "PASS"
     },
     {
-      "name": "1100:json typed aggregate input",
+      "name": "1233:json typed aggregate input",
       "ordered": true,
       "sql": "SELECT id, JSON_ARRAYAGG(JSON_EXTRACT('{\"x\":1}', '$')) FROM events GROUP BY id ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1101:json null distinction",
+      "name": "1234:json null distinction",
       "ordered": true,
       "sql": "SELECT JSON_EXTRACT('null', '$'), JSON_EXTRACT(NULL, '$'), JSON_ARRAY(JSON_EXTRACT('null', '$'), NULL)",
       "status": "PASS"
     },
     {
-      "name": "1102:union distinct",
+      "name": "1235:union distinct",
       "ordered": false,
       "sql": "SELECT note FROM events UNION SELECT note FROM events",
       "status": "PASS"
     },
     {
-      "name": "1103:union distinct",
+      "name": "1236:union distinct",
       "ordered": false,
       "sql": "SELECT id FROM events WHERE id <= 3 UNION DISTINCT SELECT id FROM events WHERE id <= 5",
       "status": "PASS"
     },
     {
-      "name": "1104:union distinct",
+      "name": "1237:union distinct",
       "ordered": true,
       "sql": "SELECT name FROM users WHERE id <= 2 UNION ALL SELECT name FROM users WHERE id <= 2 UNION SELECT name FROM users WHERE id = 3 ORDER BY name",
       "status": "PASS"
     },
     {
-      "name": "1105:exists subqueries",
+      "name": "1238:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id, e.name FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1106:exists subqueries",
+      "name": "1239:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id FROM events e WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = e.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1107:exists subqueries",
+      "name": "1240:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id, e.score FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id) AND e.score > 30 ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1108:exists subqueries",
+      "name": "1241:exists subqueries",
       "ordered": true,
       "sql": "SELECT u.id, u.name FROM users u WHERE EXISTS (SELECT 1 FROM events e WHERE e.id = u.id AND e.active = 1) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1109:exists subqueries",
+      "name": "1242:exists subqueries",
       "ordered": true,
       "sql": "SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.id = u.id AND e.score >= 50) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1110:exists subqueries",
+      "name": "1243:exists subqueries",
       "ordered": true,
       "sql": "SELECT u.id, u.name FROM users u WHERE EXISTS (SELECT 1 FROM events e WHERE e.active = 0 AND e.id = u.id AND e.note IS NOT NULL) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1111:exists subqueries",
+      "name": "1244:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.name <> 'user-05' AND e.id = u.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1112:exists subqueries",
+      "name": "1245:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id, e.name FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id AND u.id = e.score DIV 10) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1113:exists subqueries",
+      "name": "1246:exists subqueries",
       "ordered": true,
       "sql": "SELECT e.id FROM events e WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = e.id AND u.id = e.score DIV 10 AND u.name <> 'user-03') ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1114:in subqueries",
+      "name": "1247:in subqueries",
       "ordered": true,
       "sql": "SELECT u.id, u.name FROM users u WHERE u.id IN (SELECT e.id FROM events e WHERE e.score = u.id * 10) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1115:in subqueries",
+      "name": "1248:in subqueries",
       "ordered": true,
       "sql": "SELECT u.id FROM users u WHERE u.id IN (SELECT e.id FROM events e WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1116:in subqueries",
+      "name": "1249:in subqueries",
       "ordered": true,
       "sql": "SELECT u.id FROM users u WHERE u.id NOT IN (SELECT e.id FROM events e WHERE e.score = u.id * 10 AND e.active = 1) ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1117:dependent correlated subqueries",
+      "name": "1250:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT u.name FROM users u WHERE u.id >= e.id ORDER BY u.id LIMIT 1) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1118:dependent correlated subqueries",
+      "name": "1251:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id FROM events e WHERE EXISTS (SELECT 1 FROM users u WHERE u.id > e.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1119:dependent correlated subqueries",
+      "name": "1252:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id FROM events e WHERE e.id + 1 IN (SELECT u.id FROM users u WHERE u.id > e.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1120:dependent correlated subqueries",
+      "name": "1253:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, COUNT(*) FROM events e GROUP BY e.id HAVING EXISTS (SELECT 1 FROM users u WHERE u.id > e.id) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1121:dependent correlated subqueries",
+      "name": "1254:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, (WITH candidates AS (SELECT id, name FROM users) SELECT name FROM candidates WHERE candidates.id >= e.id ORDER BY candidates.id LIMIT 1) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1122:dependent correlated subqueries",
+      "name": "1255:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT (SELECT u2.name FROM users u2 WHERE u2.id >= u1.id AND u2.id >= e.id ORDER BY u2.id LIMIT 1) FROM users u1 WHERE u1.id = e.id) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1123:dependent correlated subqueries",
+      "name": "1256:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, (SELECT (SELECT e.name FROM users e WHERE e.id = u.id) FROM users u WHERE u.id = e.id) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1124:dependent correlated subqueries",
+      "name": "1257:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, IF(e.id > 0, 'chosen', (SELECT u.name FROM users u WHERE u.id >= e.id)) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1125:dependent correlated subqueries",
+      "name": "1258:dependent correlated subqueries",
       "ordered": true,
       "sql": "SELECT e.id, COALESCE('chosen', (SELECT u.name FROM users u WHERE u.id >= e.id)) FROM events e ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1126:recursive cte",
+      "name": "1259:recursive cte",
       "ordered": true,
       "sql": "WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 10) SELECT n FROM seq ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1127:recursive cte",
+      "name": "1260:recursive cte",
       "ordered": false,
       "sql": "WITH RECURSIVE r (n) AS (SELECT 1 UNION SELECT n * 2 % 7 FROM r) SELECT n FROM r",
       "status": "PASS"
     },
     {
-      "name": "1128:recursive cte",
+      "name": "1261:recursive cte",
       "ordered": true,
       "sql": "WITH RECURSIVE chain (id) AS (SELECT id FROM events WHERE id = 1 UNION ALL SELECT e.id FROM events e JOIN chain c ON e.id = c.id + 1 WHERE e.id <= 5) SELECT c.id, e.name FROM chain c JOIN events e ON e.id = c.id ORDER BY c.id",
       "status": "PASS"
     },
     {
-      "name": "1129:recursive cte",
+      "name": "1262:recursive cte",
       "ordered": true,
       "sql": "WITH RECURSIVE t (n, s) AS (SELECT 1, CAST('x' AS CHAR(20)) UNION ALL SELECT n + 1, CONCAT(s, 'y') FROM t WHERE n < 5) SELECT n, s FROM t ORDER BY n",
       "status": "PASS"
     },
     {
-      "name": "1130:decimal round",
+      "name": "1263:decimal round",
       "ordered": true,
       "sql": "SELECT ROUND(CAST(322.905 AS DECIMAL(9,3)), 2), ROUND(CAST(-322.905 AS DECIMAL(9,3)), 2), ROUND(CAST(2.5 AS DECIMAL(4,1))), ROUND(CAST(-2.5 AS DECIMAL(4,1)))",
       "status": "PASS"
     },
     {
-      "name": "1131:decimal round",
+      "name": "1264:decimal round",
       "ordered": true,
       "sql": "SELECT ROUND(CAST(1234.567 AS DECIMAL(10,3)), -2), ROUND(CAST(9.99 AS DECIMAL(4,2)), 1), ROUND(CAST(1.005 AS DECIMAL(6,3)), 2), ROUND(CAST(322.905 AS DECIMAL(9,3)), 5)",
       "status": "PASS"
     },
     {
-      "name": "1132:decimal round",
+      "name": "1265:decimal round",
       "ordered": false,
       "sql": "SELECT active, ROUND(AVG(score), 2), ROUND(AVG(id) / 7, 2) FROM events GROUP BY active",
       "status": "PASS"
     },
     {
-      "name": "1133:decimal round",
+      "name": "1266:decimal round",
       "ordered": true,
       "sql": "SELECT CEIL(CAST(2.5 AS DECIMAL(4,1))), CEIL(CAST(-2.5 AS DECIMAL(4,1))), FLOOR(CAST(2.5 AS DECIMAL(4,1))), FLOOR(CAST(-2.5 AS DECIMAL(4,1))), CEIL(CAST(3.0 AS DECIMAL(4,1))), FLOOR(CAST(-3.0 AS DECIMAL(4,1)))",
       "status": "PASS"
     },
     {
-      "name": "1134:decimal round",
+      "name": "1267:decimal round",
       "ordered": true,
       "sql": "SELECT TRUNCATE(CAST(322.905 AS DECIMAL(9,3)), 2), TRUNCATE(CAST(-322.905 AS DECIMAL(9,3)), 2), TRUNCATE(CAST(1234.567 AS DECIMAL(10,3)), -2), TRUNCATE(CAST(9.99 AS DECIMAL(4,2)), 5), TRUNCATE(CAST(1.005 AS DECIMAL(6,3)), 2)",
       "status": "PASS"
     },
     {
-      "name": "1135:div precedence",
+      "name": "1268:div precedence",
       "ordered": true,
       "sql": "SELECT id, id DIV 2 + 1, id DIV 3 IS NULL, score DIV 10 AND active FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1136:div precedence",
+      "name": "1269:div precedence",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE id = score DIV 10 AND active = 1 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1137:multi-key join",
+      "name": "1270:multi-key join",
       "ordered": true,
       "sql": "SELECT e.id, u.name FROM events e JOIN users u ON u.id = e.id AND u.id = e.score DIV 10 ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1138:exists subqueries",
+      "name": "1271:exists subqueries",
       "ordered": true,
       "sql": "SELECT id, name FROM events WHERE EXISTS (SELECT 1 FROM users WHERE users.id > 6) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1139:exists subqueries",
+      "name": "1272:exists subqueries",
       "ordered": true,
       "sql": "SELECT id FROM events WHERE NOT EXISTS (SELECT 1 FROM users WHERE users.id > 100) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1140:exists subqueries",
+      "name": "1273:exists subqueries",
       "ordered": true,
       "sql": "SELECT EXISTS (SELECT 1 FROM users WHERE name = 'user-03'), EXISTS (SELECT 1 FROM users WHERE name = 'nobody'), NOT EXISTS (SELECT 1 FROM events WHERE score > 90)",
       "status": "PASS"
     },
     {
-      "name": "1141:datetime calendar",
+      "name": "1274:datetime calendar",
       "ordered": true,
       "sql": "SELECT QUARTER('2024-05-15'), DAYOFWEEK('2024-05-15'), WEEKDAY('2024-05-15'), DAYOFYEAR('2024-05-15'), WEEK('2024-01-01'), WEEK('2024-01-07'), WEEK('2024-12-31'), WEEKOFYEAR('2024-01-01'), WEEK('2024-06-15', 3)",
       "status": "PASS"
     },
     {
-      "name": "1142:datetime week modes",
+      "name": "1275:datetime week modes",
       "ordered": true,
       "sql": "SELECT WEEK('2008-02-20', 0), WEEK('2008-02-20', 1), WEEK('2008-02-20', 2), WEEK('2008-02-20', 3), WEEK('2008-02-20', 4), WEEK('2008-02-20', 5), WEEK('2008-02-20', 6), WEEK('2008-02-20', 7)",
       "status": "PASS"
     },
     {
-      "name": "1143:datetime calendar",
+      "name": "1276:datetime calendar",
       "ordered": true,
       "sql": "SELECT YEARWEEK('2024-01-01'), YEARWEEK('2023-01-01'), YEARWEEK('2024-06-15'), LAST_DAY('2024-02-10'), LAST_DAY('2023-02-10'), DAYNAME('2024-05-15'), MONTHNAME('2024-05-15')",
       "status": "PASS"
     },
     {
-      "name": "1144:datetime calendar",
+      "name": "1277:datetime calendar",
       "ordered": true,
       "sql": "SELECT TO_DAYS('1970-01-01'), TO_DAYS('2024-05-15'), FROM_DAYS(719528), TIME_TO_SEC('01:01:01'), SEC_TO_TIME(3661), SEC_TO_TIME(0 - 3661), SEC_TO_TIME(9999999)",
       "status": "PASS"
     },
     {
-      "name": "1145:datetime calendar",
+      "name": "1278:datetime calendar",
       "ordered": true,
       "sql": "SELECT MAKEDATE(2024, 60), MAKEDATE(2024, 0), MAKEDATE(2023, 365), EXTRACT(QUARTER FROM '2024-05-15'), EXTRACT(WEEK FROM '2024-01-07'), TIMESTAMPADD(DAY, 10, '2024-05-15'), TIMESTAMPADD(HOUR, 0 - 5, '2024-05-15 03:00:00')",
       "status": "PASS"
     },
     {
-      "name": "1146:datetime calendar",
+      "name": "1279:datetime calendar",
       "ordered": true,
       "sql": "SELECT STR_TO_DATE('15,5,2024', '%d,%m,%Y'), STR_TO_DATE('2024-05-15 10:20:30', '%Y-%m-%d %H:%i:%s'), STR_TO_DATE('nope', '%Y-%m-%d')",
       "status": "PASS"
     },
     {
-      "name": "1147:group concat",
+      "name": "1280:group concat",
       "ordered": true,
       "sql": "SELECT active, GROUP_CONCAT(name ORDER BY id DESC SEPARATOR '|') FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1148:group concat",
+      "name": "1281:group concat",
       "ordered": true,
       "sql": "SELECT GROUP_CONCAT(DISTINCT note ORDER BY note), GROUP_CONCAT(score ORDER BY score DESC SEPARATOR ';') FROM events",
       "status": "PASS"
     },
     {
-      "name": "1149:group concat",
+      "name": "1282:group concat",
       "ordered": true,
       "sql": "SELECT active, LENGTH(GROUP_CONCAT(REPEAT(name, 40) ORDER BY id)) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1150:numeric scalars",
+      "name": "1283:numeric scalars",
       "ordered": true,
       "sql": "SELECT id, ABS(CAST(id AS SIGNED) - 5), SIGN(CAST(id AS SIGNED) - 5), ABS(0 - score / 7) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1151:numeric scalars",
+      "name": "1284:numeric scalars",
       "ordered": true,
       "sql": "SELECT id, POWER(id, 2), ROUND(SQRT(score), 6), ROUND(EXP(id / 100), 6) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1152:numeric scalars",
+      "name": "1285:numeric scalars",
       "ordered": true,
       "sql": "SELECT ROUND(LN(score), 6), ROUND(LOG(2, score), 6), ROUND(LOG2(score), 6), ROUND(LOG10(score), 6), LN(0), SQRT(0 - 1), LOG(1, 5) FROM events WHERE id = 4",
       "status": "PASS"
     },
     {
-      "name": "1153:numeric scalars",
+      "name": "1286:numeric scalars",
       "ordered": true,
       "sql": "SELECT id, TRUNCATE(score / 7, 2), MOD(score, 7), score % 7, MOD(score, 0) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1154:numeric scalars",
+      "name": "1287:numeric scalars",
       "ordered": true,
       "sql": "SELECT id, GREATEST(id, score, 25), LEAST(id, score, 25), GREATEST(score / 7, id), LEAST(name, note), GREATEST('10', '9') FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1155:numeric scalars",
+      "name": "1288:numeric scalars",
       "ordered": true,
       "sql": "SELECT id, IFNULL(note, 'none'), IFNULL(NULL, id) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1156:string scalars",
+      "name": "1289:string scalars",
       "ordered": true,
       "sql": "SELECT id, CONCAT_WS('-', name, note, NULL), CONCAT_WS(NULL, name, note) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1157:string scalars",
+      "name": "1290:string scalars",
       "ordered": true,
       "sql": "SELECT id, REVERSE(name), REPEAT(note, 2), SPACE(3), LPAD(id, 6, '0'), RPAD(name, 12, '.') FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1158:string scalars",
+      "name": "1291:string scalars",
       "ordered": true,
       "sql": "SELECT id, INSTR(name, 'event'), INSTR(name, 'zzz'), FIND_IN_SET('b', 'a,b,c'), FIND_IN_SET('d', 'a,b,c'), FIND_IN_SET(note, 'Alpha,beta') FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1159:string scalars",
+      "name": "1292:string scalars",
       "ordered": true,
       "sql": "SELECT id, ASCII(name), ORD(name), HEX(name), HEX(id), UNHEX('414243'), UNHEX('zz') FROM events WHERE id <= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1160:string scalars",
+      "name": "1293:string scalars",
       "ordered": true,
       "sql": "SELECT id, ELT(2, 'a', 'b', 'c'), ELT(9, 'a'), FIELD('b', 'a', 'b'), FIELD('z', 'a', 'b'), FORMAT(1234567.8915, 2), FORMAT(score * 1000.4, 0) FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1161:string scalars",
+      "name": "1294:string scalars",
       "ordered": true,
       "sql": "SELECT id, TO_BASE64(name), FROM_BASE64(TO_BASE64(name)), FROM_BASE64('!!') FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1162:decimal arithmetic",
+      "name": "1295:decimal arithmetic",
       "ordered": true,
       "sql": "SELECT CAST(12.50 AS DECIMAL(10, 2)) + 1, CAST(12.50 AS DECIMAL(10, 2)) - CAST(0.75 AS DECIMAL(10, 2)), CAST(1.25 AS DECIMAL(10, 2)) * 3, CAST(1.25 AS DECIMAL(10, 2)) * CAST(0.5 AS DECIMAL(10, 1)), CAST(99999999.99 AS DECIMAL(10, 2)) + CAST(0.01 AS DECIMAL(10, 2))",
       "status": "PASS"
     },
     {
-      "name": "1163:decimal arithmetic",
+      "name": "1296:decimal arithmetic",
       "ordered": true,
       "sql": "SELECT CAST(12.567 AS DECIMAL(10, 2)), CAST(12.565 AS DECIMAL(10, 2)), CAST(0 - 12.565 AS DECIMAL(10, 2)), CAST(score AS DECIMAL(10, 3)), CAST('88.4499' AS DECIMAL(6, 2)) FROM events WHERE id = 1",
       "status": "PASS"
     },
     {
-      "name": "1164:decimal exact comparison",
+      "name": "1297:decimal exact comparison",
       "ordered": true,
       "sql": "SELECT CAST('9007199254740993' AS DECIMAL(16,0)) > CAST('9007199254740992' AS DECIMAL(16,0)), CAST('1.00' AS DECIMAL(3,2)) = CAST('1.0' AS DECIMAL(2,1)), CAST('9007199254740993' AS DECIMAL(16,0)) > 9007199254740992",
       "status": "PASS"
     },
     {
-      "name": "1165:decimal exact set and modulo",
+      "name": "1298:decimal exact set and modulo",
       "ordered": true,
       "sql": "SELECT CAST('9007199254740993' AS DECIMAL(16,0)) IN (9007199254740992), CAST('9007199254740993' AS DECIMAL(16,0)) % 2, CAST('12.50' AS DECIMAL(4,2)) % CAST('0.70' AS DECIMAL(3,2)), CAST('12.50' AS DECIMAL(4,2)) % 0",
       "status": "PASS"
     },
     {
-      "name": "1166:decimal ordering",
+      "name": "1299:decimal ordering",
       "ordered": true,
       "sql": "SELECT id, score / 7 AS share FROM events ORDER BY share DESC, id",
       "status": "PASS"
     },
     {
-      "name": "1167:decimal ordering",
+      "name": "1300:decimal ordering",
       "ordered": true,
       "sql": "SELECT name, SUM(score) AS total, ROW_NUMBER() OVER (ORDER BY SUM(score) / 7 DESC) AS heaviest FROM events GROUP BY name ORDER BY name",
       "status": "PASS"
     },
     {
-      "name": "1168:decimal average",
+      "name": "1301:decimal average",
       "ordered": true,
       "sql": "SELECT AVG(score), AVG(id), AVG(active) FROM events",
       "status": "PASS"
     },
     {
-      "name": "1169:decimal average",
+      "name": "1302:decimal average",
       "ordered": true,
       "sql": "SELECT active, AVG(score), COUNT(*) FROM events GROUP BY active ORDER BY active",
       "status": "PASS"
     },
     {
-      "name": "1170:decimal mixed precision boundaries",
+      "name": "1303:decimal mixed precision boundaries",
       "ordered": true,
       "sql": "SELECT CAST('999.99' AS DECIMAL(5,2)) + CAST('0.01' AS DECIMAL(3,2)), CAST('-5.50' AS DECIMAL(3,2)) + CAST('2.125' AS DECIMAL(4,3)), CAST('-12.34' AS DECIMAL(4,2)) * CAST('1.50' AS DECIMAL(3,2)), CAST('12.34' AS DECIMAL(5,2)) / CAST('1.234' AS DECIMAL(4,3))",
       "status": "PASS"
     },
     {
-      "name": "1171:decimal exact grouping distinct and extremes",
+      "name": "1304:decimal exact grouping distinct and extremes",
       "ordered": true,
       "sql": "SELECT CAST(active AS DECIMAL(20,0)) + CAST('9007199254740992' AS DECIMAL(20,0)) AS amount, COUNT(*), MIN(CAST(id AS DECIMAL(20,0)) + CAST('9007199254740992' AS DECIMAL(20,0))), MAX(CAST(id AS DECIMAL(20,0)) + CAST('9007199254740992' AS DECIMAL(20,0))) FROM events GROUP BY amount ORDER BY amount",
       "status": "PASS"
     },
     {
-      "name": "1172:decimal exact distinct ordering",
+      "name": "1305:decimal exact distinct ordering",
       "ordered": true,
       "sql": "SELECT DISTINCT CAST(active AS DECIMAL(20,0)) + CAST('9007199254740992' AS DECIMAL(20,0)) AS amount FROM events ORDER BY amount",
       "status": "PASS"
     },
     {
-      "name": "1173:decimal mixed comparison and join keys",
+      "name": "1306:decimal mixed comparison and join keys",
       "ordered": true,
       "sql": "SELECT e.id, u.id, CAST('9007199254740993' AS DECIMAL(16,0)) = CAST('9007199254740993' AS CHAR), CAST('9007199254740993' AS DECIMAL(16,0)) = 9007199254740992e0 FROM events e JOIN users u ON CAST(e.id AS DECIMAL(20,0)) + CAST('9007199254740992' AS DECIMAL(20,0)) = CAST(u.id AS DECIMAL(21,1)) + CAST('9007199254740992.0' AS DECIMAL(21,1)) ORDER BY e.id",
       "status": "PASS"
     },
     {
-      "name": "1174:datetime helpers",
+      "name": "1307:datetime helpers",
       "ordered": true,
       "sql": "SELECT TIMESTAMPDIFF(SECOND, '2024-01-01 00:00:00', '2024-01-01 00:05:30'), TIMESTAMPDIFF(MINUTE, '2024-01-01 00:00:00', '2024-01-02 03:04:00'), TIMESTAMPDIFF(HOUR, '2024-01-02 03:00:00', '2024-01-01 00:00:00'), TIMESTAMPDIFF(DAY, '2024-01-01 12:00:00', '2024-03-01 11:59:59')",
       "status": "PASS"
     },
     {
-      "name": "1175:datetime helpers",
+      "name": "1308:datetime helpers",
       "ordered": true,
       "sql": "SELECT TIMESTAMPDIFF(MONTH, '2020-01-31', '2020-02-29'), TIMESTAMPDIFF(MONTH, '2020-01-31', '2020-03-01'), TIMESTAMPDIFF(MONTH, '2020-03-01', '2020-01-31'), TIMESTAMPDIFF(YEAR, '2020-02-29', '2024-02-28'), TIMESTAMPDIFF(YEAR, '2020-02-29', '2024-02-29')",
       "status": "PASS"
     },
     {
-      "name": "1176:datetime helpers",
+      "name": "1309:datetime helpers",
       "ordered": true,
       "sql": "SELECT CEIL(7 / 2), FLOOR(7 / 2), CEIL(-7 / 2), FLOOR(-7 / 2), CEIL(10 * 0.95), CEIL(4 / 2)",
       "status": "PASS"
     },
     {
-      "name": "1177:datetime helpers",
+      "name": "1310:datetime helpers",
       "ordered": true,
       "sql": "SELECT '2024-01-31' + INTERVAL 1 DAY, '2024-01-31' + INTERVAL 1 MONTH, '2024-03-31' - INTERVAL 1 MONTH, '2024-02-29' + INTERVAL 1 YEAR, '2024-01-01 23:30:00' + INTERVAL 45 MINUTE",
       "status": "PASS"
     },
     {
-      "name": "1178:datetime helpers",
+      "name": "1311:datetime helpers",
       "ordered": true,
       "sql": "SELECT id, CEIL(score / 3) AS c, FLOOR(score / 3) AS f FROM events ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1179:diversify decimal column aggregates",
+      "name": "1312:diversify decimal column aggregates",
       "ordered": true,
       "sql": "SELECT COUNT(*), SUM(total), AVG(total), MIN(total), MAX(total), ROUND(AVG(total), 2) FROM orders",
       "status": "PASS"
     },
     {
-      "name": "1180:diversify decimal column aggregates",
+      "name": "1313:diversify decimal column aggregates",
       "ordered": true,
       "sql": "SELECT status, COUNT(*), SUM(total), ROUND(AVG(total), 2) FROM orders GROUP BY status HAVING COUNT(*) >= 1 ORDER BY status",
       "status": "PASS"
     },
     {
-      "name": "1181:diversify decimal column math",
+      "name": "1314:diversify decimal column math",
       "ordered": true,
       "sql": "SELECT id, total, total * 2, total + 0.50, ROUND(total / 3, 4), TRUNCATE(total, 1) FROM orders WHERE id <= 6 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1182:diversify decimal beyond float64",
+      "name": "1315:diversify decimal beyond float64",
       "ordered": true,
       "sql": "SELECT id, total FROM orders WHERE total = CAST('99999999.99' AS DECIMAL(12,2)) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1183:diversify decimal join key",
+      "name": "1316:diversify decimal join key",
       "ordered": true,
       "sql": "SELECT o.id, u.name, o.total FROM orders o JOIN users u ON o.user_id = u.id WHERE o.total > CAST('20.00' AS DECIMAL(12,2)) ORDER BY o.total DESC, o.id",
       "status": "PASS"
     },
     {
-      "name": "1184:diversify outer join nullability",
+      "name": "1317:diversify outer join nullability",
       "ordered": true,
       "sql": "SELECT u.id, u.name, COUNT(o.id) AS n, COALESCE(SUM(o.total), 0) AS spend FROM users u LEFT JOIN orders o ON o.user_id = u.id GROUP BY u.id, u.name ORDER BY spend DESC, u.id",
       "status": "PASS"
     },
     {
-      "name": "1185:diversify outer join unmatched orders",
+      "name": "1318:diversify outer join unmatched orders",
       "ordered": true,
       "sql": "SELECT o.id, o.user_id, u.name FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE u.id IS NULL ORDER BY o.id",
       "status": "PASS"
     },
     {
-      "name": "1186:diversify temporal column",
+      "name": "1319:diversify temporal column",
       "ordered": true,
       "sql": "SELECT id, YEAR(placed_at), MONTH(placed_at), DAY(placed_at), DATE(placed_at), DATE_FORMAT(placed_at, '%Y-%m-%d %H:%i:%s') FROM orders ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1187:diversify temporal bucketing",
+      "name": "1320:diversify temporal bucketing",
       "ordered": true,
       "sql": "SELECT YEAR(placed_at) AS yr, MONTH(placed_at) AS mo, COUNT(*), SUM(total) FROM orders GROUP BY yr, mo ORDER BY yr, mo",
       "status": "PASS"
     },
     {
-      "name": "1188:diversify convert_tz on column",
+      "name": "1321:diversify convert_tz on column",
       "ordered": true,
       "sql": "SELECT id, CONVERT_TZ(placed_at, '+00:00', '+05:30'), CONVERT_TZ(placed_at, 'UTC', 'America/New_York') FROM orders WHERE id IN (1, 2, 7) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1189:diversify json column extract",
+      "name": "1322:diversify json column extract",
       "ordered": true,
       "sql": "SELECT id, JSON_EXTRACT(meta, '$.score'), JSON_UNQUOTE(JSON_EXTRACT(meta, '$.tags[0]')), meta -> '$.score', meta ->> '$.tags[0]' FROM orders WHERE meta IS NOT NULL ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1190:diversify json contains and length",
+      "name": "1323:diversify json contains and length",
       "ordered": true,
       "sql": "SELECT id, JSON_CONTAINS(meta, '\"premium\"', '$.tags'), JSON_LENGTH(meta, '$.items'), JSON_TYPE(JSON_EXTRACT(meta, '$.score')) FROM orders WHERE meta IS NOT NULL ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1191:diversify json null rows",
+      "name": "1324:diversify json null rows",
       "ordered": true,
       "sql": "SELECT id, meta IS NULL, COALESCE(JSON_LENGTH(meta), -1) FROM orders ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1192:diversify window on decimal",
+      "name": "1325:diversify window on decimal",
       "ordered": true,
       "sql": "SELECT id, status, total, ROUND(SUM(total) OVER (PARTITION BY status ORDER BY id), 2) AS running, ROW_NUMBER() OVER (PARTITION BY status ORDER BY total DESC, id) AS rank_in_status FROM orders ORDER BY status, rank_in_status, id",
       "status": "PASS"
     },
     {
-      "name": "1193:diversify correlated scalar on orders",
+      "name": "1326:diversify correlated scalar on orders",
       "ordered": true,
       "sql": "SELECT u.id, u.name, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS n, (SELECT COALESCE(SUM(o.total), 0) FROM orders o WHERE o.user_id = u.id) AS spend FROM users u ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1194:diversify correlated exists",
+      "name": "1327:diversify correlated exists",
       "ordered": true,
       "sql": "SELECT u.id, u.name FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'shipped') ORDER BY u.id",
       "status": "PASS"
     },
     {
-      "name": "1195:diversify in subquery",
+      "name": "1328:diversify in subquery",
       "ordered": true,
       "sql": "SELECT id, name FROM users WHERE id IN (SELECT user_id FROM orders WHERE total > 50) ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1196:diversify set ops with columns",
+      "name": "1329:diversify set ops with columns",
       "ordered": true,
       "sql": "SELECT user_id AS id FROM orders WHERE status = 'shipped' UNION SELECT id FROM users WHERE id <= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1197:diversify set ops except",
+      "name": "1330:diversify set ops except",
       "ordered": true,
       "sql": "SELECT id FROM users EXCEPT SELECT user_id FROM orders ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1198:diversify three table join",
+      "name": "1331:diversify three table join",
       "ordered": true,
       "sql": "SELECT o.id, u.name, e.name, o.total FROM orders o JOIN users u ON o.user_id = u.id JOIN events e ON e.id = u.id WHERE o.status <> 'cancelled' ORDER BY o.id",
       "status": "PASS"
     },
     {
-      "name": "1199:diversify case on status and decimal",
+      "name": "1332:diversify case on status and decimal",
       "ordered": true,
       "sql": "SELECT CASE WHEN total >= 100 THEN 'high' WHEN total >= 20 THEN 'mid' ELSE 'low' END AS bucket, COUNT(*), SUM(total) FROM orders GROUP BY bucket ORDER BY bucket",
       "status": "PASS"
     },
     {
-      "name": "1200:diversify group_concat statuses",
+      "name": "1333:diversify group_concat statuses",
       "ordered": true,
       "sql": "SELECT user_id, GROUP_CONCAT(status ORDER BY id) AS statuses, COUNT(*) AS n FROM orders GROUP BY user_id HAVING COUNT(*) >= 2 ORDER BY user_id",
       "status": "PASS"
     },
     {
-      "name": "1201:diversify filter null json and temporal range",
+      "name": "1334:diversify filter null json and temporal range",
       "ordered": true,
       "sql": "SELECT id, total, placed_at FROM orders WHERE meta IS NULL AND placed_at >= '2024-07-01' ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1202:diversify distinct status total pairs",
+      "name": "1335:diversify distinct status total pairs",
       "ordered": true,
       "sql": "SELECT DISTINCT status, ROUND(total, 0) AS whole FROM orders ORDER BY status, whole",
       "status": "PASS"
     },
     {
-      "name": "1203:diversify decimal average by user",
+      "name": "1336:diversify decimal average by user",
       "ordered": true,
       "sql": "SELECT user_id, AVG(total), COUNT(*) FROM orders GROUP BY user_id ORDER BY user_id",
       "status": "PASS"
     },
     {
-      "name": "1204:diversify date_add on column",
+      "name": "1337:diversify date_add on column",
       "ordered": true,
       "sql": "SELECT id, placed_at, DATE_ADD(placed_at, INTERVAL 1 DAY), DATE_SUB(placed_at, INTERVAL 1 MONTH) FROM orders WHERE id <= 4 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1205:diversify like and string on status",
+      "name": "1338:diversify like and string on status",
       "ordered": true,
       "sql": "SELECT id, UPPER(status), status LIKE '%ship%' FROM orders ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1206:diversify multi-key style equality join",
+      "name": "1339:diversify multi-key style equality join",
       "ordered": true,
       "sql": "SELECT o.id, u.id, o.status, u.name FROM orders o JOIN users u ON o.user_id = u.id AND u.name = CONCAT('user-0', u.id) WHERE o.id <= 5 ORDER BY o.id",
       "status": "PASS"
     },
     {
-      "name": "1207:diversify distinct user ids with orders",
+      "name": "1340:diversify distinct user ids with orders",
       "ordered": false,
       "sql": "SELECT DISTINCT user_id FROM orders",
       "status": "PASS"
     },
     {
-      "name": "1208:diversify having on decimal sum",
+      "name": "1341:diversify having on decimal sum",
       "ordered": true,
       "sql": "SELECT user_id, SUM(total) AS spend FROM orders GROUP BY user_id HAVING SUM(total) >= 50 ORDER BY spend DESC, user_id",
       "status": "PASS"
     },
     {
-      "name": "1209:diversify order by decimal column",
+      "name": "1342:diversify order by decimal column",
       "ordered": true,
       "sql": "SELECT id, total FROM orders ORDER BY total DESC, id LIMIT 5",
       "status": "PASS"
     },
     {
-      "name": "1210:diversify coalesce meta length",
+      "name": "1343:diversify coalesce meta length",
       "ordered": true,
       "sql": "SELECT id, COALESCE(JSON_LENGTH(meta, '$.tags'), 0) AS tag_n FROM orders ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1211:diversify between on decimal",
+      "name": "1344:diversify between on decimal",
       "ordered": true,
       "sql": "SELECT id, total FROM orders WHERE total BETWEEN 10 AND 100 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1212:diversify not in statuses",
+      "name": "1345:diversify not in statuses",
       "ordered": true,
       "sql": "SELECT id, status FROM orders WHERE status NOT IN ('cancelled', 'pending') ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1213:diversify derived table on orders",
+      "name": "1346:diversify derived table on orders",
       "ordered": true,
       "sql": "SELECT status, AVG(total) AS avg_total FROM ( SELECT status, total FROM orders WHERE total > 0 ) d GROUP BY status ORDER BY status",
       "status": "PASS"
     },
     {
-      "name": "1214:diversify cte spend",
+      "name": "1347:diversify cte spend",
       "ordered": true,
       "sql": "WITH spend AS ( SELECT user_id, SUM(total) AS lifetime FROM orders GROUP BY user_id ) SELECT u.id, u.name, ROUND(s.lifetime, 2) AS lifetime FROM users u JOIN spend s ON s.user_id = u.id ORDER BY lifetime DESC, u.id",
       "status": "PASS"
     },
     {
-      "name": "1215:diversify lag lead on totals",
+      "name": "1348:diversify lag lead on totals",
       "ordered": true,
       "sql": "SELECT id, total, LAG(total, 1) OVER (ORDER BY id) AS prev_total, LEAD(total, 1) OVER (ORDER BY id) AS next_total FROM orders WHERE user_id = 1 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1216:diversify json object constructor with column",
+      "name": "1349:diversify json object constructor with column",
       "ordered": true,
       "sql": "SELECT id, JSON_OBJECT('id', id, 'total', total, 'status', status) FROM orders WHERE id <= 3 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1217:diversify unsigned order id filter",
+      "name": "1350:diversify unsigned order id filter",
       "ordered": true,
       "sql": "SELECT id, user_id, total FROM orders WHERE id >= 10 ORDER BY id",
       "status": "PASS"
     },
     {
-      "name": "1218:diversify min max datetime",
+      "name": "1351:diversify min max datetime",
       "ordered": true,
       "sql": "SELECT MIN(placed_at), MAX(placed_at), COUNT(*) FROM orders",
       "status": "PASS"
     }
   ],
   "cleanTree": true,
-  "commit": "1340cabca93c07fdd69da45ce1da6959cdd0f7be",
+  "commit": "7a92c1cd2412e116d5aa2bbbb4d4e84df0913c8e",
   "comparator": "exact text except float results: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
-  "corpusSha256": "50b796e99be6c2c262e2fbc1a7d8604221ce8bbe69d2ea84edf7c3aca34c2aa1",
-  "expectedCases": 1219,
-  "measuredAt": "2026-09-08T20:52:30.525728198+00:00",
+  "corpusSha256": "29483b7d971e19e8674da90efe59b82667869f63773e2094bc4e98d0788024e6",
+  "expectedCases": 1352,
+  "measuredAt": "2026-09-10T10:08:24.057758815+00:00",
   "schemaVersion": 1,
   "source": "MySQL 8.4.11 (mysql:8.4)",
   "verdict": "PASS"

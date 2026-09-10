@@ -14,7 +14,7 @@
 
 services:
   pintail:
-    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.1.2-rc12}
+    image: ghcr.io/chittihq/pintail:${PINTAIL_VERSION:-0.1.5-rc1}
     # A columnar scan opens the segment files it reads, and every
     # concurrent spilling query holds a bounded handful of run files.
     # Docker's default soft limit of 1024 is a desktop default, not a
@@ -81,11 +81,23 @@ services:
     environment:
       # Surfaces the deployed release through SELECT VERSION() and the
       # health endpoint, so a deployment identifies its build on the wire.
-      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.1.2-rc12}
+      PINTAIL_BUILD_VERSION: ${PINTAIL_VERSION:-0.1.5-rc1}
       PINTAIL_DATA_DIR: /var/lib/pintail
       # Spill defaults under the data directory, so it shares that mount
       # unless PINTAIL_SPILL_DATA below points it elsewhere.
       PINTAIL_SPILL_DIR: /var/lib/pintail/spill
+      # How much spill one query, and the whole process, may write. The
+      # engine reads both; without them here a deployment cannot raise
+      # either, because compose passes through only the variables it names.
+      # The defaults are the engine's own, so an existing deployment that
+      # sets neither is unchanged.
+      #
+      # A query that exceeds its quota FAILS - it does not fall back to a
+      # slower plan - so these bound the largest join or sort the deployment
+      # will answer rather than trading speed for space. A six-table join
+      # over a few million rows has been measured wanting 16 GiB.
+      PINTAIL_QUERY_SPILL_LIMIT_BYTES: ${PINTAIL_QUERY_SPILL_LIMIT_BYTES:-1073741824}
+      PINTAIL_GLOBAL_SPILL_LIMIT_BYTES: ${PINTAIL_GLOBAL_SPILL_LIMIT_BYTES:-8589934592}
       # Set this explicitly under a container memory limit.
       #
       # The default is three quarters of host memory read from
@@ -111,6 +123,11 @@ services:
       # once. Fractions are accepted. Unset uses 2.
       PINTAIL_QUERY_QUEUE_WAIT_SECONDS: ${PINTAIL_QUERY_QUEUE_WAIT_SECONDS:-}
       PINTAIL_RESERVED_QUERY_SLOTS: ${PINTAIL_RESERVED_QUERY_SLOTS:-}
+      # Rows one MySQL-wire result may carry. Unset or zero leaves a result
+      # bounded by the per-query memory ceiling above alone. A result that
+      # reaches a ceiling set here is refused with an error, never cut short:
+      # a MySQL client cannot tell a truncated result from a complete one.
+      PINTAIL_MAX_RESULT_ROWS: ${PINTAIL_MAX_RESULT_ROWS:-}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk
@@ -127,6 +144,7 @@ services:
       #
       # Sentry receives errors and panics only. A panic carries its stack
       # trace, parsed into frames, and is flushed before the process exits.
+      # The dashboard uses the public part of this DSN for browser errors too.
       PINTAIL_SENTRY_DSN: ${PINTAIL_SENTRY_DSN:-}
       # Better Stack (Logtail) receives every line at the PINTAIL_LOG level.
       # Both of these are required together; one without the other is refused

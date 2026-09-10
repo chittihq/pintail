@@ -2306,6 +2306,7 @@ dependencies = [
  "pintail-poll",
  "pintail-probe",
  "pintail-snapshot",
+ "pintail-sql",
  "pintail-store",
  "pintail-types",
  "rusqlite",

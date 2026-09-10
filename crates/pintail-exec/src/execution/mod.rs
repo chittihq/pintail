@@ -251,6 +251,10 @@ pub enum PhysicalPlan {
         right: Box<Self>,
         /// Join semantics.
         kind: BoundJoinKind,
+        /// Hashable equalities every accepted pair satisfies, oriented left
+        /// then right. The right input is bucketed by them so a left row
+        /// meets only the rows its keys reach; empty tests every pair.
+        keys: Vec<(BoundExpr, BoundExpr)>,
         /// Complete ON predicate.
         condition: BoundExpr,
     },
@@ -582,10 +586,12 @@ impl PhysicalPlanner {
                 }
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
                 if expression_has_subquery(&condition) {
+                    let keys = dependent_join_keys(&condition, &left, &right, collation);
                     return Ok(PhysicalPlan::NestedLoopJoin {
                         left: Box::new(Self::plan(*left, collation)?),
                         right: Box::new(Self::plan(*right, collation)?),
                         kind,
+                        keys,
                         condition,
                     });
                 }
@@ -661,8 +667,37 @@ fn plan_theta_join(
         left: Box::new(PhysicalPlanner::plan(*left, collation)?),
         right: Box::new(PhysicalPlanner::plan(*right, collation)?),
         kind,
+        keys: Vec::new(),
         condition,
     })
+}
+
+/// The equalities a dependent join's candidate pairs must satisfy: the ON
+/// conjuncts that are plain hashable equalities spanning the two inputs,
+/// oriented left then right. The executor buckets the right input by them,
+/// so a left row meets only the right rows its keys reach instead of every
+/// row; the whole condition, subqueries included, still decides each pair.
+/// An equality is one conjunct of an AND, so a pair failing it could never
+/// have matched.
+fn dependent_join_keys(
+    condition: &BoundExpr,
+    left: &LogicalPlan,
+    right: &LogicalPlan,
+    collation: Collation,
+) -> Vec<(BoundExpr, BoundExpr)> {
+    // An alias visible on both sides through a derived input would make the
+    // orientation ambiguous; the unbucketed loop answers that correctly.
+    if !logical_tables(left).is_disjoint(&logical_tables(right)) {
+        return Vec::new();
+    }
+    let mut conjuncts = Vec::new();
+    and_conjuncts(condition, &mut conjuncts);
+    conjuncts
+        .iter()
+        .filter(|conjunct| !expression_has_subquery(conjunct))
+        .filter_map(|conjunct| equi_join_key_pairs(conjunct, left, right, collation))
+        .flatten()
+        .collect()
 }
 
 fn plan_limit(
@@ -4092,6 +4127,7 @@ fn build_operator_inner(
             left,
             right,
             kind,
+            keys,
             condition,
         } => {
             let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
@@ -4110,6 +4146,7 @@ fn build_operator_inner(
                 &left_columns,
                 &right_columns,
                 kind,
+                &keys,
                 &condition,
                 provider,
                 memory,
@@ -6307,6 +6344,13 @@ mod tests {
         assert!(spill.files > 0);
     }
 
+    /// The dependent path a correlated subquery in an OUTER join's ON still
+    /// takes. An INNER join's ON hoists to WHERE and decorrelates, so this
+    /// shape has to be an outer join to reach the replay it is testing, and
+    /// it correlates to the join's RIGHT side, which is the side that still
+    /// answers: correlating to the left is refused, because there the
+    /// subquery ran without its outer context and the join matched too few
+    /// rows. The decorrelated form is covered by the test below.
     #[test]
     fn correlated_join_on_spills_its_replayed_side_and_output() {
         let batches = (0..64)
@@ -6327,7 +6371,7 @@ mod tests {
             let provider = StaticProvider {
                 batches: Mutex::new(batches.clone()),
             };
-            let mut execution = Execution::start(physical("SELECT l.name FROM events l JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = l.name)"), &provider, limit, Collation::default()).expect("execution");
+            let mut execution = Execution::start(physical("SELECT l.name FROM events l LEFT JOIN events r ON l.name = r.name AND EXISTS (SELECT 1 FROM events z WHERE z.name = r.name)"), &provider, limit, Collation::default()).expect("execution");
             let mut rows = Vec::new();
             while let Some(batch) = execution.next_batch().expect("pull") {
                 assert!(execution.memory().used() <= limit);
@@ -6349,6 +6393,73 @@ mod tests {
         assert_eq!(tight, wide);
         assert_eq!(tight.len(), 512);
         assert!(spill.files > 0);
+    }
+
+    /// The same question as the test above with an INNER join, which hoists
+    /// its correlated EXISTS to WHERE and becomes a semi-join. The point is
+    /// that the path it moves ONTO still answers under a budget and still
+    /// spills: a rewrite that traded a spilling plan for one that dies at a
+    /// memory ceiling would be a poor trade however much faster it is when
+    /// it fits.
+    #[test]
+    fn a_decorrelated_join_condition_still_spills_under_a_budget() {
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..8)
+                    .map(|row| {
+                        Value::Utf8(format!("key-{:04}-{}", batch * 8 + row, "x".repeat(1024)))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical(
+                    "SELECT l.name FROM events l JOIN events r ON l.name = r.name AND EXISTS \
+                     (SELECT 1 FROM events z WHERE z.name = l.name)",
+                ),
+                &provider,
+                limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                assert!(execution.memory().used() <= limit);
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .column(0)
+                            .expect("column")
+                            .value(row)
+                            .cloned()
+                            .expect("value"),
+                    );
+                }
+            }
+            (rows, execution.spill_metrics())
+        };
+        // No ORDER BY, so row order is unspecified and the grace-partitioned
+        // build hands them back in partition order once it spills. The rows
+        // are the claim; their sequence is not.
+        let (mut wide, _) = execute(64 * 1024 * 1024);
+        let (mut tight, spill) = execute(4 * 1024 * 1024);
+        wide.sort();
+        tight.sort();
+        assert_eq!(tight, wide);
+        assert_eq!(tight.len(), 512);
+        assert!(
+            spill.files > 0,
+            "the decorrelated plan spills rather than failing",
+        );
     }
 
     #[test]

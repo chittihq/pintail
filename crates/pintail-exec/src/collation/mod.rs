@@ -184,7 +184,10 @@ pub fn compare_bin(left: &str, right: &str) -> std::cmp::Ordering {
 /// removed and one put back, for the reason [`padded_sort_key`] gives.
 #[must_use]
 pub fn bin_sort_key(text: &str) -> Vec<u8> {
-    let mut key = text.chars().map(|character| character as u32).collect::<Vec<_>>();
+    let mut key = text
+        .chars()
+        .map(|character| character as u32)
+        .collect::<Vec<_>>();
     while key.last() == Some(&u32::from(b' ')) {
         key.pop();
     }
@@ -416,7 +419,10 @@ mod tests {
         // ß weighs as two s weights, so it equals "ss" - the expansion
         // general_ci has no way to express.
         assert_eq!(compare_unicode_ci("\u{df}", "ss"), Ordering::Equal);
-        assert_eq!(unicode_ci_sort_key("stra\u{df}e"), unicode_ci_sort_key("strasse"));
+        assert_eq!(
+            unicode_ci_sort_key("stra\u{df}e"),
+            unicode_ci_sort_key("strasse")
+        );
         // Verified against MySQL: æ is its own primary weight, NOT "ae".
         assert_ne!(compare_unicode_ci("\u{e6}", "ae"), Ordering::Equal);
     }
@@ -439,7 +445,10 @@ mod tests {
     fn unicode_ci_collapses_every_supplementary_character() {
         // The same MySQL wart general_ci has, verified for this collation
         // too: WEIGHT_STRING is 0xFFFD for both, and they compare equal.
-        assert_eq!(compare_unicode_ci("\u{1f600}", "\u{20000}"), Ordering::Equal);
+        assert_eq!(
+            compare_unicode_ci("\u{1f600}", "\u{20000}"),
+            Ordering::Equal
+        );
     }
 
     #[test]
@@ -457,8 +466,17 @@ mod tests {
         // the same column would partition it differently. The terminator in
         // the key is what keeps these two in step across a pad.
         let mut words = [
-            "banana", "Apple", "cherry", "APPLE", "bandana", "a", "a\t", "a ", "stra\u{df}e",
-            "strasse", "\u{4e00}",
+            "banana",
+            "Apple",
+            "cherry",
+            "APPLE",
+            "bandana",
+            "a",
+            "a\t",
+            "a ",
+            "stra\u{df}e",
+            "strasse",
+            "\u{4e00}",
         ];
         words.sort_by(|left, right| compare_unicode_ci(left, right));
         for pair in words.windows(2) {

@@ -161,20 +161,22 @@ const source = `//! \`utf8mb4_unicode_ci\` weights, generated from \`MySQL\`.
 //! ${sequences.length} weigh none or several, indexing the shared arena.
 //!
 //! Regenerate with \`scripts/extract-unicode-ci-weights.ts\` against any
-//! \`MySQL\` 8.
+//! \`MySQL\` 8. The tables carry \`rustfmt::skip\`: a generated table is
+//! written in the shape that reads as data, and rustfmt would put one
+//! entry on each of seventeen thousand lines.
 
 /// Code points weighing exactly one weight: \`(code point, weight)\`.
-pub(crate) static UNICODE_CI_SINGLES: &[(u16, u16)] = &[
+#[rustfmt::skip]\npub(crate) static UNICODE_CI_SINGLES: &[(u16, u16)] = &[
 ${rows(singles, 6)}
 ];
 
 /// Code points weighing none or several: \`(code point, arena offset, count)\`.
-pub(crate) static UNICODE_CI_SEQUENCES: &[(u16, u16, u16)] = &[
+#[rustfmt::skip]\npub(crate) static UNICODE_CI_SEQUENCES: &[(u16, u16, u16)] = &[
 ${rows(sequences, 5)}
 ];
 
 /// The weights \`UNICODE_CI_SEQUENCES\` indexes, back to back.
-pub(crate) static UNICODE_CI_ARENA: &[u16] = &[
+#[rustfmt::skip]\npub(crate) static UNICODE_CI_ARENA: &[u16] = &[
 ${arena
   .reduce<number[][]>((lines, weight, index) => {
     if (index % 10 === 0) lines.push([])
@@ -188,7 +190,7 @@ ${arena
 /// Ranges deriving their weights from the code point: \`(first, last, base)\`.
 /// A character in one weighs \`base + (point >> 15)\` then
 /// \`(point & 0x7fff) | 0x8000\`.
-pub(crate) static UNICODE_CI_IMPLICIT: &[(u16, u16, u16)] = &[
+#[rustfmt::skip]\npub(crate) static UNICODE_CI_IMPLICIT: &[(u16, u16, u16)] = &[
 ${rows(implicit, 4)}
 ];
 `

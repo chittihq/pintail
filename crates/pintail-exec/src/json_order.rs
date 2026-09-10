@@ -61,7 +61,20 @@ fn encode(value: &serde_json::Value, key: &mut Vec<u8>) {
         }
         serde_json::Value::Number(number) => {
             key.push(TAG_NUMBER);
-            encode_f64(number.as_f64().unwrap_or(0.0), key);
+            let approximate = number.as_f64().unwrap_or(0.0);
+            encode_f64(approximate, key);
+            // An integer past 2^53 is not its nearest double: 9007199254740993
+            // and 9007199254740992 share one. The remainder from the double
+            // keeps distinct integers distinct and in order, and is zero for
+            // every value a double holds exactly, so 1 still equals 1.0.
+            let exact = number
+                .as_i64()
+                .map(i128::from)
+                .or_else(|| number.as_u64().map(i128::from));
+            #[allow(clippy::cast_possible_truncation)] // an integral double within i128
+            let remainder = exact.map_or(0, |exact| exact - approximate as i128);
+            let ordered = u128::from_be_bytes(remainder.to_be_bytes()) ^ (1_u128 << 127);
+            key.extend_from_slice(&ordered.to_be_bytes());
         }
         serde_json::Value::String(text) => {
             key.push(TAG_STRING);

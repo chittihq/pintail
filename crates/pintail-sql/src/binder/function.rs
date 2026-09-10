@@ -763,6 +763,20 @@ pub(super) fn bind_in_list(
             value, tables, aggregates, windows, subqueries,
         )?);
     }
+    let args = super::unify_temporal_list(args);
+    let subject = args[0].clone();
+    let args = args
+        .into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if index == 0 {
+                Ok(argument)
+            } else {
+                super::canonical_literal_operand(&subject, argument)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
@@ -784,16 +798,57 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let args = vec![
+    let args = super::unify_temporal_list(vec![
         bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
-    ];
+    ]);
+    let [subject, low, high]: [BoundExpr; 3] = args
+        .try_into()
+        .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+    let low = super::canonical_literal_operand(&subject, low)?;
+    let high = super::canonical_literal_operand(&subject, high)?;
+    let args = super::numeric_list_as_double(vec![subject, low, high]);
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)
     {
         return Err(BindError::InvalidScalarFunction("BETWEEN".to_owned()));
+    }
+    // A DECIMAL travels as text, and the row-level BETWEEN compared that text
+    // with its bounds: -12.50 sorted below -0.01. Written as the two exact
+    // comparisons MySQL defines BETWEEN to be, every path - vectorized
+    // masks, pruning, the row loop - compares by value.
+    if super::is_exact_decimal_comparison(BinaryOp::GreaterOrEqual, &args[0], &args[1])
+        && super::is_exact_decimal_comparison(BinaryOp::LessOrEqual, &args[0], &args[2])
+    {
+        let [value, low, high]: [BoundExpr; 3] = args
+            .try_into()
+            .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+        let lower =
+            super::bind_exact_decimal_comparison(BinaryOp::GreaterOrEqual, value.clone(), low);
+        let upper = super::bind_exact_decimal_comparison(BinaryOp::LessOrEqual, value, high);
+        let range = BoundExpr {
+            nullable: lower.nullable || upper.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Binary {
+                op: BinaryOp::And,
+                left: Box::new(lower),
+                right: Box::new(upper),
+            },
+        };
+        return Ok(if negated {
+            BoundExpr {
+                nullable: range.nullable,
+                data_type: Some(DataType::Boolean),
+                kind: BoundExprKind::Unary {
+                    op: crate::bound::UnaryOp::Not,
+                    expr: Box::new(range),
+                },
+            }
+        } else {
+            range
+        });
     }
     bind_scalar(ScalarFunction::Between { negated }, args)
 }
@@ -1828,6 +1883,10 @@ pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
 }
 
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+    let (left, right) = super::unify_temporal_operands(left, right);
+    let right = super::canonical_literal_operand(&left, right)?;
+    let left = super::canonical_literal_operand(&right, left)?;
+    let (left, right) = super::text_as_number(left, right);
     let (left, right) = super::rewrite_json_comparison(left, right);
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {

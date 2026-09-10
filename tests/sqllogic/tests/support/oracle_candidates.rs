@@ -177,7 +177,7 @@ pub fn run() -> Result<(), String> {
         }
         let case = OracleCase {
             sql_mode: "",
-            family: "llm-candidate",
+            family: "generated-candidate",
             sql: sql.into(),
             ordered: false,
         };
@@ -231,9 +231,9 @@ pub fn run() -> Result<(), String> {
         }
         outcomes.push(serde_json::json!({"sql":sql,"family":candidate["family"],"rationale":candidate["rationale"],"status":if pass {"PASS"} else {"FAIL"},"expected":expected[0],"actual":actual.as_ref().ok(),"error":actual.as_ref().err(),"minimizedSQL":minimized}));
     }
-    let report = serde_json::json!({"model":document["model"],"promptSha256":document["promptSha256"],"provenance":oracle_transport::provenance(&mysql)?,"outcomes":outcomes});
+    let report = serde_json::json!({"source":document["source"],"provenance":oracle_transport::provenance(&mysql)?,"outcomes":outcomes});
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../validate-out/llm-validated.json");
+        .join("../../validate-out/candidates-validated.json");
     std::fs::write(
         path,
         serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?,
@@ -244,7 +244,7 @@ pub fn run() -> Result<(), String> {
         .filter(|o| o["status"] == "PASS" || o["status"] == "FAIL")
         .count();
     println!(
-        "candidate sweep: {accepted}/{} MySQL-valid queries; see validate-out/llm-validated.json",
+        "candidate sweep: {accepted}/{} MySQL-valid queries; see validate-out/candidates-validated.json",
         candidates.len()
     );
     if outcomes.iter().any(|o| o["status"] == "FAIL") {

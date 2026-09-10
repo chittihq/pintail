@@ -561,28 +561,34 @@ impl TableSnapshot {
     /// always has some overlap somewhere, and a single overlapping pair used
     /// to disable pruning for every other segment.
     fn value_prunable_segments(&self) -> Vec<bool> {
+        // Dropping a segment whose every live row fails the predicate is
+        // safe exactly when nothing it would have SHADOWED is still read.
+        // A segment whose overlapping neighbours are all newer shadows
+        // nothing: each of its rows is either current - and fails the
+        // predicate - or stale behind a newer version that decides for
+        // itself, since merge-on-read keeps the highest version. A segment
+        // overlapping an OLDER one is the other case: its rows may be the
+        // newer versions of rows the older one still holds, and dropping
+        // them would bring those versions back.
+        //
+        // The rule this replaces allowed no overlap at all, which switched
+        // value pruning off for a table's whole base as soon as updates put
+        // a newer segment over it - on a table taking updates, always - and
+        // turned a range filter on a timestamp column into a scan of every
+        // segment.
         let segments = &self.manifest.segments;
-        let mut order = (0..segments.len()).collect::<Vec<_>>();
-        order.sort_by(|left, right| {
-            segments[*left]
-                .min_key
-                .cmp(&segments[*right].min_key)
-                .then_with(|| segments[*left].max_key.cmp(&segments[*right].max_key))
-        });
-        let mut prunable = vec![false; segments.len()];
-        let mut highest_end: Option<&PrimaryKey> = None;
-        for (position, index) in order.iter().copied().enumerate() {
-            let meta = &segments[index];
-            let touches_earlier = highest_end.is_some_and(|end| end >= &meta.min_key);
-            let touches_later = order
-                .get(position + 1)
-                .is_some_and(|next| segments[*next].min_key <= meta.max_key);
-            prunable[index] = !touches_earlier && !touches_later;
-            if highest_end.is_none_or(|end| end < &meta.max_key) {
-                highest_end = Some(&meta.max_key);
-            }
-        }
-        prunable
+        segments
+            .iter()
+            .enumerate()
+            .map(|(index, meta)| {
+                segments.iter().enumerate().all(|(other_index, other)| {
+                    other_index == index
+                        || other.max_key < meta.min_key
+                        || other.min_key > meta.max_key
+                        || other.min_version > meta.max_version
+                })
+            })
+            .collect()
     }
 
     /// Scans an inclusive key range while decoding only requested user

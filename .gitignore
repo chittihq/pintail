@@ -31,6 +31,7 @@ REVIEW.md
 # Local dashboard-development data directory (docs/development.md).
 .devdata/
 .env
+.env.sentry-build-plugin
 
 # `go build ./...` in the wire-client matrix drops its binary beside the
 # source, named after the module.

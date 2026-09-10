@@ -33,8 +33,8 @@ use crate::limits::{
     record_prepared_refused,
 };
 use crate::{
-    DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
-    ReplicaEngine, SqlRejection,
+    DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats, ReplicaEngine,
+    SqlRejection,
 };
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
@@ -996,12 +996,9 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(Some(
                         session.cte_max_recursion_depth,
                     ));
-                    let result = engine.execute_with_deadline(
-                        &database_id,
-                        &sql,
-                        DEFAULT_MAX_ROWS,
-                        deadline,
-                    );
+                    let result = engine
+                        .execute_with_deadline(&database_id, &sql, max_result_rows(), deadline)
+                        .and_then(refuse_truncated);
                     let warnings = pintail_exec::take_session_group_concat_warnings();
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
@@ -3567,5 +3564,51 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         // that a stalled peer cannot hold descriptors for long.
         assert!(LOGIN_TIMEOUT >= std::time::Duration::from_secs(10));
         assert!(LOGIN_TIMEOUT <= std::time::Duration::from_secs(60));
+    }
+}
+
+/// Rows one wire result may carry. A `MySQL` client has no way to learn that
+/// a result stopped short - the protocol has no "and more" marker - so a
+/// capped result read as a complete one: a report over 43,000 rows arrived
+/// with 10,000 and no error. Unset, or zero, leaves a result bounded by the
+/// per-query memory ceiling alone, which already holds the encoded copy;
+/// `PINTAIL_MAX_RESULT_ROWS` sets a row ceiling, and a result that reaches
+/// it is refused rather than cut.
+fn max_result_rows() -> usize {
+    static LIMIT: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        max_result_rows_from(std::env::var("PINTAIL_MAX_RESULT_ROWS").ok().as_deref())
+    })
+}
+
+fn max_result_rows_from(value: Option<&str>) -> usize {
+    match value.and_then(|value| value.trim().parse::<usize>().ok()) {
+        Some(0) | None => usize::MAX,
+        Some(rows) => rows,
+    }
+}
+
+/// A result the row ceiling stopped is an error, never a shorter answer.
+fn refuse_truncated(output: QueryOutput) -> Result<QueryOutput, QueryError> {
+    if output.truncated {
+        return Err(QueryError::Invalid(format!(
+            "the result has more than {} rows, the ceiling PINTAIL_MAX_RESULT_ROWS sets; \
+             narrow it with a filter or LIMIT, or raise the ceiling",
+            output.rows.len()
+        )));
+    }
+    Ok(output)
+}
+
+#[cfg(test)]
+mod result_ceiling_tests {
+    use super::max_result_rows_from;
+
+    #[test]
+    fn an_unset_or_zero_ceiling_leaves_results_whole() {
+        assert_eq!(max_result_rows_from(None), usize::MAX);
+        assert_eq!(max_result_rows_from(Some("0")), usize::MAX);
+        assert_eq!(max_result_rows_from(Some("not a number")), usize::MAX);
+        assert_eq!(max_result_rows_from(Some(" 250000 ")), 250_000);
     }
 }

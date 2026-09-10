@@ -68,14 +68,20 @@ fn an_isolated_segment_prunes_while_overlapping_neighbours_are_read() {
     let table = overlapping_table(directory.path());
 
     // Bucket 3 lives only in the last segment. The first segment's key range
-    // touches nothing else, so its statistics alone decide it, even though
-    // two other segments in the same manifest overlap each other.
+    // touches nothing else, so its statistics alone decide it. The middle
+    // segment overlaps the last, but only a NEWER one: every row it holds is
+    // current and fails the bound, or stale behind the last segment's
+    // version, so it prunes too.
     let (rows, pruned) = scan(&table, &bucket_equals(3));
-    assert_eq!(pruned, 1, "the isolated non-matching segment must prune");
+    assert_eq!(
+        pruned, 2,
+        "both non-matching segments older than their overlaps prune"
+    );
     assert!(
         rows.iter().all(|row| row[0] != Value::UInt64(1)),
         "pruned segment's keys must not appear"
     );
+    assert_eq!(rows.len(), 101, "the last segment's keys 250..=350 alone");
 
     // Whole-manifest pruning would have refused here: the manifest has both
     // an overlapping pair and, after the merge, tombstone-free statistics
@@ -107,4 +113,52 @@ fn overlapping_segments_never_prune_away_a_winning_version() {
     );
     assert_eq!(bucket_of(340), Some(Value::Int64(3)));
     assert_eq!(rows.len(), 151, "only the bucket-1 segment prunes away");
+}
+
+/// The shape a replicated table takes: a base loaded in key-disjoint
+/// chunks, then a newer segment of updates scattered across the whole key
+/// range. Every base chunk overlaps that newer segment, which used to
+/// switch value pruning off for all of them. A base chunk hides no newer
+/// version - what it holds is current and fails the bound, or stale behind
+/// the updates - so each chunk the bound excludes still prunes, while the
+/// updates, which overlap older rows, are always read.
+#[test]
+fn a_base_overlapped_only_by_newer_updates_still_prunes() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema(), options).expect("open");
+    for chunk in 0..4_u64 {
+        let bucket = i64::try_from(chunk * 10).expect("small");
+        let keys = chunk * 100 + 1..=chunk * 100 + 100;
+        table
+            .ingest(keys.map(|id| row(id, bucket, 1)).collect())
+            .expect("ingest");
+        table.flush().expect("flush");
+    }
+    // Every tenth key, across all four chunks, moves to bucket 99.
+    table
+        .ingest((1..=400).step_by(10).map(|id| row(id, 99, 2)).collect())
+        .expect("ingest");
+    table.flush().expect("flush");
+
+    // Bucket 20 is the third chunk's: the other three prune.
+    let (rows, pruned) = scan(&table, &bucket_equals(20));
+    assert_eq!(pruned, 3, "every base chunk the bound excludes prunes");
+    let matching = rows.iter().filter(|row| row[1] == Value::Int64(20)).count();
+    assert_eq!(matching, 90, "the chunk's rows less the ten updated away");
+    assert!(
+        rows.iter()
+            .all(|row| row[1] == Value::Int64(20) || row[1] == Value::Int64(99)),
+        "no stale version of an updated key comes back"
+    );
+
+    // Bucket 99 lives only in the updates: all four chunks prune, and the
+    // updated keys come back with their new bucket.
+    let (rows, pruned) = scan(&table, &bucket_equals(99));
+    assert_eq!(pruned, 4);
+    assert_eq!(rows.len(), 40);
+    assert!(rows.iter().all(|row| row[1] == Value::Int64(99)));
 }

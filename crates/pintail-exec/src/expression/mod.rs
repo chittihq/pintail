@@ -594,24 +594,18 @@ impl CompiledExpr {
                 else {
                     return Ok(None);
                 };
-                if matches!(value, Value::Null)
-                    || matches!(lower, Value::Null)
-                    || matches!(upper, Value::Null)
-                {
-                    return Ok(Some(false));
-                }
-                let in_range = predicate_truth(&evaluate_comparison(
-                    BinaryOp::GreaterOrEqual,
-                    value,
-                    lower,
-                    *collation,
-                )?)? && predicate_truth(&evaluate_comparison(
-                    BinaryOp::LessOrEqual,
-                    value,
-                    upper,
-                    *collation,
-                )?)?;
-                Ok(Some(if *negated { !in_range } else { in_range }))
+                // Three-valued, as BETWEEN's two comparisons AND-ed: a NULL
+                // bound leaves the other comparison able to decide, and NOT
+                // of an unknown range stays unknown.
+                let lower =
+                    evaluate_comparison(BinaryOp::GreaterOrEqual, value, lower, *collation)?;
+                let upper = evaluate_comparison(BinaryOp::LessOrEqual, value, upper, *collation)?;
+                let range = evaluate_logic(BinaryOp::And, &lower, &upper)?;
+                let result = match range {
+                    Value::Boolean(in_range) => Value::Boolean(in_range != *negated),
+                    unknown => unknown,
+                };
+                Ok(Some(predicate_truth(&result)?))
             }
             _ => Ok(None),
         }
@@ -1875,6 +1869,9 @@ fn evaluate_eager_scalar_inner(
         && !matches!(
             function,
             ScalarFunction::InList { .. }
+                // BETWEEN is its two comparisons AND-ed: a NULL bound leaves the
+                // other comparison able to decide it.
+                | ScalarFunction::Between { .. }
                 | ScalarFunction::NullIf
                 // NULL arguments are data, not poison, for these: CONCAT_WS
                 // skips them, ELT/FIELD treat them positionally, CHAR drops
@@ -2083,31 +2080,15 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::InList { negated } => evaluate_in_list(
             values,
             negated,
-            argument_types.len() == values.len()
-                && argument_types.iter().all(|data_type| {
-                    matches!(
-                        data_type,
-                        Some(
-                            DataType::Boolean
-                                | DataType::Int8
-                                | DataType::Int16
-                                | DataType::Int32
-                                | DataType::Int64
-                                | DataType::UInt8
-                                | DataType::UInt16
-                                | DataType::UInt32
-                                | DataType::UInt64
-                                | DataType::Year
-                                | DataType::Decimal { .. }
-                        )
-                    )
-                })
-                && argument_types
-                    .iter()
-                    .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. }))),
+            exact_decimal_arguments(argument_types, values.len()),
             collation,
         ),
-        ScalarFunction::Between { negated } => evaluate_between(values, negated, collation),
+        ScalarFunction::Between { negated } => evaluate_between(
+            values,
+            negated,
+            exact_decimal_arguments(argument_types, values.len()),
+            collation,
+        ),
         ScalarFunction::DecimalComparison { op } => {
             let ordering = compare_decimal_values(&values[0], &values[1])?;
             Ok(Value::Boolean(match op {
@@ -5374,12 +5355,45 @@ enum LikeToken {
     AnyMany,
 }
 
+/// Whether every argument is an exact number and one is a DECIMAL: such a
+/// list compares by value, not by the DECIMAL's text carrier.
+fn exact_decimal_arguments(argument_types: &[Option<DataType>], arity: usize) -> bool {
+    argument_types.len() == arity
+        && argument_types.iter().all(|data_type| {
+            matches!(
+                data_type,
+                Some(
+                    DataType::Boolean
+                        | DataType::Int8
+                        | DataType::Int16
+                        | DataType::Int32
+                        | DataType::Int64
+                        | DataType::UInt8
+                        | DataType::UInt16
+                        | DataType::UInt32
+                        | DataType::UInt64
+                        | DataType::Year
+                        | DataType::Decimal { .. }
+                )
+            )
+        })
+        && argument_types
+            .iter()
+            .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. })))
+}
+
 pub(crate) fn evaluate_in_list(
     values: &[Value],
     negated: bool,
     exact_decimal: bool,
     collation: Collation,
 ) -> Result<Value, ExecError> {
+    // Nothing is a member of an empty set - not even NULL - so `NULL NOT IN`
+    // an empty subquery is true, which is how an outer join scoped by a
+    // membership list keeps a row whose list came back empty.
+    if values.len() == 1 {
+        return Ok(Value::Boolean(negated));
+    }
     if matches!(values[0], Value::Null) {
         return Ok(Value::Null);
     }
@@ -5407,10 +5421,24 @@ pub(crate) fn evaluate_in_list(
 fn evaluate_between(
     values: &[Value],
     negated: bool,
+    exact_decimal: bool,
     collation: Collation,
 ) -> Result<Value, ExecError> {
-    let lower = evaluate_comparison(BinaryOp::GreaterOrEqual, &values[0], &values[1], collation)?;
-    let upper = evaluate_comparison(BinaryOp::LessOrEqual, &values[0], &values[2], collation)?;
+    // DECIMAL values ride a text carrier, so against another exact number
+    // they compare by value: compared as text, -12.50 sorted below -500.
+    let compare = |op: BinaryOp, bound: &Value| -> Result<Value, ExecError> {
+        if exact_decimal && !matches!(values[0], Value::Null) && !matches!(bound, Value::Null) {
+            let ordering = compare_decimal_values(&values[0], bound)?;
+            Ok(Value::Boolean(match op {
+                BinaryOp::GreaterOrEqual => ordering != Ordering::Less,
+                _ => ordering != Ordering::Greater,
+            }))
+        } else {
+            evaluate_comparison(op, &values[0], bound, collation)
+        }
+    };
+    let lower = compare(BinaryOp::GreaterOrEqual, &values[1])?;
+    let upper = compare(BinaryOp::LessOrEqual, &values[2])?;
     let result = evaluate_logic(BinaryOp::And, &lower, &upper)?;
     match result {
         Value::Boolean(value) => Ok(Value::Boolean(if negated { !value } else { value })),

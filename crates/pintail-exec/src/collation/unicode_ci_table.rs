@@ -13,9 +13,12 @@
 //! 2293 weigh none or several, indexing the shared arena.
 //!
 //! Regenerate with `scripts/extract-unicode-ci-weights.ts` against any
-//! `MySQL` 8.
+//! `MySQL` 8. The tables carry `rustfmt::skip`: a generated table is
+//! written in the shape that reads as data, and rustfmt would put one
+//! entry on each of seventeen thousand lines.
 
 /// Code points weighing exactly one weight: `(code point, weight)`.
+#[rustfmt::skip]
 pub(crate) static UNICODE_CI_SINGLES: &[(u16, u16)] = &[
     (0x0009, 0x0201), (0x000a, 0x0202), (0x000b, 0x0203), (0x000c, 0x0204), (0x000d, 0x0205), (0x0020, 0x0209),
     (0x0021, 0x0251), (0x0022, 0x027e), (0x0023, 0x02d2), (0x0024, 0x0e0f), (0x0025, 0x02d3), (0x0026, 0x02cf),
@@ -1648,6 +1651,7 @@ pub(crate) static UNICODE_CI_SINGLES: &[(u16, u16)] = &[
 ];
 
 /// Code points weighing none or several: `(code point, arena offset, count)`.
+#[rustfmt::skip]
 pub(crate) static UNICODE_CI_SEQUENCES: &[(u16, u16, u16)] = &[
     (0x0000, 0x0000, 0x0000), (0x0001, 0x0000, 0x0000), (0x0002, 0x0000, 0x0000), (0x0003, 0x0000, 0x0000), (0x0004, 0x0000, 0x0000),
     (0x0005, 0x0000, 0x0000), (0x0006, 0x0000, 0x0000), (0x0007, 0x0000, 0x0000), (0x0008, 0x0000, 0x0000), (0x000e, 0x0000, 0x0000),
@@ -2111,6 +2115,7 @@ pub(crate) static UNICODE_CI_SEQUENCES: &[(u16, u16, u16)] = &[
 ];
 
 /// The weights `UNICODE_CI_SEQUENCES` indexes, back to back.
+#[rustfmt::skip]
 pub(crate) static UNICODE_CI_ARENA: &[u16] = &[
     0x0e2a, 0x02cd, 0x0e2d, 0x0e2a, 0x02cd, 0x0e2b, 0x0e2c, 0x02cd, 0x0e2d, 0x0fea,
     0x0fea, 0x0efb, 0x0f10, 0x0efb, 0x0f10, 0x0f2e, 0x0267, 0x0f2e, 0x0267, 0x10b1,
@@ -2550,6 +2555,7 @@ pub(crate) static UNICODE_CI_ARENA: &[u16] = &[
 /// Ranges deriving their weights from the code point: `(first, last, base)`.
 /// A character in one weighs `base + (point >> 15)` then
 /// `(point & 0x7fff) | 0x8000`.
+#[rustfmt::skip]
 pub(crate) static UNICODE_CI_IMPLICIT: &[(u16, u16, u16)] = &[
     (0x0237, 0x024f, 0xfbc0), (0x0358, 0x035c, 0xfbc0), (0x0370, 0x0373, 0xfbc0), (0x0376, 0x0379, 0xfbc0),
     (0x037b, 0x037d, 0xfbc0), (0x037f, 0x0383, 0xfbc0), (0x038b, 0x038b, 0xfbc0), (0x038d, 0x038d, 0xfbc0),
