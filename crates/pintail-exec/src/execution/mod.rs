@@ -347,10 +347,7 @@ impl PhysicalPlan {
                         &expression.expr.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
-                    timestamp: matches!(
-                        &expression.expr.kind,
-                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
-                    ),
+                    timestamp: expression.expr.is_source_timestamp(),
                 })
                 .collect(),
             Self::SetOp { left: input, .. }
@@ -388,10 +385,7 @@ impl PhysicalPlan {
                         &expression.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
-                    timestamp: matches!(
-                        &expression.kind,
-                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
-                    ),
+                    timestamp: expression.is_source_timestamp(),
                 })
                 .chain(aggregates.iter().map(|aggregate| OutputField {
                     name: String::new(),

@@ -487,11 +487,13 @@ pub fn session_time_zone_key() -> Option<String> {
 pub fn set_session_time_zone(zone: Option<&str>) -> bool {
     let Some(zone) = zone else {
         SESSION_TIME_ZONE.set(None);
+        pintail_sql::set_session_timestamp_zone(None);
         return true;
     };
     let trimmed = zone.trim();
     if trimmed.eq_ignore_ascii_case("system") {
         SESSION_TIME_ZONE.set(None);
+        pintail_sql::set_session_timestamp_zone(None);
         return true;
     }
     if trimmed.starts_with(['+', '-']) {
@@ -515,12 +517,15 @@ pub fn set_session_time_zone(zone: Option<&str>) -> bool {
             return false;
         };
         SESSION_TIME_ZONE.set(Some(SessionZone::Fixed(offset)));
+        // Stored TIMESTAMP values are UTC: only another offset converts them.
+        pintail_sql::set_session_timestamp_zone((seconds != 0).then_some(trimmed));
         return true;
     }
     let Ok(zone) = chrono_tz::Tz::from_str_insensitive(trimmed) else {
         return false;
     };
     SESSION_TIME_ZONE.set(Some(SessionZone::Named(zone)));
+    pintail_sql::set_session_timestamp_zone(Some(zone.name()));
     true
 }
 

@@ -205,6 +205,10 @@ fn expression(
     catalog: &CatalogSnapshot,
     facts: &SourceFacts,
 ) -> Column {
+    // A session-zone reading presents as the column it reads.
+    if let Some(source) = expr.session_timestamp_source() {
+        return expression(source, query, catalog, facts);
+    }
     let mut column = base(expr);
     match &expr.kind {
         BoundExprKind::Column(reference) => {

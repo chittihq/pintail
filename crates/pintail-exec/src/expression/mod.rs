@@ -1276,6 +1276,7 @@ impl CompiledExpr {
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
+                    | ScalarFunction::SessionTimestamp
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
@@ -1463,6 +1464,7 @@ impl CompiledExpr {
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
+                    | ScalarFunction::SessionTimestamp
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
@@ -3009,6 +3011,14 @@ fn evaluate_eager_scalar_inner(
             let from = scalar_string(&values[1])?;
             let to = scalar_string(&values[2])?;
             Ok(convert_tz(&text, &from, &to).map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::SessionTimestamp => {
+            if matches!(values[0], Value::Null) {
+                return Ok(Value::Null);
+            }
+            let text = scalar_string(&values[0])?;
+            let zone = scalar_string(&values[1])?;
+            Ok(convert_tz(&text, "+00:00", &zone).map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::Char => {
             let mut bytes = Vec::with_capacity(values.len() * 4);

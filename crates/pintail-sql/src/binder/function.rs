@@ -1242,6 +1242,11 @@ pub(super) fn bind_scalar(
         ));
     }
     let (data_type, nullable) = match function {
+        // A session-zone reading keeps its column's type and nullability.
+        ScalarFunction::SessionTimestamp => (
+            args.first().and_then(|argument| argument.data_type),
+            args.first().is_some_and(|argument| argument.nullable),
+        ),
         // LOWER/UPPER over a binary argument return it unchanged, so the
         // result stays binary — declaring Utf8 here made the output column
         // reject the value it was handed.

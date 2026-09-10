@@ -147,6 +147,84 @@ std::thread_local! {
         const { std::cell::Cell::new(None) };
 }
 
+std::thread_local! {
+    /// The zone a source `TIMESTAMP` column reads in, installed per statement;
+    /// `None` reads the stored UTC values as they are.
+    static SESSION_TIMESTAMP_ZONE: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Installs the zone source `TIMESTAMP` columns read in for the current
+/// thread's statement, or `None` to read them as stored (UTC).
+pub fn set_session_timestamp_zone(zone: Option<&str>) {
+    SESSION_TIMESTAMP_ZONE.with(|cell| *cell.borrow_mut() = zone.map(str::to_owned));
+}
+
+/// The zone installed by [`set_session_timestamp_zone`].
+#[must_use]
+pub fn session_timestamp_zone() -> Option<String> {
+    SESSION_TIMESTAMP_ZONE.with(|cell| cell.borrow().clone())
+}
+
+impl BoundExpr {
+    /// A reference to `column`. A source `TIMESTAMP` column reads in the
+    /// session's time zone when one is installed, as `MySQL` converts it on
+    /// retrieval, so filters, grouping and functions all see the session's
+    /// values.
+    #[must_use]
+    pub fn column(column: BoundColumn) -> Self {
+        let data_type = Some(column.data_type);
+        let nullable = column.nullable;
+        let zone = column.timestamp.then(session_timestamp_zone).flatten();
+        let reference = Self {
+            data_type,
+            nullable,
+            kind: BoundExprKind::Column(column),
+        };
+        match zone {
+            Some(zone) => Self {
+                data_type,
+                nullable,
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::SessionTimestamp,
+                    args: vec![
+                        reference,
+                        Self {
+                            data_type: Some(DataType::Utf8),
+                            nullable: false,
+                            kind: BoundExprKind::Literal(Value::Utf8(zone)),
+                        },
+                    ],
+                },
+            },
+            None => reference,
+        }
+    }
+
+    /// The column a session-zone reading wraps, when this is one.
+    #[must_use]
+    pub fn session_timestamp_source(&self) -> Option<&Self> {
+        match &self.kind {
+            BoundExprKind::Scalar {
+                function: ScalarFunction::SessionTimestamp,
+                args,
+            } => args.first(),
+            _ => None,
+        }
+    }
+
+    /// Whether this reads a source `TIMESTAMP` column as it is: bare, or
+    /// through its session-zone reading.
+    #[must_use]
+    pub fn is_source_timestamp(&self) -> bool {
+        match (&self.kind, self.session_timestamp_source()) {
+            (_, Some(source)) => source.is_source_timestamp(),
+            (BoundExprKind::Column(column), None) => column.timestamp,
+            _ => false,
+        }
+    }
+}
+
 /// Installs the connection's default collation for the current thread's
 /// statement, or clears it with `None`.
 pub fn set_session_default_collation(collation: Option<&'static str>) {
@@ -701,6 +779,10 @@ pub enum ScalarFunction {
     /// `CONVERT_TZ(datetime, from_tz, to_tz)` with IANA names or numeric
     /// offsets: NULL on malformed datetimes or unknown zones.
     ConvertTz,
+    /// A source `TIMESTAMP` column's stored UTC value read in the session's
+    /// time zone, as `MySQL` presents it. Arguments: the column, then the
+    /// zone.
+    SessionTimestamp,
     /// `CHAR(n, ...)`: integer code points become bytes (values above 255
     /// span multiple bytes); NULL arguments are skipped, never propagated.
     Char,
