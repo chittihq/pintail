@@ -600,6 +600,42 @@ fn fold_binary(
     }
 }
 
+/// Folds a binary node whose operands fold to constants. A constant that
+/// cannot evaluate - an overflow - fails the same way at run time; its
+/// operands stay as written, so the error prints the expression the
+/// statement wrote, as `MySQL`'s does.
+fn fold_arithmetic(
+    op: BinaryOp,
+    left: BoundExpr,
+    right: BoundExpr,
+    data_type: Option<DataType>,
+    nullable: bool,
+) -> BoundExpr {
+    let (written_left, written_right) = (left.clone(), right.clone());
+    let folded = fold_binary(op, fold_expr(left), fold_expr(right), data_type, nullable);
+    if let Some(value) = evaluate_constant(&folded) {
+        return BoundExpr {
+            nullable: matches!(value, Value::Null),
+            data_type: folded.data_type.or_else(|| value.data_type()),
+            kind: BoundExprKind::Literal(value),
+        };
+    }
+    if let BoundExprKind::Binary { left, right, .. } = &folded.kind
+        && matches!(left.kind, BoundExprKind::Literal(_))
+        && matches!(right.kind, BoundExprKind::Literal(_))
+    {
+        return BoundExpr {
+            kind: BoundExprKind::Binary {
+                op,
+                left: Box::new(written_left),
+                right: Box::new(written_right),
+            },
+            ..folded
+        };
+    }
+    folded
+}
+
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     // Keep exact-decimal arithmetic as a tree. The executor evaluates a
     // chain as one reduced rational so enclosing operations see MySQL's
@@ -647,13 +683,9 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             data_type: expr.data_type,
             nullable: expr.nullable,
         },
-        BoundExprKind::Binary { op, left, right } => fold_binary(
-            op,
-            fold_expr(*left),
-            fold_expr(*right),
-            expr.data_type,
-            expr.nullable,
-        ),
+        BoundExprKind::Binary { op, left, right } => {
+            return fold_arithmetic(op, *left, *right, expr.data_type, expr.nullable);
+        }
         BoundExprKind::IsNull {
             expr: child,
             negated,

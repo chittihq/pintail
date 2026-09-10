@@ -778,6 +778,10 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
         optimize: bool,
     ) -> Result<QueryOutput, QueryError> {
+        // Admission planning may already have folded this statement's
+        // constants; only this execution's divisions by zero are its own.
+        let _ = pintail_exec::take_session_division_warnings();
+        pintail_sql::set_session_database_name(Some(database_name));
         let bound = Binder::new(catalog, Some(database_name))
             .with_source(sql)
             .bind(statement)
@@ -1097,7 +1101,7 @@ fn query_execution_error(error: ExecError) -> QueryError {
         ExecError::TableNotReady { .. } => QueryError::NotReady(error.to_string()),
         // MySQL answers a row-wise numeric overflow with 1690/22003, not
         // an internal error - clients branch on the code.
-        ExecError::NumericOverflow => QueryError::Rejected {
+        ExecError::NumericOverflow | ExecError::OutOfRange(_) => QueryError::Rejected {
             rejection: SqlRejection::OutOfRange,
             message: error.to_string(),
         },

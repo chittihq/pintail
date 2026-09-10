@@ -290,6 +290,8 @@ pub(crate) enum CompiledExpr {
         op: UnaryOp,
         expr: Box<Self>,
         data_type: Option<DataType>,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
     Binary {
         op: BinaryOp,
@@ -300,6 +302,8 @@ pub(crate) enum CompiledExpr {
         /// Comparison is the one operation here whose answer depends on it,
         /// and the node is the smallest thing that knows it needs one.
         collation: Collation,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
     IsNull {
         expr: Box<Self>,
@@ -313,6 +317,8 @@ pub(crate) enum CompiledExpr {
         data_type: Option<DataType>,
         /// Needed by `IN`, which compares its needle against every element.
         collation: Collation,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
 }
 
@@ -428,6 +434,7 @@ impl DecimalRational {
 
     fn divide(self, other: Self) -> Result<Option<Self>, ExecError> {
         if other.numerator == 0 {
+            crate::execution::note_division_by_zero();
             return Ok(None);
         }
         let numerator_cancel = decimal_gcd(self.numerator, other.numerator)?;
@@ -774,6 +781,7 @@ impl CompiledExpr {
                 op: *op,
                 expr: Box::new(Self::compile(child, columns, collation)?),
                 data_type: expr.data_type,
+                overflow: overflow_message(expr),
             }),
             // The node's OWN operands decide how it compares, not the plan.
             // A query may hold a general_ci join beside a 0900_ai_ci grouping;
@@ -791,6 +799,7 @@ impl CompiledExpr {
                     .text_collation()
                     .and_then(Collation::from_mysql_name)
                     .unwrap_or(collation),
+                overflow: overflow_message(expr),
             }),
             BoundExprKind::IsNull {
                 expr: child,
@@ -814,6 +823,7 @@ impl CompiledExpr {
                         .text_collation()
                         .and_then(Collation::from_mysql_name)
                         .unwrap_or(collation),
+                    overflow: overflow_message(expr),
                 })
             }
             BoundExprKind::ScalarSubquery(_)
@@ -837,6 +847,7 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type,
+                overflow: _,
             } => Some(format!(
                 "u{op:?}({}){data_type:?}",
                 expr.deterministic_signature()?
@@ -847,6 +858,7 @@ impl CompiledExpr {
                 right,
                 data_type,
                 collation: _,
+                overflow: _,
             } => Some(format!(
                 "b{op:?}({},{}){data_type:?}",
                 left.deterministic_signature()?,
@@ -862,6 +874,7 @@ impl CompiledExpr {
                 literal_regex: _,
                 data_type,
                 collation: _,
+                overflow: _,
             } => {
                 if matches!(
                     function,
@@ -886,6 +899,7 @@ impl CompiledExpr {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one arm per expression node
     pub(crate) fn evaluate(&self, batch: &RecordBatch, row: usize) -> Result<Value, ExecError> {
         match self {
             Self::PreparedIn {
@@ -915,9 +929,11 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type,
+                overflow,
             } => {
                 let value = expr.evaluate(batch, row)?;
                 evaluate_unary(*op, &value, *data_type)
+                    .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
             Self::Binary {
                 op,
@@ -925,6 +941,7 @@ impl CompiledExpr {
                 right,
                 data_type,
                 collation,
+                overflow,
             } => {
                 if let Some(DataType::Decimal { scale, .. }) = data_type
                     && matches!(
@@ -949,6 +966,7 @@ impl CompiledExpr {
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
                 evaluate_binary(*op, &left, &right, *data_type, *collation)
+                    .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
             Self::IsNull { expr, negated } => {
                 let is_null = matches!(expr.evaluate(batch, row)?, Value::Null);
@@ -961,6 +979,7 @@ impl CompiledExpr {
                 literal_regex,
                 data_type,
                 collation,
+                overflow,
             } => {
                 if let ScalarFunction::DatePart(part) = function
                     && let [argument] = args.as_slice()
@@ -990,6 +1009,7 @@ impl CompiledExpr {
                     row,
                     *collation,
                 )
+                .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
         }
     }
@@ -1026,6 +1046,7 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type: Some(DataType::Decimal { .. }),
+                overflow: _,
             } if matches!(op, UnaryOp::Plus | UnaryOp::Minus) => {
                 let Some(value) = expr.evaluate_decimal_chain(batch, row)? else {
                     return Ok(None);
@@ -1045,6 +1066,7 @@ impl CompiledExpr {
                 right,
                 data_type: Some(DataType::Decimal { scale, .. }),
                 collation: _,
+                overflow: _,
             } if matches!(
                 op,
                 BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
@@ -1171,6 +1193,7 @@ impl CompiledExpr {
                 argument_types: _,
                 literal_regex,
                 collation: _,
+                overflow: _,
             } => {
                 let string_arguments = args
                     .iter()
@@ -3876,7 +3899,7 @@ fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
         (decimal_units_of(left), decimal_units_of(right))
     {
         if right_units == 0 {
-            return Ok(Value::Null);
+            return Ok(divided_by_zero());
         }
         // value = (lu/10^ls) / (ru/10^rs); at the target scale the numerator
         // carries 10^(target + rs - ls), which the binder's scale rule keeps
@@ -3906,7 +3929,7 @@ fn decimal_modulo(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
         return decimal_modulo_wide(left, right, target);
     };
     if right_units == 0 {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let rescale = |units: i128, scale: u8| {
         (scale <= target)
@@ -4122,7 +4145,7 @@ fn divide_decimal_wide(left: &Value, right: &Value, target: u8) -> Result<Value,
         return Err(ExecError::NumericOverflow);
     };
     if right_units.is_zero() {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let units = u32::from(target)
         .checked_add(u32::from(right_scale))
@@ -4141,7 +4164,7 @@ fn decimal_modulo_wide(left: &Value, right: &Value, target: u8) -> Result<Value,
         return Err(ExecError::NumericOverflow);
     };
     if right_units.is_zero() {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let units = wide_rescale(left_units, left_scale, target)
         .zip(wide_rescale(right_units, right_scale, target))
@@ -5997,18 +6020,21 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left * right,
                 BinaryOp::Divide => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     left / right
                 }
                 BinaryOp::IntegerDivide => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     (left / right).trunc()
                 }
                 BinaryOp::Modulo => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     left % right
@@ -6052,9 +6078,9 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left.checked_mul(right),
                 BinaryOp::IntegerDivide if right != 0 => Some(left / right),
                 BinaryOp::Modulo if right != 0 => Some(left % right),
-                BinaryOp::Divide if right == 0 => return Ok(Value::Null),
+                BinaryOp::Divide if right == 0 => return Ok(divided_by_zero()),
                 BinaryOp::IntegerDivide | BinaryOp::Modulo if right == 0 => {
-                    return Ok(Value::Null);
+                    return Ok(divided_by_zero());
                 }
                 _ => None,
             };
@@ -6069,9 +6095,9 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left.checked_mul(right),
                 BinaryOp::IntegerDivide if right != 0 => left.checked_div(right),
                 BinaryOp::Modulo if right != 0 => left.checked_rem(right),
-                BinaryOp::Divide if right == 0 => return Ok(Value::Null),
+                BinaryOp::Divide if right == 0 => return Ok(divided_by_zero()),
                 BinaryOp::IntegerDivide | BinaryOp::Modulo if right == 0 => {
-                    return Ok(Value::Null);
+                    return Ok(divided_by_zero());
                 }
                 _ => None,
             };
@@ -6275,6 +6301,27 @@ fn parse_mysql_number(value: &str) -> f64 {
         end = exponent;
     }
     value[..end].parse().unwrap_or(0.0)
+}
+
+/// `MySQL`'s out-of-range message for an arithmetic node, computed while
+/// the bound expression still names its columns.
+fn overflow_message(expr: &pintail_sql::BoundExpr) -> Option<std::sync::Arc<str>> {
+    expr.out_of_range_message().map(std::sync::Arc::from)
+}
+
+/// A node's own overflow, reported with `MySQL`'s message when it has one.
+/// An operand's error has already been named by the operand.
+fn out_of_range(error: ExecError, overflow: Option<&std::sync::Arc<str>>) -> ExecError {
+    match (error, overflow) {
+        (ExecError::NumericOverflow, Some(message)) => ExecError::OutOfRange(message.to_string()),
+        (error, _) => error,
+    }
+}
+
+/// The NULL a division by zero answers, counted as `MySQL`'s warning 1365.
+fn divided_by_zero() -> Value {
+    crate::execution::note_division_by_zero();
+    Value::Null
 }
 
 #[cfg(test)]
@@ -7114,6 +7161,7 @@ mod tests {
             right: Box::new(CompiledExpr::Literal(Value::Utf8("2024-01-01".to_owned()))),
             data_type: Some(DataType::Boolean),
             collation: Collation::default(),
+            overflow: None,
         };
         let between = CompiledExpr::Scalar {
             function: ScalarFunction::Between { negated: false },
@@ -7130,6 +7178,7 @@ mod tests {
             ],
             literal_regex: None,
             collation: Collation::default(),
+            overflow: None,
         };
 
         assert_eq!(

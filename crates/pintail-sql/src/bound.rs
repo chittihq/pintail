@@ -225,6 +225,121 @@ impl BoundExpr {
     }
 }
 
+std::thread_local! {
+    /// The statement's database, which `MySQL` names in an expression it
+    /// prints into a diagnostic.
+    static SESSION_DATABASE_NAME: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Installs the database a diagnostic's column names are qualified with,
+/// for the current thread's statement.
+pub fn set_session_database_name(name: Option<&str>) {
+    SESSION_DATABASE_NAME.with(|cell| *cell.borrow_mut() = name.map(str::to_owned));
+}
+
+impl BoundExpr {
+    /// `MySQL`'s out-of-range error for this expression - `BIGINT UNSIGNED
+    /// value is out of range in '(cast(0 as unsigned) - 1)'` - when its type
+    /// and shape are ones `MySQL`'s wording is known for.
+    #[must_use]
+    pub fn out_of_range_message(&self) -> Option<String> {
+        let value_type = match self.data_type? {
+            DataType::UInt64 => "BIGINT UNSIGNED",
+            DataType::Int64 => "BIGINT",
+            DataType::Float64 => "DOUBLE",
+            DataType::Decimal { .. } => "DECIMAL",
+            _ => return None,
+        };
+        Some(format!(
+            "{value_type} value is out of range in '{}'",
+            self.diagnostic_text()?
+        ))
+    }
+
+    /// The expression as `MySQL` prints it into a diagnostic, for columns,
+    /// numeric literals, arithmetic, unary minus, ABS, EXP, POW and CAST.
+    fn diagnostic_text(&self) -> Option<String> {
+        match &self.kind {
+            BoundExprKind::Column(column) => Some(SESSION_DATABASE_NAME.with(|cell| {
+                cell.borrow().as_ref().map_or_else(
+                    || format!("`{}`.`{}`", column.relation_name, column.name),
+                    |database| format!("`{database}`.`{}`.`{}`", column.relation_name, column.name),
+                )
+            })),
+            BoundExprKind::Literal(value) => {
+                let (negative, digits) = match value {
+                    Value::Int64(number) => (*number < 0, number.unsigned_abs().to_string()),
+                    Value::UInt64(number) => (false, number.to_string()),
+                    Value::Utf8(text)
+                        if matches!(self.data_type, Some(DataType::Decimal { .. })) =>
+                    {
+                        text.strip_prefix('-')
+                            .map_or((false, text.clone()), |digits| (true, digits.to_owned()))
+                    }
+                    Value::Null => return Some("NULL".to_owned()),
+                    _ => return None,
+                };
+                // A negative literal is a minus applied to a number.
+                Some(if negative {
+                    format!("-({digits})")
+                } else {
+                    digits
+                })
+            }
+            BoundExprKind::Unary {
+                op: UnaryOp::Minus,
+                expr,
+            } => Some(format!("-({})", expr.diagnostic_text()?)),
+            BoundExprKind::Binary { op, left, right } => {
+                let operator = match op {
+                    BinaryOp::Add => "+",
+                    BinaryOp::Subtract => "-",
+                    BinaryOp::Multiply => "*",
+                    BinaryOp::Divide => "/",
+                    BinaryOp::IntegerDivide => "DIV",
+                    BinaryOp::Modulo => "%",
+                    _ => return None,
+                };
+                Some(format!(
+                    "({} {operator} {})",
+                    left.diagnostic_text()?,
+                    right.diagnostic_text()?
+                ))
+            }
+            BoundExprKind::Scalar { function, args } => {
+                let arguments = args
+                    .iter()
+                    .map(Self::diagnostic_text)
+                    .collect::<Option<Vec<_>>>()?;
+                let name = match function {
+                    ScalarFunction::Abs { .. } => "abs",
+                    ScalarFunction::Exp => "exp",
+                    ScalarFunction::Power => "pow",
+                    ScalarFunction::Cast(target) | ScalarFunction::DeclaredCast { target, .. } => {
+                        let target = match target {
+                            DataType::UInt64 => "unsigned".to_owned(),
+                            DataType::Int64 => "signed".to_owned(),
+                            DataType::Float64 => "double".to_owned(),
+                            DataType::Decimal { precision, scale } => {
+                                format!("decimal({precision},{scale})")
+                            }
+                            _ => return None,
+                        };
+                        let [argument] = arguments.as_slice() else {
+                            return None;
+                        };
+                        return Some(format!("cast({argument} as {target})"));
+                    }
+                    _ => return None,
+                };
+                Some(format!("{name}({})", arguments.join(",")))
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Installs the connection's default collation for the current thread's
 /// statement, or clears it with `None`.
 pub fn set_session_default_collation(collation: Option<&'static str>) {

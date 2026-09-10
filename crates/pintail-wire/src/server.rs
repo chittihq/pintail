@@ -641,6 +641,55 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// One entry of a statement's diagnostics area.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Condition {
+    level: &'static str,
+    code: u16,
+    message: String,
+}
+
+/// `MySQL`'s default `max_error_count`: the conditions a diagnostics area
+/// lists.
+const MAX_LISTED_CONDITIONS: usize = 1024;
+
+/// The diagnostics area a statement leaves: its error, or its warnings.
+fn statement_conditions(
+    result: &Result<QueryOutput, QueryError>,
+    group_concat: u64,
+    division: u64,
+) -> (Vec<Condition>, u64) {
+    if let Err(error) = result {
+        let condition = Condition {
+            level: "Error",
+            code: error_kind(error).code(),
+            message: error.to_string(),
+        };
+        return (vec![condition], 1);
+    }
+    let warning = |code: u16, message: String| Condition {
+        level: "Warning",
+        code,
+        message,
+    };
+    let conditions = (0..division)
+        .map(|_| warning(1365, "Division by 0".to_owned()))
+        .chain(
+            (1..=group_concat)
+                .map(|row| warning(1260, format!("Row {row} was cut by GROUP_CONCAT()"))),
+        )
+        .take(MAX_LISTED_CONDITIONS)
+        .collect();
+    (conditions, division.saturating_add(group_concat))
+}
+
+/// Whether a comma-separated `sql_mode` holds `mode`.
+fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
+    sql_mode
+        .split(',')
+        .any(|member| member.trim().eq_ignore_ascii_case(mode))
+}
+
 /// Per-connection session variables with real semantics: `time_zone`
 /// shifts the statement-pinned time functions, `NAMES` accepts only the
 /// utf8 charsets Pintail actually serves, and `sql_mode` accepts only
@@ -662,7 +711,11 @@ struct Session {
     /// negotiates `utf8mb4_unicode_ci`, approximated by `general_ci` (both
     /// are case-insensitive PAD SPACE; their UCA weights differ in corners).
     collation_connection: &'static str,
-    group_concat_warnings: u64,
+    /// The last statement's conditions, as `SHOW WARNINGS` lists them.
+    conditions: Vec<Condition>,
+    /// How many conditions the last statement raised, including any past
+    /// the listed ones.
+    condition_count: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
 }
@@ -680,7 +733,8 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             charset_byte: 255,
             group_concat_max_len: 1024,
             collation_connection: "utf8mb4_0900_ai_ci",
-            group_concat_warnings: 0,
+            conditions: Vec::new(),
+            condition_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
         }
@@ -1039,7 +1093,10 @@ impl Backend {
                     let result = engine
                         .execute_with_deadline(&database_id, &sql, max_result_rows(), deadline)
                         .and_then(refuse_truncated);
-                    let warnings = pintail_exec::take_session_group_concat_warnings();
+                    let warnings = (
+                        pintail_exec::take_session_group_concat_warnings(),
+                        pintail_exec::take_session_division_warnings(),
+                    );
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
@@ -1052,7 +1109,15 @@ impl Backend {
         .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
         cancel_on_drop.disarm();
         if let Ok(mut current) = self.session.lock() {
-            current.group_concat_warnings = execution.1;
+            // Division by zero is a warning only under ERROR_FOR_DIVISION_BY_ZERO.
+            let (group_concat, division) = execution.1;
+            let division = if sql_mode_has(&current.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO") {
+                division
+            } else {
+                0
+            };
+            (current.conditions, current.condition_count) =
+                statement_conditions(&execution.0, group_concat, division);
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
@@ -2321,7 +2386,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
 fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     if normalized.starts_with("show warnings") {
-        return Some(group_concat_warnings_output(session));
+        return Some(diagnostics_output(session));
     }
     let (name, value) = if matches!(
         normalized.as_str(),
@@ -2392,11 +2457,18 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             "@@group_concat_max_len",
             Value::UInt64(u64::try_from(session.group_concat_max_len).unwrap_or(u64::MAX)),
         )
-    } else if normalized.contains("@@warning_count") {
+    } else if normalized.contains("@@error_count") {
         (
-            "@@warning_count",
-            Value::UInt64(session.group_concat_warnings),
+            "@@error_count",
+            Value::UInt64(u64::from(
+                session
+                    .conditions
+                    .iter()
+                    .any(|condition| condition.level == "Error"),
+            )),
         )
+    } else if normalized.contains("@@warning_count") {
+        ("@@warning_count", Value::UInt64(session.condition_count))
     } else if normalized.contains("@@cte_max_recursion_depth") {
         (
             "@@cte_max_recursion_depth",
@@ -2440,24 +2512,35 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
     })
 }
 
-fn group_concat_warnings_output(session: &Session) -> QueryOutput {
+/// `SHOW WARNINGS`: the last statement's conditions, with `MySQL`'s column
+/// metadata (text columns carry 31 decimals; `Code` is an unsigned INT).
+fn diagnostics_output(session: &Session) -> QueryOutput {
+    let text = |name: &str, characters: u32| {
+        let mut column = Column::new(name.to_owned(), ColumnType::MysqlTypeVarString);
+        column.column_length = characters * 4;
+        // Any text set: the connection's result charset replaces it.
+        column.character_set = 255;
+        column.decimals = 31;
+        column.colflags.set(ColumnFlags::NOT_NULL_FLAG, true);
+        QueryField {
+            wire_column: Some(column),
+            name: name.to_owned(),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+            collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
+            group_concat: false,
+            geometry: false,
+            timestamp: false,
+            wire_hint: None,
+        }
+    };
     QueryOutput {
         fields: vec![
-            QueryField {
-                wire_column: None,
-                name: "Level".to_owned(),
-                data_type: Some(DataType::Utf8),
-                nullable: false,
-                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
-                group_concat: false,
-                geometry: false,
-                timestamp: false,
-                wire_hint: None,
-            },
+            text("Level", 7),
             QueryField {
                 wire_column: None,
                 name: "Code".to_owned(),
-                data_type: Some(DataType::UInt64),
+                data_type: Some(DataType::UInt32),
                 nullable: false,
                 collation: None,
                 group_concat: false,
@@ -2465,29 +2548,21 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 timestamp: false,
                 wire_hint: None,
             },
-            QueryField {
-                wire_column: None,
-                name: "Message".to_owned(),
-                data_type: Some(DataType::Utf8),
-                nullable: false,
-                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
-                group_concat: false,
-                geometry: false,
-                timestamp: false,
-                wire_hint: None,
-            },
+            text("Message", 512),
         ],
-        rows: (1..=session.group_concat_warnings)
-            .map(|row| {
+        rows: session
+            .conditions
+            .iter()
+            .map(|condition| {
                 vec![
-                    Value::Utf8("Warning".to_owned()),
-                    Value::UInt64(1260),
-                    Value::Utf8(format!("Row {row} was cut by GROUP_CONCAT()")),
+                    Value::Utf8(condition.level.to_owned()),
+                    Value::UInt64(u64::from(condition.code)),
+                    Value::Utf8(condition.message.clone()),
                 ]
             })
             .collect(),
         stats: QueryStats {
-            rows: usize::try_from(session.group_concat_warnings).unwrap_or(usize::MAX),
+            rows: session.conditions.len(),
             ..QueryStats::default()
         },
         truncated: false,
@@ -4145,5 +4220,48 @@ mod result_ceiling_tests {
             ]
         );
         assert!(super::parameter_columns("SELECT * FROM t WHERE id = ?").is_empty());
+    }
+
+    #[test]
+    fn a_statement_leaves_its_error_or_its_warnings_in_the_diagnostics_area() {
+        let failed: Result<super::QueryOutput, super::QueryError> =
+            Err(super::QueryError::Rejected {
+                rejection: super::SqlRejection::OutOfRange,
+                message: "BIGINT UNSIGNED value is out of range in '(cast(0 as unsigned) - 1)'"
+                    .to_owned(),
+            });
+        let (conditions, count) = super::statement_conditions(&failed, 0, 1);
+        assert_eq!(count, 1);
+        assert_eq!(
+            conditions,
+            [super::Condition {
+                level: "Error",
+                code: 1690,
+                message: "BIGINT UNSIGNED value is out of range in '(cast(0 as unsigned) - 1)'"
+                    .to_owned(),
+            }]
+        );
+        let (conditions, count) = super::statement_conditions(
+            &Ok(super::diagnostics_output(&super::Session::default())),
+            1,
+            2,
+        );
+        assert_eq!(count, 3);
+        assert_eq!(
+            conditions
+                .iter()
+                .map(|condition| (condition.code, condition.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (1365, "Division by 0"),
+                (1365, "Division by 0"),
+                (1260, "Row 1 was cut by GROUP_CONCAT()"),
+            ]
+        );
+        assert!(super::sql_mode_has(
+            "STRICT_TRANS_TABLES, error_for_division_by_zero",
+            "ERROR_FOR_DIVISION_BY_ZERO"
+        ));
+        assert!(!super::sql_mode_has("", "ERROR_FOR_DIVISION_BY_ZERO"));
     }
 }

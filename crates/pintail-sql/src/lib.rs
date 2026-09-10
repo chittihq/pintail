@@ -22,6 +22,7 @@ pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 mod repeatable;
 pub use repeatable::is_repeatable_statement;
 
+pub use bound::set_session_database_name;
 pub use sqlparser::ast::Statement;
 
 pub use binder::{BindError, Binder};

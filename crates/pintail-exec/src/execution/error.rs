@@ -39,6 +39,8 @@ pub enum ExecError {
         /// Character offset the error names.
         position: usize,
     },
+    /// A value left its type's range; `MySQL`'s message names the expression.
+    OutOfRange(String),
     /// Numeric evaluation exceeded the bound result type.
     NumericOverflow,
     /// Binary numeric coercion encountered invalid UTF-8.
@@ -135,6 +137,7 @@ impl fmt::Display for ExecError {
                 formatter,
                 "Invalid JSON path expression. The error is around character position {position}."
             ),
+            Self::OutOfRange(message) => formatter.write_str(message),
             Self::NumericOverflow => formatter.write_str("numeric expression overflow"),
             Self::InvalidUtf8Number => {
                 formatter.write_str("binary value is not valid UTF-8 for numeric coercion")
