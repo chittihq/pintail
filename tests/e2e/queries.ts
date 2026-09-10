@@ -1731,4 +1731,128 @@ export const differentialQueries: DifferentialQuery[] = [
     tables: ['flash_sales', 'bundle_products', 'product_reviews', 'storefront_followers', 'storefronts'],
     mysqlOptimizerSwitch: storefrontSwitch,
   },
+  // WHERE clauses at their edges, over replicated rows that CRUD has
+  // updated and deleted: temporal literals against DATE, DATETIME(6) and
+  // TIMESTAMP(6) columns, implicit casts, NULL in IN lists, SET, binary,
+  // latin1, generated and JSON columns, and PAD SPACE.
+  {
+    name: 'where: a DATE column against a datetime literal at midnight',
+    sql: 'SELECT id FROM orders WHERE placed_on = \'2024-03-05 00:00:00\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE column against a datetime literal with a time',
+    sql: 'SELECT id FROM orders WHERE placed_on > \'2024-06-15 12:00:00\' ORDER BY id LIMIT 40',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a DATE range ending on a leap day',
+    sql: 'SELECT id FROM orders WHERE placed_on BETWEEN \'2024-02-01\' AND \'2024-02-29\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: TIMESTAMP(6) at a microsecond boundary',
+    sql: 'SELECT id, updated_at FROM orders WHERE updated_at >= \'2025-03-15 08:05:00.000001\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: TIMESTAMP BETWEEN a date and a datetime',
+    sql: 'SELECT id FROM orders WHERE updated_at BETWEEN \'2025-02-01\' AND \'2025-06-01 12:00:00\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATE() of a TIMESTAMP',
+    sql: 'SELECT id FROM orders WHERE DATE(updated_at) = \'2025-06-01\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: DATETIME(6) against a fractional literal',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE created_at > \'2020-01-01 00:00:00.000001\'',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: DECIMAL against a string literal',
+    sql: 'SELECT id FROM customers WHERE balance > \'100.5\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: DECIMAL BETWEEN two negatives',
+    sql: 'SELECT id FROM customers WHERE balance BETWEEN -500 AND -0.01 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: NOT IN with a NULL in the list',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE tier NOT IN (\'free\', NULL)',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: null-safe equality on a nullable column',
+    sql: 'SELECT id FROM customers WHERE email <=> NULL ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: a filter on a virtual generated column',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE email_domain = \'example.com\'',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: SET membership by FIND_IN_SET',
+    sql: 'SELECT id FROM customers WHERE FIND_IN_SET(\'vip\', tags) > 0 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: SET equality to a member list',
+    sql: 'SELECT id FROM customers WHERE tags = \'alpha,vip\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: a latin1 column against a utf8mb4 literal',
+    sql: 'SELECT COUNT(*) AS n FROM customers WHERE latin_note = \'caf\u00e9\'',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: VARBINARY equality to a hex literal',
+    sql: 'SELECT id FROM customers WHERE avatar = X\'0001beef\' ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: JSON path comparisons',
+    sql: 'SELECT id FROM customers WHERE meta->>\'$.lang\' = \'en\' AND JSON_EXTRACT(meta, \'$.score\') >= 50 ORDER BY id',
+    tables: ['customers'],
+  },
+  {
+    name: 'where: ENUM IN beside an ENUM LIKE',
+    sql: 'SELECT id FROM orders WHERE status IN (\'shipped\', \'delivered\') AND status LIKE \'%ed\' ORDER BY id LIMIT 50',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: OR with a NULL-testing branch',
+    sql: 'SELECT id FROM orders WHERE updated_at IS NULL OR total > 900 ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: row constructor IN',
+    sql: 'SELECT id FROM orders WHERE (customer_id, status) IN ((2, \'pending\'), (3, \'shipped\')) ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: ALL over a subquery',
+    sql: 'SELECT id FROM orders WHERE total > ALL (SELECT total FROM orders WHERE customer_id = 2) ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: an unsigned column against a negative literal',
+    sql: 'SELECT COUNT(*) AS n FROM counters WHERE u8 > -1',
+    tables: ['counters'],
+  },
+  {
+    name: 'where: a string number against an integer column',
+    sql: 'SELECT id FROM orders WHERE customer_id = \'7\' ORDER BY id',
+    tables: ['orders'],
+  },
+  {
+    name: 'where: a general_ci column under PAD SPACE',
+    sql: 'SELECT id FROM customers WHERE legacy_label = \'pending \' ORDER BY id',
+    tables: ['customers'],
+  },
 ]

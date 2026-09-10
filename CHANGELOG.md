@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `IS [NOT] TRUE`, `IS [NOT] FALSE` and `IS [NOT] UNKNOWN`; row-constructor
+  comparisons (`(a, b) = (1, 2)`, and `<>`, `<`, `<=`, `>`, `>=` decided by
+  the first pair that differs); `x op ANY (subquery)`, `SOME` and `ALL`,
+  answered from the subquery's count, non-NULL count and extremes so
+  three-valued logic and an empty subquery come out as `MySQL` has them;
+  and a JSON value compared with a number, which compares as JSON.
+
 - A range filter keeps pruning segments after a table takes updates. Value
   pruning let a segment go only when it overlapped no other segment at all,
   so the first flush of updated rows over a table's base switched pruning
@@ -37,6 +44,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A DATETIME or DATE compared with a literal written any way but its
+  canonical text answered wrongly, silently: `created_at = '2024-03-01'`
+  matched nothing, a date-only upper bound in `BETWEEN` or `IN` dropped the
+  rows at that midnight, `> 20240301` and `>= '2024-3-1'` compared as
+  strings, and `'...56.000'` missed its own value. The literal is now read
+  as `MySQL` reads it and rewritten into the column's canonical form before
+  comparing; an impossible date like `'2024-02-30'` is refused, as `MySQL`
+  refuses it.
+- `NOT EXISTS` or `IN` decorrelated into a semi- or anti-join left the
+  inner table's columns visible to the outer query, so an outer column the
+  inner table shared by name - `SELECT id ... WHERE NOT EXISTS (SELECT 1
+  FROM users u ...)` - was reported ambiguous.
 - MySQL 8.4 with default optimizer switches drops a subquery's own filters
   when it materializes a correlated `IN` or `EXISTS` from an outer join's ON
   condition, so it matches rows the subquery excludes. The refusal shipped

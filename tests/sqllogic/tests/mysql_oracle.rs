@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1245;
+const EXPECTED_CASES: usize = 1352;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -315,19 +315,27 @@ fn run_oracle() -> Result<(), String> {
     let mysql_results = execute_mysql_cases(&mysql, &cases)?;
     let mut failures = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
-        let actual = pintail_sql::with_parse_mode(
+        // Every case runs, and an engine error is one more mismatch: stopping
+        // at the first refusal hid every divergence after it, so a run found
+        // one problem per rebuild.
+        let actual = match pintail_sql::with_parse_mode(
             pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
             || execute_pintail(&case.sql, &catalog, &provider),
-        )
-        .map_err(|error| format!("case {index} ({}) `{}`: {error}", case.family, case.sql))?;
+        ) {
+            Ok(actual) => actual,
+            Err(error) => {
+                failures.push(format!(
+                    "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail error: {error}",
+                    case.family, case.sql
+                ));
+                continue;
+            }
+        };
         if !oracle_rows_equal(&actual, expected, case.ordered) {
             failures.push(format!(
                 "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
                 case.family, case.sql
             ));
-            if failures.len() == 10 {
-                break;
-            }
         }
     }
     if failures.is_empty() {
@@ -339,9 +347,14 @@ fn run_oracle() -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "{} differential mismatch(es), showing at most 10:\n{}",
+            "{} differential mismatch(es), showing at most 40:\n{}",
             failures.len(),
-            failures.join("\n\n")
+            failures
+                .iter()
+                .take(40)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n\n")
         ))
     }
 }
@@ -1510,6 +1523,118 @@ fn hand_written_cases() -> Vec<OracleCase> {
              AND o.total > (SELECT AVG(o2.total) FROM orders o2 WHERE o2.user_id = u.id) \
              ORDER BY u.id, o.id",
         ),
+        // WHERE clauses at their edges: temporal literals against DATETIME
+        // (midnight, leap day, fractional and malformed literals, integer
+        // dates), implicit casts on numeric and string comparison, NULL in
+        // three-valued logic and IN lists, PAD SPACE against NO PAD
+        // collations, LIKE escapes, ANY/ALL, JSON paths and ENUM labels.
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at = '2024-03-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at BETWEEN '2024-02-29' AND '2024-03-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at > '2024-02-29 12:34:56' AND placed_at < '2024-03-08 06:30:00' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2025-02-28 23:59:59.5' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at <= '2025-02-28 23:59:59.999999' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at < '2025-01-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE DATE(placed_at) = '2024-03-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at LIKE '2024-03%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE YEAR(placed_at) = 2024 AND MONTH(placed_at) IN (2, 3) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at IN ('2024-01-15 10:00:00', '2025-01-01') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at > 20240301 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2024-3-1' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at BETWEEN '2025-03-01' AND '2025-02-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at NOT BETWEEN '2024-03-01' AND '2025-01-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at = '2024-02-29 12:34:56.000' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= DATE_SUB('2025-03-01', INTERVAL 1 DAY) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2024-12-31 23:59:59' + INTERVAL 1 SECOND ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at < CAST('2024-06-15 18:00:00' AS DATETIME) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at BETWEEN '2024-11-01 01:30' AND '2025-01-01 00:00:00' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total = 10.5 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total = '10.50' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total IN (0.01, 50, 7) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total BETWEEN 0 AND 0.01 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total > 99999999.98 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total = 0 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total < 0.005 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id = '3' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id = 3.0 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id = '3abc' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id IN ('1', 2, 3.5) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id > -1 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id BETWEEN 5 AND 3 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id NOT BETWEEN 3 AND 11 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id % 4 = 1 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE -total < -100 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total * 100 = 1050 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE user_id <> 1 AND user_id != 2 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE user_id NOT IN (1, 2, 3) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE user_id IN (SELECT id FROM users WHERE name LIKE 'user-0%') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note = NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note <=> NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE NOT (note = 'Alpha') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note NOT IN ('Alpha', NULL) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note IN ('Beta', NULL) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE COALESCE(note, 'none') = 'none' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note IS NOT NULL AND note <> 'beta' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE (note = 'Alpha') IS NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE IFNULL(note, 'x') > 'b' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE meta IS NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name = 'EVENT-01' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note = 'Alpha ' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE tag = 'red' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE tag = 'red  ' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name LIKE 'event\\_0%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name LIKE 'event_0%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name LIKE '%1' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name NOT LIKE 'event-0%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE note LIKE 'a%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE BINARY note LIKE 'a%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name > 'event-05' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name BETWEEN 'event-02' AND 'event-04' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE label = 'straße' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE label LIKE 'stra%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE tag COLLATE utf8mb4_bin = 'red' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE name IN ('EVENT-03', 'event-04 ') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE LENGTH(note) = 5 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE SUBSTRING(name, 7) = '05' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE CONCAT(note, '') = 'beta' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE NOT active ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active = TRUE ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active IS TRUE ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active IS NOT FALSE ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE score AND active ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active XOR (score > 50) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE 1 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE 0 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE score / 0 IS NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE score % 3 = 0 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE CASE WHEN active THEN score > 50 ELSE score < 30 END ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE active = 1 OR score > 50 AND note IS NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM events WHERE (active = 1 OR score > 50) AND note IS NULL ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE (user_id, total) = (1, 10.50) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE (user_id, status) IN ((1, 'shipped'), (2, 'pending')) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE NOT (user_id = 1 OR total > 100) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id = (SELECT MAX(id) FROM orders WHERE status = 'shipped') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total > ALL (SELECT total FROM orders WHERE user_id = 1) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total >= ANY (SELECT total FROM orders WHERE user_id = 3) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total < SOME (SELECT 20) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE EXISTS (SELECT 1 FROM users WHERE id = 99) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE NOT EXISTS (SELECT 1 FROM users u WHERE u.id = orders.user_id) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE user_id NOT IN (SELECT id FROM users) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total IN (SELECT total FROM orders WHERE status = 'pending') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE JSON_EXTRACT(meta, '$.score') > 2 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE meta->>'$.tags[0]' = 'premium' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE JSON_CONTAINS(meta->'$.tags', '\"premium\"') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') >= 4 ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE status IN ('shipped', 'delivered') ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE status <> 'pending' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE status LIKE 'p%' ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id IN (1, 1, 2, 2, NULL) ORDER BY id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE id NOT IN (1, 2, NULL) ORDER BY id"),
+        ordered("where edge cases", "SELECT COUNT(*) FROM orders WHERE placed_at >= '2025-01-01'"),
+        ordered("where edge cases", "SELECT user_id, SUM(total) FROM orders WHERE status <> 'cancelled' GROUP BY user_id HAVING SUM(total) > 50 ORDER BY user_id"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE total > 10 ORDER BY placed_at DESC LIMIT 3"),
+        ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2024-06-01' AND placed_at < '2025-03-01' AND status <> 'cancelled' AND total BETWEEN 10 AND 200 ORDER BY id"),
         ordered(
             "unicode_ci collation",
             "SELECT id, label FROM events ORDER BY label, id",
@@ -3730,6 +3855,13 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "reject json arithmetic",
             "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
             "json|\\+|binary|invalid",
+        ),
+        // MySQL 8.4 refuses an impossible date compared against a DATETIME
+        // column (ERROR 1525) rather than guessing what it meant.
+        (
+            "reject impossible date literal against a datetime",
+            "SELECT id FROM orders WHERE placed_at > '2024-02-30'",
+            "datetime|date|incorrect|invalid",
         ),
         (
             "reject unknown collate",

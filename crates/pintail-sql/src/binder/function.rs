@@ -763,6 +763,18 @@ pub(super) fn bind_in_list(
             value, tables, aggregates, windows, subqueries,
         )?);
     }
+    let subject = args[0].data_type;
+    let args = args
+        .into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            if index == 0 {
+                Ok(argument)
+            } else {
+                super::canonical_temporal_operand(subject, argument)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let args = super::rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
@@ -784,10 +796,18 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
+    let subject = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    let subject_type = subject.data_type;
     let args = vec![
-        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
-        bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
-        bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
+        subject,
+        super::canonical_temporal_operand(
+            subject_type,
+            bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
+        )?,
+        super::canonical_temporal_operand(
+            subject_type,
+            bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
+        )?,
     ];
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)

@@ -885,6 +885,7 @@ impl<'catalog> Binder<'catalog> {
             table: inner_table,
             condition: Some(condition),
         });
+        shadow_joined_table(tables);
         Ok(())
     }
 
@@ -1014,6 +1015,7 @@ impl<'catalog> Binder<'catalog> {
             table: inner_table,
             condition: Some(condition),
         });
+        shadow_joined_table(tables);
         Ok(())
     }
 
@@ -2860,8 +2862,39 @@ fn bind_expr_inner(
         Expr::BinaryOp { left, op, right } => {
             bind_binary(left, op, right, tables, aggregates, windows, subqueries)
         }
-        Expr::IsNull(expr) => bind_is_null(expr, false, tables, aggregates, windows, subqueries),
-        Expr::IsNotNull(expr) => bind_is_null(expr, true, tables, aggregates, windows, subqueries),
+        Expr::IsNull(expr) | Expr::IsUnknown(expr) => {
+            bind_is_null(expr, false, tables, aggregates, windows, subqueries)
+        }
+        Expr::IsNotNull(expr) | Expr::IsNotUnknown(expr) => {
+            bind_is_null(expr, true, tables, aggregates, windows, subqueries)
+        }
+        Expr::AnyOp {
+            left,
+            compare_op,
+            right,
+            ..
+        } => bind_quantified(
+            left, compare_op, right, false, tables, aggregates, windows, subqueries,
+        ),
+        Expr::AllOp {
+            left,
+            compare_op,
+            right,
+        } => bind_quantified(
+            left, compare_op, right, true, tables, aggregates, windows, subqueries,
+        ),
+        Expr::IsTrue(expr) => {
+            bind_truth_test(expr, false, false, tables, aggregates, windows, subqueries)
+        }
+        Expr::IsNotTrue(expr) => {
+            bind_truth_test(expr, false, true, tables, aggregates, windows, subqueries)
+        }
+        Expr::IsFalse(expr) => {
+            bind_truth_test(expr, true, false, tables, aggregates, windows, subqueries)
+        }
+        Expr::IsNotFalse(expr) => {
+            bind_truth_test(expr, true, true, tables, aggregates, windows, subqueries)
+        }
         // A window call may appear anywhere inside a projection expression
         // (share-of-total arithmetic, CASE arms); scopes without a window
         // list (WHERE, HAVING, aggregate arguments) still reject it.
@@ -3534,6 +3567,25 @@ fn bind_binary(
             _ => {}
         }
     }
+    if let (Expr::Tuple(lefts), Expr::Tuple(rights)) = (left, right)
+        && matches!(
+            operator,
+            BinaryOperator::Eq
+                | BinaryOperator::NotEq
+                | BinaryOperator::Lt
+                | BinaryOperator::LtEq
+                | BinaryOperator::Gt
+                | BinaryOperator::GtEq
+        )
+    {
+        return bind_expr_inner(
+            &row_comparison(lefts, operator, rights)?,
+            tables,
+            aggregates,
+            windows,
+            subqueries,
+        );
+    }
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
     if *operator == BinaryOperator::StringConcat {
@@ -3607,6 +3659,8 @@ fn bind_binary(
             | BinaryOperator::Gt
             | BinaryOperator::GtEq
     ) {
+        let right = canonical_temporal_operand(left.data_type, right)?;
+        let left = canonical_temporal_operand(right.data_type, left)?;
         rewrite_json_comparison(left, right)
     } else {
         (left, right)
@@ -3997,6 +4051,244 @@ fn bind_is_null(
         data_type: Some(DataType::Boolean),
         nullable: false,
     })
+}
+
+/// Hides a semi or anti join's inner table from the outer query's
+/// unqualified names once its join condition is bound. The table was joined
+/// only to decide which outer rows survive; in SQL its columns are not in the
+/// outer query's scope, and leaving them visible made an outer column the
+/// inner table shares - `id` - ambiguous.
+fn shadow_joined_table(tables: &mut [BoundTable]) {
+    if let Some(table) = tables.last_mut() {
+        for column in &mut table.columns {
+            column.using_shadowed = true;
+        }
+    }
+}
+
+/// A comparison of two row constructors as `MySQL` defines it: equality is
+/// every pair equal, inequality any pair unequal, and an ordering is decided
+/// by the first pair that differs. Written as the equivalent AND/OR tree, so
+/// three-valued NULL logic comes out exactly as it does pair by pair.
+fn row_comparison(
+    lefts: &[Expr],
+    operator: &BinaryOperator,
+    rights: &[Expr],
+) -> Result<Expr, BindError> {
+    if lefts.is_empty() || lefts.len() != rights.len() {
+        return Err(BindError::UnsupportedExpression(format!(
+            "operand should contain {} column(s)",
+            lefts.len()
+        )));
+    }
+    let pair = |index: usize, op: BinaryOperator| {
+        Expr::Nested(Box::new(Expr::BinaryOp {
+            left: Box::new(lefts[index].clone()),
+            op,
+            right: Box::new(rights[index].clone()),
+        }))
+    };
+    let join = |left: Expr, op: BinaryOperator, right: Expr| {
+        Expr::Nested(Box::new(Expr::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }))
+    };
+    let last = lefts.len() - 1;
+    Ok(match operator {
+        BinaryOperator::Eq | BinaryOperator::NotEq => {
+            let connective = if *operator == BinaryOperator::Eq {
+                BinaryOperator::And
+            } else {
+                BinaryOperator::Or
+            };
+            (1..lefts.len()).fold(pair(0, operator.clone()), |joined, index| {
+                join(joined, connective.clone(), pair(index, operator.clone()))
+            })
+        }
+        _ => {
+            let strict = if matches!(operator, BinaryOperator::Lt | BinaryOperator::LtEq) {
+                BinaryOperator::Lt
+            } else {
+                BinaryOperator::Gt
+            };
+            (0..last)
+                .rev()
+                .fold(pair(last, operator.clone()), |decided, index| {
+                    join(
+                        pair(index, strict.clone()),
+                        BinaryOperator::Or,
+                        join(
+                            pair(index, BinaryOperator::Eq),
+                            BinaryOperator::And,
+                            decided,
+                        ),
+                    )
+                })
+        }
+    })
+}
+
+/// Derived-table alias and column name of a quantified comparison's
+/// subquery once it is read for its count and extremes.
+const QUANTIFIED_TABLE: &str = "__quantified";
+const QUANTIFIED_VALUE: &str = "__value";
+
+/// `x op ANY (subquery)` and `x op ALL (subquery)`.
+///
+/// `= ANY` is `IN` and `<> ALL` is `NOT IN`, which bind as themselves. The
+/// rest are answered from four facts about the subquery - its row count,
+/// how many values are not NULL, and its lowest and highest value - which
+/// is exactly what the quantified comparison needs under three-valued
+/// logic: `x > ALL` holds when x exceeds the highest value, fails when it
+/// does not, and is unknown when it exceeds every value but some are NULL;
+/// `x > ANY` holds when x exceeds the lowest value and is unknown rather
+/// than false when NULLs remain. An empty subquery makes ALL true and ANY
+/// false whatever x is.
+#[allow(clippy::too_many_arguments)]
+fn bind_quantified(
+    left: &Expr,
+    operator: &BinaryOperator,
+    right: &Expr,
+    all: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let unsupported = || {
+        BindError::UnsupportedExpression(format!(
+            "{left} {operator} {}{right}",
+            if all { "ALL" } else { "ANY" }
+        ))
+    };
+    let Expr::Subquery(query) = right else {
+        return Err(unsupported());
+    };
+    if matches!(
+        (operator, all),
+        (BinaryOperator::Eq, false) | (BinaryOperator::NotEq, true)
+    ) {
+        let membership = Expr::InSubquery {
+            expr: Box::new(left.clone()),
+            subquery: query.clone(),
+            negated: all,
+        };
+        return bind_expr_inner(&membership, tables, aggregates, windows, subqueries);
+    }
+    let symbol = match operator {
+        BinaryOperator::Lt => "<",
+        BinaryOperator::LtEq => "<=",
+        BinaryOperator::Gt => ">",
+        BinaryOperator::GtEq => ">=",
+        BinaryOperator::Eq => "=",
+        BinaryOperator::NotEq => "<>",
+        _ => return Err(unsupported()),
+    };
+    let mut values = (**query).clone();
+    let SetExpr::Select(select) = values.body.as_mut() else {
+        return Err(unsupported());
+    };
+    let [
+        SelectItem::UnnamedExpr(projected)
+        | SelectItem::ExprWithAlias {
+            expr: projected, ..
+        },
+    ] = select.projection.as_slice()
+    else {
+        return Err(unsupported());
+    };
+    select.projection = vec![SelectItem::ExprWithAlias {
+        expr: projected.clone(),
+        alias: Ident::new(QUANTIFIED_VALUE),
+    }];
+    let source = format!("FROM ({values}) AS {QUANTIFIED_TABLE}");
+    let value = format!("{QUANTIFIED_TABLE}.{QUANTIFIED_VALUE}");
+    let x = format!("({left})");
+    let count = format!("(SELECT COUNT(*) {source})");
+    let present = format!("(SELECT COUNT({value}) {source})");
+    let lowest = format!("(SELECT MIN({value}) {source})");
+    let highest = format!("(SELECT MAX({value}) {source})");
+    let sql = match (all, operator) {
+        (true, BinaryOperator::Lt | BinaryOperator::LtEq) => format!(
+            "CASE WHEN {count} = 0 THEN TRUE WHEN {x} IS NULL THEN NULL \
+             WHEN NOT ({x} {symbol} {lowest}) THEN FALSE \
+             WHEN {present} < {count} THEN NULL ELSE TRUE END"
+        ),
+        (true, BinaryOperator::Gt | BinaryOperator::GtEq) => format!(
+            "CASE WHEN {count} = 0 THEN TRUE WHEN {x} IS NULL THEN NULL \
+             WHEN NOT ({x} {symbol} {highest}) THEN FALSE \
+             WHEN {present} < {count} THEN NULL ELSE TRUE END"
+        ),
+        (true, BinaryOperator::Eq) => format!(
+            "CASE WHEN {count} = 0 THEN TRUE WHEN {x} IS NULL THEN NULL \
+             WHEN {x} <> {lowest} OR {x} <> {highest} THEN FALSE \
+             WHEN {present} < {count} THEN NULL ELSE TRUE END"
+        ),
+        (false, BinaryOperator::Lt | BinaryOperator::LtEq) => format!(
+            "CASE WHEN {count} = 0 THEN FALSE WHEN {x} {symbol} {highest} THEN TRUE \
+             WHEN {x} IS NULL OR {present} < {count} THEN NULL ELSE FALSE END"
+        ),
+        (false, BinaryOperator::Gt | BinaryOperator::GtEq) => format!(
+            "CASE WHEN {count} = 0 THEN FALSE WHEN {x} {symbol} {lowest} THEN TRUE \
+             WHEN {x} IS NULL OR {present} < {count} THEN NULL ELSE FALSE END"
+        ),
+        (false, BinaryOperator::NotEq) => format!(
+            "CASE WHEN {count} = 0 THEN FALSE \
+             WHEN {x} <> {lowest} OR {x} <> {highest} THEN TRUE \
+             WHEN {x} IS NULL OR {present} < {count} THEN NULL ELSE FALSE END"
+        ),
+        _ => return Err(unsupported()),
+    };
+    let rewritten = crate::parse_expression(&sql).map_err(|_| unsupported())?;
+    // A subquery correlated to the outer row cannot be read as a derived
+    // table; that shape stays unsupported rather than reporting a column
+    // the user never wrote.
+    bind_expr_inner(&rewritten, tables, aggregates, windows, subqueries).map_err(|_| unsupported())
+}
+
+/// `x IS [NOT] TRUE` and `x IS [NOT] FALSE`: the `MySQL` truth tests, which are
+/// never NULL - a NULL operand is neither true nor false. `x IS TRUE` answers
+/// as `IF(x, TRUE, FALSE)`; `x IS FALSE` asks the same of `NOT x`, so zero is
+/// false and NULL is not; the negated forms swap the branches.
+fn bind_truth_test(
+    expr: &Expr,
+    tests_false: bool,
+    negated: bool,
+    tables: &[BoundTable],
+    aggregates: &mut Option<&mut Vec<BoundAggregate>>,
+    windows: &mut Option<&mut Vec<BoundWindow>>,
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Result<BoundExpr, BindError> {
+    let operand = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    if !is_truth_value(operand.data_type) {
+        return Err(BindError::InvalidUnaryType {
+            operation: if tests_false { "IS FALSE" } else { "IS TRUE" }.to_owned(),
+            actual: operand.data_type,
+        });
+    }
+    let condition = if tests_false {
+        BoundExpr {
+            nullable: operand.nullable,
+            data_type: Some(DataType::Boolean),
+            kind: BoundExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(operand),
+            },
+        }
+    } else {
+        operand
+    };
+    let literal = |value: bool| BoundExpr {
+        nullable: false,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Literal(Value::Boolean(value)),
+    };
+    function::bind_scalar(
+        ScalarFunction::If,
+        vec![condition, literal(!negated), literal(negated)],
+    )
 }
 
 #[allow(clippy::too_many_lines)] // one aggregate-shape table, clearer unsplit
@@ -4953,24 +5245,250 @@ fn has_json_projection(query: &BoundQuery) -> bool {
 }
 
 fn rewrite_json_comparison(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
-    if left.data_type == Some(DataType::Json) && right.data_type == Some(DataType::Json) {
-        (json_sort_key_expr(left), json_sort_key_expr(right))
+    let json = |data_type| data_type == Some(DataType::Json);
+    if json(left.data_type) && (json(right.data_type) || is_json_number(right.data_type))
+        || json(right.data_type) && is_json_number(left.data_type)
+    {
+        (
+            json_sort_key_expr(as_json(left)),
+            json_sort_key_expr(as_json(right)),
+        )
     } else {
         (left, right)
     }
 }
 
 /// The list form of [`rewrite_json_comparison`]: IN and BETWEEN wrap every
-/// operand when the whole list is JSON.
+/// operand when the list holds JSON and nothing but JSON and numbers.
 fn rewrite_json_comparison_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
     if args.len() > 1
         && args
             .iter()
-            .all(|argument| argument.data_type == Some(DataType::Json))
+            .any(|argument| argument.data_type == Some(DataType::Json))
+        && args.iter().all(|argument| {
+            argument.data_type == Some(DataType::Json) || is_json_number(argument.data_type)
+        })
     {
-        args.into_iter().map(json_sort_key_expr).collect()
+        args.into_iter()
+            .map(|argument| json_sort_key_expr(as_json(argument)))
+            .collect()
     } else {
         args
+    }
+}
+
+/// A number compared with a JSON value compares as JSON in `MySQL`: the
+/// number becomes a JSON number, which orders numerically against a JSON
+/// number and by type precedence against anything else. Text is not in
+/// this set - how a string meets a JSON value is a refusal of its own.
+fn is_json_number(data_type: Option<DataType>) -> bool {
+    matches!(
+        data_type,
+        Some(
+            DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+        )
+    )
+}
+
+fn as_json(expr: BoundExpr) -> BoundExpr {
+    if expr.data_type == Some(DataType::Json) {
+        return expr;
+    }
+    let nullable = expr.nullable;
+    BoundExpr {
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(DataType::Json),
+            args: vec![expr],
+        },
+        data_type: Some(DataType::Json),
+        nullable,
+    }
+}
+
+/// A temporal operand compared with a literal compares as the temporal
+/// type in `MySQL`: the literal is read as a date or datetime first. The
+/// executor compares these values in their canonical text, byte for byte,
+/// so a literal written any other way - a date-only bound against a
+/// DATETIME, `'2024-3-1'`, a zero fraction, the integer `20240301` - has to
+/// arrive in that form, or the comparison silently asks about a different
+/// string and answers wrongly. Anything that is not such a literal comes
+/// back unchanged; a literal shaped like a date that names an impossible
+/// one is refused, as `MySQL` refuses it.
+fn canonical_temporal_operand(
+    target: Option<DataType>,
+    operand: BoundExpr,
+) -> Result<BoundExpr, BindError> {
+    let date_only = match target {
+        Some(DataType::Date32) => true,
+        Some(DataType::DateTime64 { .. }) => false,
+        _ => return Ok(operand),
+    };
+    let text = match &operand.kind {
+        BoundExprKind::Literal(Value::Utf8(text)) => text.clone(),
+        BoundExprKind::Literal(Value::Int64(number)) if *number > 0 => number.to_string(),
+        BoundExprKind::Literal(Value::UInt64(number)) => number.to_string(),
+        _ => return Ok(operand),
+    };
+    let Some(parsed) = TemporalLiteral::parse(&text) else {
+        return Ok(operand);
+    };
+    if !parsed.is_valid() {
+        return Err(BindError::UnsupportedExpression(format!(
+            "incorrect {} value: '{text}'",
+            if date_only { "DATE" } else { "DATETIME" }
+        )));
+    }
+    let fsp = match target {
+        Some(DataType::DateTime64 { fsp }) => usize::from(fsp),
+        _ => 0,
+    };
+    Ok(BoundExpr {
+        kind: BoundExprKind::Literal(Value::Utf8(parsed.canonical(date_only, fsp))),
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+    })
+}
+
+/// A date or datetime literal in one of the spellings `MySQL` reads:
+/// `YYYY-M-D`, optionally followed by `[ T]H:M[:S[.fraction]]`, with any one
+/// punctuation character between date parts, or the digit runs `YYYYMMDD`
+/// and `YYYYMMDDHHMMSS`.
+struct TemporalLiteral {
+    year: u32,
+    month: u32,
+    day: u32,
+    hour: u32,
+    minute: u32,
+    second: u32,
+    /// Fraction digits as written, trailing zeros removed.
+    fraction: String,
+}
+
+impl TemporalLiteral {
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        if text.bytes().all(|byte| byte.is_ascii_digit()) {
+            let digits = |range: std::ops::Range<usize>| text.get(range)?.parse::<u32>().ok();
+            return match text.len() {
+                8 | 14 => Some(Self {
+                    year: digits(0..4)?,
+                    month: digits(4..6)?,
+                    day: digits(6..8)?,
+                    hour: if text.len() == 14 { digits(8..10)? } else { 0 },
+                    minute: if text.len() == 14 { digits(10..12)? } else { 0 },
+                    second: if text.len() == 14 { digits(12..14)? } else { 0 },
+                    fraction: String::new(),
+                }),
+                _ => None,
+            };
+        }
+        let (date, time) = match text.find([' ', 'T']) {
+            Some(split) => (&text[..split], Some(text[split + 1..].trim_start())),
+            None => (text, None),
+        };
+        let separator = date.chars().find(|character| !character.is_ascii_digit())?;
+        if !separator.is_ascii_punctuation() {
+            return None;
+        }
+        let parts = date.split(separator).collect::<Vec<_>>();
+        let number = |part: &str, widths: std::ops::RangeInclusive<usize>| {
+            (widths.contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_digit()))
+                .then(|| part.parse::<u32>().ok())
+                .flatten()
+        };
+        let [year, month, day] = parts.as_slice() else {
+            return None;
+        };
+        let mut literal = Self {
+            year: number(year, 4..=4)?,
+            month: number(month, 1..=2)?,
+            day: number(day, 1..=2)?,
+            hour: 0,
+            minute: 0,
+            second: 0,
+            fraction: String::new(),
+        };
+        if let Some(time) = time {
+            let (clock, fraction) = match time.split_once('.') {
+                Some((clock, fraction)) => (clock, Some(fraction)),
+                None => (time, None),
+            };
+            let pieces = clock.split(':').collect::<Vec<_>>();
+            if !(2..=3).contains(&pieces.len()) {
+                return None;
+            }
+            literal.hour = number(pieces[0], 1..=2)?;
+            literal.minute = number(pieces[1], 1..=2)?;
+            literal.second = match pieces.get(2) {
+                Some(second) => number(second, 1..=2)?,
+                None => 0,
+            };
+            if let Some(fraction) = fraction {
+                if fraction.is_empty()
+                    || fraction.len() > 6
+                    || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+                    || pieces.len() != 3
+                {
+                    return None;
+                }
+                fraction
+                    .trim_end_matches('0')
+                    .clone_into(&mut literal.fraction);
+            }
+        }
+        // A zero date is a value of its own in MySQL, not a calendar date;
+        // it keeps its original spelling.
+        (literal.year != 0 && literal.month != 0 && literal.day != 0).then_some(literal)
+    }
+
+    fn is_valid(&self) -> bool {
+        let leap = self.year.is_multiple_of(4)
+            && (!self.year.is_multiple_of(100) || self.year.is_multiple_of(400));
+        let days = match self.month {
+            2 if leap => 29,
+            2 => 28,
+            4 | 6 | 9 | 11 => 30,
+            1..=12 => 31,
+            _ => return false,
+        };
+        self.day <= days && self.hour < 24 && self.minute < 60 && self.second < 60
+    }
+
+    /// The column's canonical text. A DATE target keeps the time only when
+    /// it is not midnight - `MySQL` compares a DATE as midnight of its day -
+    /// and a DATETIME target pads the fraction to its declared digits, or
+    /// keeps every significant digit when there are more: byte order over
+    /// these digits is numeric order once no shorter form hides a zero.
+    fn canonical(&self, date_only: bool, fsp: usize) -> String {
+        let date = format!("{:04}-{:02}-{:02}", self.year, self.month, self.day);
+        let midnight = self.hour == 0 && self.minute == 0 && self.second == 0;
+        if date_only && midnight && self.fraction.is_empty() {
+            return date;
+        }
+        let mut text = format!(
+            "{date} {:02}:{:02}:{:02}",
+            self.hour, self.minute, self.second
+        );
+        let digits = if date_only { 0 } else { fsp };
+        if self.fraction.len() > digits {
+            text.push('.');
+            text.push_str(&self.fraction);
+        } else if digits > 0 {
+            text.push('.');
+            text.push_str(&self.fraction);
+            text.extend(std::iter::repeat_n('0', digits - self.fraction.len()));
+        }
+        text
     }
 }
 
