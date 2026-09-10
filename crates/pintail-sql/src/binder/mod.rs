@@ -13,10 +13,11 @@ use pintail_catalog::{CatalogSnapshot, DatabaseEntry, TableEntry};
 use pintail_types::{DataType, Value};
 use sqlparser::ast::{
     BinaryOperator, CastKind, CeilFloorKind, DateTimeField, Distinct, DuplicateTreatment, Expr,
-    Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, JoinConstraint,
-    JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
+    Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, Join,
+    JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem,
     SelectItemQualifiedWildcardKind, SetExpr, SetOperator, SetQuantifier, Spanned, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Value as SqlValue, WildcardAdditionalOptions,
+    TableAlias, TableFactor, TableWithJoins, UnaryOperator, Value as SqlValue,
+    WildcardAdditionalOptions,
 };
 
 use crate::bound::{
@@ -1016,6 +1017,247 @@ impl<'catalog> Binder<'catalog> {
         Ok(())
     }
 
+    /// The first `IN` or `EXISTS` conjunct of a join condition that needs the
+    /// join's left side: it binds neither on its own nor against the right
+    /// side by itself.
+    fn left_correlated_subquery<'a>(
+        &self,
+        condition: &'a Expr,
+        right_tables: &[BoundTable],
+        ctes: &[BoundCte],
+    ) -> Option<&'a Query> {
+        let right_scope = expression_scope(right_tables, &self.outer_tables);
+        split_and_conjuncts(condition)
+            .into_iter()
+            .filter_map(|conjunct| match conjunct {
+                Expr::Exists { subquery, .. } | Expr::InSubquery { subquery, .. } => {
+                    Some(subquery.as_ref())
+                }
+                _ => None,
+            })
+            .find(|subquery| {
+                self.bind_query(subquery, ctes).is_err()
+                    && self.bind_subquery(subquery, ctes, &right_scope).is_err()
+            })
+    }
+
+    /// Answers a LEFT join whose ON condition reaches its left side through
+    /// a correlated `IN` or `EXISTS`, by widening the right input.
+    ///
+    /// `L LEFT JOIN R ON p AND x IN (SELECT y FROM t WHERE t.c = l.k AND q)`
+    /// asks, per left row, for the right rows satisfying `p` whose `x` is
+    /// the `y` of some `t` row that `q` keeps and whose `c` equals that left
+    /// row's `k`. Those are the pairs `(y, c)` of the rows `q` keeps, and
+    /// the pairs do not depend on the left row - only which `c` a left row
+    /// asks for does. So `R` is joined to the DISTINCT pairs on `x = y`, and
+    /// `c = k` joins the rest of the ON:
+    ///
+    /// ```text
+    /// L LEFT JOIN (R JOIN (SELECT DISTINCT y, c FROM t WHERE q) d
+    ///                ON x = d.y)
+    ///   ON p AND d.c = l.k
+    /// ```
+    ///
+    /// DISTINCT is what keeps the answer: a right row meets at most one pair
+    /// for a given left row, so no match is duplicated, and a right row with
+    /// no pair for it leaves the left row null-extended exactly as the failed
+    /// membership test did. ON reads NULL as false, so a NULL on either side
+    /// of the membership fails the join equality as it failed the `IN`.
+    ///
+    /// Every equality whose outer side reads only the right input anchors
+    /// the pairs to `R`; the others join the ON. Conditions on the right
+    /// input alone move in beside the anchors, which filters `R` before it
+    /// is widened rather than after. A shape with no anchor would widen `R`
+    /// by every pair, so it, the negated forms (whose NULL semantics an
+    /// anti join does not share), and anything outside the single-table
+    /// equality form return `None` and keep the refusal.
+    #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
+    fn widen_outer_join_right(
+        &self,
+        factor: &TableFactor,
+        condition: &Expr,
+        left_tables: &[BoundTable],
+        right_tables: &[BoundTable],
+        ctes: &[BoundCte],
+    ) -> Option<(TableFactor, Expr)> {
+        let right_scope = expression_scope(right_tables, &self.outer_tables);
+        // Reads the right input and nothing else. Binding against the left
+        // side too rules out an unqualified name both sides carry, which
+        // the full scope reports as ambiguous and the right alone would not.
+        let right_only = |expr: &Expr| {
+            bind_expr(expr, right_tables, None).is_ok()
+                && bind_expr(expr, left_tables, None).is_err()
+        };
+        let equal = |left: Expr, right: Expr| Expr::BinaryOp {
+            left: Box::new(left),
+            op: BinaryOperator::Eq,
+            right: Box::new(right),
+        };
+        let mut outer_on: Vec<Expr> = Vec::new();
+        let mut right_filters: Vec<Expr> = Vec::new();
+        // One pair table per rewritten conjunct: its query, alias, and the
+        // equalities anchoring it to the right input.
+        let mut pair_tables: Vec<(Query, String, Vec<Expr>)> = Vec::new();
+        for conjunct in split_and_conjuncts(condition) {
+            let needs_left = match conjunct {
+                Expr::Exists { subquery, .. } | Expr::InSubquery { subquery, .. } => {
+                    self.bind_query(subquery, ctes).is_err()
+                        && self.bind_subquery(subquery, ctes, &right_scope).is_err()
+                }
+                _ => false,
+            };
+            if !needs_left {
+                if right_only(conjunct) {
+                    right_filters.push(conjunct.clone());
+                } else {
+                    outer_on.push(conjunct.clone());
+                }
+                continue;
+            }
+            let (operand, subquery) = match conjunct {
+                Expr::InSubquery {
+                    expr,
+                    subquery,
+                    negated: false,
+                } => (Some(expr.as_ref()), subquery.as_ref()),
+                Expr::Exists {
+                    subquery,
+                    negated: false,
+                } => (None, subquery.as_ref()),
+                _ => return None,
+            };
+            let SetExpr::Select(inner) = subquery.body.as_ref() else {
+                return None;
+            };
+            let simple = inner.from.len() == 1
+                && inner.from[0].joins.is_empty()
+                && matches!(inner.group_by, GroupByExpr::Expressions(ref exprs, _) if exprs.is_empty())
+                && inner.having.is_none()
+                && subquery.limit_clause.is_none()
+                && subquery.order_by.is_none();
+            if !simple {
+                return None;
+            }
+            let probe_scope = vec![self.bind_table(&inner.from[0].relation, ctes).ok()?];
+            let binds_inner = |expr: &Expr| bind_expr(expr, &probe_scope, None).is_ok();
+            // (outer side, inner side) of each equality the membership is.
+            let mut pairs: Vec<(Expr, Expr)> = Vec::new();
+            if let Some(operand) = operand {
+                let [
+                    SelectItem::UnnamedExpr(projected)
+                    | SelectItem::ExprWithAlias {
+                        expr: projected, ..
+                    },
+                ] = inner.projection.as_slice()
+                else {
+                    return None;
+                };
+                if !binds_inner(projected) {
+                    return None;
+                }
+                pairs.push((operand.clone(), projected.clone()));
+            }
+            let mut local: Vec<&Expr> = Vec::new();
+            if let Some(selection) = &inner.selection {
+                for conjunct in split_and_conjuncts(selection) {
+                    if binds_inner(conjunct) {
+                        local.push(conjunct);
+                        continue;
+                    }
+                    let Expr::BinaryOp {
+                        left,
+                        op: BinaryOperator::Eq,
+                        right,
+                    } = conjunct
+                    else {
+                        return None;
+                    };
+                    match (binds_inner(left), binds_inner(right)) {
+                        (true, false) => pairs.push(((**right).clone(), (**left).clone())),
+                        (false, true) => pairs.push(((**left).clone(), (**right).clone())),
+                        _ => return None,
+                    }
+                }
+            }
+            let alias = format!(
+                "{WIDENED_PAIRS_PREFIX}{}_{}",
+                left_tables.len(),
+                pair_tables.len()
+            );
+            let key = |index: usize| {
+                Expr::CompoundIdentifier(vec![
+                    Ident::new(alias.clone()),
+                    Ident::new(format!("k{index}")),
+                ])
+            };
+            let mut anchors = Vec::new();
+            for (index, (outer, _)) in pairs.iter().enumerate() {
+                if right_only(outer) {
+                    anchors.push(equal(outer.clone(), key(index)));
+                } else {
+                    outer_on.push(equal(key(index), outer.clone()));
+                }
+            }
+            if anchors.is_empty() {
+                return None;
+            }
+            let mut pairs_query = subquery.clone();
+            let SetExpr::Select(select) = pairs_query.body.as_mut() else {
+                return None;
+            };
+            select.distinct = Some(Distinct::Distinct);
+            select.projection = pairs
+                .into_iter()
+                .enumerate()
+                .map(|(index, (_, inner))| SelectItem::ExprWithAlias {
+                    expr: inner,
+                    alias: Ident::new(format!("k{index}")),
+                })
+                .collect();
+            select.selection = and_all(&local);
+            pair_tables.push((pairs_query, alias, anchors));
+        }
+        if let Some((_, _, anchors)) = pair_tables.first_mut() {
+            anchors.append(&mut right_filters);
+        } else {
+            return None;
+        }
+        let joins = pair_tables
+            .into_iter()
+            .map(|(query, alias, anchors)| {
+                let anchors = anchors.iter().collect::<Vec<_>>();
+                Join {
+                    relation: TableFactor::Derived {
+                        lateral: false,
+                        subquery: Box::new(query),
+                        alias: Some(TableAlias {
+                            explicit: true,
+                            name: Ident::new(alias),
+                            columns: Vec::new(),
+                            at: None,
+                        }),
+                        sample: None,
+                    },
+                    global: false,
+                    join_operator: JoinOperator::Inner(JoinConstraint::On(
+                        and_all(&anchors).expect("every pair table has an anchor"),
+                    )),
+                }
+            })
+            .collect();
+        let widened = TableFactor::NestedJoin {
+            table_with_joins: Box::new(TableWithJoins {
+                relation: factor.clone(),
+                joins,
+            }),
+            alias: None,
+        };
+        let outer_on = outer_on.iter().collect::<Vec<_>>();
+        let condition =
+            and_all(&outer_on).unwrap_or_else(|| Expr::Value(SqlValue::Boolean(true).into()));
+        Some((widened, condition))
+    }
+
     /// Rewrites one correlated scalar subquery from the select list into a
     /// scalar or LEFT JOIN. Aggregate forms group by their correlation keys;
     /// non-aggregate lookups use scalar-join semantics so the executor raises
@@ -1306,10 +1548,48 @@ impl<'catalog> Binder<'catalog> {
                 if join.global {
                     return Err(BindError::UnsupportedQueryClause(join.to_string()));
                 }
-                let (kind, constraint) = bind_join_operator(&join.join_operator)?;
+                let (kind, mut constraint) = bind_join_operator(&join.join_operator)?;
                 let mut relation = self.bind_join_relation(&join.relation, ctes)?;
                 for visible in &relation.tables {
                     reject_duplicate_relation(&tables, visible)?;
+                }
+                // A LEFT join whose ON reaches its left side through a
+                // subquery is answered by widening the right input instead
+                // (widen_outer_join_right). What the widening cannot take
+                // keeps the refusal below, and so does a widened form that
+                // fails to bind: the refusal says why, a bind error about a
+                // column the user never wrote would not.
+                let widened_constraint;
+                let mut refusal: Option<BindError> = None;
+                if kind == BoundJoinKind::Left
+                    && let JoinConstraint::On(condition) = constraint
+                    && let Some(subquery) =
+                        self.left_correlated_subquery(condition, &relation.tables, ctes)
+                {
+                    let refused = outer_join_refusal(subquery);
+                    let (factor, widened) = self
+                        .widen_outer_join_right(
+                            &join.relation,
+                            condition,
+                            &tables,
+                            &relation.tables,
+                            ctes,
+                        )
+                        .ok_or_else(|| refused.clone())?;
+                    relation = self
+                        .bind_join_relation(&factor, ctes)
+                        .map_err(|_| refused.clone())?;
+                    for visible in &relation.tables {
+                        reject_duplicate_relation(&tables, visible)?;
+                    }
+                    // The pair table's columns are the rewrite's, not the
+                    // query's, so `*` never shows them.
+                    relation
+                        .wildcard_order
+                        .retain(|column| !column.relation_name.starts_with(WIDENED_PAIRS_PREFIX));
+                    widened_constraint = JoinConstraint::On(widened);
+                    constraint = &widened_constraint;
+                    refusal = Some(refused);
                 }
                 if matches!(kind, BoundJoinKind::Left | BoundJoinKind::Scalar) {
                     for column in &mut relation.table.columns {
@@ -1344,33 +1624,23 @@ impl<'catalog> Binder<'catalog> {
                         // answers correctly, so the test is whether the
                         // subquery binds against the right side by itself.
                         //
-                        // Refusing is the honest answer until the rewrite
-                        // that widens the right input lands, because the
-                        // alternative is a wrong number nobody can see is
+                        // A LEFT join's were widened away above; one still
+                        // here is a shape the widening does not take, and a
+                        // refusal beats a wrong number nobody can see is
                         // wrong (docs/limitations.md).
-                        if kind != BoundJoinKind::Inner {
-                            let right_scope = expression_scope(&right_tables, &self.outer_tables);
-                            for conjunct in split_and_conjuncts(condition) {
-                                let subquery = match conjunct {
-                                    Expr::Exists { subquery, .. }
-                                    | Expr::InSubquery { subquery, .. } => Some(subquery),
-                                    _ => None,
-                                };
-                                if let Some(subquery) = subquery
-                                    && self.bind_query(subquery, ctes).is_err()
-                                    && self.bind_subquery(subquery, ctes, &right_scope).is_err()
-                                {
-                                    return Err(BindError::UnsupportedSubquery(format!(
-                                        "a subquery in an outer join's ON condition correlated \
-                                         to the join's left side: {subquery}"
-                                    )));
-                                }
-                            }
+                        if kind != BoundJoinKind::Inner
+                            && let Some(subquery) =
+                                self.left_correlated_subquery(condition, &right_tables, ctes)
+                        {
+                            return Err(outer_join_refusal(subquery));
                         }
                         let join_scope = expression_scope(&tables, &self.outer_tables);
                         let resolve_subquery =
                             |query: &Query| self.bind_subquery(query, ctes, &join_scope);
-                        Some(bind_expr(condition, &join_scope, Some(&resolve_subquery))?)
+                        Some(
+                            bind_expr(condition, &join_scope, Some(&resolve_subquery))
+                                .map_err(|error| refusal.take().unwrap_or(error))?,
+                        )
                     }
                     JoinConstraint::None if kind == BoundJoinKind::Cross => {
                         item_wildcard.extend(relation.wildcard_order.iter().cloned());
@@ -3565,6 +3835,14 @@ fn hoist_inner_join_subqueries(select: &Select) -> Option<Select> {
     Some(rewritten)
 }
 
+/// The refusal for a subquery in an outer join's ON that needs the join's
+/// left side and is not a shape the right input can be widened to answer.
+fn outer_join_refusal(subquery: &Query) -> BindError {
+    BindError::UnsupportedSubquery(format!(
+        "a subquery in an outer join's ON condition correlated to the join's left side: {subquery}"
+    ))
+}
+
 /// ANDs a non-empty conjunct list back into one expression.
 fn and_all(conjuncts: &[&Expr]) -> Option<Expr> {
     let mut all = conjuncts.first().map(|first| (*first).clone())?;
@@ -4519,6 +4797,11 @@ const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
 
 /// Prefix of the derived table a decorrelated scalar subquery becomes.
 const SCALAR_TABLE_PREFIX: &str = "__scalar_";
+
+/// Prefix of the DISTINCT pair table an outer join's right input is widened
+/// by, so a correlated `IN` or `EXISTS` in its ON condition reads as join
+/// equalities (`widen_outer_join_right`).
+const WIDENED_PAIRS_PREFIX: &str = "__widened_pairs_";
 
 /// What a decorrelated scalar subquery correlates on, by physical identity.
 struct ScalarCorrelation {

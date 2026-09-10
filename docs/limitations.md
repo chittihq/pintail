@@ -27,23 +27,17 @@ stays readable as a list of things to fix.
   requires both membership sides to be provably non-nullable: with a possible
   NULL, MySQL's three-valued `NOT IN` diverges from an anti join, so those
   shapes reject.
-- A subquery in an OUTER join's ON condition that is correlated to the
-  join's LEFT side is refused. Dependent resolution exists only at Filter
-  level, so in a join condition the subquery ran without the outer context
-  it needs and the join matched too few rows - measured against MySQL 8.4,
-  three matches reported as one and two reported as none, with no error to
-  notice. Refusing is not the fix; it is what the engine can honestly say
-  until the rewrite lands, and a wrong count is worse than a rejection.
-  Correlating to the join's RIGHT side alone answers correctly and is
-  unaffected, as is an uncorrelated subquery, which is materialized during
-  planning. An INNER join's ON filters the rows WHERE filters, so a
-  correlated `IN` or `EXISTS` there is moved to WHERE and decorrelates into
-  a semi-join.
-  The rewrite that would lift the restriction cannot plant a semi-join
-  under the right input, because the correlation reaches the LEFT side and a
-  semi-join's inner rows are not visible outside it; it has to widen the
-  right side into a derived input carrying the correlation column, distinct
-  over that side's columns.
+- A subquery in a LEFT (or RIGHT) join's ON condition that reaches the
+  join's preserved side is refused unless it is a non-negated `IN` or
+  `EXISTS` over a single table whose correlations are all equalities, at
+  least one of them against the other side's columns. Those shapes are
+  answered by joining the other side to the subquery's distinct rows;
+  `NOT IN`, `NOT EXISTS`, an inequality correlation, a subquery with its own
+  join, grouping or LIMIT, and a subquery tied to the preserved side alone
+  have no such rewrite yet. Dependent resolution exists only at Filter
+  level, so in a join condition those would run without the outer context
+  they need and match too few rows - measured against MySQL 8.4, three
+  matches reported as one - and a refusal is the honest answer.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather

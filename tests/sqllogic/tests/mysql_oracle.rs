@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1231;
+const EXPECTED_CASES: usize = 1238;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1373,11 +1373,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
         // orders differently from the two collations beside it.
         // A correlated subquery in a JOIN's ON condition. An INNER join's ON
         // filters the rows WHERE filters, so a correlated IN or EXISTS there
-        // decorrelates; an OUTER join's does not, and still resolves per
-        // correlation value. These pin the ANSWERS across any rewrite that
-        // changes which path they take - above all the LEFT JOIN cases,
-        // where hoisting the predicate to the outer scope would drop the
-        // null-extended rows the join exists to keep.
+        // decorrelates; an OUTER join's does not, and a subquery there that
+        // reaches the join's LEFT side is answered by widening the right
+        // input with the subquery's DISTINCT pairs. These pin the ANSWERS
+        // across any rewrite that changes which path they take - above all
+        // the LEFT JOIN cases, where hoisting the predicate to the outer
+        // scope would drop the null-extended rows the join exists to keep.
         ordered(
             "join-condition subquery",
             "SELECT u.id, COUNT(DISTINCT o.id) AS n FROM users u \
@@ -1391,6 +1392,57 @@ fn hand_written_cases() -> Vec<OracleCase> {
              JOIN orders o ON o.user_id = u.id \
              WHERE o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
              AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, COUNT(o.id) AS n, SUM(o.total) AS s FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 50) GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
+             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total \
+             AND o2.user_id = u.id) ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o \
+             ON o.id IN (SELECT o2.id FROM orders o2 WHERE o2.user_id = u.id + 1) \
+             ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, e.id, e.note FROM users u LEFT JOIN events e ON e.id = u.id \
+             AND e.note IN (SELECT e2.note FROM events e2 WHERE e2.score = (u.id + 1) * 10) \
+             ORDER BY u.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id FROM orders o RIGHT JOIN users u ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total < 50) ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT u.id, o.id, e.id FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id \
+             AND o2.total > 20) \
+             LEFT JOIN events e ON e.id = u.id \
+             AND e.score IN (SELECT e2.score FROM events e2 WHERE e2.id = u.id \
+             AND e2.active = 1) ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join-condition subquery",
+            "SELECT t.uid, SUM(t.n) AS n FROM ( \
+             SELECT u.id AS uid, COUNT(DISTINCT o.id) AS n FROM users u \
+             JOIN events ev ON ev.id = u.id \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             AND o.id IN (SELECT o2.id FROM orders o2 WHERE o2.user_id = ev.id \
+             AND o2.status <> 'cancelled') GROUP BY u.id) t \
+             GROUP BY t.uid ORDER BY t.uid",
         ),
         ordered(
             "unicode_ci collation",
@@ -3613,22 +3665,22 @@ fn reject_cases() -> Vec<(&'static str, &'static str, &'static str)> {
             "SELECT meta + 1 FROM orders WHERE meta IS NOT NULL",
             "json|\\+|binary|invalid",
         ),
-        // Dependent resolution exists only at Filter level, so a correlated
-        // subquery in an OUTER join's ON runs without the outer context it
-        // needs and the join matches too few rows. Measured against MySQL
-        // before it was refused: three matches reported as one, two as none.
-        // Refusing beats a wrong number nobody can see is wrong.
+        // An OUTER join's ON reaching its left side through a subquery is
+        // answered by widening the right input with the subquery's DISTINCT
+        // pairs. What that cannot express still refuses: a negated
+        // membership, whose NULL semantics an anti join does not share, and
+        // a correlation that is not an equality.
         (
-            "reject correlated in under an outer join condition",
+            "reject negated membership under an outer join condition",
             "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
-             AND o.total IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id)",
-            "correlated subquery|outer join|unsupported",
+             AND o.total NOT IN (SELECT o2.total FROM orders o2 WHERE o2.user_id = u.id)",
+            "outer join|unsupported",
         ),
         (
-            "reject correlated exists under an outer join condition",
+            "reject inequality correlation under an outer join condition",
             "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id \
-             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total AND o2.user_id = u.id)",
-            "correlated subquery|outer join|unsupported",
+             AND EXISTS (SELECT 1 FROM orders o2 WHERE o2.total = o.total AND o2.user_id < u.id)",
+            "outer join|unsupported",
         ),
         (
             "reject unknown collate",

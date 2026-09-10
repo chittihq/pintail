@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- A correlated `IN` or `EXISTS` in a LEFT or RIGHT join's ON condition that
+  reaches the join's preserved side is answered instead of refused. The
+  subquery's rows do not depend on the outer row - only which of them a
+  row asks for does - so the joined side is widened by the subquery's
+  DISTINCT rows on the equality it names, and the correlation becomes one
+  more join key. DISTINCT keeps the answer exact: a joined row meets at most
+  one subquery row per preserved row, so no match is duplicated and an
+  unmatched row stays null-extended. It runs as hash joins with no per-row
+  subquery executions. Negated forms, inequality correlations and
+  multi-table subqueries are still refused (docs/limitations.md).
+
 ### Fixed
 
 - Browser exceptions and Nuxt errors are reported to the configured Sentry
