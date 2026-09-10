@@ -31,7 +31,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inequality correlations, subqueries with their own joins or grouping -
   are answered on the dependent join path instead of refused. Each
   candidate pair of rows resolves the subquery with both rows in scope,
-  memoized per distinct correlation value.
+  memoized per distinct correlation value, and the ON condition's plain
+  equalities bucket the candidates: a left row meets only the right rows
+  its keys reach, where the path used to test every pair.
 
 ### Fixed
 

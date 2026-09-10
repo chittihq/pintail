@@ -73,7 +73,10 @@ fn an_isolated_segment_prunes_while_overlapping_neighbours_are_read() {
     // current and fails the bound, or stale behind the last segment's
     // version, so it prunes too.
     let (rows, pruned) = scan(&table, &bucket_equals(3));
-    assert_eq!(pruned, 2, "both non-matching segments older than their overlaps prune");
+    assert_eq!(
+        pruned, 2,
+        "both non-matching segments older than their overlaps prune"
+    );
     assert!(
         rows.iter().all(|row| row[0] != Value::UInt64(1)),
         "pruned segment's keys must not appear"
@@ -144,10 +147,7 @@ fn a_base_overlapped_only_by_newer_updates_still_prunes() {
     // Bucket 20 is the third chunk's: the other three prune.
     let (rows, pruned) = scan(&table, &bucket_equals(20));
     assert_eq!(pruned, 3, "every base chunk the bound excludes prunes");
-    let matching = rows
-        .iter()
-        .filter(|row| row[1] == Value::Int64(20))
-        .count();
+    let matching = rows.iter().filter(|row| row[1] == Value::Int64(20)).count();
     assert_eq!(matching, 90, "the chunk's rows less the ten updated away");
     assert!(
         rows.iter()

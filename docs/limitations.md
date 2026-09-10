@@ -29,11 +29,13 @@ stays readable as a list of things to fix.
   shapes reject.
 - A subquery in a LEFT (or RIGHT) join's ON condition that reaches the
   join's preserved side, and is not a non-negated `IN` or `EXISTS` over one
-  table correlated by equalities, runs on the dependent join path: every
-  candidate pair of rows is tested and the subquery resolves once per
-  distinct correlation value. `NOT IN`, `NOT EXISTS`, inequality
+  table correlated by equalities, runs on the dependent join path: the
+  subquery resolves once per distinct correlation value and each candidate
+  pair is tested row by row. The ON condition's plain equalities bucket the
+  candidates, so the cost follows the pairs those keys reach; with no such
+  equality every pair is tested. `NOT IN`, `NOT EXISTS`, inequality
   correlations and subqueries with their own joins or grouping answer
-  there, at nested-loop cost rather than hash-join cost.
+  there, slower than a hash join.
 - MySQL 8.4 with its default optimizer switches answers a correlated `IN`
   or `EXISTS` in an outer join's ON condition wrongly when the subquery
   carries filters of its own: its semi-join materialization drops them, so

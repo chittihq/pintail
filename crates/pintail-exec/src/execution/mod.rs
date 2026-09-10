@@ -251,6 +251,10 @@ pub enum PhysicalPlan {
         right: Box<Self>,
         /// Join semantics.
         kind: BoundJoinKind,
+        /// Hashable equalities every accepted pair satisfies, oriented left
+        /// then right. The right input is bucketed by them so a left row
+        /// meets only the rows its keys reach; empty tests every pair.
+        keys: Vec<(BoundExpr, BoundExpr)>,
         /// Complete ON predicate.
         condition: BoundExpr,
     },
@@ -582,10 +586,12 @@ impl PhysicalPlanner {
                 }
                 let condition = condition.ok_or(ExecError::UnsupportedJoinCondition)?;
                 if expression_has_subquery(&condition) {
+                    let keys = dependent_join_keys(&condition, &left, &right, collation);
                     return Ok(PhysicalPlan::NestedLoopJoin {
                         left: Box::new(Self::plan(*left, collation)?),
                         right: Box::new(Self::plan(*right, collation)?),
                         kind,
+                        keys,
                         condition,
                     });
                 }
@@ -661,8 +667,37 @@ fn plan_theta_join(
         left: Box::new(PhysicalPlanner::plan(*left, collation)?),
         right: Box::new(PhysicalPlanner::plan(*right, collation)?),
         kind,
+        keys: Vec::new(),
         condition,
     })
+}
+
+/// The equalities a dependent join's candidate pairs must satisfy: the ON
+/// conjuncts that are plain hashable equalities spanning the two inputs,
+/// oriented left then right. The executor buckets the right input by them,
+/// so a left row meets only the right rows its keys reach instead of every
+/// row; the whole condition, subqueries included, still decides each pair.
+/// An equality is one conjunct of an AND, so a pair failing it could never
+/// have matched.
+fn dependent_join_keys(
+    condition: &BoundExpr,
+    left: &LogicalPlan,
+    right: &LogicalPlan,
+    collation: Collation,
+) -> Vec<(BoundExpr, BoundExpr)> {
+    // An alias visible on both sides through a derived input would make the
+    // orientation ambiguous; the unbucketed loop answers that correctly.
+    if !logical_tables(left).is_disjoint(&logical_tables(right)) {
+        return Vec::new();
+    }
+    let mut conjuncts = Vec::new();
+    and_conjuncts(condition, &mut conjuncts);
+    conjuncts
+        .iter()
+        .filter(|conjunct| !expression_has_subquery(conjunct))
+        .filter_map(|conjunct| equi_join_key_pairs(conjunct, left, right, collation))
+        .flatten()
+        .collect()
 }
 
 fn plan_limit(
@@ -4092,6 +4127,7 @@ fn build_operator_inner(
             left,
             right,
             kind,
+            keys,
             condition,
         } => {
             let (mut left, left_columns) = build_operator(*left, provider, memory, collation)?;
@@ -4110,6 +4146,7 @@ fn build_operator_inner(
                 &left_columns,
                 &right_columns,
                 kind,
+                &keys,
                 &condition,
                 provider,
                 memory,
