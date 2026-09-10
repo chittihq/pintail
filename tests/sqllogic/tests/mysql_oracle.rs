@@ -6409,6 +6409,21 @@ fn corpus_scale_probe() {
         })
         .collect::<Vec<_>>();
 
+    // Ad hoc statements, separated by `;;`, replace the corpus cases.
+    let cases = match std::env::var("PINTAIL_CORPUS_PROBE_SQL") {
+        Ok(statements) => statements
+            .split(";;")
+            .enumerate()
+            .map(|(index, sql)| {
+                (
+                    format!("adhoc-{index}"),
+                    "adhoc".to_owned(),
+                    sql.trim().to_owned(),
+                )
+            })
+            .collect(),
+        Err(_) => cases,
+    };
     let copies = |rows: Vec<StoredRow>, user_id: Option<usize>| {
         (0..scale)
             .flat_map(|copy| {
@@ -6539,6 +6554,16 @@ fn corpus_scale_probe() {
             .map_err(|error| error.to_string())?;
             let mut rows = 0;
             while let Some(batch) = execution.next_batch().map_err(|error| error.to_string())? {
+                if std::env::var_os("PINTAIL_CORPUS_PROBE_ROWS").is_some() {
+                    for row in batch.selection().selected_rows().take(8) {
+                        let values = batch
+                            .columns()
+                            .iter()
+                            .map(|column| format!("{:?}", column.value(row)))
+                            .collect::<Vec<_>>();
+                        eprintln!("    row: {}", values.join(" | "));
+                    }
+                }
                 rows += batch.visible_row_count();
             }
             Ok(rows)
