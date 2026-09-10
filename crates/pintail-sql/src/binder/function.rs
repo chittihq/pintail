@@ -773,10 +773,10 @@ pub(super) fn bind_in_list(
                 Ok(argument)
             } else {
                 super::canonical_literal_operand(&subject, argument)
-                    .map(|member| super::number_for_text(&subject, member))
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let args = super::numeric_list_as_double(args);
     let args = super::rewrite_json_comparison_list(args);
     if args[1..]
         .iter()
@@ -806,9 +806,9 @@ pub(super) fn bind_between(
     let [subject, low, high]: [BoundExpr; 3] = args
         .try_into()
         .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
-    let low = super::number_for_text(&subject, super::canonical_literal_operand(&subject, low)?);
-    let high = super::number_for_text(&subject, super::canonical_literal_operand(&subject, high)?);
-    let args = vec![subject, low, high];
+    let low = super::canonical_literal_operand(&subject, low)?;
+    let high = super::canonical_literal_operand(&subject, high)?;
+    let args = super::numeric_list_as_double(vec![subject, low, high]);
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
         || !comparable(args[0].data_type, args[2].data_type)

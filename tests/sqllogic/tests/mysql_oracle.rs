@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1377;
+const EXPECTED_CASES: usize = 1388;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1660,6 +1660,17 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("review edge cases", "SELECT id FROM events WHERE score NOT BETWEEN NULL AND 50 ORDER BY id"),
         ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT MAX(o.total) FROM orders o WHERE o.user_id = u.id) AND u.id < 5 ORDER BY id"),
         ordered("review edge cases", "SELECT CAST('9007199254740993' AS JSON) > CAST('9007199254740992' AS JSON), CAST('1' AS JSON) = CAST('1.0' AS JSON)"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total IN ('x', 7.0, 50.0) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total BETWEEN '5x' AND 10.50 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total IN (7.0e0, 50.00, 10.5) ORDER BY id"),
+        ordered("review edge cases", "SELECT 9007199254740993 = '9007199254740992', 9007199254740993 = '9007199254740992x'"),
+        ordered("review edge cases", "SELECT CAST(9007199254740993 AS DECIMAL(20,0)) = '9007199254740992', CAST(9007199254740993 AS DECIMAL(20,0)) = '9007199254740992x'"),
+        ordered("review edge cases", "SELECT id FROM events WHERE CAST(score AS CHAR) BETWEEN 9.5 AND 20.25 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM events WHERE CAST(score AS CHAR) IN (10.00, 20.0) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE DATE(placed_at) IN (SELECT placed_at FROM orders WHERE id IN (3, 8)) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE DATE(placed_at) = ANY (SELECT placed_at FROM orders WHERE id IN (3, 8)) ORDER BY id"),
+        ordered("review edge cases", "SELECT o.id FROM orders o WHERE DATE(o.placed_at) IN (SELECT o2.placed_at FROM orders o2 WHERE o2.user_id = o.user_id) ORDER BY o.id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE placed_at NOT IN (SELECT DATE(placed_at) FROM orders WHERE id IN (3, 8)) ORDER BY id"),
         ordered(
             "unicode_ci collation",
             "SELECT id, label FROM events ORDER BY label, id",

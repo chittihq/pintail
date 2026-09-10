@@ -986,6 +986,7 @@ impl<'catalog> Binder<'catalog> {
             tables.pop();
             return Err(unsupported());
         }
+        let (outer_value, projected_value) = unify_temporal_operands(outer_value, projected_value);
         let membership = BoundExpr {
             data_type: Some(DataType::Boolean),
             nullable: outer_value.nullable || projected_value.nullable,
@@ -3155,10 +3156,16 @@ fn bind_in_subquery(
                     "IN subquery must produce exactly one column".to_owned(),
                 ));
             }
+            let mut query = query;
             let projection = &query.projection[0];
             if !comparable(expr.data_type, projection.expr.data_type) {
                 return Err(BindError::InvalidScalarFunction("IN subquery".to_owned()));
             }
+            // A DATE member meets a DATETIME value as the instant at its
+            // midnight: both sides are read as DATETIME(6), the subquery's
+            // column where it is produced.
+            let (expr, value) = unify_temporal_operands(expr, query.projection[0].expr.clone());
+            query.projection[0].expr = value;
             return Ok(BoundExpr {
                 kind: BoundExprKind::InSubquery {
                     expr: Box::new(expr),
@@ -5461,14 +5468,27 @@ fn text_as_number(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
     }
 }
 
-/// The IN and BETWEEN form of [`text_as_number`]: a member meeting a DECIMAL
-/// subject is read as a double when it is text.
-fn number_for_text(subject: &BoundExpr, member: BoundExpr) -> BoundExpr {
-    if matches!(subject.data_type, Some(DataType::Decimal { .. })) && is_plain_text(&member) {
-        cast_to(member, DataType::Float64)
-    } else {
-        member
+/// IN and BETWEEN compare their whole list under one type in `MySQL`: when a
+/// DECIMAL shares it with text or a floating-point number, every member
+/// compares as a double. Compared pair by pair instead, the DECIMAL members
+/// met each other as text and `7.00 IN ('x', 7.0)` failed.
+fn numeric_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let decimal = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Decimal { .. }));
+    let inexact = |expr: &BoundExpr| {
+        is_plain_text(expr) || matches!(expr.data_type, Some(DataType::Float32 | DataType::Float64))
+    };
+    if !(args.iter().any(decimal) && args.iter().any(inexact)) {
+        return args;
     }
+    args.into_iter()
+        .map(|argument| {
+            if decimal(&argument) || is_plain_text(&argument) {
+                cast_to(argument, DataType::Float64)
+            } else {
+                argument
+            }
+        })
+        .collect()
 }
 
 /// A temporal operand compared with a literal compares as the temporal
@@ -5524,10 +5544,12 @@ fn canonical_literal_operand(
     })
 }
 
-/// An exact number compared with a string literal compares as a number in
-/// `MySQL`. The DECIMAL carrier is text, so `balance > '100.5'` compared the
-/// strings and `'99.00'` came out greater; a literal that is a plain number
-/// is read as one first. Anything else is left as written.
+/// An exact number compared with a string compares as a double in `MySQL`,
+/// however the string is spelled: `'9007199254740992'` and
+/// `'9007199254740992x'` meet a BIGINT the same way. A literal that is a plain
+/// number is read as that double here; any other text is read by its numeric
+/// prefix where it is compared. The DECIMAL carrier is text, so compared as
+/// written `balance > '100.5'` would have compared strings.
 fn numeric_literal(operand: BoundExpr) -> BoundExpr {
     let BoundExprKind::Literal(Value::Utf8(text)) = &operand.kind else {
         return operand;
@@ -5539,10 +5561,10 @@ fn numeric_literal(operand: BoundExpr) -> BoundExpr {
     if !digits(integer) || !digits(fraction) {
         return operand;
     }
-    match parse_number(number) {
-        Ok((value, data_type)) => BoundExpr {
-            kind: BoundExprKind::Literal(value),
-            data_type,
+    match number.parse::<f64>() {
+        Ok(value) => BoundExpr {
+            kind: BoundExprKind::Literal(Value::float64(value)),
+            data_type: Some(DataType::Float64),
             nullable: false,
         },
         Err(_) => operand,

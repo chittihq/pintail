@@ -26,6 +26,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   DISTINCT keys; `1` still equals `1.0`.
 - `x op ANY` and `x op ALL` over text values take their extremes as numbers
   when `x` is a number, as MySQL does over a table column.
+- An exact number compared with a string compares as a double however the
+  string is spelled, so `'9007199254740992'` and `'9007199254740992x'` agree.
+- IN and BETWEEN compare their whole list under one type: a DECIMAL sharing
+  it with text or a float compares as a double, where DECIMAL members had
+  met each other as text; a text subject meets DECIMAL bounds the same way.
+- A DATE member of an `IN (SELECT ...)` or `= ANY` list of DATETIME values,
+  decorrelated or not, matches the instant at its midnight.
 
 ## [0.1.5-rc1] - 2026-09-10
 
