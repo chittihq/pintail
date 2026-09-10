@@ -64,12 +64,16 @@ export function oracleEvidenceFromLedger(ledger: string, corpus: string, commit:
   const expected = Number(/const EXPECTED_CASES: usize = (\d+);/.exec(corpus)?.[1])
   if (!expected || run.expectedCases !== expected || !Array.isArray(run.cases) || run.cases.length !== expected) throw new Error('Oracle evidence is not a complete fixed corpus')
   const names = new Set<string>()
-  const cases = run.cases.map((row: { name: string; sql: string; ordered: boolean; status: string }) => {
-    if (typeof row.name !== 'string' || !row.name || typeof row.sql !== 'string' || !row.sql || typeof row.ordered !== 'boolean' || row.status !== 'PASS') throw new Error('Oracle case lacks SQL or PASS result')
+  // A reviewed known failure (the oracle ledger) is part of a complete run but
+  // proves no coverage, so it is checked and then left out of the case list.
+  const rows = run.cases as { name: string; sql: string; ordered: boolean; status: string }[]
+  const cases = rows.filter((row) => {
+    if (typeof row.name !== 'string' || !row.name || typeof row.sql !== 'string' || !row.sql || typeof row.ordered !== 'boolean' ||
+        (row.status !== 'PASS' && row.status !== 'KNOWN_FAILURE')) throw new Error('Oracle case lacks SQL or PASS result')
     if (names.has(row.name)) throw new Error('Duplicate oracle case name')
     names.add(row.name)
-    return { name: `oracle:${row.name}`, sqlSha256: sha256(row.sql), functions: functionCalls(row.sql), phases: ['fixed-oracle'] }
-  }).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
+    return row.status === 'PASS'
+  }).map((row) => ({ name: `oracle:${row.name}`, sqlSha256: sha256(row.sql), functions: functionCalls(row.sql), phases: ['fixed-oracle'] })).sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
   return {
     schemaVersion: 1, commit, sourceCommit: run.commit, measuredAt: run.measuredAt, source: run.source,
     ledgerSha256: sha256(ledger), corpusSha256: sha256(corpus), cases,

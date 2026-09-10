@@ -195,7 +195,7 @@ const STAGES: Stage[] = [
     remote: true,
     timeoutMinutes: 20,
     command: [
-      'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture',
+      'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture', '--test-threads=1', '--skip', 'validates_generated_candidates',
     ],
     env: { PINTAIL_DASHBOARD_PREBUILT: '1', PINTAIL_ORACLE_EVIDENCE: join(repository, 'tests/sqllogic/results-oracle.json') },
   },

@@ -3673,10 +3673,24 @@ fn bind_binary(
             | BinaryOperator::GtEq
     ) {
         let (left, right) = unify_temporal_operands(left, right);
+        let (left, right) = unify_time_operands(left, right);
         let right = canonical_literal_operand(&left, right)?;
         let left = canonical_literal_operand(&right, left)?;
         let (left, right) = text_as_number(left, right);
         rewrite_json_comparison(left, right)
+    } else {
+        (left, right)
+    };
+    let (left, right) = if matches!(
+        operator,
+        BinaryOperator::Plus
+            | BinaryOperator::Minus
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide
+            | BinaryOperator::Modulo
+            | BinaryOperator::MyIntegerDivide
+    ) {
+        (time_as_number(left), time_as_number(right))
     } else {
         (left, right)
     };
@@ -3815,22 +3829,20 @@ fn bind_exact_decimal_comparison(
     mut left: BoundExpr,
     mut right: BoundExpr,
 ) -> BoundExpr {
-    if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) {
+    let (left_scale, left_integer) =
+        exact_numeric_digits(left.data_type.expect("typed")).expect("exact numeric comparison");
+    let (right_scale, right_integer) =
+        exact_numeric_digits(right.data_type.expect("typed")).expect("exact numeric comparison");
+    let scale = left_scale.max(right_scale);
+    let precision = left_integer.max(right_integer).saturating_add(scale);
+    // Past the widest DECIMAL no common type holds both sides - DECIMAL(38,0)
+    // against DECIMAL(20,3) needs 41 digits - so such a pair compares by value
+    // below instead of through a cast that overflows.
+    if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) && precision <= MAX_DECIMAL_PRECISION {
         // Keep equality as a binary predicate so the physical planner can
         // still extract equi-join keys. Casting both sides to one scale also
         // gives the text-backed DECIMAL carrier one canonical hash key.
-        let (left_scale, left_integer) =
-            exact_numeric_digits(left.data_type.expect("typed")).expect("exact numeric comparison");
-        let (right_scale, right_integer) = exact_numeric_digits(right.data_type.expect("typed"))
-            .expect("exact numeric comparison");
-        let scale = left_scale.max(right_scale);
-        let unified = DataType::Decimal {
-            precision: left_integer
-                .max(right_integer)
-                .saturating_add(scale)
-                .min(MAX_DECIMAL_PRECISION),
-            scale,
-        };
+        let unified = DataType::Decimal { precision, scale };
         wrap_in_decimal_cast(&mut left, unified);
         wrap_in_decimal_cast(&mut right, unified);
         return BoundExpr {
@@ -4225,31 +4237,9 @@ fn bind_quantified(
         _ => return Err(unsupported()),
     };
     let mut values = (**query).clone();
-    let SetExpr::Select(select) = values.body.as_mut() else {
+    if !name_quantified_value(values.body.as_mut(), numeric_left) {
         return Err(unsupported());
-    };
-    let [
-        SelectItem::UnnamedExpr(projected)
-        | SelectItem::ExprWithAlias {
-            expr: projected, ..
-        },
-    ] = select.projection.as_slice()
-    else {
-        return Err(unsupported());
-    };
-    let value_expr = if numeric_left {
-        Expr::BinaryOp {
-            left: Box::new(Expr::Nested(Box::new(projected.clone()))),
-            op: BinaryOperator::Plus,
-            right: Box::new(Expr::Value(SqlValue::Number("0".to_owned(), false).into())),
-        }
-    } else {
-        projected.clone()
-    };
-    select.projection = vec![SelectItem::ExprWithAlias {
-        expr: value_expr,
-        alias: Ident::new(QUANTIFIED_VALUE),
-    }];
+    }
     let source = format!("FROM ({values}) AS {QUANTIFIED_TABLE}");
     let value = format!("{QUANTIFIED_TABLE}.{QUANTIFIED_VALUE}");
     let x = format!("({left})");
@@ -4293,6 +4283,45 @@ fn bind_quantified(
     // table; that shape stays unsupported rather than reporting a column
     // the user never wrote.
     bind_expr_inner(&rewritten, tables, aggregates, windows, subqueries).map_err(|_| unsupported())
+}
+
+/// Names the one column of a quantified subquery [`QUANTIFIED_VALUE`], read as
+/// a number when the comparison is numeric. Every branch of a set operation
+/// is named alike, so `x > ALL (SELECT .. UNION ALL SELECT ..)` reads the
+/// combined rows. False for a shape that is not one projected column.
+fn name_quantified_value(body: &mut SetExpr, numeric: bool) -> bool {
+    match body {
+        SetExpr::Select(select) => {
+            let [
+                SelectItem::UnnamedExpr(projected)
+                | SelectItem::ExprWithAlias {
+                    expr: projected, ..
+                },
+            ] = select.projection.as_slice()
+            else {
+                return false;
+            };
+            let value_expr = if numeric {
+                Expr::BinaryOp {
+                    left: Box::new(Expr::Nested(Box::new(projected.clone()))),
+                    op: BinaryOperator::Plus,
+                    right: Box::new(Expr::Value(SqlValue::Number("0".to_owned(), false).into())),
+                }
+            } else {
+                projected.clone()
+            };
+            select.projection = vec![SelectItem::ExprWithAlias {
+                expr: value_expr,
+                alias: Ident::new(QUANTIFIED_VALUE),
+            }];
+            true
+        }
+        SetExpr::SetOperation { left, right, .. } => {
+            name_quantified_value(left, numeric) && name_quantified_value(right, numeric)
+        }
+        SetExpr::Query(query) => name_quantified_value(query.body.as_mut(), numeric),
+        _ => false,
+    }
 }
 
 /// `x IS [NOT] TRUE` and `x IS [NOT] FALSE`: the `MySQL` truth tests, which are
@@ -5439,6 +5468,57 @@ fn unify_temporal_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
         .collect()
 }
 
+/// Integer digits of a TIME read as a number: 838:59:59 is 8385959.
+const TIME_NUMBER_DIGITS: u8 = 7;
+
+/// A TIME in a numeric context is the number `[-]HHMMSS[.ffffff]` in `MySQL`,
+/// at the value's fractional precision: `TIME + 0` is that number.
+fn time_as_number(expr: BoundExpr) -> BoundExpr {
+    match expr.data_type {
+        Some(DataType::Time64 { fsp: 0 }) => cast_to(expr, DataType::Int64),
+        Some(DataType::Time64 { fsp }) => cast_to(
+            expr,
+            DataType::Decimal {
+                precision: TIME_NUMBER_DIGITS + fsp,
+                scale: fsp,
+            },
+        ),
+        _ => expr,
+    }
+}
+
+/// A TIME compares as its number, which keeps the time order where the text
+/// does not (`-100:00:00` sorted above `-00:00:01` as text), and a string
+/// compared with a TIME is read as a TIME first, as `MySQL` does.
+fn unify_time_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    if is_time(&left) || is_time(&right) {
+        (time_comparand(left), time_comparand(right))
+    } else {
+        (left, right)
+    }
+}
+
+/// The list form of [`unify_time_operands`], for IN and BETWEEN.
+fn unify_time_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    if args.iter().any(is_time) {
+        args.into_iter().map(time_comparand).collect()
+    } else {
+        args
+    }
+}
+
+fn is_time(expr: &BoundExpr) -> bool {
+    matches!(expr.data_type, Some(DataType::Time64 { .. }))
+}
+
+fn time_comparand(expr: BoundExpr) -> BoundExpr {
+    if is_plain_text(&expr) {
+        time_as_number(cast_to(expr, DataType::Time64 { fsp: 6 }))
+    } else {
+        time_as_number(expr)
+    }
+}
+
 fn as_common_temporal(expr: BoundExpr) -> BoundExpr {
     if expr.data_type == Some(COMMON_TEMPORAL) {
         expr
@@ -5835,7 +5915,6 @@ fn bind_order_by(
     // UNION all change the row set or reject unprojected sorts outright.
     let allow_hidden = bound.group_by.is_empty()
         && bound.aggregates.is_empty()
-        && bound.windows.is_empty()
         && !bound.distinct
         && bound.union_all.is_empty();
     let visible = bound.projection.len();
@@ -7567,7 +7646,8 @@ mod tests {
         .expect("scalar functions");
         assert_eq!(query.projection.len(), 8);
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Utf8));
-        assert_eq!(query.projection[1].expr.data_type, Some(DataType::Float64));
+        // An unsigned id against a non-negative literal stays unsigned.
+        assert_eq!(query.projection[1].expr.data_type, Some(DataType::UInt64));
         assert_eq!(query.projection[3].expr.data_type, Some(DataType::Boolean));
         assert_eq!(query.projection[5].expr.data_type, Some(DataType::Utf8));
         assert_eq!(query.projection[6].expr.data_type, Some(DataType::Utf8));

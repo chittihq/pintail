@@ -40,4 +40,6 @@ test('fixed oracle evidence includes executed SQL and rejects incomplete or dirt
   expect(() => parse({ ...run, corpusSha256: 'stale' })).toThrow('corpus')
   expect(() => parse({ ...run, cases: [run.cases[0], run.cases[0]] })).toThrow('Duplicate')
   expect(() => parse({ ...run, cases: [run.cases[0], { ...run.cases[1], status: 'FAIL' }] })).toThrow('PASS')
+  const known = parse({ ...run, cases: [run.cases[0], { ...run.cases[1], status: 'KNOWN_FAILURE' }] })
+  expect(known.cases.map((c) => c.name)).toEqual(['oracle:0000:numeric'])
 })

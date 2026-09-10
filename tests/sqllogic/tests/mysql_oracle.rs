@@ -9,6 +9,17 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
+#[path = "support/oracle_boundaries.rs"]
+mod oracle_boundaries;
+#[path = "support/oracle_candidates.rs"]
+mod oracle_candidates;
+#[path = "support/oracle_ledger.rs"]
+mod oracle_ledger;
+#[path = "support/oracle_physical.rs"]
+mod oracle_physical;
+#[path = "support/oracle_transport.rs"]
+mod oracle_transport;
+
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
 };
@@ -29,7 +40,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1388;
+const EXPECTED_CASES: usize = 1895;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -81,6 +92,7 @@ const FIXTURE_SQL: &str = "CREATE TABLE events (\
            (12,7,64.00,'2025-04-01 16:45:00','delivered','{\"tags\":[\"premium\"],\"score\":8,\"items\":[2,4,6,8]}'),\
            (13,8,949.86,'2025-05-01 12:00:00','processing','{\"tags\":[\"rounding\"],\"score\":9.5,\"items\":[5]}');";
 
+#[derive(Clone)]
 struct OracleCase {
     sql_mode: &'static str,
     family: &'static str,
@@ -88,8 +100,10 @@ struct OracleCase {
     ordered: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 enum OracleValue {
+    Null,
+    Binary(Vec<u8>),
     Exact(String),
     Float(String),
 }
@@ -97,16 +111,19 @@ enum OracleValue {
 struct MysqlContainer {
     name: String,
     image: String,
+    password: String,
 }
 
 impl MysqlContainer {
     fn start() -> Result<Self, String> {
-        let image =
+        let requested =
             std::env::var("PINTAIL_ORACLE_MYSQL_IMAGE").unwrap_or_else(|_| "mysql:8.4".to_owned());
+        let image = oracle_transport::pinned_image(&requested)?;
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
+        let password = oracle_transport::hash(&rand::random::<[u8; 32]>());
         let name = format!("pintail-mysql-oracle-{}-{nonce}", std::process::id());
         checked_output(
             Command::new("docker").args([
@@ -116,8 +133,12 @@ impl MysqlContainer {
                 &name,
                 "--tmpfs",
                 "/var/lib/mysql:rw,size=2g",
+                "--publish",
+                "3306",
                 "--env",
-                "MYSQL_ALLOW_EMPTY_PASSWORD=yes",
+                "MYSQL_ROOT_HOST=%",
+                "--env",
+                &format!("MYSQL_ROOT_PASSWORD={password}"),
                 "--env",
                 "MYSQL_DATABASE=app",
                 &image,
@@ -127,12 +148,18 @@ impl MysqlContainer {
             &format!("start {image} oracle"),
         )?;
 
-        let container = Self { name, image };
+        let container = Self {
+            name,
+            image,
+            password,
+        };
         let mut consecutive_connections = 0;
         for _ in 0..120 {
             let connected = Command::new("docker")
                 .args([
                     "exec",
+                    "--env",
+                    &format!("MYSQL_PWD={}", container.password),
                     &container.name,
                     "mysql",
                     "--user=root",
@@ -155,6 +182,8 @@ impl MysqlContainer {
                 checked_output(
                     Command::new("docker").args([
                         "exec",
+                        "--env",
+                        &format!("MYSQL_PWD={}", container.password),
                         &container.name,
                         "sh",
                         "-c",
@@ -179,6 +208,8 @@ impl MysqlContainer {
             .args([
                 "exec",
                 "--interactive",
+                "--env",
+                &format!("MYSQL_PWD={}", self.password),
                 &self.name,
                 "mysql",
                 "--user=root",
@@ -227,24 +258,116 @@ fn matches_configured_mysql_for_fixed_corpus() {
 }
 
 #[test]
+#[ignore = "requires Docker; compares storage layouts and spill execution against MySQL"]
+fn matches_mysql_across_storage_layouts() {
+    oracle_physical::run().unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+#[ignore = "requires an explicitly supplied candidate file and Docker"]
+fn validates_generated_candidates() {
+    oracle_candidates::run().unwrap_or_else(|e| panic!("{e}"));
+}
+
+#[test]
+#[ignore = "private bounded candidate subprocess"]
+fn validates_generated_candidates_worker() {
+    oracle_candidates::worker().unwrap();
+}
+
+#[test]
+fn generated_candidates_are_read_only_and_reducible() {
+    for sql in [
+        "SELECT id, COUNT(*) OVER (ORDER BY 1 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM bounds",
+        "SELECT id FROM bounds LIMIT 1",
+        "DELETE FROM bounds",
+        "SELECT SLEEP(1)",
+        "SELECT LOAD_FILE('/etc/passwd')",
+        "SELECT * FROM mysql.user",
+        "SELECT * FROM bounds FOR UPDATE",
+        "SELECT 1; SELECT 2",
+        "SELECT 1 INTO OUTFILE '/tmp/a'",
+    ] {
+        assert!(oracle_candidates::validate(sql).is_err(), "{sql}");
+    }
+    assert!(
+        oracle_candidates::validate(
+            "WITH x AS (SELECT id FROM bounds) SELECT * FROM x ORDER BY id"
+        )
+        .is_ok()
+    );
+    let variants =
+        oracle_candidates::reductions("SELECT id, n, frac FROM bounds WHERE id > 0 ORDER BY id");
+    assert!(!variants.is_empty());
+    assert!(
+        variants
+            .iter()
+            .all(|s| oracle_candidates::validate(s).is_ok())
+    );
+}
+
+#[test]
 fn oracle_applies_tolerance_only_to_float_results() {
     assert!(!oracle_values_equal(
         &OracleValue::Exact("9007199254740993".to_owned()),
-        "9007199254740992",
+        &OracleValue::Exact("9007199254740992".to_owned()),
     ));
     assert!(!oracle_values_equal(
         &OracleValue::Exact("01".to_owned()),
-        "1",
+        &OracleValue::Exact("1".to_owned()),
     ));
     assert!(oracle_values_equal(
         &OracleValue::Float("0.30000000000000004".to_owned()),
-        "0.3",
+        &OracleValue::Float("0.3".to_owned()),
+    ));
+}
+
+#[test]
+fn oracle_preserves_null_bytes_and_expected_numeric_types() {
+    let text = OracleValue::Exact("NULL".into());
+    assert!(!oracle_values_equal(&OracleValue::Null, &text));
+    assert!(!oracle_values_equal(&text, &OracleValue::Null));
+    assert!(!oracle_values_equal(
+        &OracleValue::Binary(vec![0xff]),
+        &OracleValue::Binary(vec![0xfe])
+    ));
+    assert!(!oracle_values_equal(
+        &OracleValue::Float("9007199254740992".into()),
+        &OracleValue::Exact("9007199254740993".into())
+    ));
+    assert!(!oracle_values_equal(
+        &OracleValue::Float("1".into()),
+        &OracleValue::Exact("1".into())
+    ));
+    for bytes in [
+        b"a\tb".as_slice(),
+        b"a\nb",
+        b"\0",
+        b"",
+        b"__PINTAIL_CASE_1__",
+    ] {
+        let value = OracleValue::Binary(bytes.to_vec());
+        assert!(oracle_values_equal(&value, &value));
+    }
+    let one = vec![OracleValue::Null];
+    let literal = vec![text];
+    assert!(!oracle_rows_equal(
+        &[one.clone(), one.clone()],
+        &[one.clone(), literal.clone()],
+        false
+    ));
+    assert!(oracle_rows_equal(
+        &[one.clone(), literal.clone()],
+        &[literal, one],
+        false
     ));
 }
 
 #[test]
 fn oracle_case_inventory_matches_the_declared_gate() {
-    assert_eq!(oracle_cases().len(), EXPECTED_CASES);
+    let cases = oracle_cases();
+    assert_eq!(cases.len(), EXPECTED_CASES);
+    oracle_transport::export_inventory(&cases).expect("export runtime inventory");
 }
 
 #[allow(clippy::too_many_lines)]
@@ -258,6 +381,7 @@ fn run_oracle() -> Result<(), String> {
         .transpose()?;
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
+    mysql.query_batch(oracle_boundaries::SQL)?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
@@ -294,6 +418,17 @@ fn run_oracle() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -302,6 +437,7 @@ fn run_oracle() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
@@ -312,49 +448,101 @@ fn run_oracle() -> Result<(), String> {
             cases.len()
         ));
     }
-    let mysql_results = execute_mysql_cases(&mysql, &cases)?;
+    let mysql_results = oracle_transport::execute_all(&mysql, &cases)?;
+    let known = oracle_ledger::load()?;
+    let mut listed = BTreeSet::new();
+    let mut warnings = Vec::new();
+    let mut known_failed = BTreeSet::new();
     let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     for (index, (case, expected)) in cases.iter().zip(&mysql_results).enumerate() {
-        // Every case runs, and an engine error is one more mismatch: stopping
-        // at the first refusal hid every divergence after it, so a run found
-        // one problem per rebuild.
-        let actual = match pintail_sql::with_parse_mode(
-            pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
-            || execute_pintail(&case.sql, &catalog, &provider),
-        ) {
-            Ok(actual) => actual,
+        let expected = match expected {
+            Ok(rows) => rows,
             Err(error) => {
-                failures.push(format!(
-                    "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail error: {error}",
-                    case.family, case.sql
-                ));
+                failures.push(error.clone());
+                outcomes.push(serde_json::json!({"id":oracle_transport::case_id(case),"family":case.family,"sql":case.sql,"status":"MYSQL_REJECTED","error":error}));
                 continue;
             }
         };
-        if !oracle_rows_equal(&actual, expected, case.ordered) {
-            failures.push(format!(
-                "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
+        let actual = pintail_sql::with_parse_mode(
+            pintail_sql::ParseMode::from_sql_mode(case.sql_mode),
+            || execute_pintail(&case.sql, &catalog, &provider),
+        );
+        let id = oracle_transport::case_id(case);
+        let entry = known.get(&id);
+        if let Some(entry) = entry {
+            listed.insert(id.clone());
+            if entry.sql != case.sql {
+                failures.push(format!(
+                    "known failure {id} lists different SQL than case {index}: {}",
+                    entry.sql
+                ));
+            }
+        }
+        let pass = actual
+            .as_ref()
+            .is_ok_and(|a| oracle_rows_equal(a, expected, case.ordered));
+        outcomes.push(serde_json::json!({
+            "id": id, "family": case.family, "sql": case.sql,
+            "status": match (pass, entry.is_some()) {
+                (true, false) => "PASS",
+                (false, false) => "FAIL",
+                (false, true) => "KNOWN_FAILURE",
+                (true, true) => "STALE_KNOWN_FAILURE",
+            },
+            "expected": expected, "actual": actual.as_ref().ok(), "error": actual.as_ref().err(),
+        }));
+        if let Some(entry) = entry {
+            if pass {
+                failures.push(format!(
+                    "case {index} ({})\nSQL: {}\nnow matches MySQL but is listed as a known failure; \
+                     remove {id} from oracle_known_failures.json",
+                    case.family, case.sql
+                ));
+            } else {
+                known_failed.insert(id.clone());
+                warnings.push(format!(
+                    "case {index} ({}): {} [{}]\nSQL: {}",
+                    case.family, entry.reason, entry.limitation, case.sql
+                ));
+            }
+            continue;
+        }
+        match actual {
+            Err(error) => failures.push(format!(
+                "case {index} ({})\nSQL: {}\nPintail execution error: {error}",
                 case.family, case.sql
-            ));
+            )),
+            Ok(actual) if !oracle_rows_equal(&actual, expected, case.ordered) => {
+                failures.push(format!(
+                    "case {index} ({})\nSQL: {}\nMySQL: {expected:?}\nPintail: {actual:?}",
+                    case.family, case.sql
+                ));
+            }
+            Ok(_) => {}
         }
     }
+    for id in known.keys().filter(|id| !listed.contains(*id)) {
+        failures.push(format!("known failure {id} names no case in the corpus"));
+    }
+    for warning in &warnings {
+        println!("WARN known failure, {warning}");
+    }
+    oracle_transport::write_outcomes(&mysql, &cases, &outcomes)?;
     if failures.is_empty() {
-        export_oracle_evidence(&mysql, &cases, evidence.as_ref())?;
+        export_oracle_evidence(&mysql, &cases, &known_failed, evidence.as_ref())?;
         println!(
-            "all {EXPECTED_CASES} generated and hand-written queries matched {}",
-            mysql.image
+            "{} of {EXPECTED_CASES} generated and hand-written queries matched {}; {} reviewed known failure(s) warned",
+            EXPECTED_CASES - warnings.len(),
+            mysql.image,
+            warnings.len()
         );
         Ok(())
     } else {
         Err(format!(
-            "{} differential mismatch(es), showing at most 40:\n{}",
+            "{} of {EXPECTED_CASES} differential case(s) failed, showing at most 40:\n{}",
             failures.len(),
-            failures
-                .iter()
-                .take(40)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join("\n\n")
+            failures[..failures.len().min(40)].join("\n\n")
         ))
     }
 }
@@ -442,6 +630,7 @@ fn oracle_evidence_rejects_dirty_starts_and_changes_during_the_run() {
 fn export_oracle_evidence(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
+    known_failed: &BTreeSet<String>,
     evidence: Option<&(String, OracleRunProvenance)>,
 ) -> Result<(), String> {
     let Some((path, provenance)) = evidence else {
@@ -462,12 +651,13 @@ fn export_oracle_evidence(
         "source": format!("MySQL {} ({})", version.trim(), mysql.image),
         "corpusSha256": corpus_hash,
         "expectedCases": EXPECTED_CASES,
-        "comparator": "exact text except float results: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
+        "comparator": "typed NULL and bytes; approximate types on both sides only: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
         "cases": cases.iter().enumerate().map(|(index, case)| serde_json::json!({
             "name": format!("{index:04}:{}", case.family),
             "sql": case.sql,
             "ordered": case.ordered,
-            "status": "PASS",
+            // A reviewed known failure is recorded as one, never as a pass.
+            "status": if known_failed.contains(&oracle_transport::case_id(case)) { "KNOWN_FAILURE" } else { "PASS" },
         })).collect::<Vec<_>>(),
     });
     let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
@@ -511,56 +701,8 @@ fn mysql_optimizer_switch(family: &str) -> Option<&'static str> {
 fn execute_mysql_cases(
     mysql: &MysqlContainer,
     cases: &[OracleCase],
-) -> Result<Vec<Vec<String>>, String> {
-    let mut sql = String::new();
-    for (index, case) in cases.iter().enumerate() {
-        writeln!(sql, "SELECT '__PINTAIL_CASE_{index}__';")
-            .expect("writing to an owned string cannot fail");
-        if !case.sql_mode.is_empty() {
-            writeln!(
-                sql,
-                "SET @pintail_previous_mode=@@sql_mode; SET sql_mode='{}';",
-                case.sql_mode
-            )
-            .unwrap();
-        }
-        let optimizer_switch = mysql_optimizer_switch(case.family);
-        if let Some(switch) = optimizer_switch {
-            writeln!(sql, "SET SESSION optimizer_switch='{switch}';").unwrap();
-        }
-        sql.push_str(&case.sql);
-        sql.push_str(";\n");
-        if optimizer_switch.is_some() {
-            sql.push_str("SET SESSION optimizer_switch='default';\n");
-        }
-        if !case.sql_mode.is_empty() {
-            sql.push_str("SET sql_mode=@pintail_previous_mode;\n");
-        }
-    }
-    writeln!(sql, "SELECT '__PINTAIL_CASE_{}__';", cases.len())
-        .expect("writing to an owned string cannot fail");
-
-    let output = mysql.query_batch(&sql)?;
-    let mut results = vec![Vec::new(); cases.len()];
-    let mut current = None;
-    for line in output.lines() {
-        if let Some(index) = parse_marker(line) {
-            current = (index < cases.len()).then_some(index);
-        } else if let Some(index) = current {
-            results[index].push(line.to_owned());
-        } else if !line.is_empty() {
-            return Err(format!(
-                "unexpected MySQL output before first marker: {line}"
-            ));
-        }
-    }
-    Ok(results)
-}
-
-fn parse_marker(line: &str) -> Option<usize> {
-    line.strip_prefix("__PINTAIL_CASE_")
-        .and_then(|value| value.strip_suffix("__"))
-        .and_then(|value| value.parse().ok())
+) -> Result<Vec<Vec<Vec<OracleValue>>>, String> {
+    oracle_transport::execute(mysql, cases)
 }
 
 fn execute_pintail(
@@ -599,7 +741,11 @@ fn execute_pintail(
     Ok(rows)
 }
 
-fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[String], ordered: bool) -> bool {
+fn oracle_rows_equal(
+    actual: &[Vec<OracleValue>],
+    expected: &[Vec<OracleValue>],
+    ordered: bool,
+) -> bool {
     if actual.len() != expected.len() {
         return false;
     }
@@ -624,33 +770,39 @@ fn oracle_rows_equal(actual: &[Vec<OracleValue>], expected: &[String], ordered: 
     })
 }
 
-fn oracle_row_equal(actual: &[OracleValue], expected: &str) -> bool {
-    let expected = expected.split('\t').collect::<Vec<_>>();
+fn oracle_row_equal(actual: &[OracleValue], expected: &[OracleValue]) -> bool {
     actual.len() == expected.len()
         && actual
             .iter()
             .zip(expected)
-            .all(|(actual, expected)| oracle_values_equal(actual, expected))
+            .all(|(a, e)| oracle_values_equal(a, e))
 }
 
-fn oracle_values_equal(actual: &OracleValue, expected: &str) -> bool {
-    match actual {
-        OracleValue::Exact(actual) => actual == expected,
-        OracleValue::Float(actual) if actual == expected => true,
-        OracleValue::Float(actual) => {
-            let (Ok(actual), Ok(expected)) = (actual.parse::<f64>(), expected.parse::<f64>())
-            else {
+fn oracle_values_equal(actual: &OracleValue, expected: &OracleValue) -> bool {
+    match (actual, expected) {
+        (OracleValue::Null, OracleValue::Null) => true,
+        (OracleValue::Binary(a), OracleValue::Binary(e)) => a == e,
+        (OracleValue::Exact(a), OracleValue::Exact(e)) => a == e,
+        // The text and binary carriers share byte identity, not lossy decoding.
+        (OracleValue::Exact(a), OracleValue::Binary(e)) => a.as_bytes() == e,
+        (OracleValue::Binary(a), OracleValue::Exact(e)) => a == e.as_bytes(),
+        (OracleValue::Float(a), OracleValue::Float(e)) => {
+            if a == e {
+                return true;
+            }
+            let (Ok(a), Ok(e)) = (a.parse::<f64>(), e.parse::<f64>()) else {
                 return false;
             };
-            let scale = actual.abs().max(expected.abs()).max(1.0);
-            (actual - expected).abs() <= f64::EPSILON * 16.0 * scale
+            let scale = a.abs().max(e.abs()).max(1.0);
+            (a - e).abs() <= f64::EPSILON * 16.0 * scale
         }
+        _ => false,
     }
 }
 
 fn canonical_value(value: &Value) -> OracleValue {
     match value {
-        Value::Null => OracleValue::Exact("NULL".to_owned()),
+        Value::Null => OracleValue::Null,
         Value::Boolean(value) => OracleValue::Exact(u8::from(*value).to_string()),
         Value::Int64(value) => OracleValue::Exact(value.to_string()),
         Value::UInt64(value) => OracleValue::Exact(value.to_string()),
@@ -662,7 +814,7 @@ fn canonical_value(value: &Value) -> OracleValue {
             let value = &average.label;
             OracleValue::Exact(value.clone())
         }
-        Value::Binary(value) => OracleValue::Exact(String::from_utf8_lossy(value).into_owned()),
+        Value::Binary(value) => OracleValue::Binary(value.clone()),
     }
 }
 
@@ -1280,6 +1432,33 @@ fn oracle_cases() -> Vec<OracleCase> {
         cases.push(OracleCase { sql_mode: "", family: "exact integer rounding", sql: format!("SELECT {function}(CAST(9223372036854775807 AS SIGNED)), {function}(CAST(18446744073709551615 AS UNSIGNED))"), ordered: true });
     }
     cases.extend(hand_written_cases());
+    cases.extend(oracle_boundaries::cases());
+    for corpus in [
+        include_str!("support/oracle_reviewed_cases.json"),
+        include_str!("support/oracle_seed_cases.json"),
+    ] {
+        let document: serde_json::Value =
+            serde_json::from_str(corpus).expect("reviewed corpus JSON");
+        for case in document["cases"].as_array().expect("case array") {
+            cases.push(OracleCase {
+                sql: case["sql"].as_str().expect("case SQL").into(),
+                sql_mode: match case["sqlMode"].as_str().expect("case mode") {
+                    "" => "",
+                    "NO_UNSIGNED_SUBTRACTION" => "NO_UNSIGNED_SUBTRACTION",
+                    _ => panic!("unknown reviewed SQL mode"),
+                },
+                family: match case["family"].as_str().expect("case family") {
+                    "reviewed-nullable-decimal" => "reviewed-nullable-decimal",
+                    "reviewed-quantified-subquery" => "reviewed-quantified-subquery",
+                    "reviewed-collation-json" => "reviewed-collation-json",
+                    "reviewed-cte-window" => "reviewed-cte-window",
+                    "seed-minimized" => "seed-minimized",
+                    _ => panic!("unknown reviewed family"),
+                },
+                ordered: case["ordered"].as_bool().expect("reviewed ordering"),
+            });
+        }
+    }
     cases
 }
 
@@ -3536,6 +3715,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
     ]
     .into_iter()
     .chain(diversify_cases())
+    .chain(relational_edge_cases())
     .collect()
 }
 
@@ -3791,6 +3971,599 @@ fn diversify_cases() -> Vec<OracleCase> {
             "diversify min max datetime",
             "SELECT MIN(placed_at), MAX(placed_at), COUNT(*) FROM orders",
         ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note = NULL, note <> NULL, note <=> NULL, NOT (note = NULL) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, (note = 'Alpha') AND NULL, (note = 'Alpha') OR NULL, NOT (note = 'Alpha') FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN ('Alpha', NULL), note NOT IN ('Alpha', NULL) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN (SELECT note FROM events WHERE id < 0), note NOT IN (SELECT note FROM events WHERE id < 0) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, note IN (SELECT note FROM events WHERE id <= 3), note NOT IN (SELECT note FROM events WHERE id <= 3) FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, CASE note WHEN NULL THEN 'null' WHEN 'Alpha' THEN 'match' ELSE 'other' END, CASE WHEN note IS NULL THEN 'null' ELSE note END FROM events ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id FROM events WHERE NOT (note = 'Alpha' OR note IS NULL) ORDER BY id",
+        ),
+        ordered(
+            "null truth tables",
+            "SELECT id, COALESCE(NULLIF(note, 'Alpha'), 'missing'), IFNULL(NULLIF(score, 30), -1) FROM events ORDER BY id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id WHERE o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COUNT(*), COUNT(o.id), SUM(o.total), MIN(o.total), MAX(o.total) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 WHERE o.id IS NULL ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COALESCE(SUM(o.total), 0), SUM(CASE WHEN o.id IS NULL THEN 1 ELSE 0 END) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id HAVING COUNT(o.id) = 0 ORDER BY u.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT o.id, u.id, e.note FROM orders o LEFT JOIN users u ON u.id = o.user_id LEFT JOIN events e ON e.id = u.id AND e.note IS NOT NULL ORDER BY o.id",
+        ),
+        ordered(
+            "outer join null interactions",
+            "SELECT u.id, o.id FROM users u LEFT JOIN orders o ON o.user_id = u.id AND 1 = 0 ORDER BY u.id",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*), COUNT(note), COUNT(DISTINCT note), SUM(score), AVG(score), MIN(score), MAX(score) FROM events WHERE id < 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*), SUM(total), AVG(total), MIN(placed_at), MAX(status) FROM orders WHERE total < 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT note, COUNT(*), SUM(score) FROM events WHERE id < 0 GROUP BY note",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*) FROM orders WHERE id < 0 HAVING COUNT(*) = 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(*) FROM orders WHERE id < 0 HAVING SUM(total) > 0",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COUNT(note), SUM(LENGTH(note)), MIN(note), MAX(note) FROM events WHERE note IS NULL",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT active, COUNT(*), COUNT(note), COUNT(DISTINCT note) FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "empty aggregate interactions",
+            "SELECT COALESCE(SUM(total), 0), IFNULL(AVG(total), -1) FROM orders WHERE id < 0",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(CASE WHEN status = 'shipped' THEN total ELSE 0 END), SUM(CASE WHEN status = 'pending' THEN total END) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(DISTINCT total), COUNT(DISTINCT total), MIN(NULLIF(total, 0)) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, ROUND(total, -1), TRUNCATE(total, 1), ROUND(-total, 1) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, total BETWEEN 0.01 AND 50.00, total IN (0.00, 0.01, 50.00, NULL) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id HAVING SUM(total) BETWEEN 25 AND 1000 ORDER BY amount, user_id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, CASE WHEN total = 0 THEN NULL ELSE total END, COALESCE(NULLIF(total, 0), 1.25) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT id, CAST(total AS DECIMAL(14,3)), CAST(-total AS DECIMAL(14,1)) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "decimal conditional aggregates",
+            "SELECT user_id, ROUND(SUM(total), 1), SUM(ROUND(total, 1)) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(*) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING), COUNT(note) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, MIN(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), MAX(note) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, LAG(note, 1, 'edge') OVER (ORDER BY id), LEAD(note, 1, 'edge') OVER (ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, FIRST_VALUE(note) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW), LAST_VALUE(note) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, SUM(total) OVER (PARTITION BY user_id ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, SUM(total) OVER (ORDER BY id ROWS BETWEEN 1 FOLLOWING AND 1 FOLLOWING) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "nullable window frames",
+            "SELECT id, COUNT(note) OVER (PARTITION BY active), ROW_NUMBER() OVER (PARTITION BY active ORDER BY id DESC) FROM events ORDER BY id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id, (SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id, (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 100) FROM users u ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 100) ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT o.id FROM orders o WHERE o.total > (SELECT AVG(p.total) FROM orders p WHERE p.user_id = o.user_id) ORDER BY o.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE total > 100) ORDER BY id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT u.id FROM users u WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.total > 0) AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id AND o.status = 'cancelled') ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "WITH totals AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) SELECT u.id, t.amount FROM users u LEFT JOIN totals t ON t.user_id = u.id AND t.amount > 100 ORDER BY u.id",
+        ),
+        ordered(
+            "subquery aggregate interactions",
+            "SELECT d.user_id, d.amount FROM (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) d WHERE d.amount > 100 ORDER BY d.amount DESC, d.user_id LIMIT 3",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATE_ADD(placed_at, INTERVAL 1 MONTH), DATE_SUB(placed_at, INTERVAL 1 MONTH) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, LAST_DAY(placed_at), DAYOFMONTH(placed_at), DAYOFYEAR(placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATE(placed_at) = LAST_DAY(placed_at), YEAR(placed_at), QUARTER(placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT YEAR(placed_at), MONTH(placed_at), COUNT(*), SUM(total) FROM orders GROUP BY YEAR(placed_at), MONTH(placed_at) ORDER BY YEAR(placed_at), MONTH(placed_at)",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id FROM orders WHERE placed_at >= '2024-02-29' AND placed_at < DATE_ADD('2024-02-29', INTERVAL 1 DAY) ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, TIMESTAMPDIFF(DAY, placed_at, DATE_ADD(placed_at, INTERVAL 1 MONTH)) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT id, DATEDIFF(LAST_DAY(placed_at), placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "calendar boundary interactions",
+            "SELECT DATE_ADD('2000-02-29', INTERVAL 100 YEAR), DATE_ADD('2024-01-31', INTERVAL 1 MONTH), DATE_SUB('2024-03-31', INTERVAL 1 MONTH)",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT active, COUNT(DISTINCT LOWER(note)), COUNT(DISTINCT UPPER(tag)) FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, NULLIF(note, 'ALPHA'), note <=> 'ALPHA' FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id FROM events WHERE COALESCE(note, 'Alpha') = 'ALPHA' ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, tag = 'red', tag LIKE 'red', tag IN ('red') FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note <=> b.note WHERE a.id <= 3 AND b.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, label = 'STRASSE', label IN ('strasse', 'arger') FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, CONCAT_WS(':', note, tag), CHARACTER_LENGTH(note), LENGTH(note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "collation expression interactions",
+            "SELECT id, CASE WHEN note = 'ALPHA' THEN LOWER(note) ELSE UPPER(note) END FROM events ORDER BY id",
+        ),
+    ]
+}
+
+/// Distinct query shapes covering interactions over the shared typed fixtures.
+#[allow(clippy::too_many_lines)]
+fn relational_edge_cases() -> Vec<OracleCase> {
+    let ordered = |family, sql: &str| OracleCase {
+        sql_mode: "",
+        family,
+        sql: sql.to_owned(),
+        ordered: true,
+    };
+    let unordered = |family, sql: &str| OracleCase {
+        ordered: false,
+        ..ordered(family, sql)
+    };
+    vec![
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_EXTRACT(meta, '$.missing'), JSON_TYPE(JSON_EXTRACT(meta, '$.missing')), JSON_LENGTH(meta, '$.missing') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, meta IS NULL, JSON_EXTRACT(meta, '$.tags') IS NULL, JSON_LENGTH(meta, '$.tags') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_CONTAINS_PATH(meta, 'one', '$.tags', '$.missing'), JSON_CONTAINS_PATH(meta, 'all', '$.tags', '$.missing') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, JSON_EXTRACT(meta, '$.items[0]'), JSON_EXTRACT(meta, '$.items[99]') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT user_id, COUNT(meta), COUNT(JSON_EXTRACT(meta, '$.missing')), SUM(JSON_LENGTH(meta, '$.items')) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id FROM orders WHERE JSON_LENGTH(meta, '$.items') = 0 OR meta IS NULL ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT id, COALESCE(JSON_UNQUOTE(JSON_EXTRACT(meta, '$.tags[0]')), 'empty') FROM orders ORDER BY id",
+        ),
+        ordered(
+            "json missing and null interactions",
+            "SELECT JSON_TYPE('null'), JSON_EXTRACT('null', '$') IS NULL, JSON_EXTRACT('{}', '$.x') IS NULL, JSON_UNQUOTE(JSON_EXTRACT('{\"x\":null}', '$.x'))",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 3 UNION SELECT note FROM events WHERE id >= 8",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 3 UNION ALL SELECT note FROM events WHERE id >= 8",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 6 INTERSECT ALL SELECT note FROM events WHERE id >= 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id <= 6 EXCEPT ALL SELECT note FROM events WHERE id >= 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE id < 0 UNION SELECT note FROM events WHERE note IS NULL",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE note IS NULL INTERSECT SELECT note FROM events WHERE id = 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT note FROM events WHERE note IS NULL EXCEPT ALL SELECT note FROM events WHERE id = 3",
+        ),
+        unordered(
+            "set multiplicity and null interactions",
+            "SELECT COUNT(*), COUNT(d.note) FROM (SELECT note FROM events UNION ALL SELECT note FROM events WHERE note IS NULL) d",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id, note FROM events ORDER BY note IS NULL, note, id LIMIT 3 OFFSET 2",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id FROM events ORDER BY id LIMIT 0",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT id FROM events ORDER BY id LIMIT 3 OFFSET 10",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT d.id FROM (SELECT id FROM events ORDER BY id DESC LIMIT 4) d ORDER BY d.id",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT d.id FROM (SELECT id FROM events ORDER BY id LIMIT 4 OFFSET 3) d WHERE d.id % 2 = 0 ORDER BY d.id",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT COUNT(*), SUM(d.total) FROM (SELECT total FROM orders ORDER BY total DESC, id LIMIT 3) d",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT user_id, COUNT(*) AS n FROM orders GROUP BY user_id ORDER BY n DESC, user_id LIMIT 3 OFFSET 1",
+        ),
+        ordered(
+            "derived limit boundaries",
+            "SELECT DISTINCT active FROM events ORDER BY active DESC LIMIT 1 OFFSET 1",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH selected AS (SELECT id, active FROM events WHERE id <= 4) SELECT a.id, b.id FROM selected a JOIN selected b ON a.active = b.active ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH grouped AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id), selected AS (SELECT user_id FROM grouped WHERE amount > 100) SELECT u.id FROM users u JOIN selected s ON s.user_id = u.id ORDER BY u.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH empty_rows AS (SELECT id FROM events WHERE id < 0) SELECT COUNT(*) FROM empty_rows",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH empty_rows AS (SELECT id FROM events WHERE id < 0) SELECT u.id, e.id FROM users u LEFT JOIN empty_rows e ON e.id = u.id ORDER BY u.id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH totals AS (SELECT user_id, SUM(total) AS amount FROM orders GROUP BY user_id) SELECT MAX(amount), MIN(amount), COUNT(*) FROM totals",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH notes AS (SELECT id, note FROM events WHERE note IS NULL) SELECT id FROM notes UNION ALL SELECT id FROM notes ORDER BY id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH ranked AS (SELECT id, user_id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total DESC, id) AS rn FROM orders) SELECT id, user_id FROM ranked WHERE rn = 1 ORDER BY user_id",
+        ),
+        ordered(
+            "cte reuse and composition",
+            "WITH subset AS (SELECT id, note FROM events ORDER BY id DESC LIMIT 3) SELECT COUNT(*), COUNT(note) FROM subset",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT active, GROUP_CONCAT(note ORDER BY id SEPARATOR '|') FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT user_id, GROUP_CONCAT(id, ':', status ORDER BY total DESC, id SEPARATOR '|') FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(note ORDER BY id), GROUP_CONCAT(COALESCE(note, 'missing') ORDER BY id) FROM events WHERE note IS NULL",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(name ORDER BY id) FROM events WHERE id < 0",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT user_id, GROUP_CONCAT(CASE WHEN total > 100 THEN id END ORDER BY id) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT u.id, GROUP_CONCAT(o.id ORDER BY o.id) FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 GROUP BY u.id ORDER BY u.id",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT active, GROUP_CONCAT(DISTINCT score ORDER BY score DESC SEPARATOR ':') FROM events GROUP BY active ORDER BY active",
+        ),
+        ordered(
+            "ordered concatenation interactions",
+            "SELECT GROUP_CONCAT(name ORDER BY id DESC SEPARATOR '') FROM events WHERE id <= 3",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, RANK() OVER (ORDER BY active), DENSE_RANK() OVER (ORDER BY active) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, COUNT(*) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND CURRENT ROW) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, SUM(score) OVER (ORDER BY active RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, NTILE(3) OVER (PARTITION BY active ORDER BY id) FROM events ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, LAG(total, 2, -1) OVER (PARTITION BY user_id ORDER BY id), LEAD(total, 2, -1) OVER (PARTITION BY user_id ORDER BY id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, COUNT(*) OVER (PARTITION BY user_id), MIN(total) OVER (PARTITION BY user_id), MAX(total) OVER (PARTITION BY user_id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT id, ROW_NUMBER() OVER (ORDER BY id) FROM orders WHERE total > 100 ORDER BY id",
+        ),
+        ordered(
+            "window peer and partition interactions",
+            "SELECT user_id, COUNT(*) AS n, RANK() OVER (ORDER BY COUNT(*) DESC) FROM orders GROUP BY user_id ORDER BY user_id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT status, COUNT(*), MIN(id), MAX(id) FROM orders GROUP BY status ORDER BY status DESC",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, status = 'shipped', status = 3, status IN ('pending', 'delivered', NULL) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, CAST(status AS CHAR), CAST(status AS UNSIGNED), status + 0 FROM orders ORDER BY id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT a.id, b.id FROM orders a JOIN orders b ON a.status = b.status WHERE a.id <= 4 AND b.id <= 4 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT u.id, o.status, o.status IS NULL FROM users u LEFT JOIN orders o ON o.user_id = u.id AND o.total > 100 ORDER BY u.id, o.id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id FROM orders WHERE status <> 'pending' AND status NOT IN ('cancelled', 'delivered') ORDER BY status, id",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT COUNT(DISTINCT status), COUNT(DISTINCT CAST(status AS CHAR)) FROM orders",
+        ),
+        ordered(
+            "enum relational interactions",
+            "SELECT id, ROW_NUMBER() OVER (PARTITION BY status ORDER BY id) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note = b.note WHERE a.id <= 3 AND b.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a LEFT JOIN events b ON a.note = b.note AND b.id <= 3 WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a LEFT JOIN events b ON a.note <=> b.note AND b.id <= 3 WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, COUNT(b.id) FROM events a LEFT JOIN events b ON a.note <=> b.note GROUP BY a.id ORDER BY a.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id FROM events a WHERE EXISTS (SELECT 1 FROM events b WHERE b.note <=> a.note AND b.id <> a.id) ORDER BY a.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a JOIN events b ON a.note <=> b.note AND a.active = b.active WHERE a.id <= 3 ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id, b.id FROM events a CROSS JOIN events b WHERE a.id <= 2 AND b.id <= 3 AND NOT (a.note <=> b.note) ORDER BY a.id, b.id",
+        ),
+        ordered(
+            "null safe relational joins",
+            "SELECT a.id FROM events a WHERE NOT EXISTS (SELECT 1 FROM events b WHERE b.note = a.note) ORDER BY a.id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, SUBSTRING(note, -2), SUBSTRING(note, 0), SUBSTRING(note, 2, 0) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LOCATE('a', note), INSTR(note, 'a'), REPLACE(note, 'a', 'X') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LEFT(note, 2), RIGHT(note, 2), REVERSE(note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, LPAD(note, 3, 'xy'), RPAD(note, 7, 'xy') FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, CONCAT(note, ':', tag), CONCAT_WS(':', note, NULL, tag) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, CHAR_LENGTH(label), LENGTH(label), HEX(label) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT id, TRIM(tag), LENGTH(tag), LENGTH(TRIM(tag)) FROM events ORDER BY id",
+        ),
+        ordered(
+            "string boundary composition",
+            "SELECT SUBSTRING('abc', -9), SUBSTRING('abc', 9), LPAD('abc', 5, ''), RPAD('abc', 0, 'x')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT ABS(NULL), ROUND(NULL, 2), TRUNCATE(NULL, 2), MOD(NULL, 3), POWER(NULL, 2)",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT DATE(NULL), YEAR(NULL), MONTH(NULL), LAST_DAY(NULL), DATEDIFF(NULL, '2024-01-01')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT DATE_ADD(NULL, INTERVAL 1 DAY), DATE_SUB('2024-01-01', INTERVAL NULL DAY), TIMESTAMPDIFF(DAY, NULL, '2024-01-01')",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, ABS(-total), SIGN(total), NULLIF(total, 0) IS NULL FROM orders ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, MOD(score, 30), MOD(-score, 30), MOD(score, -30) FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, IF(note IS NULL, score, NULL), COALESCE(NULL, note, name), NULLIF(note, note) FROM events ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, DATE_FORMAT(placed_at, '%Y-%m-%d'), EXTRACT(HOUR FROM placed_at), EXTRACT(MINUTE FROM placed_at) FROM orders ORDER BY id",
+        ),
+        ordered(
+            "numeric and temporal null propagation",
+            "SELECT id, TIMESTAMPDIFF(SECOND, placed_at, DATE_ADD(placed_at, INTERVAL 1 DAY)), DATEDIFF(DATE_ADD(placed_at, INTERVAL 1 DAY), placed_at) FROM orders ORDER BY id",
+        ),
     ]
 }
 
@@ -3827,6 +4600,17 @@ fn documented_rejects_stay_explicit() {
         .ingest((1..=8).map(user_row).collect())
         .expect("ingest users");
     orders.ingest(order_rows()).expect("ingest orders");
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -3835,6 +4619,7 @@ fn documented_rejects_stay_explicit() {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .expect("provider");
 
@@ -3959,7 +4744,16 @@ fn catalog(
     .map_err(|error| error.to_string())?
     .with_key_columns([1])
     .map_err(|error| error.to_string())?;
-    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders])
+    let bounds = TableEntry::new(
+        TableId::new(4),
+        "bounds",
+        oracle_boundaries::schema(),
+        TableStatistics::with_row_count(8),
+    )
+    .map_err(|e| e.to_string())?
+    .with_key_columns([1])
+    .map_err(|e| e.to_string())?;
+    let database = DatabaseEntry::new(DATABASE_ID, "app", [events, users, orders, bounds])
         .map_err(|error| error.to_string())?;
     CatalogSnapshot::new([database]).map_err(|error| error.to_string())
 }
@@ -4259,6 +5053,7 @@ fn run_fuzz() -> Result<(), String> {
 
     let mysql = MysqlContainer::start()?;
     mysql.query_batch(FIXTURE_SQL)?;
+    mysql.query_batch(oracle_boundaries::SQL)?;
 
     let events_directory =
         tempfile::tempdir().map_err(|error| format!("events tempdir: {error}"))?;
@@ -4295,6 +5090,17 @@ fn run_fuzz() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -4303,13 +5109,18 @@ fn run_fuzz() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
     let oracle_cases = generated
         .iter()
         .map(|case| OracleCase {
-            sql_mode: "",
+            sql_mode: if case.index % 2 == 0 {
+                ""
+            } else {
+                "NO_UNSIGNED_SUBTRACTION"
+            },
             family: case.family,
             sql: case.sql.clone(),
             ordered: true,
@@ -4319,18 +5130,43 @@ fn run_fuzz() -> Result<(), String> {
     // therefore a generator defect and fails the sweep; it is never counted
     // as a skipped compatibility case.
     let mut expected = Vec::with_capacity(oracle_cases.len());
-    for (chunk, cases) in oracle_cases.chunks(FUZZ_MYSQL_BATCH_CASES).enumerate() {
-        expected.extend(execute_mysql_cases(&mysql, cases).map_err(|error| {
-            let first = chunk * FUZZ_MYSQL_BATCH_CASES;
-            format!(
-                "generated corpus contains SQL MySQL rejected in cases {first}..{}; seeds={seeds:?}, cases/seed={cases_per_seed}: {error}",
-                first + cases.len(),
-            )
-        })?);
+    for cases in oracle_cases.chunks(FUZZ_MYSQL_BATCH_CASES) {
+        expected.extend(oracle_transport::execute_all(&mysql, cases)?);
     }
     let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
     for (case, expected) in generated.iter().zip(&expected) {
-        match execute_pintail(&case.sql, &catalog, &provider) {
+        let expected = match expected {
+            Ok(rows) => rows,
+            Err(error) => {
+                failures.push(error.clone());
+                outcomes.push(serde_json::json!({"seed":case.seed,"index":case.index,"family":case.family,"sql":case.sql,"status":"MYSQL_REJECTED","error":error}));
+                continue;
+            }
+        };
+        let mode = if case.index % 2 == 0 {
+            ""
+        } else {
+            "NO_UNSIGNED_SUBTRACTION"
+        };
+        let actual =
+            pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+                execute_pintail(&case.sql, &catalog, &provider)
+            });
+        let minimized = if actual
+            .as_ref()
+            .is_ok_and(|r| oracle_rows_equal(r, expected, true))
+        {
+            None
+        } else {
+            Some(oracle_candidates::minimize(
+                &mysql, &case.sql, mode, &actual,
+            ))
+        };
+        outcomes.push(serde_json::json!({"seed":case.seed,"index":case.index,"family":case.family,"sql":case.sql,
+            "status":if actual.as_ref().is_ok_and(|r| oracle_rows_equal(r,expected,true)) {"PASS"} else {"FAIL"},
+            "sqlMode":mode,"minimizedSQL":minimized,"expected":expected,"actual":actual.as_ref().ok(),"error":actual.as_ref().err()}));
+        match actual {
             Ok(actual) => {
                 if !oracle_rows_equal(&actual, expected, true) {
                     failures.push(format!(
@@ -4346,19 +5182,24 @@ fn run_fuzz() -> Result<(), String> {
                 ));
             }
         }
-        if failures.len() >= 10 {
-            break;
-        }
+    }
+    let metamorphic = mysql_metamorphic(&mysql)?;
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../validate-out/oracle-fuzz.json");
+    std::fs::create_dir_all(path.parent().expect("report parent")).map_err(|e| e.to_string())?;
+    std::fs::write(path,serde_json::to_string_pretty(&serde_json::json!({"provenance":oracle_transport::provenance(&mysql)?,"seeds":seeds,"uniqueSQL":unique,"families":families,"metamorphic":metamorphic,"outcomes":outcomes})).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    if metamorphic.iter().any(|o| o["status"] != "PASS") {
+        failures.push("MySQL rejected proposed metamorphic equivalence(s)".into());
     }
     if !failures.is_empty() {
         return Err(format!(
             "{} fuzz divergence(s), showing at most 10:\n{}",
             failures.len(),
-            failures.join("\n\n")
+            failures[..failures.len().min(10)].join("\n\n")
         ));
     }
     println!(
-        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched {} byte-for-byte; 0 skipped; families={families:?}",
+        "fuzz: {} generated queries ({} unique SQL) across {} seeds matched {} with typed comparison; 0 skipped; families={families:?}",
         generated.len(),
         unique,
         seeds.len(),
@@ -4683,7 +5524,8 @@ fn metamorphic_variants(parts: &QueryParts) -> Vec<(&'static str, String)> {
             parts.render_tail()
         ),
     ));
-    if parts.from.is_some() {
+    // UNION converts ENUM to text, changing ordering even with an empty arm.
+    if parts.from.is_some() && parts.family != "enum" {
         // q UNION ALL (q WHERE FALSE) == q: the second arm contributes
         // nothing, whatever grouping or having the arms carry.
         variants.push((
@@ -4752,6 +5594,17 @@ fn run_metamorphic() -> Result<(), String> {
     orders
         .ingest(order_rows())
         .map_err(|error| format!("ingest orders: {error}"))?;
+    let bounds_directory = tempfile::tempdir().expect("boundary directory");
+    let mut bounds = TableStore::open(
+        bounds_directory.path(),
+        oracle_boundaries::schema(),
+        StoreOptions::default(),
+    )
+    .expect("boundary store");
+    bounds
+        .ingest(oracle_boundaries::rows())
+        .expect("boundary rows");
+    let bounds_snapshot = bounds.snapshot();
     let events_snapshot = events.snapshot();
     let users_snapshot = users.snapshot();
     let orders_snapshot = orders.snapshot();
@@ -4760,6 +5613,7 @@ fn run_metamorphic() -> Result<(), String> {
         (DATABASE_ID, EVENTS_ID, &events_snapshot),
         (DATABASE_ID, USERS_ID, &users_snapshot),
         (DATABASE_ID, ORDERS_ID, &orders_snapshot),
+        (DATABASE_ID, TableId::new(4), &bounds_snapshot),
     ])
     .map_err(|error| format!("create snapshot provider: {error}"))?;
 
@@ -4917,7 +5771,7 @@ impl QueryParts {
 
 #[allow(clippy::too_many_lines)]
 fn generate_parts(rng: &mut Xorshift) -> QueryParts {
-    match rng.below(16) {
+    match rng.below(20) {
         // Scalar-only: expressions with no FROM.
         0 => {
             let picks = 1 + rng.below(3);
@@ -5297,6 +6151,46 @@ fn generate_parts(rng: &mut Xorshift) -> QueryParts {
                 limit: Some(50),
             }
         }
+        16..=19 => {
+            let column = *rng.pick(&["n", "u", "frac", "approx"]);
+            let rhs = *rng.pick(&["0", "1", "NULL", "'1'", "-1.005"]);
+            let kind = rng.below(4);
+            let expression = match kind {
+                0 => format!(
+                    "{column} {} {rhs}",
+                    rng.pick(&["=", "<=>", "<", ">=", "<>"])
+                ),
+                1 => format!(
+                    "{column} IN (SELECT n FROM bounds WHERE id <= {})",
+                    rng.below(9)
+                ),
+                2 => format!(
+                    "SUBSTRING(txt, {}, {})",
+                    i64::try_from(rng.below(25)).expect("small offset") - 12,
+                    rng.below(12)
+                ),
+                _ => format!(
+                    "COUNT(txt) OVER (ORDER BY id ROWS BETWEEN {} PRECEDING AND CURRENT ROW)",
+                    rng.below(4)
+                ),
+            };
+            QueryParts {
+                family: [
+                    "boundary-scalar",
+                    "boundary-membership",
+                    "boundary-string",
+                    "boundary-window",
+                ][kind],
+                select: vec!["id".into(), expression],
+                from: Some("bounds".into()),
+                from_commuted: None,
+                where_clause: Some(format!("id >= {}", rng.below(8))),
+                group_by: None,
+                having: None,
+                order_columns: 1,
+                limit: Some(8),
+            }
+        }
         // Deterministic hashes and encodings used by BI symmetric-aggregate
         // SQL and application-generated identifiers.
         _ => {
@@ -5346,6 +6240,10 @@ fn generated_corpus_reaches_every_query_family() {
     assert_eq!(
         families,
         BTreeSet::from([
+            "boundary-scalar",
+            "boundary-membership",
+            "boundary-string",
+            "boundary-window",
             "decimal",
             "conditional-null",
             "correlated-subquery",
@@ -5368,5 +6266,43 @@ fn generated_corpus_reaches_every_query_family() {
         unique.len() >= 850,
         "only {} unique SQL strings",
         unique.len()
+    );
+}
+
+fn mysql_metamorphic(mysql: &MysqlContainer) -> Result<Vec<serde_json::Value>, String> {
+    let mut rng = Xorshift(0xA11C_E55E);
+    let mut outcomes = Vec::new();
+    for index in 0..40 {
+        let parts = generate_parts(&mut rng);
+        let base = OracleCase {
+            sql_mode: "",
+            family: parts.family,
+            sql: parts.render(),
+            ordered: true,
+        };
+        for (label, sql) in metamorphic_variants(&parts) {
+            let variant = OracleCase {
+                sql_mode: "",
+                family: label,
+                sql,
+                ordered: true,
+            };
+            let results = oracle_transport::execute_all(mysql, &[base.clone(), variant.clone()])?;
+            let pass = match (&results[0], &results[1]) {
+                (Ok(a), Ok(b)) => oracle_rows_equal(a, b, true),
+                _ => false,
+            };
+            outcomes.push(serde_json::json!({"index":index,"transformation":label,"baseSQL":base.sql,"variantSQL":variant.sql,"status":if pass {"PASS"} else {"REJECTED_EQUIVALENCE"},"results":results}));
+        }
+    }
+    Ok(outcomes)
+}
+
+#[test]
+fn candidate_worker_executes_aggregate_under_process_limits() {
+    assert_eq!(
+        oracle_candidates::bounded_execute("SELECT SUM(score) FROM events")
+            .expect("bounded aggregate"),
+        vec![vec![OracleValue::Exact("550".into())]]
     );
 }

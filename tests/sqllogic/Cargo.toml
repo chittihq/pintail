@@ -8,6 +8,11 @@ rust-version.workspace = true
 publish = false
 
 [dev-dependencies]
+rand.workspace = true
+sqlparser.workspace = true
+mysql_async.workspace = true
+tokio.workspace = true
+serde.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
