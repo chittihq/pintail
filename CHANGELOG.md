@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `EXISTS` and `NOT EXISTS` over an ungrouped aggregate subquery - `EXISTS
+  (SELECT COUNT(*) FROM ... WHERE ...)` - held only where input rows
+  existed; the aggregate yields its one row regardless, as MySQL answers.
+- Two temporal operands of different types compared their texts: a DATE
+  never equalled the DATETIME at its midnight, nor a DATETIME the same
+  instant at another fractional precision. They now compare as instants in
+  comparisons, `<=>`, IN, BETWEEN, row IN and join keys, and `<=>` reads a
+  temporal literal as the other comparisons do.
+- BETWEEN with a NULL bound answered NULL where its other comparison
+  decides: `1 BETWEEN 2 AND NULL` is false, and `NOT BETWEEN ... AND NULL`
+  keeps the rows below the lower bound.
+- A DECIMAL compared with text compares as a double, the text read by its
+  numeric prefix or exponent: `total > '100.5x'` and `> '2e1'` compared
+  strings.
+- JSON integers past 2^53 no longer collide in comparison, grouping and
+  DISTINCT keys; `1` still equals `1.0`.
+- `x op ANY` and `x op ALL` over text values take their extremes as numbers
+  when `x` is a number, as MySQL does over a table column.
+
 ## [0.1.5-rc1] - 2026-09-10
 
 Outer-join ON subqueries answered in every shape, WHERE clauses matched to

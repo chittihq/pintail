@@ -817,6 +817,12 @@ impl<'catalog> Binder<'catalog> {
         if !simple {
             return Err(unsupported());
         }
+        // An ungrouped aggregate yields its one row even over no input, so
+        // such an EXISTS holds for every outer row, while the semi join would
+        // ask whether input rows exist. The dependent path answers it.
+        if inner.projection.iter().any(select_item_has_aggregate) {
+            return Err(unsupported());
+        }
         let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
         if tables.iter().any(|existing| {
             existing
@@ -3659,8 +3665,10 @@ fn bind_binary(
             | BinaryOperator::Gt
             | BinaryOperator::GtEq
     ) {
+        let (left, right) = unify_temporal_operands(left, right);
         let right = canonical_literal_operand(&left, right)?;
         let left = canonical_literal_operand(&right, left)?;
+        let (left, right) = text_as_number(left, right);
         rewrite_json_comparison(left, right)
     } else {
         (left, right)
@@ -4146,7 +4154,7 @@ const QUANTIFIED_VALUE: &str = "__value";
 /// `x > ANY` holds when x exceeds the lowest value and is unknown rather
 /// than false when NULLs remain. An empty subquery makes ALL true and ANY
 /// false whatever x is.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)] // one rewrite table, clearer unsplit
 fn bind_quantified(
     left: &Expr,
     operator: &BinaryOperator,
@@ -4177,6 +4185,29 @@ fn bind_quantified(
         };
         return bind_expr_inner(&membership, tables, aggregates, windows, subqueries);
     }
+    // The extremes are taken in the comparison's domain: against a number,
+    // text values compare as numbers, and the lexical MAX of '2' and '10' is
+    // not the numeric one. Adding zero reads text as a number and leaves an
+    // exact number exact.
+    let numeric_left =
+        bind_expr_inner(left, tables, &mut None, &mut None, subqueries).is_ok_and(|bound| {
+            matches!(
+                bound.data_type,
+                Some(
+                    DataType::Int8
+                        | DataType::Int16
+                        | DataType::Int32
+                        | DataType::Int64
+                        | DataType::UInt8
+                        | DataType::UInt16
+                        | DataType::UInt32
+                        | DataType::UInt64
+                        | DataType::Float32
+                        | DataType::Float64
+                        | DataType::Decimal { .. }
+                )
+            )
+        });
     let symbol = match operator {
         BinaryOperator::Lt => "<",
         BinaryOperator::LtEq => "<=",
@@ -4199,8 +4230,17 @@ fn bind_quantified(
     else {
         return Err(unsupported());
     };
+    let value_expr = if numeric_left {
+        Expr::BinaryOp {
+            left: Box::new(Expr::Nested(Box::new(projected.clone()))),
+            op: BinaryOperator::Plus,
+            right: Box::new(Expr::Value(SqlValue::Number("0".to_owned(), false).into())),
+        }
+    } else {
+        projected.clone()
+    };
     select.projection = vec![SelectItem::ExprWithAlias {
-        expr: projected.clone(),
+        expr: value_expr,
         alias: Ident::new(QUANTIFIED_VALUE),
     }];
     let source = format!("FROM ({values}) AS {QUANTIFIED_TABLE}");
@@ -5312,6 +5352,122 @@ fn as_json(expr: BoundExpr) -> BoundExpr {
         },
         data_type: Some(DataType::Json),
         nullable,
+    }
+}
+
+/// Whether a select item computes an aggregate.
+fn select_item_has_aggregate(item: &SelectItem) -> bool {
+    let (SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }) = item else {
+        return false;
+    };
+    let mut found = false;
+    let _ = sqlparser::ast::visit_expressions(expr, |candidate| {
+        if let Expr::Function(function) = candidate
+            && aggregate_function_name(function).is_some()
+        {
+            found = true;
+            return std::ops::ControlFlow::Break(());
+        }
+        std::ops::ControlFlow::Continue(())
+    });
+    found
+}
+
+fn is_temporal(data_type: Option<DataType>) -> bool {
+    matches!(
+        data_type,
+        Some(DataType::Date32 | DataType::DateTime64 { .. })
+    )
+}
+
+fn cast_to(expr: BoundExpr, target: DataType) -> BoundExpr {
+    BoundExpr {
+        nullable: expr.nullable,
+        data_type: Some(target),
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Cast(target),
+            args: vec![expr],
+        },
+    }
+}
+
+const COMMON_TEMPORAL: DataType = DataType::DateTime64 { fsp: 6 };
+
+/// Two temporal operands of different types compare as instants in `MySQL`: a
+/// DATE is midnight of its day, and fractional precision does not separate
+/// equal instants. Their canonical texts differ in width, so compared as
+/// written a DATE never equalled the DATETIME at its midnight. Both are read
+/// as DATETIME(6), whose fixed-width text orders as time does.
+fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    if is_temporal(left.data_type)
+        && is_temporal(right.data_type)
+        && left.data_type != right.data_type
+    {
+        (as_common_temporal(left), as_common_temporal(right))
+    } else {
+        (left, right)
+    }
+}
+
+/// The list form of [`unify_temporal_operands`]: when an IN or BETWEEN list
+/// mixes temporal types, every temporal member is read as DATETIME(6).
+fn unify_temporal_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let first = args
+        .iter()
+        .find_map(|argument| is_temporal(argument.data_type).then_some(argument.data_type));
+    let mixed = args
+        .iter()
+        .any(|argument| is_temporal(argument.data_type) && Some(argument.data_type) != first);
+    if !mixed {
+        return args;
+    }
+    args.into_iter()
+        .map(|argument| {
+            if is_temporal(argument.data_type) {
+                as_common_temporal(argument)
+            } else {
+                argument
+            }
+        })
+        .collect()
+}
+
+fn as_common_temporal(expr: BoundExpr) -> BoundExpr {
+    if expr.data_type == Some(COMMON_TEMPORAL) {
+        expr
+    } else {
+        cast_to(expr, COMMON_TEMPORAL)
+    }
+}
+
+/// Text an ENUM or SET column carries compares by its own rules.
+fn is_plain_text(expr: &BoundExpr) -> bool {
+    expr.data_type == Some(DataType::Utf8)
+        && !matches!(&expr.kind, BoundExprKind::Column(column) if column.enum_labels.is_some())
+}
+
+/// A DECIMAL compared with text compares as a double in `MySQL`, the text
+/// read by its numeric prefix. Both travel as text here, so compared as
+/// written `99.00 > '100.5x'` held; the text side is read as a double, and
+/// the comparison then reads the DECIMAL as one too.
+fn text_as_number(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    let decimal = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Decimal { .. }));
+    if decimal(&left) && is_plain_text(&right) {
+        (left, cast_to(right, DataType::Float64))
+    } else if is_plain_text(&left) && decimal(&right) {
+        (cast_to(left, DataType::Float64), right)
+    } else {
+        (left, right)
+    }
+}
+
+/// The IN and BETWEEN form of [`text_as_number`]: a member meeting a DECIMAL
+/// subject is read as a double when it is text.
+fn number_for_text(subject: &BoundExpr, member: BoundExpr) -> BoundExpr {
+    if matches!(subject.data_type, Some(DataType::Decimal { .. })) && is_plain_text(&member) {
+        cast_to(member, DataType::Float64)
+    } else {
+        member
     }
 }
 

@@ -763,6 +763,7 @@ pub(super) fn bind_in_list(
             value, tables, aggregates, windows, subqueries,
         )?);
     }
+    let args = super::unify_temporal_list(args);
     let subject = args[0].clone();
     let args = args
         .into_iter()
@@ -772,6 +773,7 @@ pub(super) fn bind_in_list(
                 Ok(argument)
             } else {
                 super::canonical_literal_operand(&subject, argument)
+                    .map(|member| super::number_for_text(&subject, member))
             }
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -796,15 +798,16 @@ pub(super) fn bind_between(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
-    let subject = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
-    let low = super::canonical_literal_operand(
-        &subject,
+    let args = super::unify_temporal_list(vec![
+        bind_expr_inner(expr, tables, aggregates, windows, subqueries)?,
         bind_expr_inner(low, tables, aggregates, windows, subqueries)?,
-    )?;
-    let high = super::canonical_literal_operand(
-        &subject,
         bind_expr_inner(high, tables, aggregates, windows, subqueries)?,
-    )?;
+    ]);
+    let [subject, low, high]: [BoundExpr; 3] = args
+        .try_into()
+        .map_err(|_| BindError::InvalidScalarFunction("BETWEEN".to_owned()))?;
+    let low = super::number_for_text(&subject, super::canonical_literal_operand(&subject, low)?);
+    let high = super::number_for_text(&subject, super::canonical_literal_operand(&subject, high)?);
     let args = vec![subject, low, high];
     let args = super::rewrite_json_comparison_list(args);
     if !comparable(args[0].data_type, args[1].data_type)
@@ -1880,6 +1883,10 @@ pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
 }
 
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
+    let (left, right) = super::unify_temporal_operands(left, right);
+    let right = super::canonical_literal_operand(&left, right)?;
+    let left = super::canonical_literal_operand(&right, left)?;
+    let (left, right) = super::text_as_number(left, right);
     let (left, right) = super::rewrite_json_comparison(left, right);
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {

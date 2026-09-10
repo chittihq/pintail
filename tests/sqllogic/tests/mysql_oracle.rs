@@ -29,7 +29,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1352;
+const EXPECTED_CASES: usize = 1377;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -1635,6 +1635,31 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ordered("where edge cases", "SELECT user_id, SUM(total) FROM orders WHERE status <> 'cancelled' GROUP BY user_id HAVING SUM(total) > 50 ORDER BY user_id"),
         ordered("where edge cases", "SELECT id FROM orders WHERE total > 10 ORDER BY placed_at DESC LIMIT 3"),
         ordered("where edge cases", "SELECT id FROM orders WHERE placed_at >= '2024-06-01' AND placed_at < '2025-03-01' AND status <> 'cancelled' AND total BETWEEN 10 AND 200 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM users u WHERE NOT EXISTS (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT SUM(o.total) FROM orders o WHERE o.user_id = u.id AND o.total > 1000000) ORDER BY id"),
+        ordered("review edge cases", "SELECT o.id FROM orders o, orders lo, orders hi WHERE lo.id = 7 AND hi.id = 1 AND o.total BETWEEN lo.total AND hi.total ORDER BY o.id"),
+        ordered("review edge cases", "SELECT o.id, o.total BETWEEN lo.total AND hi.total FROM orders o, orders lo, orders hi WHERE lo.id = 7 AND hi.id = 1 ORDER BY o.id"),
+        ordered("review edge cases", "SELECT CAST('9007199254740992' AS JSON) = CAST('9007199254740993' AS JSON)"),
+        ordered("review edge cases", "SELECT id, DATE(placed_at) = placed_at, DATE(placed_at) < placed_at FROM orders ORDER BY id"),
+        ordered("review edge cases", "SELECT id, CAST(placed_at AS DATETIME(6)) = placed_at FROM orders ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE placed_at <=> '2024-03-01' ORDER BY id"),
+        ordered("review edge cases", "SELECT 1 BETWEEN 2 AND NULL, 1 NOT BETWEEN 2 AND NULL, 3 BETWEEN 2 AND NULL, NULL BETWEEN 1 AND 2"),
+        ordered("review edge cases", "SELECT id FROM events WHERE NOT (score BETWEEN 50 AND NULL) ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM events WHERE score NOT BETWEEN 50 AND NULL ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total > '100.5x' ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM events WHERE CAST(score AS DECIMAL(8,2)) > '2e1' ORDER BY id"),
+        ordered("review edge cases", "SELECT 95 < ANY (SELECT CAST(score AS CHAR) FROM events), 95 > ALL (SELECT CAST(score AS CHAR) FROM events), 95 = ANY (SELECT CAST(score AS CHAR) FROM events)"),
+        ordered("review edge cases", "SELECT a.id, b.id FROM orders a JOIN orders b ON DATE(a.placed_at) = b.placed_at ORDER BY a.id, b.id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE DATE(placed_at) IN (placed_at, '2025-02-28') ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE placed_at BETWEEN DATE(placed_at) AND '2024-06-30' ORDER BY id"),
+        ordered("review edge cases", "SELECT id, (DATE(placed_at), user_id) IN (('2024-03-01', 2), ('2025-01-01', 5)) FROM orders ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total NOT BETWEEN '10x' AND 20 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM orders WHERE total IN ('10.5x', '50') ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM events WHERE score BETWEEN NULL AND 50 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM events WHERE score NOT BETWEEN NULL AND 50 ORDER BY id"),
+        ordered("review edge cases", "SELECT id FROM users u WHERE EXISTS (SELECT MAX(o.total) FROM orders o WHERE o.user_id = u.id) AND u.id < 5 ORDER BY id"),
+        ordered("review edge cases", "SELECT CAST('9007199254740993' AS JSON) > CAST('9007199254740992' AS JSON), CAST('1' AS JSON) = CAST('1.0' AS JSON)"),
         ordered(
             "unicode_ci collation",
             "SELECT id, label FROM events ORDER BY label, id",

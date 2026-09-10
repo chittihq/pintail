@@ -51,6 +51,11 @@ stays readable as a list of things to fix.
   indexed column took 30-80 s against 1-2 ms, with every answer exact
   (`benchmark/results-filters.md`). There are no secondary indexes: a point
   lookup on a non-key column reads every segment its value might be in.
+- `x op ANY` and `x op ALL` compare a number with text values as numbers,
+  as MySQL 8.4 does over a table column. MySQL answers lexically when the
+  subquery reads string constants through a derived table (`3 < ANY (SELECT v
+  FROM (SELECT '2' AS v UNION ALL SELECT '10') t)` is 0 there), and Pintail
+  does not reproduce that form.
 - A join with no hashable equality key (a pure range/theta join) runs on
   the nested loop and tests every row pair, so it sits behind the same
   cardinality guard as a cross join; above the guard it rejects rather

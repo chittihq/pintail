@@ -594,24 +594,18 @@ impl CompiledExpr {
                 else {
                     return Ok(None);
                 };
-                if matches!(value, Value::Null)
-                    || matches!(lower, Value::Null)
-                    || matches!(upper, Value::Null)
-                {
-                    return Ok(Some(false));
-                }
-                let in_range = predicate_truth(&evaluate_comparison(
-                    BinaryOp::GreaterOrEqual,
-                    value,
-                    lower,
-                    *collation,
-                )?)? && predicate_truth(&evaluate_comparison(
-                    BinaryOp::LessOrEqual,
-                    value,
-                    upper,
-                    *collation,
-                )?)?;
-                Ok(Some(if *negated { !in_range } else { in_range }))
+                // Three-valued, as BETWEEN's two comparisons AND-ed: a NULL
+                // bound leaves the other comparison able to decide, and NOT
+                // of an unknown range stays unknown.
+                let lower =
+                    evaluate_comparison(BinaryOp::GreaterOrEqual, value, lower, *collation)?;
+                let upper = evaluate_comparison(BinaryOp::LessOrEqual, value, upper, *collation)?;
+                let range = evaluate_logic(BinaryOp::And, &lower, &upper)?;
+                let result = match range {
+                    Value::Boolean(in_range) => Value::Boolean(in_range != *negated),
+                    unknown => unknown,
+                };
+                Ok(Some(predicate_truth(&result)?))
             }
             _ => Ok(None),
         }
@@ -1875,6 +1869,9 @@ fn evaluate_eager_scalar_inner(
         && !matches!(
             function,
             ScalarFunction::InList { .. }
+                // BETWEEN is its two comparisons AND-ed: a NULL bound leaves the
+                // other comparison able to decide it.
+                | ScalarFunction::Between { .. }
                 | ScalarFunction::NullIf
                 // NULL arguments are data, not poison, for these: CONCAT_WS
                 // skips them, ELT/FIELD treat them positionally, CHAR drops
