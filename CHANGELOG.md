@@ -43,6 +43,14 @@ replication fixes below.
   nothing that changed is missed, while a name appearing in a comment costs
   a resync rather than a wrong answer.
 
+- The dashboard reports browser errors through its runtime Sentry
+  configuration, so a failure in the page reaches the same place a failure
+  in the server does.
+
+- The dashboard bounds how much of a SQL result it renders, and releases
+  its chart tooltip components, so a large answer or a long session no
+  longer grows the page without limit.
+
 ## [0.1.3-rc1] - 2026-09-10
 
 ### Fixed
