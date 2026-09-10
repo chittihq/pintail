@@ -1079,25 +1079,112 @@ fn infer_joins_from_filter(input: LogicalPlan, predicate: BoundExpr) -> LogicalP
     plan
 }
 
-/// A plan's row estimate, with an unknown one counting as the largest so it is
-/// never chosen as the side to hold in memory.
-fn estimated_or_max(plan: &LogicalPlan) -> u64 {
-    plan.estimated_rows().unwrap_or(u64::MAX)
+/// Cost hints are deliberately separate from `LogicalPlan::estimated_rows`:
+/// the latter is a conservative bound used by execution guards. These guesses
+/// choose an order only; they never remove a predicate, row, or runtime check.
+struct JoinCost {
+    rows: u64,
+    keys: Vec<BTreeSet<ColumnKey>>,
 }
 
-/// The first pair of components some conjunct joins, with `left < right`.
+impl JoinCost {
+    fn for_plan(plan: &LogicalPlan) -> Self {
+        match plan {
+            LogicalPlan::Scan(scan) => {
+                let key: BTreeSet<_> = scan
+                    .table
+                    .columns
+                    .iter()
+                    .filter(|column| scan.table.key_column_ids.contains(&column.column_id))
+                    .map(column_key)
+                    .collect();
+                Self {
+                    rows: scan.estimated_rows().unwrap_or(u64::MAX),
+                    keys: if key.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![key]
+                    },
+                }
+            }
+            LogicalPlan::Filter { input, .. } | LogicalPlan::Sort { input, .. } => {
+                Self::for_plan(input)
+            }
+            LogicalPlan::Join {
+                left,
+                right,
+                kind: BoundJoinKind::Inner,
+                condition: Some(condition),
+            } => Self::joined(
+                &Self::for_plan(left),
+                &Self::for_plan(right),
+                &conjuncts_of(condition),
+            ),
+            _ => Self {
+                rows: plan.estimated_rows().unwrap_or(u64::MAX),
+                keys: Vec::new(),
+            },
+        }
+    }
+
+    fn joined(left: &Self, right: &Self, conditions: &[&BoundExpr]) -> Self {
+        let columns: BTreeSet<_> = conditions
+            .iter()
+            .flat_map(|expr| join_equalities(expr))
+            .flat_map(|(left, right)| [column_key(&left), column_key(&right)])
+            .collect();
+        let left_key = left.keys.iter().any(|key| key.is_subset(&columns));
+        let right_key = right.keys.iter().any(|key| key.is_subset(&columns));
+        let rows = match (left_key, right_key) {
+            (true, true) => left.rows.min(right.rows),
+            (true, false) => right.rows,
+            (false, true) => left.rows,
+            (false, false) => left.rows.saturating_mul(right.rows),
+        };
+        // Joining to a key preserves the other side's key as a cost hint.
+        // Coercions, collations and missing statistics can make these estimates
+        // inaccurate; execution still compares all keys and retains duplicates.
+        let mut keys = Vec::new();
+        if right_key {
+            keys.extend(left.keys.iter().cloned());
+        }
+        if left_key {
+            keys.extend(right.keys.iter().cloned());
+        }
+        Self { rows, keys }
+    }
+}
+
+fn estimated_or_max(plan: &LogicalPlan) -> u64 {
+    JoinCost::for_plan(plan).rows
+}
+
+/// Choose the connected pair with the smallest estimated intermediate work.
+/// Source order breaks ties. In a cyclic graph, the first linked pair can be
+/// two dimensions sharing a non-unique attribute, expanding millions of rows
+/// before either fact-table key is applied.
 fn find_linked_pair(components: &[LogicalPlan], conjuncts: &[BoundExpr]) -> Option<(usize, usize)> {
+    let estimates: Vec<_> = components.iter().map(JoinCost::for_plan).collect();
+    let mut best = None;
     for left in 0..components.len() {
         for right in (left + 1)..components.len() {
-            if conjuncts
+            let conditions: Vec<_> = conjuncts
                 .iter()
-                .any(|conjunct| joins_two_sides(conjunct, &components[left], &components[right]))
-            {
-                return Some((left, right));
+                .filter(|conjunct| joins_two_sides(conjunct, &components[left], &components[right]))
+                .collect();
+            if conditions.is_empty() {
+                continue;
+            }
+            let joined = JoinCost::joined(&estimates[left], &estimates[right], &conditions);
+            let work = u128::from(joined.rows)
+                + u128::from(estimates[left].rows)
+                + u128::from(estimates[right].rows);
+            if best.is_none_or(|(cost, _, _)| work < cost) {
+                best = Some((work, left, right));
             }
         }
     }
-    None
+    best.map(|(_, left, right)| (left, right))
 }
 
 /// Whether a conjunct is usable as the join condition between two sides.
