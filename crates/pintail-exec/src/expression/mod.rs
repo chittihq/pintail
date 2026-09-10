@@ -1895,14 +1895,22 @@ fn evaluate_eager_scalar_inner(
                 .concat(),
         )),
         ScalarFunction::Substring => {
-            let value = scalar_string(&values[0])?;
             let start = mysql_i64(&values[1])?;
             let length = values
                 .get(2)
                 .map(mysql_i64)
                 .transpose()?
                 .unwrap_or(i64::MAX);
-            Ok(Value::Utf8(mysql_substring(&value, start, length)))
+            // A binary string counts bytes, not characters.
+            Ok(if let Value::Binary(bytes) = &values[0] {
+                Value::Binary(chars_as_bytes(&mysql_substring(
+                    &bytes_as_chars(bytes),
+                    start,
+                    length,
+                )))
+            } else {
+                Value::Utf8(mysql_substring(&scalar_string(&values[0])?, start, length))
+            })
         }
         // MySQL's LOWER/UPPER are ineffective on a binary string: case is a
         // property of a character set, and a binary value has none. Folding
@@ -2022,13 +2030,15 @@ fn evaluate_eager_scalar_inner(
             }
             Ok(Value::Utf8(result.to_owned()))
         }
-        ScalarFunction::Trim => Ok(Value::Utf8(
-            // MySQL's default TRIM removes the space character only. Rust's
-            // trim() removes the whole Unicode whitespace class, so a
-            // leading tab used to disappear: HEX(TRIM(CHAR(9))) answered ''
-            // where MySQL answers '09'.
-            scalar_string(&values[0])?.trim_matches(' ').to_owned(),
-        )),
+        // MySQL's default TRIM removes the space character only. Rust's trim()
+        // removes the whole Unicode whitespace class, so a leading tab used to
+        // disappear: HEX(TRIM(CHAR(9))) answered '' where MySQL answers '09'.
+        // A binary string trims the 0x20 byte the same way.
+        ScalarFunction::Trim => Ok(if let Value::Binary(bytes) = &values[0] {
+            Value::Binary(chars_as_bytes(bytes_as_chars(bytes).trim_matches(' ')))
+        } else {
+            Value::Utf8(scalar_string(&values[0])?.trim_matches(' ').to_owned())
+        }),
         // Binary values are counted as raw bytes: LENGTH(geometry) is the
         // stored WKB size (SRID prefix included), and the binary charset
         // makes CHAR_LENGTH the same count. Routing them through the text
@@ -2072,8 +2082,12 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Like { negated, escape } => {
             let binary = binary_operand(&values[0..2]);
-            let value = scalar_string(&values[0])?;
-            let pattern = scalar_string(&values[1])?;
+            // Binary operands match byte by byte: `_` consumes one byte.
+            let (value, pattern) = if binary {
+                (byte_text(&values[0])?, byte_text(&values[1])?)
+            } else {
+                (scalar_string(&values[0])?, scalar_string(&values[1])?)
+            };
             let matched = like_matches(&value, &pattern, escape, binary, collation);
             Ok(Value::Boolean(if negated { !matched } else { matched }))
         }
@@ -2106,9 +2120,15 @@ fn evaluate_eager_scalar_inner(
             target: DataType::Year,
             ..
         } => cast_mysql_year(&values[0], argument_types.first().copied().flatten()),
-        ScalarFunction::Cast(target) => cast_scalar(&values[0], Some(target)),
+        ScalarFunction::Cast(target) => cast_scalar(
+            &numeric_cast_operand(&values[0], argument_types, target),
+            Some(target),
+        ),
         ScalarFunction::DeclaredCast { target, characters } => {
-            let mut value = cast_scalar(&values[0], Some(target))?;
+            let mut value = cast_scalar(
+                &numeric_cast_operand(&values[0], argument_types, target),
+                Some(target),
+            )?;
             if let (Some(characters), Value::Utf8(text)) = (characters, &mut value)
                 && let Some((offset, _)) = text.char_indices().nth(characters as usize)
             {
@@ -2265,13 +2285,23 @@ fn evaluate_eager_scalar_inner(
             if matches!(values[0], Value::Null) {
                 return Ok(Value::Null);
             }
-            let separator = scalar_string(&values[0])?;
+            // A binary argument makes the result a binary string, joined byte
+            // for byte.
+            let binary = binary_operand(values);
+            let text: fn(&Value) -> Result<String, ExecError> =
+                if binary { byte_text } else { scalar_string };
+            let separator = text(&values[0])?;
             let parts = values[1..]
                 .iter()
                 .filter(|value| !matches!(value, Value::Null))
-                .map(scalar_string)
+                .map(text)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Value::Utf8(parts.join(&separator)))
+            let joined = parts.join(&separator);
+            Ok(if binary {
+                Value::Binary(chars_as_bytes(&joined))
+            } else {
+                Value::Utf8(joined)
+            })
         }
         ScalarFunction::Reverse => Ok(Value::Utf8(
             scalar_string(&values[0])?.chars().rev().collect(),
@@ -2320,15 +2350,21 @@ fn evaluate_eager_scalar_inner(
             repeat_capped(" ", count)
         }
         ScalarFunction::Lpad | ScalarFunction::Rpad => {
-            let text = scalar_string(&values[0])?;
-            let target = mysql_i64(&values[1])?;
-            let pad = scalar_string(&values[2])?;
-            mysql_pad(
-                &text,
-                target,
-                &pad,
+            // A binary operand pads and truncates by bytes.
+            let binary =
+                matches!(values[0], Value::Binary(_)) || matches!(values[2], Value::Binary(_));
+            let text: fn(&Value) -> Result<String, ExecError> =
+                if binary { byte_text } else { scalar_string };
+            let padded = mysql_pad(
+                &text(&values[0])?,
+                mysql_i64(&values[1])?,
+                &text(&values[2])?,
                 matches!(function, ScalarFunction::Lpad),
-            )
+            )?;
+            Ok(match padded {
+                Value::Utf8(padded) if binary => Value::Binary(chars_as_bytes(&padded)),
+                padded => padded,
+            })
         }
         ScalarFunction::Instr => {
             let binary = binary_operand(&values[0..2]);
@@ -2749,15 +2785,20 @@ fn evaluate_eager_scalar_inner(
                     unit,
                     IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day
                 );
-            Ok(Value::Utf8(
-                value
-                    .format(if date_only {
-                        "%Y-%m-%d"
-                    } else {
-                        "%Y-%m-%d %H:%M:%S"
-                    })
-                    .to_string(),
-            ))
+            if date_only {
+                return Ok(Value::Utf8(value.format("%Y-%m-%d").to_string()));
+            }
+            // The result keeps the input's fractional seconds, at the
+            // precision the binder declared for it.
+            let fsp = match data_type {
+                Some(DataType::DateTime64 { fsp }) => fsp,
+                _ => 0,
+            };
+            Ok(Value::Utf8(format_with_fraction(
+                value,
+                fsp,
+                "%Y-%m-%d %H:%M:%S",
+            )))
         }
         ScalarFunction::DateDiff => {
             let left = parse_mysql_datetime(&scalar_string(&values[0])?)?;
@@ -3316,6 +3357,64 @@ fn hex_lower(bytes: &[u8]) -> String {
     hex
 }
 
+/// A binary string's bytes as one character each, so the character-counting
+/// string functions count bytes for it, as `MySQL`'s binary charset does.
+/// [`chars_as_bytes`] reverses it.
+fn bytes_as_chars(bytes: &[u8]) -> String {
+    bytes.iter().copied().map(char::from).collect()
+}
+
+fn chars_as_bytes(text: &str) -> Vec<u8> {
+    text.chars()
+        .map(|character| u8::try_from(character).unwrap_or(b'?'))
+        .collect()
+}
+
+/// An operand of a binary string function, one character per byte: a text
+/// operand contributes its UTF-8 bytes.
+fn byte_text(value: &Value) -> Result<String, ExecError> {
+    Ok(match value {
+        Value::Binary(bytes) => bytes_as_chars(bytes),
+        other => bytes_as_chars(scalar_string(other)?.as_bytes()),
+    })
+}
+
+/// A TIME read as a number is `[-]HHMMSS[.ffffff]` in `MySQL`: `TIME + 0`,
+/// `CAST(t AS DECIMAL)` and a comparison between TIME values all see that
+/// number. It keeps the time order, since minutes and seconds stay below
+/// 60, where the text form does not: `-100:00:00` sorts below `-00:00:01`.
+fn time_as_number(value: &Value) -> Value {
+    let parsed = match value {
+        Value::Utf8(text) => parse_temporal_micros(text),
+        _ => None,
+    };
+    let Some(parsed) = parsed.filter(|parsed| !parsed.datetime) else {
+        return value.clone();
+    };
+    let magnitude = parsed.micros.unsigned_abs();
+    let seconds = magnitude / 1_000_000;
+    let number = seconds / 3600 * 10_000 + seconds / 60 % 60 * 100 + seconds % 60;
+    let sign = if parsed.micros < 0 { "-" } else { "" };
+    Value::Utf8(format!("{sign}{number}.{:06}", magnitude % 1_000_000))
+}
+
+/// The operand a numeric cast reads: a TIME argument as its number.
+fn numeric_cast_operand<'a>(
+    value: &'a Value,
+    argument_types: &[Option<DataType>],
+    target: DataType,
+) -> std::borrow::Cow<'a, Value> {
+    let numeric = matches!(
+        target,
+        DataType::Decimal { .. } | DataType::Int64 | DataType::UInt64 | DataType::Float64
+    );
+    if numeric && matches!(argument_types.first(), Some(Some(DataType::Time64 { .. }))) {
+        std::borrow::Cow::Owned(time_as_number(value))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
+}
+
 fn scalar_string(value: &Value) -> Result<String, ExecError> {
     match value {
         Value::Null => Ok(String::new()),
@@ -3611,8 +3710,10 @@ fn render_time_micros(micros: i128, fsp: u8) -> String {
     const MAX_SECONDS: u128 = 838 * 3600 + 59 * 60 + 59;
     let negative = micros < 0;
     let magnitude = micros.unsigned_abs();
-    let (seconds, fraction) = if magnitude / 1_000_000 > MAX_SECONDS {
-        (MAX_SECONDS, 999_999)
+    // Out of range clamps to the TIME maximum itself, 838:59:59 with no
+    // fraction (measured on 8.4: SUBTIME('-838:59:59', '00:00:00.000001')).
+    let (seconds, fraction) = if magnitude > MAX_SECONDS * 1_000_000 {
+        (MAX_SECONDS, 0)
     } else {
         (magnitude / 1_000_000, magnitude % 1_000_000)
     };
@@ -3955,8 +4056,9 @@ fn mysql_pad(text: &str, target: i64, pad: &str, left: bool) -> Result<Value, Ex
         return Ok(Value::Utf8(text.chars().take(target).collect()));
     }
     if pad.is_empty() {
-        // MySQL returns NULL when padding is required but empty.
-        return Ok(Value::Null);
+        // Padding is required and there is nothing to pad with: MySQL 8.4
+        // answers an empty string (measured), not NULL.
+        return Ok(Value::Utf8(String::new()));
     }
     let filler = pad
         .chars()
@@ -4610,7 +4712,15 @@ fn json_type_name(value: &serde_json::Value) -> &'static str {
         serde_json::Value::Null => "NULL",
         serde_json::Value::Bool(_) => "BOOLEAN",
         serde_json::Value::Number(number) => {
-            if number.is_i64() || number.is_u64() {
+            // MySQL 8.4 reports a non-negative integer past 2^32 - 1 as
+            // UNSIGNED INTEGER (measured: 4294967295 is INTEGER, 4294967296
+            // is not), and any other integer as INTEGER.
+            if number
+                .as_u64()
+                .is_some_and(|value| value > u64::from(u32::MAX))
+            {
+                "UNSIGNED INTEGER"
+            } else if number.is_i64() || number.is_u64() {
                 "INTEGER"
             } else {
                 "DOUBLE"
@@ -5241,7 +5351,14 @@ fn mysql_substring(value: &str, start: i64, length: i64) -> String {
     let start_character = if start > 0 {
         usize::try_from(start - 1).unwrap_or(usize::MAX)
     } else {
-        character_count.saturating_sub(usize::try_from(start.unsigned_abs()).unwrap_or(usize::MAX))
+        // A negative start counts from the end; one reaching past the first
+        // character selects nothing, rather than clamping to the start.
+        match character_count
+            .checked_sub(usize::try_from(start.unsigned_abs()).unwrap_or(usize::MAX))
+        {
+            Some(start) => start,
+            None => return String::new(),
+        }
     };
     let length = usize::try_from(length).unwrap_or(usize::MAX);
     value.chars().skip(start_character).take(length).collect()
@@ -5825,7 +5942,11 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
             .parse()
             .map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => Ok(value.get()),
-        Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(parse_mysql_number(value)),
+        // An ENUM or SET in a numeric context is its declaration index or
+        // member mask, as in MySQL: status = 3 and status + 0 read it.
+        #[allow(clippy::cast_precision_loss)] // an ENUM index or SET mask is far below 2^52
+        Value::Enum { index, .. } => Ok(*index as f64),
+        Value::Utf8(value) => Ok(parse_mysql_number(value)),
         Value::DecimalAverage(average) => {
             let value = &average.label;
             Ok(parse_mysql_number(value))
@@ -5873,9 +5994,8 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
         Value::Int64(value) => Ok(*value),
         Value::UInt64(value) => i64::try_from(*value).map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => float_to_i64(value.get()),
-        Value::Utf8(value) | Value::Enum { label: value, .. } => {
-            float_to_i64(parse_mysql_number(value))
-        }
+        Value::Enum { index, .. } => Ok(i64::try_from(*index).unwrap_or(i64::MAX)),
+        Value::Utf8(value) => float_to_i64(parse_mysql_number(value)),
         Value::DecimalAverage(average) => {
             let value = &average.label;
             float_to_i64(parse_mysql_number(value))
@@ -5894,9 +6014,8 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         Value::Int64(value) => u64::try_from(*value).map_err(|_| ExecError::NumericOverflow),
         Value::UInt64(value) => Ok(*value),
         Value::Float64(value) => float_to_u64(value.get()),
-        Value::Utf8(value) | Value::Enum { label: value, .. } => {
-            float_to_u64(parse_mysql_number(value))
-        }
+        Value::Enum { index, .. } => Ok(*index),
+        Value::Utf8(value) => float_to_u64(parse_mysql_number(value)),
         Value::DecimalAverage(average) => {
             let value = &average.label;
             float_to_u64(parse_mysql_number(value))
@@ -6205,6 +6324,106 @@ mod tests {
                 .expect("time");
             assert_eq!(mysql_date_format(value, "%D"), expected);
         }
+    }
+
+    /// Boundary semantics the oracle corpus measured on `MySQL` 8.4.
+    #[test]
+    fn boundary_string_time_and_json_semantics_match_mysql() {
+        use pintail_types::{DataType, Value};
+        let text = |function, args: Vec<Value>| {
+            super::evaluate_eager_scalar(function, &args, Some(DataType::Utf8)).expect("evaluate")
+        };
+        let bytes = |function, args: Vec<Value>| {
+            super::evaluate_eager_scalar(function, &args, Some(DataType::Binary)).expect("evaluate")
+        };
+        let utf8 = |text: &str| Value::Utf8(text.to_owned());
+        // A negative start reaching past the first character selects nothing.
+        assert_eq!(
+            text(
+                ScalarFunction::Substring,
+                vec![utf8("abc"), Value::Int64(-3)]
+            ),
+            utf8("abc")
+        );
+        assert_eq!(
+            text(
+                ScalarFunction::Substring,
+                vec![utf8("abc"), Value::Int64(-4)]
+            ),
+            utf8("")
+        );
+        // Padding with nothing is an empty string, not NULL; truncation still applies.
+        assert_eq!(
+            text(
+                ScalarFunction::Lpad,
+                vec![utf8("abc"), Value::Int64(5), utf8("")]
+            ),
+            utf8("")
+        );
+        assert_eq!(
+            text(
+                ScalarFunction::Lpad,
+                vec![utf8("abc"), Value::Int64(2), utf8("")]
+            ),
+            utf8("ab")
+        );
+        // Binary strings count bytes and keep them.
+        assert_eq!(
+            bytes(
+                ScalarFunction::Substring,
+                vec![Value::Binary(vec![0xff, 0xfe, 0x61]), Value::Int64(-2)]
+            ),
+            Value::Binary(vec![0xfe, 0x61])
+        );
+        assert_eq!(
+            bytes(
+                ScalarFunction::Trim,
+                vec![Value::Binary(vec![b' ', 0xff, b' '])]
+            ),
+            Value::Binary(vec![0xff])
+        );
+        assert_eq!(
+            bytes(
+                ScalarFunction::ConcatWs,
+                vec![utf8(":"), Value::Binary(vec![0xff]), utf8("end")]
+            ),
+            Value::Binary(vec![0xff, b':', b'e', b'n', b'd'])
+        );
+        assert_eq!(
+            bytes(
+                ScalarFunction::Rpad,
+                vec![Value::Binary(vec![0xff]), Value::Int64(3), utf8("x")]
+            ),
+            Value::Binary(vec![0xff, b'x', b'x'])
+        );
+        // A TIME read as a number, and the TIME range clamp.
+        assert_eq!(
+            super::time_as_number(&utf8("-838:59:59.000000")),
+            utf8("-8385959.000000")
+        );
+        assert_eq!(
+            super::time_as_number(&utf8("-00:00:00.000001")),
+            utf8("-0.000001")
+        );
+        assert_eq!(
+            super::render_time_micros(-(3_020_399 * 1_000_000 + 1), 6),
+            "-838:59:59.000000"
+        );
+        // JSON_TYPE names a non-negative integer past 2^32 - 1 unsigned.
+        assert_eq!(
+            text(ScalarFunction::JsonType, vec![utf8("4294967295")]),
+            utf8("INTEGER")
+        );
+        assert_eq!(
+            text(ScalarFunction::JsonType, vec![utf8("4294967296")]),
+            utf8("UNSIGNED INTEGER")
+        );
+        // An ENUM in a numeric context is its declaration index.
+        let shipped = Value::Enum {
+            index: 3,
+            label: "shipped".to_owned(),
+        };
+        assert_eq!(super::mysql_u64(&shipped).expect("index"), 3);
     }
 
     /// Three divergences measured against `MySQL` 8.4 and now repaired.
