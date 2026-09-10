@@ -25,6 +25,7 @@ pub(super) enum MaterializedMembership {
 enum BucketMode {
     Integer,
     Text,
+    Decimal,
     Common,
 }
 
@@ -69,12 +70,14 @@ impl std::fmt::Debug for ExternalMembership {
 }
 
 /// A member's equality key, for the modes whose comparison it decides:
-/// integers by value whatever their signedness, text by its collation
-/// weights. Values outside the mode have none and are compared one by one.
+/// integers by value whatever their signedness, exact numbers by value
+/// whatever their scale, text by its collation weights. Values outside
+/// the mode have none and are compared one by one.
 #[derive(PartialEq, Eq, Hash)]
 enum MemberKey {
     Integer(i128),
     Text(String),
+    Decimal(i128, u8),
 }
 
 fn member_key(value: &Value, mode: BucketMode, collation: Collation) -> Option<MemberKey> {
@@ -87,8 +90,34 @@ fn member_key(value: &Value, mode: BucketMode, collation: Collation) -> Option<M
         (BucketMode::Text, Value::DecimalAverage(value)) => Some(MemberKey::Text(
             super::join::normalized_collation_text(&value.label, collation),
         )),
+        (BucketMode::Decimal, value) => {
+            decimal_key(value).map(|(units, scale)| MemberKey::Decimal(units, scale))
+        }
         _ => None,
     }
+}
+
+/// An exact number as its digits and scale with trailing fractional zeros
+/// dropped, so `1.5`, `1.50` and `1.500` share a key and `3` meets `3.00`.
+fn decimal_key(value: &Value) -> Option<(i128, u8)> {
+    let (mut units, mut scale) = match value {
+        Value::Int64(value) => (i128::from(*value), 0),
+        Value::UInt64(value) => (i128::from(*value), 0),
+        value => {
+            let text = value.text()?;
+            let scale = u8::try_from(
+                text.split_once('.')
+                    .map_or(0, |(_, fraction)| fraction.len()),
+            )
+            .ok()?;
+            (pintail_types::parse_decimal_scaled(text, scale)?, scale)
+        }
+    };
+    while scale > 0 && units % 10 == 0 {
+        units /= 10;
+        scale -= 1;
+    }
+    Some((units, scale))
 }
 
 fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
@@ -101,8 +130,13 @@ fn bucket(value: &Value, mode: BucketMode, collation: Collation) -> usize {
 }
 
 fn bucket_mode(needle_type: Option<DataType>, value_type: Option<DataType>) -> BucketMode {
+    let exact = |data_type: Option<DataType>| {
+        integer_type(data_type) || matches!(data_type, Some(DataType::Decimal { .. }))
+    };
     if integer_type(needle_type) && integer_type(value_type) {
         BucketMode::Integer
+    } else if exact(needle_type) && exact(value_type) {
+        BucketMode::Decimal
     } else if needle_type == Some(DataType::Utf8) && value_type == Some(DataType::Utf8) {
         BucketMode::Text
     } else {
@@ -313,6 +347,8 @@ struct HashedMembership {
     mode: BucketMode,
     collation: Collation,
     saw_null: bool,
+    /// Members and probes compare as exact numbers.
+    exact_decimal: bool,
 }
 
 impl std::fmt::Debug for HashedMembership {
@@ -332,9 +368,12 @@ impl HashedMembership {
         members: impl IntoIterator<Item = usize>,
     ) -> Result<bool, MembershipError> {
         for index in members {
-            // Both indexed modes compare integers or text, never an exact
-            // decimal.
-            if member_matches(needle, self.values[index].clone(), false, self.collation)? {
+            if member_matches(
+                needle,
+                self.values[index].clone(),
+                self.exact_decimal,
+                self.collation,
+            )? {
                 return Ok(true);
             }
         }
@@ -439,6 +478,7 @@ pub(super) fn index_members(
             mode,
             collation,
             saw_null,
+            exact_decimal: matches!(mode, BucketMode::Decimal),
         })),
         bytes,
     )
@@ -797,12 +837,14 @@ mod tests {
         members: &[Value],
         needle: &Value,
         collation: Collation,
+        exact_decimal: bool,
     ) {
         let mut list = vec![needle.clone()];
         list.extend_from_slice(members);
         assert_eq!(
             membership.0.lookup(needle).expect("lookup"),
-            crate::expression::evaluate_in_list(&list, false, false, collation).expect("list"),
+            crate::expression::evaluate_in_list(&list, false, exact_decimal, collation)
+                .expect("list"),
             "{needle:?}"
         );
     }
@@ -831,7 +873,7 @@ mod tests {
                 Value::Int64(-1),
                 Value::Null,
             ] {
-                assert_answers_as_list(&integers, &members, &needle, Collation::default());
+                assert_answers_as_list(&integers, &members, &needle, Collation::default(), false);
             }
         }
         let words = (0..100)
@@ -847,8 +889,37 @@ mod tests {
                 panic!("a hundred words are indexed");
             };
             for needle in ["word 7", "WORD 99 ", "word 100", "Word 7x", "Wörd 8"] {
-                assert_answers_as_list(&text, &words, &Value::Utf8(needle.to_owned()), collation);
+                assert_answers_as_list(
+                    &text,
+                    &words,
+                    &Value::Utf8(needle.to_owned()),
+                    collation,
+                    false,
+                );
             }
+        }
+        let decimals = (0..100)
+            .map(|quarter| Value::Utf8(format!("{}.{:02}", quarter / 4, quarter % 4 * 25)))
+            .collect::<Vec<_>>();
+        let money = Some(DataType::Decimal {
+            precision: 12,
+            scale: 2,
+        });
+        let MaterializedMembership::Prepared(exact, _) =
+            index_members(decimals.clone(), Collation::default(), money, money)
+        else {
+            panic!("a hundred decimals are indexed");
+        };
+        for needle in [
+            Value::Utf8("1.5".to_owned()),
+            Value::Utf8("1.50".to_owned()),
+            Value::Utf8("24.75".to_owned()),
+            Value::Utf8("25.00".to_owned()),
+            Value::Utf8("-0.00".to_owned()),
+            Value::Utf8("0.1".to_owned()),
+            Value::Int64(3),
+        ] {
+            assert_answers_as_list(&exact, &decimals, &needle, Collation::default(), true);
         }
         assert!(matches!(
             index_members(
