@@ -7388,11 +7388,11 @@
     }
   ],
   "cleanTree": true,
-  "commit": "3ef9d2a1f335bbb65c80d3a40febc155dc68ac0c",
+  "commit": "4ad883cf9f0908e5ddaa45c2073d1eb9b4a0bc2f",
   "comparator": "exact text except float results: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
   "corpusSha256": "3a3925036fdf4db8998146758328b8e8b062496f7954b8c59a5dfc9afe99790b",
   "expectedCases": 1231,
-  "measuredAt": "2026-09-10T05:58:19.955922021+00:00",
+  "measuredAt": "2026-09-10T06:57:21.859594561+00:00",
   "schemaVersion": 1,
   "source": "MySQL 8.4.11 (mysql:8.4)",
   "verdict": "PASS"
