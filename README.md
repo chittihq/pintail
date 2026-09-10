@@ -42,6 +42,28 @@ including the queries where ClickHouse still wins.
   state and dead letters; workspaces, members and API keys; S3-compatible
   backup and restore; an HTTP API for all of it.
 
+## MySQL compatibility
+
+![oracle](https://img.shields.io/badge/oracle-1%2C890%20of%201%2C895%20byte--exact-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C014%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
+
+Pintail answers queries meant for MySQL, so an answer that differs from
+MySQL's is a bug. Every change to `dev` passes these gates against real
+MySQL 8.4 and 8.0 servers before it merges.
+
+| Gate | What it compares | Size | Last result |
+|---|---|---:|---|
+| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,895 queries | 1,890 match; 5 on the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) |
+| Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
+| Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
+| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,014 checks per MySQL version | [0 failed](tests/e2e/results.md) |
+| Crash recovery | Faults mid-write and `kill -9`, then every table compared | 38 scenarios, 692 checks | [0 failed](tests/e2e/results-recovery.md) |
+| Clients | JDBC, Go, Python, Bun and the `mysql` CLI against the wire endpoint | 5 client stacks | pass |
+
+Which MySQL functions and operators are implemented, and which are
+differentially tested, is inventoried in [parity.md](parity.md) and
+[docs/mysql-parity](docs/mysql-parity/). What does not match yet is in
+[docs/limitations.md](docs/limitations.md).
+
 ## Quick start
 
 Pintail ships as a public image, `ghcr.io/chittihq/pintail`, for
@@ -124,28 +146,6 @@ The wire endpoint speaks `caching_sha2_password` and
 Metabase, Prisma, Drizzle and Sequelize all work unchanged. How closely
 the answers match MySQL, and how that is tested, is under
 [MySQL compatibility](#mysql-compatibility).
-
-## MySQL compatibility
-
-![oracle](https://img.shields.io/badge/oracle-1%2C890%20of%201%2C895%20byte--exact-2ea44f) ![replication e2e](https://img.shields.io/badge/replication%20e2e-7%2C014%20checks-2ea44f) ![MySQL](https://img.shields.io/badge/MySQL-8.4%20and%208.0-0969da) ![crash recovery](https://img.shields.io/badge/crash%20recovery-38%20scenarios-2ea44f) ![generated SQL](https://img.shields.io/badge/generated%20SQL-100k%2B-6e7781)
-
-Pintail answers queries meant for MySQL, so an answer that differs from
-MySQL's is a bug. Every change to `dev` passes these gates against real
-MySQL 8.4 and 8.0 servers before it merges.
-
-| Gate | What it compares | Size | Last result |
-|---|---|---:|---|
-| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,895 queries | 1,890 match; 5 on the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) |
-| Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
-| Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
-| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,014 checks per MySQL version | [0 failed](tests/e2e/results.md) |
-| Crash recovery | Faults mid-write and `kill -9`, then every table compared | 38 scenarios, 692 checks | [0 failed](tests/e2e/results-recovery.md) |
-| Clients | JDBC, Go, Python, Bun and the `mysql` CLI against the wire endpoint | 5 client stacks | pass |
-
-Which MySQL functions and operators are implemented, and which are
-differentially tested, is inventoried in [parity.md](parity.md) and
-[docs/mysql-parity](docs/mysql-parity/). What does not match yet is in
-[docs/limitations.md](docs/limitations.md).
 
 ## How it works
 
