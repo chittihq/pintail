@@ -1748,7 +1748,7 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
         Value::Boolean(value) => Some(i8::from(*value).to_string().into_bytes()),
         Value::Int64(value) => Some(value.to_string().into_bytes()),
         Value::UInt64(value) => Some(value.to_string().into_bytes()),
-        Value::Float64(value) => Some(value.get().to_string().into_bytes()),
+        Value::Float64(value) => Some(value.mysql_text().into_bytes()),
         // Clients see an ENUM as its label, exactly as MySQL sends it.
         Value::Utf8(value) | Value::Enum { label: value, .. } => Some(value.clone().into_bytes()),
         Value::DecimalAverage(average) => {

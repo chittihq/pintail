@@ -5874,7 +5874,7 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::Boolean(value) => Ok(if *value { "1" } else { "0" }.to_owned()),
         Value::Int64(value) => Ok(value.to_string()),
         Value::UInt64(value) => Ok(value.to_string()),
-        Value::Float64(value) => Ok(value.get().to_string()),
+        Value::Float64(value) => Ok(value.mysql_text()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
         Value::DecimalAverage(average) => {
             let value = &average.label;
