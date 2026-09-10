@@ -1,0 +1,721 @@
+{
+  "revision": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+  "binarySha256": "b28de37230ae96c3bcda8d45e878cea563a79799e047fe16c50230ebe2bcf9bc",
+  "startedAt": "2026-09-10T05:46:21.002Z",
+  "finishedAt": "2026-09-10T05:52:37.668Z",
+  "runs": 3,
+  "warmups": 1,
+  "settledMemo": false,
+  "queryMemoryBytes": "4294967296",
+  "querySpillBytes": "17179869184",
+  "globalSpillBytes": "34359738368",
+  "mysqlBufferPoolBytes": "4294967296",
+  "counts": {
+    "region": "5",
+    "nation": "25",
+    "supplier": "10000",
+    "part": "200000",
+    "partsupp": "800000",
+    "customer": "150000",
+    "orders": "1500000",
+    "lineitem": "6000749"
+  },
+  "outcomes": [
+    {
+      "id": "q01-pricing-summary",
+      "sqlSha256": "f25fec72249795cc6b88e882ab685266635f18d6406b444b94dfe9fe9d361d7c",
+      "exact": true,
+      "answer": [
+        [
+          "A",
+          "F",
+          "26639179.00",
+          "55368930279.56",
+          "52600878924.1966",
+          "54704244609.135810",
+          "25.494526",
+          "52989.794487",
+          "0.050007",
+          "1044898"
+        ],
+        [
+          "A",
+          "O",
+          "26672391.00",
+          "55431788488.38",
+          "52659382598.0253",
+          "54765733375.688460",
+          "25.488160",
+          "52970.665431",
+          "0.049988",
+          "1046462"
+        ],
+        [
+          "N",
+          "F",
+          "26668938.00",
+          "55411064924.35",
+          "52640062879.1435",
+          "54746857381.404784",
+          "25.492656",
+          "52967.058893",
+          "0.049993",
+          "1046142"
+        ],
+        [
+          "N",
+          "O",
+          "26660920.00",
+          "55312142798.47",
+          "52547204461.9367",
+          "54647943063.700562",
+          "25.505056",
+          "52914.127456",
+          "0.049981",
+          "1045319"
+        ],
+        [
+          "R",
+          "F",
+          "17758549.00",
+          "36907627768.41",
+          "35060618101.1424",
+          "36467070236.550384",
+          "25.490179",
+          "52976.290142",
+          "0.050041",
+          "696682"
+        ],
+        [
+          "R",
+          "O",
+          "17782152.00",
+          "36850385938.55",
+          "35006344341.5581",
+          "36408888015.373677",
+          "25.525597",
+          "52897.315599",
+          "0.050051",
+          "696640"
+        ]
+      ],
+      "answerSha256": "64bdfb09291c3685765bd6e5fc66c8a4b85a60b9f3f537290c0f975b8a39409f",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T05:46:38.512Z",
+          "finishedAt": "2026-09-10T05:46:56.202Z",
+          "mysqlMs": 8177.407407999999,
+          "pintailMs": 9512.014398,
+          "stats": {
+            "duration_ms": 9510,
+            "rows": 6,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:46:56.202Z",
+          "finishedAt": "2026-09-10T05:47:13.745Z",
+          "mysqlMs": 8179.8592260000005,
+          "pintailMs": 9363.771830000005,
+          "stats": {
+            "duration_ms": 9361,
+            "rows": 6,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:47:13.745Z",
+          "finishedAt": "2026-09-10T05:47:31.350Z",
+          "mysqlMs": 8184.737626999995,
+          "pintailMs": 9420.36178,
+          "stats": {
+            "duration_ms": 9418,
+            "rows": 6,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 9420.36178,
+      "p95Ms": 9512.014398,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Sort keys=[BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: Some(\"utf8mb4_0900_ai_ci\") }, BoundOrderKey { index: 1, ascending: true, nulls_first: true, decimal: false, collation: Some(\"utf8mb4_0900_ai_ci\") }] top_k=None trim=0\n  Project outputs=[l_returnflag, l_linestatus, sum_qty, sum_base_price, sum_disc_price, sum_charge, avg_qty, avg_price, avg_disc, count_order]\n    HashAggregate groups=2 aggregates=8\n      Scan table=tpch.lineitem rows=Some(6000749) columns=[5, 6, 7, 8, 9, 10, 11] predicates=1 limit=None actual_segments=61/61 actual_blocks=3368/3368 decoded_blocks=3368\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0 peak_handles=0\nProfile total=9370.4ms spill_files=0 spill_bytes=0 peak_spill_handles=0\nSort keys=2 total=9370.4ms self=0.0ms first=9370.4ms build=0.1ms batches=1 rows=6 peak_reserved=0.0MiB\n  Project columns=10 total=9370.4ms self=0.0ms first=9370.4ms build=0.1ms batches=1 rows=6 peak_reserved=0.0MiB\n    HashAggregate keys=2 aggregates=8 total=9370.4ms self=2334.6ms first=9370.4ms build=0.1ms batches=1 rows=6 peak_reserved=0.0MiB\n      Scan tpch.lineitem predicates=1 total=7035.7ms self=7035.7ms first=154.3ms build=0.1ms batches=61 rows=5576143 peak_reserved=309.9MiB (fused into the aggregate above; its inputs ran directly)\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 9372,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 61,
+          "segments_pruned": 0,
+          "blocks_read": 3368,
+          "blocks_pruned": 0,
+          "blocks_decoded": 3368
+        },
+        "truncated": false
+      }
+    },
+    {
+      "id": "q03-shipping-priority",
+      "sqlSha256": "e817335ed44aa5c55c81db1ff31dae8a5ebaf3dbe512cf5767fcc77be18dce76",
+      "exact": true,
+      "answer": [
+        [
+          "146269",
+          "586542.4566",
+          "1995-03-11",
+          "0"
+        ],
+        [
+          "1427024",
+          "526590.1500",
+          "1995-03-04",
+          "0"
+        ],
+        [
+          "1047604",
+          "518465.2074",
+          "1995-03-07",
+          "0"
+        ],
+        [
+          "1031415",
+          "513453.6172",
+          "1995-02-13",
+          "0"
+        ],
+        [
+          "665468",
+          "503238.8966",
+          "1995-03-02",
+          "0"
+        ],
+        [
+          "92991",
+          "501464.6476",
+          "1995-02-11",
+          "0"
+        ],
+        [
+          "399003",
+          "496749.7488",
+          "1995-02-18",
+          "0"
+        ],
+        [
+          "504587",
+          "487102.9835",
+          "1995-03-10",
+          "0"
+        ],
+        [
+          "1308515",
+          "486341.3604",
+          "1995-02-24",
+          "0"
+        ],
+        [
+          "711569",
+          "485195.9178",
+          "1995-02-07",
+          "0"
+        ]
+      ],
+      "answerSha256": "e7bdcab16a9136b0f48fcd4f2161e3f660395cedd73b4628049a1006015cefe0",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T05:47:47.093Z",
+          "finishedAt": "2026-09-10T05:47:53.696Z",
+          "mysqlMs": 953.6211550000007,
+          "pintailMs": 5649.028797999999,
+          "stats": {
+            "duration_ms": 5258,
+            "rows": 10,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:47:53.696Z",
+          "finishedAt": "2026-09-10T05:48:00.113Z",
+          "mysqlMs": 953.3338979999971,
+          "pintailMs": 5463.627626000001,
+          "stats": {
+            "duration_ms": 5080,
+            "rows": 10,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:48:00.113Z",
+          "finishedAt": "2026-09-10T05:48:06.512Z",
+          "mysqlMs": 941.0082760000078,
+          "pintailMs": 5458.025817000002,
+          "stats": {
+            "duration_ms": 5074,
+            "rows": 10,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 5463.627626000001,
+      "p95Ms": 5649.028797999999,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Limit offset=0 count=10\n  Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 2, ascending: true, nulls_first: true, decimal: false, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(10) trim=0\n    Project outputs=[l_orderkey, revenue, o_orderdate, o_shippriority]\n      HashAggregate groups=3 aggregates=1\n        HashJoin kind=inner\n          HashJoin kind=inner\n            Scan table=tpch.orders rows=Some(1500000) columns=[1, 2, 5, 8] predicates=1 limit=None actual_segments=15/15 actual_blocks=525/525 decoded_blocks=525\n            Scan table=tpch.customer rows=Some(150000) columns=[1, 7] predicates=1 limit=None actual_segments=2/2 actual_blocks=33/33 decoded_blocks=33\n          Scan table=tpch.lineitem rows=Some(6000749) columns=[1, 6, 7, 11] predicates=1 limit=None actual_segments=61/61 actual_blocks=2105/2105 decoded_blocks=2105\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0 peak_handles=0\nProfile total=5109.6ms spill_files=0 spill_bytes=0 peak_spill_handles=0\nLimit offset=0 count=10 total=5109.6ms self=0.0ms first=5109.6ms build=0.1ms batches=1 rows=10 peak_reserved=1936.8MiB\n  Sort keys=3 top_k=10 total=5109.6ms self=3.1ms first=5109.6ms build=0.1ms batches=1 rows=10 peak_reserved=1936.8MiB\n    Project columns=4 total=5106.5ms self=1.0ms first=5106.5ms build=0.1ms batches=1 rows=10829 peak_reserved=1936.8MiB\n      HashAggregate keys=3 aggregates=1 total=5105.5ms self=36.6ms first=5105.5ms build=0.1ms batches=1 rows=10829 peak_reserved=1936.8MiB\n        HashJoin kind=Inner keys=1 residual=false total=5068.9ms self=4442.1ms first=4568.6ms build=0.1ms batches=7 rows=28606 peak_reserved=1969.2MiB (fused into the aggregate above; its inputs ran directly)\n          HashJoin kind=Inner keys=1 residual=false total=593.5ms self=578.9ms first=74.6ms build=0.0ms batches=34 rows=139102 peak_reserved=1974.5MiB\n            Scan tpch.orders predicates=1 total=11.8ms self=11.8ms first=9.7ms build=0.0ms batches=15 rows=685876 peak_reserved=1971.4MiB\n            Scan tpch.customer predicates=1 total=2.8ms self=2.8ms first=2.7ms build=0.0ms batches=2 rows=30285 peak_reserved=1928.5MiB\n          Scan tpch.lineitem predicates=1 total=33.3ms self=33.3ms first=22.8ms build=0.1ms batches=61 rows=3396499 peak_reserved=1877.6MiB\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 5438,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 78,
+          "segments_pruned": 0,
+          "blocks_read": 2663,
+          "blocks_pruned": 0,
+          "blocks_decoded": 2663
+        },
+        "truncated": false
+      }
+    },
+    {
+      "id": "q05-local-supplier-volume",
+      "sqlSha256": "e47443c2fad86ce86e785fafc0a4685cefa82f57991c0a6d9ca38c331442f139",
+      "exact": true,
+      "answer": [
+        [
+          "VIETNAM",
+          "75180864.2457"
+        ],
+        [
+          "INDIA",
+          "75070739.4641"
+        ],
+        [
+          "CHINA",
+          "66728146.5186"
+        ],
+        [
+          "JAPAN",
+          "66251633.3028"
+        ],
+        [
+          "INDONESIA",
+          "63017263.9848"
+        ]
+      ],
+      "answerSha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T05:49:00.705Z",
+          "finishedAt": "2026-09-10T05:49:49.447Z",
+          "mysqlMs": 786.2316979999887,
+          "pintailMs": 47955.17605500002,
+          "stats": {
+            "duration_ms": 47719,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:49:49.447Z",
+          "finishedAt": "2026-09-10T05:50:38.000Z",
+          "mysqlMs": 785.5616830000072,
+          "pintailMs": 47767.402504,
+          "stats": {
+            "duration_ms": 47535,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:50:38.000Z",
+          "finishedAt": "2026-09-10T05:51:26.963Z",
+          "mysqlMs": 786.5773760000011,
+          "pintailMs": 48176.65189000001,
+          "stats": {
+            "duration_ms": 47948,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 47955.17605500002,
+      "p95Ms": 48176.65189000001,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Sort keys=[BoundOrderKey { index: 1, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: Some(\"utf8mb4_0900_ai_ci\") }] top_k=None trim=0\n  Project outputs=[n_name, revenue]\n    HashAggregate groups=1 aggregates=1\n      HashJoin kind=inner\n        HashJoin kind=inner\n          Scan table=tpch.lineitem rows=Some(6000749) columns=[1, 3, 6, 7] predicates=0 limit=None actual_segments=61/61 actual_blocks=1684/1684 decoded_blocks=1684\n          Scan table=tpch.orders rows=Some(1500000) columns=[1, 2, 5] predicates=2 limit=None actual_segments=15/15 actual_blocks=420/420 decoded_blocks=420\n        HashJoin kind=inner\n          HashJoin kind=inner\n            Scan table=tpch.customer rows=Some(150000) columns=[1, 4] predicates=0 limit=None actual_segments=2/2 actual_blocks=22/22 decoded_blocks=22\n            Scan table=tpch.supplier rows=Some(10000) columns=[1, 4] predicates=0 limit=None actual_segments=1/1 actual_blocks=2/2 decoded_blocks=2\n          HashJoin kind=inner\n            Scan table=tpch.nation rows=Some(25) columns=[1, 2, 3] predicates=0 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\n            Scan table=tpch.region rows=Some(5) columns=[1, 2] predicates=1 limit=None actual_segments=1/1 actual_blocks=3/3 decoded_blocks=3\nSpill files=32 bytes=1466506682 active_bytes=0 quota_failures=0 peak_handles=2\nProfile total=47938.0ms spill_files=32 spill_bytes=1466506682 peak_spill_handles=2\nSort keys=2 total=47938.0ms self=0.0ms first=47938.0ms build=34.8ms batches=1 rows=5 peak_reserved=357.6MiB\n  Project columns=2 total=47938.0ms self=0.0ms first=47938.0ms build=34.8ms batches=1 rows=5 peak_reserved=357.6MiB\n    HashAggregate keys=1 aggregates=1 total=47938.0ms self=4.4ms first=47938.0ms build=34.8ms batches=1 rows=5 peak_reserved=357.6MiB\n      HashJoin kind=Inner keys=2 residual=false total=47933.6ms self=18713.1ms first=44323.2ms build=34.8ms batches=2 rows=6869 peak_reserved=629.4MiB (fused into the aggregate above; its inputs ran directly)\n        HashJoin kind=Inner keys=1 residual=false total=4326.6ms self=2980.3ms first=1663.5ms build=34.7ms batches=210 rows=857315 peak_reserved=542.5MiB\n          Scan tpch.lineitem predicates=0 total=51.5ms self=51.5ms first=51.3ms build=34.7ms batches=61 rows=6000749 peak_reserved=538.9MiB\n          Scan tpch.orders predicates=2 total=1294.9ms self=1294.9ms first=92.9ms build=0.0ms batches=15 rows=214279 peak_reserved=358.1MiB\n        HashJoin kind=Inner keys=1 residual=false total=24893.9ms self=14695.6ms first=18.7ms build=0.0ms batches=2946 rows=12066680 peak_reserved=2050.8MiB\n          HashJoin kind=Inner keys=1 residual=false total=10198.1ms self=10197.3ms first=7.5ms build=0.0ms batches=14648 rows=59995715 peak_reserved=2050.3MiB\n            Scan tpch.customer predicates=0 total=0.7ms self=0.7ms first=0.7ms build=0.0ms batches=2 rows=150000 peak_reserved=2.0MiB\n            Scan tpch.supplier predicates=0 total=0.1ms self=0.1ms first=0.1ms build=0.0ms batches=1 rows=10000 peak_reserved=1.3MiB\n          HashJoin kind=Inner keys=1 residual=false total=0.1ms self=0.0ms first=0.1ms build=0.0ms batches=1 rows=5 peak_reserved=0.1MiB\n            Scan tpch.nation predicates=0 total=0.0ms self=0.0ms first=0.0ms build=0.0ms batches=1 rows=25 peak_reserved=0.1MiB\n            Scan tpch.region predicates=1 total=0.1ms self=0.1ms first=0.1ms build=0.0ms batches=1 rows=1 peak_reserved=0.0MiB\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 48168,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 81,
+          "segments_pruned": 0,
+          "blocks_read": 2134,
+          "blocks_pruned": 0,
+          "blocks_decoded": 2134
+        },
+        "truncated": false
+      }
+    },
+    {
+      "id": "q10-returned-item-reporting",
+      "sqlSha256": "ae73bdb3715b0dc6f7ab574df8a59ee82711ee8aa27cdad9489228c62ce242bd",
+      "exact": true,
+      "answer": [
+        [
+          "6781",
+          "Customer#000006781",
+          "538996.8498",
+          "-265.29",
+          "SAUDI ARABIA",
+          "address 42307",
+          "15-304-312-9716",
+          "customer comment"
+        ],
+        [
+          "140150",
+          "Customer#000140150",
+          "516138.6206",
+          "8433.78",
+          "FRANCE",
+          "address 84277",
+          "15-488-150-1364",
+          "customer comment"
+        ],
+        [
+          "89699",
+          "Customer#000089699",
+          "477036.3319",
+          "7135.01",
+          "ETHIOPIA",
+          "address 6100",
+          "10-331-309-3481",
+          "customer comment"
+        ],
+        [
+          "112302",
+          "Customer#000112302",
+          "475068.4318",
+          "3558.11",
+          "ALGERIA",
+          "address 72960",
+          "15-693-172-6268",
+          "customer comment"
+        ],
+        [
+          "77488",
+          "Customer#000077488",
+          "471832.6760",
+          "8836.42",
+          "MOZAMBIQUE",
+          "address 11698",
+          "26-264-745-4051",
+          "customer comment"
+        ],
+        [
+          "8621",
+          "Customer#000008621",
+          "469585.3892",
+          "7704.40",
+          "INDIA",
+          "address 82101",
+          "16-161-974-5024",
+          "customer comment"
+        ],
+        [
+          "30208",
+          "Customer#000030208",
+          "464584.0391",
+          "2549.72",
+          "INDIA",
+          "address 91983",
+          "22-210-706-7021",
+          "customer comment"
+        ],
+        [
+          "57365",
+          "Customer#000057365",
+          "454806.1171",
+          "8393.40",
+          "INDIA",
+          "address 48538",
+          "22-527-156-7477",
+          "customer comment"
+        ],
+        [
+          "49279",
+          "Customer#000049279",
+          "448663.9703",
+          "3789.42",
+          "CHINA",
+          "address 42014",
+          "15-948-413-3752",
+          "customer comment"
+        ],
+        [
+          "14766",
+          "Customer#000014766",
+          "441485.6343",
+          "6523.63",
+          "CHINA",
+          "address 60015",
+          "30-185-852-9868",
+          "customer comment"
+        ],
+        [
+          "77906",
+          "Customer#000077906",
+          "441265.5167",
+          "7302.23",
+          "INDIA",
+          "address 22298",
+          "22-768-957-4688",
+          "customer comment"
+        ],
+        [
+          "74541",
+          "Customer#000074541",
+          "441121.4958",
+          "6462.36",
+          "CHINA",
+          "address 81576",
+          "13-147-456-4755",
+          "customer comment"
+        ],
+        [
+          "84549",
+          "Customer#000084549",
+          "436889.8178",
+          "9200.65",
+          "ARGENTINA",
+          "address 6523",
+          "11-529-412-2568",
+          "customer comment"
+        ],
+        [
+          "67656",
+          "Customer#000067656",
+          "436715.6376",
+          "-846.57",
+          "FRANCE",
+          "address 56315",
+          "12-635-610-8161",
+          "customer comment"
+        ],
+        [
+          "103344",
+          "Customer#000103344",
+          "433788.2925",
+          "7375.45",
+          "IRAN",
+          "address 370",
+          "26-555-702-9681",
+          "customer comment"
+        ],
+        [
+          "43357",
+          "Customer#000043357",
+          "433039.6146",
+          "76.91",
+          "ETHIOPIA",
+          "address 35253",
+          "12-291-254-5396",
+          "customer comment"
+        ],
+        [
+          "69459",
+          "Customer#000069459",
+          "432623.0161",
+          "9615.27",
+          "GERMANY",
+          "address 54969",
+          "24-812-637-2920",
+          "customer comment"
+        ],
+        [
+          "149275",
+          "Customer#000149275",
+          "428658.1185",
+          "3823.75",
+          "UNITED KINGDOM",
+          "address 11757",
+          "25-923-125-1980",
+          "customer comment"
+        ],
+        [
+          "8232",
+          "Customer#000008232",
+          "427427.6450",
+          "5934.72",
+          "EGYPT",
+          "address 56211",
+          "10-207-770-1993",
+          "customer comment"
+        ],
+        [
+          "2577",
+          "Customer#000002577",
+          "426707.8613",
+          "113.08",
+          "ETHIOPIA",
+          "address 8357",
+          "25-253-982-4004",
+          "customer comment"
+        ]
+      ],
+      "answerSha256": "b992bdd579523c78bcb64198ce409612057e5f8d1483493b723f3c26d96cdc93",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T05:52:19.558Z",
+          "finishedAt": "2026-09-10T05:52:24.040Z",
+          "mysqlMs": 390.4163599999738,
+          "pintailMs": 4091.5490010000067,
+          "stats": {
+            "duration_ms": 4036,
+            "rows": 20,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:52:24.040Z",
+          "finishedAt": "2026-09-10T05:52:28.515Z",
+          "mysqlMs": 391.67851900000824,
+          "pintailMs": 4083.6059860000387,
+          "stats": {
+            "duration_ms": 4026,
+            "rows": 20,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T05:52:28.515Z",
+          "finishedAt": "2026-09-10T05:52:33.020Z",
+          "mysqlMs": 391.2270460000145,
+          "pintailMs": 4113.384380999953,
+          "stats": {
+            "duration_ms": 4055,
+            "rows": 20,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 4091.5490010000067,
+      "p95Ms": 4113.384380999953,
+      "profile": {
+        "fields": [
+          {
+            "name": "plan",
+            "data_type": "utf8",
+            "nullable": false,
+            "collation": "utf8mb4_0900_ai_ci"
+          }
+        ],
+        "rows": [
+          [
+            "Limit offset=0 count=20\n  Sort keys=[BoundOrderKey { index: 2, ascending: false, nulls_first: false, decimal: true, collation: None }, BoundOrderKey { index: 0, ascending: true, nulls_first: true, decimal: false, collation: None }] top_k=Some(20) trim=0\n    Project outputs=[c_custkey, c_name, revenue, c_acctbal, n_name, c_address, c_phone, c_comment]\n      HashAggregate groups=7 aggregates=1\n        HashJoin kind=inner\n          HashJoin kind=inner\n            Scan table=tpch.lineitem rows=Some(6000749) columns=[1, 6, 7, 9] predicates=1 limit=None actual_segments=61/61 actual_blocks=2105/2105 decoded_blocks=2105\n            Scan table=tpch.orders rows=Some(1500000) columns=[1, 2, 5] predicates=2 limit=None actual_segments=15/15 actual_blocks=420/420 decoded_blocks=420\n          HashJoin kind=inner\n            Scan table=tpch.customer rows=Some(150000) columns=[1, 2, 3, 4, 5, 6, 8] predicates=0 limit=None actual_segments=2/2 actual_blocks=77/77 decoded_blocks=77\n            Scan table=tpch.nation rows=Some(25) columns=[1, 2] predicates=0 limit=None actual_segments=1/1 actual_blocks=2/2 decoded_blocks=2\nSpill files=0 bytes=0 active_bytes=0 quota_failures=0 peak_handles=0\nProfile total=3947.4ms spill_files=0 spill_bytes=0 peak_spill_handles=0\nLimit offset=0 count=20 total=3947.3ms self=0.0ms first=3947.3ms build=0.2ms batches=1 rows=20 peak_reserved=425.3MiB\n  Sort keys=2 top_k=20 total=3947.3ms self=17.9ms first=3947.3ms build=0.2ms batches=1 rows=20 peak_reserved=425.3MiB\n    Project columns=8 total=3929.5ms self=9.6ms first=3929.5ms build=0.2ms batches=1 rows=30412 peak_reserved=425.3MiB\n      HashAggregate keys=7 aggregates=1 total=3919.9ms self=169.1ms first=3919.9ms build=0.2ms batches=1 rows=30412 peak_reserved=425.3MiB\n        HashJoin kind=Inner keys=1 residual=false total=3750.8ms self=273.7ms first=2005.6ms build=0.2ms batches=14 rows=54020 peak_reserved=538.4MiB (fused into the aggregate above; its inputs ran directly)\n          HashJoin kind=Inner keys=1 residual=false total=3285.7ms self=1905.1ms first=1616.8ms build=0.2ms batches=14 rows=54020 peak_reserved=537.4MiB\n            Scan tpch.lineitem predicates=1 total=43.8ms self=43.8ms first=27.2ms build=0.1ms batches=61 rows=1499849 peak_reserved=545.7MiB\n            Scan tpch.orders predicates=2 total=1336.8ms self=1336.8ms first=94.5ms build=0.0ms batches=15 rows=54083 peak_reserved=381.8MiB\n          HashJoin kind=Inner keys=1 residual=false total=191.5ms self=176.9ms first=53.7ms build=0.0ms batches=37 rows=150000 peak_reserved=291.8MiB\n            Scan tpch.customer predicates=0 total=14.5ms self=14.5ms first=14.5ms build=0.0ms batches=2 rows=150000 peak_reserved=291.8MiB\n            Scan tpch.nation predicates=0 total=0.0ms self=0.0ms first=0.0ms build=0.0ms batches=1 rows=25 peak_reserved=0.2MiB\n"
+          ]
+        ],
+        "stats": {
+          "duration_ms": 4031,
+          "rows": 1,
+          "batches": 0,
+          "segments_read": 79,
+          "segments_pruned": 0,
+          "blocks_read": 2604,
+          "blocks_pruned": 0,
+          "blocks_decoded": 2604
+        },
+        "truncated": false
+      }
+    }
+  ]
+}

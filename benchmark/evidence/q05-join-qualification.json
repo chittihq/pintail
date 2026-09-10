@@ -1,0 +1,88 @@
+{
+  "baseline": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+  "candidate": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
+  "scope": "Warm-cache deterministic SF1 Q05 and four-query TPC-H comparison; not a general latency guarantee.",
+  "fixture": {
+    "generator": "benchmark/workloads/tpch-v1/seed.ts",
+    "seed": 42,
+    "scale": 1,
+    "counts": {
+      "region": "5",
+      "nation": "25",
+      "supplier": "10000",
+      "part": "200000",
+      "partsupp": "800000",
+      "customer": "150000",
+      "orders": "1500000",
+      "lineitem": "6000749"
+    }
+  },
+  "measurement": {
+    "logical_cpus": 16,
+    "ram_gib": 60,
+    "host_fingerprint": "2c89ea593c54a6dc3dcd61e20ea00deee006c814ec7ff47e3e2712dd3edf2913",
+    "settled_memo": false,
+    "query_memory_bytes": "4294967296",
+    "query_spill_bytes": "1073741824",
+    "global_spill_bytes": "8589934592",
+    "mysql_buffer_pool_bytes": "4294967296",
+    "competing_containers_during_tpch": false,
+    "next_foreign_oracle_created_at": "2026-09-10T06:48:56Z"
+  },
+  "target": {
+    "threshold_ms": 1000,
+    "runs": 15,
+    "warmups": 2,
+    "median_ms": 910.7304280000008,
+    "p95_ms": 991.6108989999993,
+    "passed": true,
+    "all_answers_exact": true,
+    "answer_sha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08"
+  },
+  "four_query_comparison": [
+    {
+      "id": "q01-pricing-summary",
+      "baseline_median_ms": 9420.36178,
+      "candidate_median_ms": 2359.558965,
+      "answers_equal": true,
+      "sql_equal": true
+    },
+    {
+      "id": "q03-shipping-priority",
+      "baseline_median_ms": 5463.627626000001,
+      "candidate_median_ms": 563.5938380000007,
+      "answers_equal": true,
+      "sql_equal": true
+    },
+    {
+      "id": "q05-local-supplier-volume",
+      "baseline_median_ms": 47955.17605500002,
+      "candidate_median_ms": 906.2925090000062,
+      "answers_equal": true,
+      "sql_equal": true
+    },
+    {
+      "id": "q10-returned-item-reporting",
+      "baseline_median_ms": 4091.5490010000067,
+      "candidate_median_ms": 952.9117709999991,
+      "answers_equal": true,
+      "sql_equal": true
+    }
+  ],
+  "raw_reports": [
+    "q05-join-qualification/tpch-baseline.json",
+    "q05-join-qualification/tpch-candidate.json",
+    "q05-join-qualification/q05-target.json",
+    "q05-join-qualification/supplementary-baseline.json",
+    "q05-join-qualification/supplementary-target.json"
+  ],
+  "remaining_qualification": {
+    "rc": "pending",
+    "eight_query_20m_candidate": "pending; setup attempts interrupted by overlapping harnesses"
+  },
+  "eight_query_baseline": {
+    "path": "q05-join-qualification/eight-query-baseline.json",
+    "all_answers_exact": true,
+    "final_concurrency_result_excluded": "Other oracle containers started during the last two seconds of the final concurrency test, after the eight-query measurements."
+  }
+}

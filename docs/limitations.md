@@ -256,18 +256,6 @@ stays readable as a list of things to fix.
 - Spill storage is bounded by `query.spill_limit_bytes` plus the process-wide
   `global_spill_limit_bytes`; exhausting either limit fails the query before
   the write crosses the ceiling.
-- <a id="tpch-q05-spill-capacity"></a> **TPC-H Q05 spill capacity and latency:**
-  the SF1 six-table revenue query failed on the unchanged storage-scan baseline
-  with `join spill write: query spill disk quota exceeded`, using the default
-  1 GiB per-query spill allowance and a 4 GiB query-memory ceiling. Spill files
-  hold intermediate query data on disk; exhausting their allowance aborts the
-  query rather than returning a successful, incomplete answer. With identical
-  16 GiB per-query / 32 GiB process spill allowances, baseline and candidate
-  returned byte-identical answers to MySQL, but both took about 48 seconds.
-  The larger allowance permits completion; it does not resolve the execution
-  cost. Peak spill usage, the minimum sufficient allowance, and the cause of
-  the join's spill volume have not been established. See the
-  [measured comparison and retained default-quota failure](../benchmark/evidence/storage-scan-qualification.md#tpc-h-sf1).
 - Dependent correlated execution can rerun its inner plan for each outer
   row when memoization is unavailable. Nullable correlated
   `NOT IN` shapes that cannot be proven safe still reject rather than risk a

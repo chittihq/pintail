@@ -64,6 +64,22 @@ const ENGINE = [
 
 const ARTIFACTS: Artifact[] = [
   {
+    name: 'Q05 join qualification',
+    evidence: ['benchmark/evidence/q05-join-qualification.json'],
+    sources: [
+      ...ENGINE,
+      'benchmark/replay-tpch.ts',
+      'benchmark/run.ts',
+      'benchmark/queries.ts',
+      'benchmark/run-tpch.ts',
+      'benchmark/workloads/tpch-v1/queries',
+      'benchmark/workloads/tpch-v1/schema.mysql.sql',
+      'benchmark/workloads/tpch-v1/seed.ts',
+      'benchmark/workloads/tpch-v1/workload.ts',
+    ],
+    refresh: 'Repeat benchmark/evidence/q05-join-qualification.md and bank the exact-answer replays and 20M comparison',
+  },
+  {
     name: 'storage scan qualification',
     evidence: ['benchmark/evidence/storage-scan-qualification.json'],
     sources: [

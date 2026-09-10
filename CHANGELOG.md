@@ -8,6 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
+- Avoid dimension fanout in cyclic inner joins, propagate complete integer join
+  membership, fold literal date intervals into scan bounds, and copy only needed
+  packed scalar payloads. With settled-result memoization disabled, the unchanged
+  synthetic SF1 Q05 query improved from a 47.96-second median to 0.91 seconds
+  (0.99-second p95 over fifteen runs), with exact MySQL answers and no spill.
+  This uses a 4 GiB query-memory ceiling and default spill limits; it is a
+  measured workload result, not a one-second guarantee for arbitrary joins.
+
 - Cache immutable block offsets and retain decoded predicate columns when the
   output projection is identical. Dense text-predicate scans with that
   projection decode half as many blocks. Idle-host 20-million-row probes found

@@ -1,0 +1,297 @@
+{
+  "revision": "b2cb6f5bea0cb9bdfddae0815da4f11b2773bab3",
+  "binarySha256": "c6d07a43a8771985bdfd079112a700001f8cb485b68952be5b827eab08312776",
+  "startedAt": "2026-09-10T06:47:36.014Z",
+  "finishedAt": "2026-09-10T06:48:05.354Z",
+  "runs": 15,
+  "warmups": 2,
+  "settledMemo": false,
+  "queryMemoryBytes": "4294967296",
+  "querySpillBytes": "1073741824",
+  "globalSpillBytes": "8589934592",
+  "mysqlBufferPoolBytes": "4294967296",
+  "counts": {
+    "region": "5",
+    "nation": "25",
+    "supplier": "10000",
+    "part": "200000",
+    "partsupp": "800000",
+    "customer": "150000",
+    "orders": "1500000",
+    "lineitem": "6000749"
+  },
+  "outcomes": [
+    {
+      "id": "q05-local-supplier-volume",
+      "sqlSha256": "e47443c2fad86ce86e785fafc0a4685cefa82f57991c0a6d9ca38c331442f139",
+      "exact": true,
+      "answer": [
+        [
+          "VIETNAM",
+          "75180864.2457"
+        ],
+        [
+          "INDIA",
+          "75070739.4641"
+        ],
+        [
+          "CHINA",
+          "66728146.5186"
+        ],
+        [
+          "JAPAN",
+          "66251633.3028"
+        ],
+        [
+          "INDONESIA",
+          "63017263.9848"
+        ]
+      ],
+      "answerSha256": "917d70a312a389a1e42c804d5ff12ed278c08161127a8dca7464ed54f52c3e08",
+      "timings": [
+        {
+          "startedAt": "2026-09-10T06:47:39.335Z",
+          "finishedAt": "2026-09-10T06:47:41.056Z",
+          "mysqlMs": 790.3602690000002,
+          "pintailMs": 930.0792240000001,
+          "stats": {
+            "duration_ms": 858,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:41.056Z",
+          "finishedAt": "2026-09-10T06:47:42.699Z",
+          "mysqlMs": 789.8459489999996,
+          "pintailMs": 853.1509499999993,
+          "stats": {
+            "duration_ms": 783,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:42.699Z",
+          "finishedAt": "2026-09-10T06:47:44.397Z",
+          "mysqlMs": 787.5323770000005,
+          "pintailMs": 910.7304280000008,
+          "stats": {
+            "duration_ms": 839,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:44.397Z",
+          "finishedAt": "2026-09-10T06:47:45.977Z",
+          "mysqlMs": 790.3242849999988,
+          "pintailMs": 789.9219919999996,
+          "stats": {
+            "duration_ms": 718,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:45.977Z",
+          "finishedAt": "2026-09-10T06:47:47.674Z",
+          "mysqlMs": 788.848324999999,
+          "pintailMs": 908.0084650000008,
+          "stats": {
+            "duration_ms": 838,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:47.674Z",
+          "finishedAt": "2026-09-10T06:47:49.448Z",
+          "mysqlMs": 788.7674289999995,
+          "pintailMs": 984.5018359999995,
+          "stats": {
+            "duration_ms": 910,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:49.448Z",
+          "finishedAt": "2026-09-10T06:47:51.168Z",
+          "mysqlMs": 789.6334150000002,
+          "pintailMs": 930.5247070000005,
+          "stats": {
+            "duration_ms": 860,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:51.168Z",
+          "finishedAt": "2026-09-10T06:47:52.805Z",
+          "mysqlMs": 790.6360949999998,
+          "pintailMs": 846.1205010000012,
+          "stats": {
+            "duration_ms": 776,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:52.805Z",
+          "finishedAt": "2026-09-10T06:47:54.543Z",
+          "mysqlMs": 798.6272800000006,
+          "pintailMs": 939.1726660000022,
+          "stats": {
+            "duration_ms": 865,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:54.543Z",
+          "finishedAt": "2026-09-10T06:47:56.311Z",
+          "mysqlMs": 797.617416000001,
+          "pintailMs": 971.2505889999993,
+          "stats": {
+            "duration_ms": 892,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:56.311Z",
+          "finishedAt": "2026-09-10T06:47:57.923Z",
+          "mysqlMs": 798.0855900000024,
+          "pintailMs": 812.9807959999998,
+          "stats": {
+            "duration_ms": 741,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:57.923Z",
+          "finishedAt": "2026-09-10T06:47:59.626Z",
+          "mysqlMs": 797.179533999999,
+          "pintailMs": 905.7959379999993,
+          "stats": {
+            "duration_ms": 835,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:47:59.626Z",
+          "finishedAt": "2026-09-10T06:48:01.405Z",
+          "mysqlMs": 787.4049500000001,
+          "pintailMs": 991.6108989999993,
+          "stats": {
+            "duration_ms": 919,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:48:01.405Z",
+          "finishedAt": "2026-09-10T06:48:03.010Z",
+          "mysqlMs": 788.1445410000015,
+          "pintailMs": 816.7703010000005,
+          "stats": {
+            "duration_ms": 747,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        },
+        {
+          "startedAt": "2026-09-10T06:48:03.010Z",
+          "finishedAt": "2026-09-10T06:48:04.728Z",
+          "mysqlMs": 794.0676979999989,
+          "pintailMs": 923.9721739999986,
+          "stats": {
+            "duration_ms": 852,
+            "rows": 5,
+            "batches": 1,
+            "segments_read": 0,
+            "segments_pruned": 0,
+            "blocks_read": 0,
+            "blocks_pruned": 0,
+            "blocks_decoded": 0
+          }
+        }
+      ],
+      "medianMs": 910.7304280000008,
+      "p95Ms": 991.6108989999993
+    }
+  ]
+}
