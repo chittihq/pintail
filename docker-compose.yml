@@ -86,6 +86,18 @@ services:
       # Spill defaults under the data directory, so it shares that mount
       # unless PINTAIL_SPILL_DATA below points it elsewhere.
       PINTAIL_SPILL_DIR: /var/lib/pintail/spill
+      # How much spill one query, and the whole process, may write. The
+      # engine reads both; without them here a deployment cannot raise
+      # either, because compose passes through only the variables it names.
+      # The defaults are the engine's own, so an existing deployment that
+      # sets neither is unchanged.
+      #
+      # A query that exceeds its quota FAILS - it does not fall back to a
+      # slower plan - so these bound the largest join or sort the deployment
+      # will answer rather than trading speed for space. A six-table join
+      # over a few million rows has been measured wanting 16 GiB.
+      PINTAIL_QUERY_SPILL_LIMIT_BYTES: ${PINTAIL_QUERY_SPILL_LIMIT_BYTES:-1073741824}
+      PINTAIL_GLOBAL_SPILL_LIMIT_BYTES: ${PINTAIL_GLOBAL_SPILL_LIMIT_BYTES:-8589934592}
       # Set this explicitly under a container memory limit.
       #
       # The default is three quarters of host memory read from
