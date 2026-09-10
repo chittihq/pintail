@@ -9,6 +9,10 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/pintail-flow.svg" width="100%" alt="Animated diagram: a one-time snapshot copies MySQL into Pintail and hands over to CDC at its GTID; changes then stream from the binlog through the WAL and memtable into columnar files, and one query engine answers the mysql CLI, BI tools, apps and the dashboard.">
+</p>
+
 Pintail makes slow MySQL reports fast. Point it at a MySQL or MariaDB
 server and it copies the data into a columnar store, keeps the copy in
 sync from the binlog, and answers the queries MySQL struggles with: the
