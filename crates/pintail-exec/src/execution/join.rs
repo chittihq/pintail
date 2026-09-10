@@ -2046,7 +2046,18 @@ fn prepare_hash_join_left(
         }
         let key_memory = left_key
             .allocation_upper_bound(batch, row)
-            .saturating_mul(12);
+            .saturating_add(
+                extra_keys
+                    .iter()
+                    .map(|(key, _, _)| key.allocation_upper_bound(batch, row))
+                    .fold(0_usize, usize::saturating_add),
+            )
+            .saturating_mul(12)
+            .saturating_add(if extra_keys.is_empty() {
+                0
+            } else {
+                (extra_keys.len() + 1).saturating_mul(size_of::<JoinHashKey>())
+            });
         memory.ensure_transient(key_memory)?;
         state.left_key = match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? {
             Some(primary) => composite_join_key(primary, batch, row, extra_keys, JoinSide::Probe)?,
