@@ -1671,3 +1671,38 @@ not fit even at the minimum needed width demotes to the hash set for
 good, matching the join table's own "correctness never depends on the
 range guess" rule - the guess only ever costs performance, never an
 exact answer.
+
+### Join cost hints choose execution order without becoming correctness bounds
+
+A connected join graph can have several legal next joins. Choosing the first
+connected pair can multiply two dimensions before reaching the fact table.
+The optimizer now compares the estimated intermediate work of connected pairs,
+using catalog row counts and key coverage to recognize many-to-one shapes.
+These estimates are separate from the conservative cardinality bounds used by
+execution guards. They choose order and build side only: coercions, collations,
+stale counts, or duplicate values can make a cost hint inaccurate without
+removing a predicate, duplicate, or runtime check.
+
+A completed resident composite hash build may also supply a complete integer
+membership set to an unstarted scan through intervening inner joins. Absence
+from that set proves that a row cannot match the final join; presence still
+requires all key components and the residual predicate to match. Outer and
+layout-changing boundaries stop propagation. Spilled or dense builds, unsupported
+keys, and insufficient memory decline the optimization as a whole. The set and
+its packed representation reserve memory before allocation; a partial set is
+never used to reject rows.
+
+### Keep packed columns packed until a surviving row needs a scalar
+
+Hash probes used to expand a whole packed column when copying one scalar cell.
+The row-copy and expression paths now read the requested cell, preserving nulls,
+ENUM ordinals, and already-materialized decimal or temporal spelling. Pure
+column projections move packed vectors and retain their selection mask; only a
+repeated projection clones a column. Scan-only predicate inputs remain available
+to storage filtering but are removed from the payload before an enclosing join.
+This reduces copying without changing the storage predicate or its selected rows.
+
+Literal date-interval expressions use the existing scalar evaluator during
+constant folding. The resulting literal permits the existing scan-bound logic
+to recognize date ranges. Unsupported or failing expressions retain runtime
+evaluation; there is no separate calendar arithmetic implementation.
