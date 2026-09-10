@@ -36,6 +36,11 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -51,6 +56,26 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -61,7 +86,27 @@
   },
   {
     "phase": "snapshot",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -1002,6 +1047,186 @@
   {
     "phase": "snapshot",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -1161,6 +1386,11 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -1176,6 +1406,26 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -1186,7 +1436,27 @@
   },
   {
     "phase": "orm-compat",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -2127,6 +2397,186 @@
   {
     "phase": "orm-compat",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "orm-compat",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -2166,6 +2616,11 @@
   },
   {
     "phase": "crud",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -2181,6 +2636,26 @@
   },
   {
     "phase": "crud",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -2191,7 +2666,27 @@
   },
   {
     "phase": "crud",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -3132,6 +3627,186 @@
   {
     "phase": "crud",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "crud",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -3171,6 +3846,11 @@
   },
   {
     "phase": "composite-keys",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -3186,6 +3866,26 @@
   },
   {
     "phase": "composite-keys",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -3196,7 +3896,27 @@
   },
   {
     "phase": "composite-keys",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -4137,6 +4857,186 @@
   {
     "phase": "composite-keys",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "composite-keys",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -4176,6 +5076,11 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -4191,6 +5096,26 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -4201,7 +5126,27 @@
   },
   {
     "phase": "type-edges",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:sellers",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -5142,6 +6087,186 @@
   {
     "phase": "type-edges",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "type-edges",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -5196,6 +6321,11 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -5211,6 +6341,26 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -5221,7 +6371,17 @@
   },
   {
     "phase": "ddl",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -5232,6 +6392,16 @@
   {
     "phase": "ddl",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -6173,6 +7343,186 @@
   {
     "phase": "ddl",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -6212,6 +7562,11 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -6227,6 +7582,26 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -6237,7 +7612,17 @@
   },
   {
     "phase": "schema-drift-minimal",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -6248,6 +7633,16 @@
   {
     "phase": "schema-drift-minimal",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -7189,6 +8584,186 @@
   {
     "phase": "schema-drift-minimal",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-minimal",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -7228,6 +8803,11 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -7243,6 +8823,26 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -7253,7 +8853,17 @@
   },
   {
     "phase": "schema-drift-unseen",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -7264,6 +8874,16 @@
   {
     "phase": "schema-drift-unseen",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -8205,6 +9825,186 @@
   {
     "phase": "schema-drift-unseen",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "schema-drift-unseen",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -8274,6 +10074,11 @@
   },
   {
     "phase": "churn",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -8289,6 +10094,26 @@
   },
   {
     "phase": "churn",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -8299,7 +10124,17 @@
   },
   {
     "phase": "churn",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -8310,6 +10145,16 @@
   {
     "phase": "churn",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -9251,6 +11096,186 @@
   {
     "phase": "churn",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "churn",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -9290,6 +11315,11 @@
   },
   {
     "phase": "contention",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -9305,6 +11335,26 @@
   },
   {
     "phase": "contention",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -9315,7 +11365,17 @@
   },
   {
     "phase": "contention",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -9326,6 +11386,16 @@
   {
     "phase": "contention",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -10267,6 +12337,186 @@
   {
     "phase": "contention",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "contention",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -10331,6 +12581,11 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -10346,6 +12601,26 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -10356,7 +12631,17 @@
   },
   {
     "phase": "execution-budget",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -10367,6 +12652,16 @@
   {
     "phase": "execution-budget",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -11308,6 +13603,186 @@
   {
     "phase": "execution-budget",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "execution-budget",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -11367,6 +13842,11 @@
   },
   {
     "phase": "spill",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -11382,6 +13862,26 @@
   },
   {
     "phase": "spill",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -11392,7 +13892,17 @@
   },
   {
     "phase": "spill",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -11403,6 +13913,16 @@
   {
     "phase": "spill",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -12344,6 +14864,186 @@
   {
     "phase": "spill",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "spill",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -12403,6 +15103,11 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -12418,6 +15123,26 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -12428,7 +15153,17 @@
   },
   {
     "phase": "pooling",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -12439,6 +15174,16 @@
   {
     "phase": "pooling",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -13380,6 +16125,186 @@
   {
     "phase": "pooling",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "pooling",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -13514,6 +16439,11 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -13529,6 +16459,26 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -13539,7 +16489,17 @@
   },
   {
     "phase": "local-database",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -13550,6 +16510,16 @@
   {
     "phase": "local-database",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -14491,6 +17461,186 @@
   {
     "phase": "local-database",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "local-database",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -14535,6 +17685,11 @@
   },
   {
     "phase": "restart",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -14550,6 +17705,26 @@
   },
   {
     "phase": "restart",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -14560,7 +17735,17 @@
   },
   {
     "phase": "restart",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -14571,6 +17756,16 @@
   {
     "phase": "restart",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -15515,10 +18710,190 @@
     "status": "PASS"
   },
   {
+    "phase": "restart",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150029 sync_runs rows for db_be7799efcb59c6042445b6041a05071f"
+    "detail": "150031 sync_runs rows for db_018d02f0065ac7dd9f08420664f106af"
   },
   {
     "phase": "activity-history",
@@ -15530,25 +18905,25 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 1ms over 150000 rows"
+    "detail": "p50 2ms p95 2ms over 150000 rows"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 1ms"
+    "detail": "p50 2ms p95 2ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 28ms p99 36ms"
+    "detail": "p50 52ms p99 166ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 2ms"
+    "detail": "health p95 18ms"
   },
   {
     "phase": "activity-history",
@@ -15587,6 +18962,11 @@
   },
   {
     "phase": "activity-history",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -15602,6 +18982,26 @@
   },
   {
     "phase": "activity-history",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -15612,7 +19012,17 @@
   },
   {
     "phase": "activity-history",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -15623,6 +19033,16 @@
   {
     "phase": "activity-history",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -16564,31 +19984,211 @@
   {
     "phase": "activity-history",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "activity-history",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4907"
+    "detail": "0 failed of 4903"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4907 requests: p50 1ms p99 11ms"
+    "detail": "4903 requests: p50 1ms p99 15ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 2ms"
+    "detail": "health p99 1ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 7416 vs source 7416"
+    "detail": "orders replica 7425 vs source 7425"
   },
   {
     "phase": "poll-storm",
@@ -16627,6 +20227,11 @@
   },
   {
     "phase": "poll-storm",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -16642,6 +20247,26 @@
   },
   {
     "phase": "poll-storm",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:marketplaces",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
     "check": "converge:order_items",
     "status": "PASS"
   },
@@ -16652,7 +20277,17 @@
   },
   {
     "phase": "poll-storm",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -16663,6 +20298,16 @@
   {
     "phase": "poll-storm",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -17604,6 +21249,186 @@
   {
     "phase": "poll-storm",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "poll-storm",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -17748,6 +21573,11 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -17763,7 +21593,27 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -17778,7 +21628,17 @@
   },
   {
     "phase": "control-plane",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -17789,6 +21649,16 @@
   {
     "phase": "control-plane",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -18730,6 +22600,186 @@
   {
     "phase": "control-plane",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "control-plane",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -18774,6 +22824,11 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -18789,7 +22844,27 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -18804,7 +22879,17 @@
   },
   {
     "phase": "snapshot-ddl-window",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -18815,6 +22900,16 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -19756,6 +23851,186 @@
   {
     "phase": "snapshot-ddl-window",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "snapshot-ddl-window",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -19821,6 +24096,11 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -19836,7 +24116,27 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -19851,7 +24151,17 @@
   },
   {
     "phase": "drop-table-cdc",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -19862,6 +24172,16 @@
   {
     "phase": "drop-table-cdc",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -20803,6 +25123,186 @@
   {
     "phase": "drop-table-cdc",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-cdc",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -20858,6 +25358,11 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -20873,7 +25378,27 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -20888,7 +25413,17 @@
   },
   {
     "phase": "drop-table-recreate",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -20899,6 +25434,16 @@
   {
     "phase": "drop-table-recreate",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -21843,6 +26388,186 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-recreate",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "drop-table-polling",
     "check": "polling:fixtures replicate before the mode switch",
     "status": "PASS"
@@ -21861,7 +26586,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_be7799efcb59c6042445b6041a05071f\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-10T06:57:29.254218106+00:00\",\"updated_at\":\"2026-09-10T07:03:26.745258564+00:00\"},\"tables\":21,\"rows\":10141}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_018d02f0065ac7dd9f08420664f106af\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-10T10:08:31.411239044+00:00\",\"updated_at\":\"2026-09-10T10:14:40.762750439+00:00\"},\"tables\":30,\"rows\":11338}"
   },
   {
     "phase": "drop-table-polling",
@@ -21905,6 +26630,11 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -21920,7 +26650,27 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -21935,7 +26685,17 @@
   },
   {
     "phase": "drop-table-polling",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -21946,6 +26706,16 @@
   {
     "phase": "drop-table-polling",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -22887,6 +27657,186 @@
   {
     "phase": "drop-table-polling",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-table-polling",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -22947,6 +27897,11 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -22962,7 +27917,27 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -22977,7 +27952,17 @@
   },
   {
     "phase": "restart-during-snapshot",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -22988,6 +27973,16 @@
   {
     "phase": "restart-during-snapshot",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -23929,6 +28924,186 @@
   {
     "phase": "restart-during-snapshot",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-snapshot",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -24000,6 +29175,11 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -24015,7 +29195,27 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -24030,7 +29230,17 @@
   },
   {
     "phase": "restart-during-resync",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -24041,6 +29251,16 @@
   {
     "phase": "restart-during-resync",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -24985,6 +30205,186 @@
     "status": "PASS"
   },
   {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "restart-during-resync",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "memory-pressure",
     "check": "memory-pressure:a CDC table with a secondary UNIQUE key streams under the ceiling",
     "status": "PASS",
@@ -24994,7 +30394,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 88 ok, dashboards 111 ok; no errors"
+    "detail": "wire 240 ok, http 76 ok, dashboards 114 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -25006,25 +30406,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 88"
+    "detail": "wire 240 of 240, http 76"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 210ms p99 1227ms over 240 queries"
+    "detail": "wire p50 217ms p99 1001ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 12ms over 8 samples"
+    "detail": "health p99 16ms over 8 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 179MB with a 256MB budget"
+    "detail": "peak RSS 174MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -25075,6 +30475,11 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -25090,7 +30495,27 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -25105,7 +30530,17 @@
   },
   {
     "phase": "memory-pressure",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -25116,6 +30551,16 @@
   {
     "phase": "memory-pressure",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -26060,6 +31505,186 @@
     "status": "PASS"
   },
   {
+    "phase": "memory-pressure",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "memory-pressure",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:the source holds the large child table",
     "status": "PASS",
@@ -26087,7 +31712,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 74MB before, peak 187MB during (margin 768MB)"
+    "detail": "RSS 60MB before, peak 213MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
@@ -26126,6 +31751,11 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -26141,7 +31771,27 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -26156,7 +31806,17 @@
   },
   {
     "phase": "reconcile-memory",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -26167,6 +31827,16 @@
   {
     "phase": "reconcile-memory",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -27108,6 +32778,186 @@
   {
     "phase": "reconcile-memory",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "reconcile-memory",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   },
   {
@@ -27188,6 +33038,11 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -27203,7 +33058,27 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -27218,7 +33093,17 @@
   },
   {
     "phase": "drop-database",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -27229,6 +33114,16 @@
   {
     "phase": "drop-database",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -28173,6 +34068,186 @@
     "status": "PASS"
   },
   {
+    "phase": "drop-database",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "drop-database",
+    "check": "query:where: a general_ci column under PAD SPACE",
+    "status": "PASS"
+  },
+  {
     "phase": "ddl-documented-gaps",
     "check": "converge:Dim",
     "status": "PASS"
@@ -28210,6 +34285,11 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:bundle_products",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:counters",
     "status": "PASS"
   },
@@ -28225,7 +34305,27 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:flash_sales",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:keyless_log",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:listing_entries",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:listing_groups",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:marketplaces",
     "status": "PASS"
   },
   {
@@ -28241,7 +34341,17 @@
   },
   {
     "phase": "ddl-documented-gaps",
+    "check": "converge:product_reviews",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
     "check": "converge:renamed_target",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:sellers",
     "status": "PASS"
   },
   {
@@ -28252,6 +34362,16 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "converge:staff",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:storefront_followers",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "converge:storefronts",
     "status": "PASS"
   },
   {
@@ -29194,6 +35314,186 @@
   {
     "phase": "ddl-documented-gaps",
     "check": "query:json: distinct case variants survive a derived table",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: monthly reviewed and expected per seller",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: the per-sale rows under the report",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: rows, matches and rating sum per sale",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: the same membership written as EXISTS",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: membership under a RIGHT JOIN",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: membership keyed on shopper and locale",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: locale membership across case variants",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: shopper and staff reviews side by side",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: membership correlated through the storefront alias",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: reviews from outside the storefront (NOT IN)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: reviews from outside the storefront (NOT EXISTS)",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: membership across a storefront range",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:storefront: membership from a grouped, joined list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column against a datetime literal at midnight",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE column against a datetime literal with a time",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a DATE range ending on a leap day",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: TIMESTAMP(6) at a microsecond boundary",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: TIMESTAMP BETWEEN a date and a datetime",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DATE() of a TIMESTAMP",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DATETIME(6) against a fractional literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DECIMAL against a string literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: DECIMAL BETWEEN two negatives",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: NOT IN with a NULL in the list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: null-safe equality on a nullable column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a filter on a virtual generated column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: SET membership by FIND_IN_SET",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: SET equality to a member list",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: VARBINARY equality to a hex literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: JSON path comparisons",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: ENUM IN beside an ENUM LIKE",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: OR with a NULL-testing branch",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: row constructor IN",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: ALL over a subquery",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: an unsigned column against a negative literal",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a string number against an integer column",
+    "status": "PASS"
+  },
+  {
+    "phase": "ddl-documented-gaps",
+    "check": "query:where: a general_ci column under PAD SPACE",
     "status": "PASS"
   }
 ]
