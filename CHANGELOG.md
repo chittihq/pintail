@@ -44,6 +44,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A MySQL-wire result stopped at 10,000 rows without an error. The client
+  protocol has no way to say a result was cut, so a report over 43,000 rows
+  arrived as a complete-looking 10,000. The wire now returns every row,
+  bounded by the per-query memory ceiling as before, and
+  `PINTAIL_MAX_RESULT_ROWS` sets an optional row ceiling that refuses a
+  larger result instead of truncating it. The HTTP query API keeps its
+  preview cap, which it reports as truncated.
 - A DATETIME or DATE compared with a literal written any way but its
   canonical text answered wrongly, silently: `created_at = '2024-03-01'`
   matched nothing, a date-only upper bound in `BETWEEN` or `IN` dropped the

@@ -123,6 +123,11 @@ services:
       # once. Fractions are accepted. Unset uses 2.
       PINTAIL_QUERY_QUEUE_WAIT_SECONDS: ${PINTAIL_QUERY_QUEUE_WAIT_SECONDS:-}
       PINTAIL_RESERVED_QUERY_SLOTS: ${PINTAIL_RESERVED_QUERY_SLOTS:-}
+      # Rows one MySQL-wire result may carry. Unset or zero leaves a result
+      # bounded by the per-query memory ceiling above alone. A result that
+      # reaches a ceiling set here is refused with an error, never cut short:
+      # a MySQL client cannot tell a truncated result from a complete one.
+      PINTAIL_MAX_RESULT_ROWS: ${PINTAIL_MAX_RESULT_ROWS:-}
       # error | info | debug. Defaults to info: every API request with its
       # duration, replication and backup lifecycle, and all failures. Raise to
       # debug while diagnosing - it adds per-table probe timings, per-chunk
