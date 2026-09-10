@@ -21,11 +21,26 @@ const database = {
   created_at: '2026-01-01', updated_at: '2026-01-01',
 }
 let resultRows = 10_000
+let telemetryMode: 'enabled' | 'disabled' | 'unavailable' = 'enabled'
+const envelopes: string[] = []
 const server = createServer(async (request, response) => {
   const path = new URL(request.url!, 'http://localhost').pathname
   const json = (value: unknown) => {
     response.setHeader('Content-Type', 'application/json')
     response.end(JSON.stringify(value))
+  }
+  if (path === '/api/telemetry/config') {
+    if (telemetryMode === 'unavailable') return response.writeHead(503).end()
+    return json({
+      dsn: telemetryMode === 'enabled' ? `http://public@${request.headers.host}/42` : null,
+      environment: 'browser-test', release: 'test-release',
+    })
+  }
+  if (path === '/api/42/envelope/') {
+    let body = ''
+    for await (const chunk of request) body += chunk.toString()
+    envelopes.push(body)
+    return json({})
   }
   if (path === '/tooltip-test.js') {
     response.setHeader('Content-Type', 'text/javascript')
@@ -119,6 +134,48 @@ try {
   console.log('PASS: bounded SQL rows, page navigation, result replacement and empty results')
 
   assert.deepEqual(errors, [])
+  await page.evaluate(async () => {
+    history.replaceState(null, '', '/sql?token=private-token&db=private-db#private-fragment')
+    const root = document.querySelector('#__nuxt') as Element & {
+      __vue_app__: { config: { globalProperties: { $nuxt: { callHook: (name: string, error: Error) => Promise<void> } } } }
+    }
+    await root.__vue_app__.config.globalProperties.$nuxt.callHook('vue:error', new Error('Synthetic Vue error'))
+    await root.__vue_app__.config.globalProperties.$nuxt.callHook('app:error', new Error('Synthetic Nuxt error'))
+  })
+  // Script-tag exceptions take the actual window error/rejection path.
+  await page.addScriptTag({ content: `
+    console.log('private-row-value');
+    setTimeout(() => { throw new Error('Synthetic browser error') }, 0);
+    setTimeout(() => { void Promise.reject(new Error('Synthetic rejected promise')) }, 0);
+  ` })
+  for (let attempt = 0; attempt < 100 && envelopes.length < 4; attempt += 1) {
+    await new Promise(done => setTimeout(done, 50))
+  }
+  const events = envelopes.map(envelope => JSON.parse(envelope.trim().split('\n')[2]!))
+  assert.equal(envelopes.length, 4, `Vue, Nuxt, window errors and rejections must reach Sentry once each; received ${events.map(event => event.exception?.values?.[0]?.value).join(', ')}`)
+  assert.deepEqual(events.map(event => event.exception.values[0].value).sort(), [
+    'Synthetic Vue error', 'Synthetic Nuxt error', 'Synthetic browser error', 'Synthetic rejected promise',
+  ].sort())
+  for (const event of events) {
+    assert.equal(event.release, 'test-release')
+    assert.equal(event.environment, 'browser-test')
+    assert.equal(event.tags.surface, 'dashboard')
+    assert.equal(event.request, undefined)
+    assert.equal(event.breadcrumbs, undefined)
+    assert.equal(event.user, undefined)
+    assert.equal(event.contexts?.vue, undefined)
+  }
+  assert(!envelopes.join('').includes('private-'), 'reporting must strip navigation secrets and console data')
+  console.log('PASS: real Sentry envelopes for Vue, Nuxt, browser errors and rejections; sensitive context excluded')
+  for (const mode of ['disabled', 'unavailable'] as const) {
+    telemetryMode = mode
+    const other = await browser.newPage()
+    await other.goto(`http://127.0.0.1:${address.port}/sql`)
+    await other.getByRole('heading', { name: 'Welcome back' }).waitFor()
+    await other.close()
+  }
+  assert.equal(envelopes.length, 4, 'disabled telemetry must send no envelopes')
+  console.log('PASS: sign-in works with disabled or unavailable telemetry')
 } finally {
   await browser.close()
   server.closeAllConnections()

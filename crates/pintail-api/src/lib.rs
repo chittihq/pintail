@@ -4,6 +4,7 @@ mod activity;
 mod audit;
 mod auth;
 mod backup;
+mod browser_telemetry;
 mod controls;
 mod databases;
 mod dsn;
@@ -331,6 +332,7 @@ pub fn router_with_state(state: ApiState) -> Router {
     // /health would otherwise bury every real request: a container health
     // check polls constantly and tells nobody anything.
     let api = Router::new()
+        .route("/telemetry/config", get(browser_telemetry::config))
         .route("/auth/setup/status", get(setup_status))
         .route("/auth/setup", post(setup))
         .route("/auth/login", post(login))

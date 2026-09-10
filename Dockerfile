@@ -6,7 +6,9 @@ RUN bun install --frozen-lockfile
 COPY packages/dashboard/app ./app
 COPY packages/dashboard/public ./public
 COPY packages/dashboard/nuxt.config.ts ./
-RUN bun run generate
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+RUN --mount=type=secret,id=sentry_auth_token,env=SENTRY_AUTH_TOKEN bun run generate
 
 # Dependencies compile in their own layer, keyed on the manifests alone.
 # Copying sources before building — the obvious shape — puts 472 crates behind

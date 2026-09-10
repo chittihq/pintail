@@ -1,5 +1,40 @@
 # Development
 
+## Browser error reporting
+
+The embedded dashboard reads `/api/telemetry/config` before mounting. When
+`PINTAIL_SENTRY_DSN` is configured, it reports browser exceptions, unhandled
+promise rejections and Nuxt errors to that project. An unset or invalid DSN
+disables reporting. Configuration failures time out after two seconds and
+leave the dashboard usable. No separate Nuxt server is required.
+
+The endpoint returns only the public DSN, environment and release. A legacy
+DSN's private key is stripped. Release tags use `PINTAIL_RELEASE`, then
+`PINTAIL_BUILD_VERSION`, then the crate version. `PINTAIL_ENVIRONMENT` tags
+the environment. Events carry `surface=dashboard`; component props, user
+context, request details and breadcrumbs are excluded. Session recording,
+session tracking, performance tracing, logs and metrics are disabled.
+
+For readable stack traces, set `SENTRY_ORG`, `SENTRY_PROJECT` and
+`SENTRY_AUTH_TOKEN` in the build environment before `bun run generate`.
+The build uploads client source maps and removes them before embedding
+the dashboard. These variables are build-only; the token is never sent
+to browsers. Without all three variables, source-map generation and
+upload are disabled; errors still report, with minified stack traces.
+
+For Docker builds, pass the organization and project as build arguments
+and the token as a BuildKit secret:
+
+```sh
+docker build --build-arg SENTRY_ORG --build-arg SENTRY_PROJECT \
+  --secret id=sentry_auth_token,env=SENTRY_AUTH_TOKEN -t pintail:local .
+```
+
+The isolated browser regressions use synthetic APIs and a local envelope
+receiver. After generating the dashboard, run `bun run dashboard` in
+`tests/browser` to check result pagination, tooltip cleanup, actual browser
+error delivery and reporting privacy without contacting Sentry.
+
 ## Running the dashboard against a live server
 
 In production `pintail` serves the built dashboard itself, so the app calls the
