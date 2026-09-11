@@ -47,11 +47,39 @@ pub struct ResultSet {
     pub binary: bool,
 }
 
+/// A result set whose rows arrive while it is being written: a result too
+/// large to hold whole goes out as execution produces it.
+#[derive(Debug)]
+pub struct RowStream {
+    /// Column metadata, sent before any row.
+    pub columns: Vec<Column>,
+    /// The rows, already in wire form, then how the result ended.
+    /// Bounded: a producer that runs ahead of the client waits for the
+    /// socket.
+    pub chunks: tokio::sync::mpsc::Receiver<RowChunk>,
+}
+
+/// One message of a [`RowStream`].
+#[derive(Debug)]
+pub enum RowChunk {
+    /// The next rows.
+    Rows(EncodedRows),
+    /// Every row was sent; the result ends normally.
+    Done,
+    /// The result failed after its columns went out. The error follows any
+    /// rows already sent and ends the result, as `MySQL` ends a result that
+    /// fails part-way.
+    Failed(ErrorKind, String),
+}
+
 /// What a handler returns for one command.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Response {
     /// A result set.
     Rows(Box<ResultSet>),
+    /// A result set streamed while it is produced; the connection calls
+    /// [`Handler::finish_stream`] once it has been written.
+    Stream(Box<RowStream>),
     /// A statement that produced no rows.
     Ok(OkPacket, String),
     /// A failure the client should see as a `MySQL` error.
@@ -167,6 +195,13 @@ pub trait Handler: Send + Sync {
 
     /// Changes the default schema.
     async fn init_database(&mut self, database: &[u8]) -> Result<(), (ErrorKind, String)>;
+
+    /// Called after a [`Response::Stream`] has been written - `delivered` -
+    /// or once writing it failed, before the next command is read: the
+    /// statement's work is over only now, and whatever the handler records
+    /// about it belongs here. A stream nobody is reading any more should
+    /// stop producing.
+    async fn finish_stream(&mut self, _delivered: bool) {}
 }
 
 /// What probing for a disconnected peer turned up.
@@ -557,7 +592,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                     },
                     None => handler.execute(statement, body).await,
                 };
-                self.write_response(response).await?;
+                self.write_handled(handler, response, StatusFlags::empty())
+                    .await?;
             }
             Command::Close(statement) => handler.close_statement(statement).await,
             Command::ResetStatement(statement) => {
@@ -654,59 +690,81 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
                 },
                 None => handler.query(statement).await,
             };
-            let more = !matches!(response, Response::Error(..))
-                && multi
-                && handler.first_statement(tail).is_some();
-            let status = if more {
+            // A following statement is announced only when this one ends
+            // well; a streamed result can still fail after its rows.
+            let follows = multi && handler.first_statement(tail).is_some();
+            let status = if follows {
                 StatusFlags::SERVER_MORE_RESULTS_EXISTS
             } else {
                 StatusFlags::empty()
             };
-            self.write_response_status(response, status).await?;
-            if !more {
+            let completed = self.write_handled(handler, response, status).await?;
+            if !(completed && follows) {
                 return Ok(true);
             }
             remaining = tail;
         }
     }
 
-    async fn write_response(&mut self, response: Response) -> std::io::Result<()> {
-        self.write_response_status(response, StatusFlags::empty())
-            .await
+    /// Writes one handler response, telling the handler when a stream it
+    /// returned is over. `status` goes on a successful result's terminator;
+    /// returns whether the response ended without an error.
+    async fn write_handled(
+        &mut self,
+        handler: &mut dyn Handler,
+        response: Response,
+        status: StatusFlags,
+    ) -> std::io::Result<bool> {
+        let streamed = matches!(response, Response::Stream(_));
+        let written = self.write_response_status(response, status).await;
+        if streamed {
+            handler.finish_stream(written.is_ok()).await;
+        }
+        written
     }
 
     async fn write_response_status(
         &mut self,
         response: Response,
         status: StatusFlags,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<bool> {
         match response {
             Response::Ok(mut packet, info) => {
                 packet.status = packet.status | status;
                 let payload = encode_ok(packet, &info);
                 self.writer.write_payload(&payload).await?;
-                self.writer.flush().await
+                self.writer.flush().await?;
+                Ok(true)
             }
-            Response::Error(kind, message) => self.write_error(kind, &message).await,
-            Response::Rows(result) => self.write_result_set(&result, status).await,
+            Response::Error(kind, message) => {
+                self.write_error(kind, &message).await?;
+                Ok(false)
+            }
+            Response::Rows(result) => {
+                self.write_result_header(&result.columns).await?;
+                for payload in result.rows.iter() {
+                    self.writer.write_payload(payload).await?;
+                }
+                let payload = encode_eof(self.capabilities, status, 0);
+                self.writer.write_payload(&payload).await?;
+                self.writer.flush().await?;
+                Ok(true)
+            }
+            Response::Stream(stream) => self.write_row_stream(*stream, status).await,
         }
     }
 
-    async fn write_result_set(
-        &mut self,
-        result: &ResultSet,
-        status: StatusFlags,
-    ) -> std::io::Result<()> {
+    /// The column count and definitions, then the EOF that ends them unless
+    /// the client deprecated it, in which case rows follow immediately.
+    async fn write_result_header(&mut self, columns: &[Column]) -> std::io::Result<()> {
         let mut header = Vec::new();
-        put_length_encoded_integer(&mut header, result.columns.len() as u64);
+        put_length_encoded_integer(&mut header, columns.len() as u64);
         self.writer.write_payload(&header).await?;
-        for column in &result.columns {
+        for column in columns {
             self.writer
                 .write_payload(&encode_column_definition(column))
                 .await?;
         }
-        // The column list is terminated by EOF unless the client deprecated
-        // it, in which case rows follow immediately.
         if !self
             .capabilities
             .contains(CapabilityFlags::CLIENT_DEPRECATE_EOF)
@@ -714,12 +772,47 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             let payload = encode_eof(self.capabilities, StatusFlags::empty(), 0);
             self.writer.write_payload(&payload).await?;
         }
-        for payload in result.rows.iter() {
-            self.writer.write_payload(payload).await?;
+        Ok(())
+    }
+
+    /// Writes a streamed result as its chunks arrive, flushing each so the
+    /// client reads while the rest is produced.
+    async fn write_row_stream(
+        &mut self,
+        mut stream: RowStream,
+        status: StatusFlags,
+    ) -> std::io::Result<bool> {
+        self.write_result_header(&stream.columns).await?;
+        self.writer.flush().await?;
+        while let Some(chunk) = stream.chunks.recv().await {
+            match chunk {
+                RowChunk::Rows(rows) => {
+                    for payload in rows.iter() {
+                        self.writer.write_payload(payload).await?;
+                    }
+                    self.writer.flush().await?;
+                }
+                RowChunk::Done => {
+                    let payload = encode_eof(self.capabilities, status, 0);
+                    self.writer.write_payload(&payload).await?;
+                    self.writer.flush().await?;
+                    return Ok(true);
+                }
+                RowChunk::Failed(kind, message) => {
+                    self.write_error(kind, &message).await?;
+                    return Ok(false);
+                }
+            }
         }
-        let payload = encode_eof(self.capabilities, status, 0);
-        self.writer.write_payload(&payload).await?;
-        self.writer.flush().await
+        // The producer went away without saying how the result ended: the
+        // rows sent may be incomplete, and the client must not read them
+        // as a whole result.
+        self.write_error(
+            ErrorKind::ErUnknownError,
+            "the query stopped before its result was complete",
+        )
+        .await?;
+        Ok(false)
     }
 
     async fn write_prepare_response(
@@ -776,7 +869,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
 mod tests {
     use super::{
         Connection, DisconnectWatch, Handler, InitialResponse, PreparedStatement, Response,
-        ResultSet, WatchOutcome, server_capabilities,
+        ResultSet, RowChunk, RowStream, WatchOutcome, server_capabilities,
     };
     use crate::handshake::{CapabilityFlags, HandshakeResponse, SCRAMBLE_SIZE};
     use crate::packet::PacketReader;
@@ -1039,6 +1132,136 @@ mod tests {
         assert_eq!(reader.next_payload().await.expect("io"), Some(vec![0xfb]));
         let terminator = reader.next_payload().await.expect("io").expect("eof");
         assert_eq!(terminator[0], 0xfe);
+    }
+
+    /// Streams one row, then ends however the statement says.
+    struct StreamFixture {
+        finished: usize,
+    }
+
+    #[async_trait]
+    impl Handler for StreamFixture {
+        async fn authenticate(&mut self, _: &HandshakeResponse, _: &[u8]) -> bool {
+            true
+        }
+
+        fn first_statement<'a>(&self, sql: &'a [u8]) -> Option<(&'a [u8], &'a [u8])> {
+            if sql.is_empty() {
+                return None;
+            }
+            Some(match sql.iter().position(|byte| *byte == b';') {
+                Some(end) => (&sql[..end], &sql[end + 1..]),
+                None => (sql, &[]),
+            })
+        }
+
+        async fn query(&mut self, sql: &[u8]) -> Response {
+            let (sender, chunks) = tokio::sync::mpsc::channel(4);
+            let mut rows = EncodedRows::default();
+            rows.text_row().bytes(b"7");
+            sender.try_send(RowChunk::Rows(rows)).expect("room");
+            match sql {
+                b"FAIL" => sender
+                    .try_send(RowChunk::Failed(
+                        ErrorKind::ErQueryInterrupted,
+                        "deadline exceeded".to_owned(),
+                    ))
+                    .expect("room"),
+                b"VANISH" => {}
+                _ => sender.try_send(RowChunk::Done).expect("room"),
+            }
+            Response::Stream(Box::new(RowStream {
+                columns: vec![Column::new("n", ColumnType::MysqlTypeLonglong)],
+                chunks,
+            }))
+        }
+
+        async fn prepare(&mut self, _: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
+            Err((ErrorKind::ErUnknownError, String::new()))
+        }
+
+        async fn execute(&mut self, _: u32, _: &[u8]) -> Response {
+            Response::Ok(OkPacket::default(), String::new())
+        }
+
+        async fn close_statement(&mut self, _: u32) {}
+
+        async fn init_database(&mut self, _: &[u8]) -> Result<(), (ErrorKind, String)> {
+            Ok(())
+        }
+
+        async fn finish_stream(&mut self, delivered: bool) {
+            assert!(delivered, "the fixture's client never goes away");
+            self.finished += 1;
+        }
+    }
+
+    /// Serves one `COM_QUERY` of `sql` to the stream fixture; returns every
+    /// payload after the handshake and how many streams were finished.
+    async fn stream_query(sql: &[u8]) -> (Vec<Vec<u8>>, usize) {
+        let capabilities = server_capabilities() | CapabilityFlags::CLIENT_MULTI_STATEMENTS;
+        let mut input = packet(1, &client_response(capabilities));
+        let mut command = vec![0x03];
+        command.extend_from_slice(sql);
+        input.extend_from_slice(&packet(0, &command));
+        let mut output = Vec::new();
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        let mut handler = StreamFixture { finished: 0 };
+        connection
+            .handshake(&mut handler, [0_u8; SCRAMBLE_SIZE])
+            .await
+            .expect("handshake");
+        assert!(connection.serve_one(&mut handler).await.expect("serve"));
+        let mut reader = PacketReader::new(output.as_slice());
+        let mut payloads = Vec::new();
+        while let Some(payload) = reader.next_payload().await.expect("io") {
+            payloads.push(payload);
+        }
+        (payloads.split_off(2), handler.finished)
+    }
+
+    #[tokio::test]
+    async fn a_streamed_result_ends_with_its_terminator_once_every_row_is_sent() {
+        let (payloads, finished) = stream_query(b"SELECT").await;
+        assert_eq!(payloads[0], vec![1], "one column");
+        assert_eq!(payloads[2], vec![1, b'7']);
+        assert_eq!(payloads[3][0], 0xfe, "the terminator follows the rows");
+        assert_eq!(payloads.len(), 4);
+        assert_eq!(finished, 1, "the handler hears the stream is over");
+    }
+
+    #[tokio::test]
+    async fn a_stream_that_fails_part_way_sends_its_error_after_the_rows() {
+        let (payloads, _) = stream_query(b"FAIL").await;
+        assert_eq!(payloads[2], vec![1, b'7'], "the rows already produced");
+        assert_eq!(
+            payloads[3][0], 0xff,
+            "then the error, in place of a terminator"
+        );
+        assert!(payloads[3].ends_with(b"deadline exceeded"));
+        assert_eq!(payloads.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn a_stream_whose_producer_vanished_is_never_read_as_complete() {
+        let (payloads, _) = stream_query(b"VANISH").await;
+        assert_eq!(payloads[3][0], 0xff);
+        assert!(payloads[3].ends_with(b"before its result was complete"));
+    }
+
+    #[tokio::test]
+    async fn a_failed_stream_ends_a_multi_statement_query() {
+        let (payloads, finished) = stream_query(b"FAIL;SELECT").await;
+        assert_eq!(payloads.last().expect("reply")[0], 0xff);
+        assert_eq!(payloads.len(), 4, "the second statement never runs");
+        assert_eq!(finished, 1);
+
+        let (payloads, finished) = stream_query(b"SELECT;SELECT").await;
+        assert_eq!(payloads.len(), 8, "both results");
+        assert_eq!(finished, 2);
+        // The first terminator announces the second result.
+        let status = u16::from_le_bytes([payloads[3][3], payloads[3][4]]);
+        assert_ne!(status & 0x0008, 0, "SERVER_MORE_RESULTS_EXISTS");
     }
 
     #[tokio::test]
