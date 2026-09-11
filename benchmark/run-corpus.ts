@@ -17,7 +17,7 @@
 //   DOCKER_HOST=ssh://... bun run benchmark/run-corpus.ts \
 //     --corpus validate-out/oracle-outcomes.json --scales 1,10000
 //   [--runs 3] [--warmups 1] [--timeout-ms 10000] [--out benchmark/corpus]
-//   [--pintail-image tag] [--families substring] [--limit N] [--keep]
+//   [--pintail-image tag] [--families substring] [--limit N] [--keep] [--trace]
 //
 // Only results.csv is tracked. To rebuild it from a run's local JSON:
 //   bun run benchmark/run-corpus.ts --csv-from benchmark/corpus/results.json
@@ -53,6 +53,12 @@ const outDir = resolve(repository, option('--out', 'benchmark/corpus')!)
 const familyFilter = option('--families')
 const limit = option('--limit') ? Number(option('--limit')) : undefined
 const keep = args.includes('--keep')
+// Records Pintail's per-statement phase trace and writes trace-s<scale>.json:
+// where each case's time went between the statement's arrival and its
+// encoded response. Tracing adds per-statement bookkeeping, so a traced run
+// attributes time; the untraced run is the one to compare engines with.
+const trace = args.includes('--trace')
+const TRACE_PATH = '/tmp/pintail-query-trace.log'
 const SEED = 0x5eed
 
 const runId = `pintail-corpus-${Date.now().toString(36)}`
@@ -421,6 +427,7 @@ async function main() {
       '--env', 'PINTAIL_DISABLE_SETTLED_MEMO=1',
       '--env', `PINTAIL_MAX_RESULT_ROWS=${MAX_ROWS}`,
       '--env', `PINTAIL_QUERY_MEMORY_LIMIT_BYTES=${4 * 1024 * 1024 * 1024}`,
+      ...(trace ? ['--env', `PINTAIL_QUERY_TRACE=${TRACE_PATH}`] : []),
       pintailImage,
     )
     const mysqlPort = await publishedPort(mysqlName, 3306)
@@ -628,6 +635,15 @@ async function main() {
       }
       sessions.mysql.close()
       sessions.pintail.close()
+      if (trace) {
+        // The writer flushes after 200 ms idle; give it that before reading.
+        await Bun.sleep(1_000)
+        const lines = (await docker('exec', pintailName, 'cat', TRACE_PATH)).stdout
+        await docker('exec', pintailName, 'sh', '-c', `: > ${TRACE_PATH}`)
+        const summary = summarizeTrace(scale, lines, outcomes)
+        writeFileSync(join(outDir, `trace-s${scale}.json`), `${JSON.stringify(summary, null, 2)}\n`)
+        log(`scale ${scale}: traced ${summary.traced} of ${outcomes.length} cases`)
+      }
       report.push({ scale, database, rowCounts, clickhouseTables, outcomes, differences: differenceKinds })
     }
 
@@ -800,4 +816,88 @@ if (csvFrom) {
   log(`rebuilt ${join(outDir, 'results.csv')} from ${csvFrom}`)
 } else {
   await main()
+}
+
+/// FNV-1a over the statement's UTF-8 bytes: the hash Pintail's query trace
+/// names each statement by.
+function statementHash(sql: string): string {
+  let hash = 0xcbf29ce484222325n
+  for (const byte of new TextEncoder().encode(sql)) {
+    hash = ((hash ^ BigInt(byte)) * 0x100000001b3n) & 0xffffffffffffffffn
+  }
+  return hash.toString(16).padStart(16, '0')
+}
+
+// Phase marks are microseconds since the statement arrived; each segment is
+// the time between one mark and the one before it.
+const TRACE_SEGMENTS: Array<[segment: string, from: string | undefined, to: string]> = [
+  ['session', undefined, 'dispatched'],
+  ['hop_in', 'dispatched', 'worker'],
+  ['parse', 'worker', 'parsed'],
+  ['classify', 'parsed', 'classified'],
+  ['admit', 'classified', 'admitted'],
+  ['replica', 'admitted', 'replica'],
+  ['catalog', 'replica', 'catalog'],
+  ['metadata', 'catalog', 'metadata'],
+  ['bind', 'metadata', 'bound'],
+  ['present', 'bound', 'presented'],
+  ['plan', 'presented', 'planned'],
+  ['start', 'planned', 'started'],
+  ['execute', 'started', 'collected'],
+  ['hop_out', 'collected', 'returned'],
+  ['encode', 'returned', 'encoded'],
+]
+const TRACE_COUNTERS = ['rows', 'materialized', 'scalar_rows', 'sorted_rows', 'regathered']
+
+function summarizeTrace(scale: number, lines: string, outcomes: Outcome[]) {
+  const byHash = new Map<string, Array<Record<string, string>>>()
+  for (const line of lines.split('\n')) {
+    if (!line.startsWith('sql=')) continue
+    const fields = Object.fromEntries(line.split('\t').map((field) => field.split('=') as [string, string]))
+    const list = byHash.get(fields.sql) ?? []
+    list.push(fields)
+    byHash.set(fields.sql, list)
+  }
+  const median = (values: number[]) => {
+    const sorted = [...values].sort((left, right) => left - right)
+    return sorted.length === 0 ? undefined : sorted[Math.floor(sorted.length / 2)]
+  }
+  const cases = outcomes.flatMap((outcome) => {
+    const records = byHash.get(statementHash(outcome.sql))
+    if (!records) return []
+    const segments: Record<string, number> = {}
+    for (const [segment, from, to] of TRACE_SEGMENTS) {
+      const value = median(
+        records
+          .filter((record) => record[to] !== undefined && (from === undefined || record[from] !== undefined))
+          .map((record) => Number(record[to]) - (from === undefined ? 0 : Number(record[from]))),
+      )
+      if (value !== undefined) segments[segment] = value
+    }
+    const counters = Object.fromEntries(
+      TRACE_COUNTERS.map((name) => [name, Math.max(0, ...records.map((record) => Number(record[name] ?? 0)))]),
+    )
+    const timing = (engine: Engine) => (outcome[engine].status === 'ok' ? outcome[engine].medianMs : undefined)
+    return [{
+      id: outcome.id,
+      family: outcome.family,
+      pintailMs: timing('pintail'),
+      mysqlMs: timing('mysql'),
+      class: records[0]?.class,
+      shared: records[0]?.shared,
+      segments,
+      counters,
+    }]
+  })
+  const totals = (selected: typeof cases) => {
+    const sums: Record<string, number> = {}
+    for (const entry of selected) {
+      for (const [segment, micros] of Object.entries(entry.segments)) sums[segment] = (sums[segment] ?? 0) + micros
+    }
+    return { cases: selected.length, microseconds: sums }
+  }
+  const slow = cases.filter(
+    (entry) => entry.pintailMs !== undefined && entry.mysqlMs !== undefined && entry.pintailMs >= 2 * entry.mysqlMs,
+  )
+  return { scale, traced: cases.length, all: totals(cases), atLeastTwiceMysql: totals(slow), cases }
 }
