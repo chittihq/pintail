@@ -144,7 +144,14 @@ program and gets its own gate and live-CDC coverage.
   showed replication closing its writers between cycles, which left most
   queries walking anyway; the server now keeps each table's lock as a
   lease between writers, so the generation holds between cycles too.
-- [ ] Phase 2
+  The corpus rerun at scale 1 then read a median of 0.39 ms against
+  MySQL's 0.26, down from 0.51, with 125 of 1,895 queries at least twice
+  MySQL's time where 1,038 had been.
+- [x] Phase 2 — columns share their built buffers, a projection evaluates
+  only its computed columns, rows encode straight into packet buffers,
+  and a result over 16,384 rows streams to the client through a bounded
+  queue while it is produced; an error after streamed rows follows them.
+  A 130,000-row result went from 58.9 ms to 32.0 ms on the wire.
 - [ ] Phase 3
 - [ ] Phase 4
 - [ ] Phase 5
