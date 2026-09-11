@@ -41,7 +41,10 @@
 use pintail_sql::{
     BinaryOp, BoundColumn, BoundExpr, BoundExprKind, DatePart, ScalarFunction, UnaryOp,
 };
-use pintail_types::{DataType, Value, format_date_days, parse_date_days, parse_datetime_micros};
+use pintail_types::{
+    DataType, Value, format_date_days, format_datetime_micros, parse_date_days,
+    parse_datetime_micros,
+};
 
 use crate::LogicalPlan;
 
@@ -174,8 +177,134 @@ pub(crate) fn rewrite_predicate(expr: BoundExpr) -> BoundExpr {
         },
         kind => {
             let expr = BoundExpr { kind, ..expr };
+            let expr = rewrite_session_reading(&expr).unwrap_or(expr);
             rewrite_comparison(&expr).unwrap_or(expr)
         }
+    }
+}
+
+/// The column and fixed offset of a session-zone `TIMESTAMP` reading:
+/// `SessionTimestamp(column, '+05:30')`. A named zone is not a single
+/// shift - across a daylight-saving change it is two - so only an offset
+/// is taken.
+fn session_reading(expr: &BoundExpr) -> Option<(&BoundColumn, i64)> {
+    let BoundExprKind::Scalar {
+        function: ScalarFunction::SessionTimestamp,
+        args,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let [source, zone] = args.as_slice() else {
+        return None;
+    };
+    let BoundExprKind::Column(column) = &source.kind else {
+        return None;
+    };
+    let BoundExprKind::Literal(Value::Utf8(zone)) = &zone.kind else {
+        return None;
+    };
+    Some((column, fixed_offset_micros(zone)?))
+}
+
+/// `+HH:MM` or `-HH:MM` in microseconds; `None` for any other zone.
+fn fixed_offset_micros(zone: &str) -> Option<i64> {
+    let sign = match zone.as_bytes().first()? {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let (hours, minutes) = zone[1..].split_once(':')?;
+    let hours: i64 = hours.parse().ok()?;
+    let minutes: i64 = minutes.parse().ok()?;
+    if hours > 14 || minutes > 59 {
+        return None;
+    }
+    Some(sign * (hours * 3_600_000_000 + minutes * 60_000_000))
+}
+
+/// The literal shifted out of the session's zone, as the stored column
+/// holds it.
+fn shifted_literal(value: &Value, offset: i64) -> Option<BoundExpr> {
+    let Value::Utf8(text) = value else {
+        return None;
+    };
+    let micros = parse_datetime_micros(text)?;
+    let fsp = if text.contains('.') { 6 } else { 0 };
+    let shifted = format_datetime_micros(micros.checked_sub(offset)?, fsp)?;
+    Some(BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+        kind: BoundExprKind::Literal(Value::Utf8(shifted)),
+    })
+}
+
+/// `reading(c) <op> literal` as `c <op> literal shifted out of the zone`.
+///
+/// A session zone shifts every stored value by the same amount, so shifting
+/// the literal the other way compares the same rows - and compares the
+/// stored column itself, which storage prunes segments, blocks and key
+/// ranges by. Wrapped in the reading, the column is a function's argument
+/// and every such filter reads the whole table.
+fn rewrite_session_reading(expr: &BoundExpr) -> Option<BoundExpr> {
+    match &expr.kind {
+        BoundExprKind::Binary {
+            op:
+                op @ (BinaryOp::Equal
+                | BinaryOp::NotEqual
+                | BinaryOp::Less
+                | BinaryOp::LessOrEqual
+                | BinaryOp::Greater
+                | BinaryOp::GreaterOrEqual),
+            left,
+            right,
+        } => {
+            let (column, offset, literal, op) =
+                match (session_reading(left), session_reading(right)) {
+                    (Some((column, offset)), None) => (column, offset, right.as_ref(), *op),
+                    (None, Some((column, offset))) => (column, offset, left.as_ref(), mirror(*op)),
+                    _ => return None,
+                };
+            let BoundExprKind::Literal(value) = &literal.kind else {
+                return None;
+            };
+            Some(BoundExpr {
+                data_type: Some(DataType::Boolean),
+                nullable: expr.nullable,
+                kind: BoundExprKind::Binary {
+                    op,
+                    left: Box::new(column_expr(column)),
+                    right: Box::new(shifted_literal(value, offset)?),
+                },
+            })
+        }
+        BoundExprKind::Scalar {
+            function: function @ ScalarFunction::Between { .. },
+            args,
+        } => {
+            let [subject, low, high] = args.as_slice() else {
+                return None;
+            };
+            let (column, offset) = session_reading(subject)?;
+            let (BoundExprKind::Literal(low), BoundExprKind::Literal(high)) =
+                (&low.kind, &high.kind)
+            else {
+                return None;
+            };
+            Some(BoundExpr {
+                data_type: Some(DataType::Boolean),
+                nullable: expr.nullable,
+                kind: BoundExprKind::Scalar {
+                    function: *function,
+                    args: vec![
+                        column_expr(column),
+                        shifted_literal(low, offset)?,
+                        shifted_literal(high, offset)?,
+                    ],
+                },
+            })
+        }
+        _ => None,
     }
 }
 
@@ -462,6 +591,15 @@ mod tests {
         }
     }
 
+    /// A boolean-valued scalar call, as `BETWEEN` binds.
+    fn scalar_boolean(function: ScalarFunction, args: Vec<BoundExpr>) -> BoundExpr {
+        BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: true,
+            kind: BoundExprKind::Scalar { function, args },
+        }
+    }
+
     fn binary(op: BinaryOp, left: BoundExpr, right: BoundExpr) -> BoundExpr {
         BoundExpr {
             data_type: Some(DataType::Boolean),
@@ -499,6 +637,67 @@ mod tests {
 
     fn datetime() -> DataType {
         DataType::DateTime64 { fsp: 0 }
+    }
+
+    /// A session-zone reading of a TIMESTAMP column: what
+    /// `BoundExpr::column` builds when a fixed offset is installed.
+    fn reading(zone: &str) -> BoundExpr {
+        BoundExpr {
+            data_type: Some(datetime()),
+            nullable: true,
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::SessionTimestamp,
+                args: vec![
+                    column_expr(datetime()),
+                    literal(Value::Utf8(zone.to_owned())),
+                ],
+            },
+        }
+    }
+
+    #[test]
+    fn a_fixed_offset_reading_moves_its_shift_onto_the_literal() {
+        let moment = || literal(Value::Utf8("2026-08-01 05:30:00".into()));
+        assert_eq!(
+            render(&rewrite_predicate(binary(
+                BinaryOp::GreaterOrEqual,
+                reading("+05:30"),
+                moment()
+            ))),
+            "(created_at GreaterOrEqual '2026-08-01 00:00:00')"
+        );
+        // Written the other way round, the operator turns with it.
+        assert_eq!(
+            render(&rewrite_predicate(binary(
+                BinaryOp::Less,
+                moment(),
+                reading("-02:00")
+            ))),
+            "(created_at Greater '2026-08-01 07:30:00')"
+        );
+        assert_eq!(
+            render(&rewrite_predicate(scalar_boolean(
+                ScalarFunction::Between { negated: false },
+                vec![
+                    reading("+05:30"),
+                    literal(Value::Utf8("2026-08-01 05:30:00".into())),
+                    literal(Value::Utf8("2026-08-02 05:30:00".into())),
+                ],
+            ))),
+            "Between { negated: false }(created_at, '2026-08-01 00:00:00', '2026-08-02 00:00:00')"
+        );
+    }
+
+    /// A named zone holds two offsets across a daylight-saving change, so
+    /// one shift cannot answer for it and the predicate stays as written.
+    #[test]
+    fn a_named_zone_reading_is_left_alone() {
+        let expr = binary(
+            BinaryOp::GreaterOrEqual,
+            reading("Europe/Paris"),
+            literal(Value::Utf8("2026-08-01 02:00:00".into())),
+        );
+        assert_eq!(render(&rewrite_predicate(expr.clone())), render(&expr));
     }
 
     #[test]

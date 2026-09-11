@@ -54,7 +54,7 @@ docker compose --project-name pintail-release exec --no-TTY pintail \
 docker compose --project-name pintail-release down --volumes
 ```
 
-The oracle starts a uniquely named MySQL container and compares 1,895 generated
+The oracle starts a uniquely named MySQL container and compares 1,897 generated
 and hand-written queries over equivalent MySQL and Pintail data. MySQL 8.4 is
 the default; `PINTAIL_ORACLE_MYSQL_IMAGE=mysql:8.0` runs the same corpus against
 the older supported major. The fixed corpus has six layers:

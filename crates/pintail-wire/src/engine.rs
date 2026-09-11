@@ -41,6 +41,13 @@ pub const DEFAULT_QUERY_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 /// Default result row ceiling for HTTP and wire clients.
 pub const DEFAULT_MAX_ROWS: usize = 10_000;
 
+/// How long a replica holding a table that would not open keeps answering
+/// before the next query reopens that table. Short enough that a table
+/// whose store recovers is live again within a second, long enough that a
+/// table which never recovers - an in-place type change with no prior
+/// definition - costs one load a second rather than one per query.
+const UNREADABLE_TABLE_RETRY: Duration = Duration::from_secs(1);
+
 /// Refusal for transaction control on a local database.
 ///
 /// A local database autocommits every statement
@@ -641,16 +648,22 @@ impl ReplicaEngine {
             replica.targets.len()
         );
         // A table that could not be opened may open on the next attempt with
-        // nothing on disk having moved, so the replica that refuses it is
-        // served but not kept: the next query loads again.
-        if replica
+        // nothing on disk having moved, so a replica holding one is kept
+        // only until the retry falls due - where it used to be served and
+        // dropped, which made every query on that database reload every
+        // table of it, for as long as the table stayed shut.
+        let unreadable = replica
             .targets
             .iter()
-            .all(|target| target.unreadable.is_none())
-        {
-            self.cache
-                .insert(key, stamp, Arc::clone(&replica), resident, opened);
-        }
+            .any(|target| target.unreadable.is_some());
+        self.cache.insert(
+            key,
+            stamp,
+            Arc::clone(&replica),
+            resident,
+            opened,
+            unreadable.then_some(UNREADABLE_TABLE_RETRY),
+        );
         Ok(replica)
     }
 
