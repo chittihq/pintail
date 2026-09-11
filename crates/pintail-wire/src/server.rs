@@ -3015,8 +3015,9 @@ fn describe_parameters(output: &mut QueryOutput, statement: &Prepared, values: &
                 Some(BinaryValue::Bytes(_) | BinaryValue::Null)
             )
         });
+        // What the parameters make the column replaces what presentation
+        // declared for the placeholder's preview value.
         if !text
-            || field.wire_column.is_some()
             || field.wire_hint.is_some()
             || field.group_concat
             || !matches!(field.data_type, None | Some(DataType::Utf8))
@@ -4263,5 +4264,68 @@ mod result_ceiling_tests {
             "ERROR_FOR_DIVISION_BY_ZERO"
         ));
         assert!(!super::sql_mode_has("", "ERROR_FOR_DIVISION_BY_ZERO"));
+    }
+
+    #[test]
+    fn parameter_metadata_replaces_what_presentation_declared() {
+        use pintail_protocol::{BinaryValue, Column, ColumnType};
+        use pintail_types::DataType;
+
+        let sql = "SELECT ? AS value, HEX(?)";
+        let statement = super::Prepared {
+            parse_mode: pintail_sql::ParseMode::default(),
+            sql: sql.to_owned(),
+            parameters: 2,
+            parameter_types: None,
+            used_long_data: false,
+            limit_parameters: vec![false, false],
+            integer_cast_parameters: vec![false, false],
+            parameter_columns: super::parameter_columns(sql),
+            nullable: vec![true, true],
+        };
+        let declared = |name: &str, coltype, character_set| {
+            let mut column = Column::new(name.to_owned(), coltype);
+            column.character_set = character_set;
+            super::QueryField {
+                wire_column: Some(column),
+                name: name.to_owned(),
+                data_type: None,
+                nullable: true,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: false,
+                wire_hint: None,
+            }
+        };
+        let mut hex = declared("HEX(?)", ColumnType::MysqlTypeVarString, 255);
+        hex.data_type = Some(DataType::Utf8);
+        let mut output = super::QueryOutput {
+            fields: vec![declared("value", ColumnType::MysqlTypeNull, 63), hex],
+            rows: Vec::new(),
+            stats: super::QueryStats::default(),
+            truncated: false,
+            affected: None,
+        };
+        super::describe_parameters(
+            &mut output,
+            &statement,
+            &[BinaryValue::Null, BinaryValue::Bytes(vec![0, 255])],
+        );
+        let described = output
+            .fields
+            .iter()
+            .map(|field| {
+                let column = field.wire_column.as_ref().expect("described");
+                (column.coltype, column.decimals, column.character_set)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            [
+                (ColumnType::MysqlTypeVarString, 31, 255),
+                (ColumnType::MysqlTypeMediumBlob, 31, 255),
+            ]
+        );
     }
 }
