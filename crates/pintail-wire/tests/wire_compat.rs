@@ -1938,3 +1938,70 @@ async fn the_prepared_statement_ceilings_refuse_with_1461_and_free_on_close() {
         .expect("wire server task")
         .expect("wire server");
 }
+
+/// Fixed per-query cost over the wire, printed rather than asserted: what a
+/// compatibility read, a query that reads no table, a point lookup and a
+/// count each cost from one connection. Run it in release:
+/// `cargo test --release -p pintail-wire --test wire_compat per_query_cost
+/// -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing probe, not a gate"]
+async fn per_query_cost() {
+    const RUNS: u32 = 2_000;
+    let _serial = wire_serial();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_with_options(
+            listener,
+            data_dir,
+            metadata_path,
+            pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+            None,
+            Duration::from_secs(30),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+    let pool = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    );
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    for sql in [
+        "SELECT @@version",
+        "SELECT 1",
+        "SELECT id FROM events WHERE id = 1",
+        "SELECT COUNT(*) FROM events",
+    ] {
+        for _ in 0..200 {
+            connection.query_drop(sql).await.expect("warm-up query");
+        }
+        let started = std::time::Instant::now();
+        for _ in 0..RUNS {
+            connection.query_drop(sql).await.expect("timed query");
+        }
+        eprintln!(
+            "{sql}: {:.1} us per query",
+            started.elapsed().as_secs_f64() * 1e6 / f64::from(RUNS)
+        );
+    }
+    drop(connection);
+    pool.disconnect().await.ok();
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}
