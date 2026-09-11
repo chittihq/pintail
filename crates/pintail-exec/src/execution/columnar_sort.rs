@@ -64,11 +64,13 @@ pub(super) struct ColumnarSorted {
 }
 
 impl ColumnarSorted {
+    /// The kept rows in order, the first `limit` of them when one is given.
     pub(super) fn new(
         batches: Vec<RecordBatch>,
         keys: &[BoundOrderKey],
         width: Option<usize>,
         collation: Collation,
+        limit: Option<usize>,
     ) -> Result<Self, ExecError> {
         let rows = batches
             .iter()
@@ -85,14 +87,23 @@ impl ColumnarSorted {
             .iter()
             .map(|key| sort_key(&batches, &rows, *key, collation))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut positions = (0..rows.len()).collect::<Vec<_>>();
-        positions.sort_by(|&left, &right| {
+        // Rows with equal keys order by arrival, as a stable sort keeps them,
+        // so the order is total and the first `limit` of it well defined.
+        let compare = |left: &usize, right: &usize| {
             keys.iter()
                 .zip(&sort_keys)
-                .map(|(key, sort_key)| compare_key(&batches, &rows, sort_key, *key, left, right))
+                .map(|(key, sort_key)| compare_key(&batches, &rows, sort_key, *key, *left, *right))
                 .find(|ordering| ordering.is_ne())
-                .unwrap_or(Ordering::Equal)
-        });
+                .unwrap_or_else(|| left.cmp(right))
+        };
+        let mut positions = (0..rows.len()).collect::<Vec<_>>();
+        if let Some(limit) = limit.filter(|limit| *limit < positions.len()) {
+            if limit > 0 {
+                positions.select_nth_unstable_by(limit - 1, compare);
+            }
+            positions.truncate(limit);
+        }
+        positions.sort_unstable_by(compare);
         crate::counters::count(|counters| {
             counters.rows_sorted = counters
                 .rows_sorted
@@ -158,6 +169,164 @@ impl ColumnarSorted {
         self.position = end;
         Ok(Some(batch))
     }
+}
+
+/// Kept batches a top-k sort holds before it cuts them down to k rows.
+const MAX_KEPT_BATCHES: usize = 32;
+
+/// A top-k sort cuts its kept batches once they hold this fraction of the
+/// query's ceiling, so the input it is still reading has room.
+const KEPT_SHARE: usize = 4;
+
+/// What a top-k sort kept: its rows in order, or the batches it held when
+/// they stopped fitting as columns, for the row sort to continue with.
+pub(super) enum TopK {
+    Sorted(ColumnarSorted),
+    Unkept(Vec<RecordBatch>),
+}
+
+/// The first `k` rows of the input in the row sort's order, with rows of
+/// equal keys in arrival order. Batches are kept whole until they hold
+/// twice `k` rows, `MAX_KEPT_BATCHES` past the last cut or a `KEPT_SHARE`
+/// of the ceiling, then cut to their first `k` rows, gathered into batches
+/// of their own. The k-th row's first key
+/// is then a cutoff: later rows whose first key orders after it cannot
+/// enter the first `k` and are left out before they are kept.
+pub(super) fn top_k(
+    input: &mut super::PullOperator,
+    k: usize,
+    keys: &[BoundOrderKey],
+    width: Option<usize>,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<TopK, ExecError> {
+    if k == 0 {
+        return ColumnarSorted::new(Vec::new(), keys, width, collation, Some(0)).map(TopK::Sorted);
+    }
+    let cut_at = k.saturating_mul(2).max(DEFAULT_BATCH_ROWS);
+    let mut kept = Vec::new();
+    // Batches holding the first k rows of the last cut.
+    let mut cut = 0_usize;
+    let mut rows = 0_usize;
+    let mut reserved = 0_usize;
+    let mut cutoff = None;
+    while let Some(mut batch) = input.next_batch(memory)? {
+        if let (Some(cutoff), Some(key)) = (&cutoff, keys.first()) {
+            narrow(&mut batch, cutoff, *key)?;
+        }
+        let visible = batch.visible_row_count();
+        if visible == 0 {
+            continue;
+        }
+        let bytes = retained_bytes(&batch, keys.len());
+        if memory.reserve(bytes).is_err() {
+            memory.release(reserved);
+            kept.push(batch);
+            return Ok(TopK::Unkept(kept));
+        }
+        reserved = reserved.saturating_add(bytes);
+        rows = rows.saturating_add(visible);
+        kept.push(batch);
+        if rows < cut_at
+            && kept.len() <= cut + MAX_KEPT_BATCHES
+            && reserved <= memory.limit() / KEPT_SHARE
+        {
+            continue;
+        }
+        let Some(types) = uniform_types(&kept) else {
+            memory.release(reserved);
+            return Ok(TopK::Unkept(kept));
+        };
+        let mut first = ColumnarSorted::new(kept, keys, None, collation, Some(k))?;
+        kept = Vec::new();
+        while let Some(batch) = first.next_batch(&types, memory)? {
+            kept.push(batch);
+        }
+        cut = kept.len();
+        rows = kept.iter().map(RecordBatch::visible_row_count).sum();
+        let now = kept
+            .iter()
+            .map(|batch| retained_bytes(batch, keys.len()))
+            .sum::<usize>();
+        memory.release(reserved);
+        // The first k rows alone crowd the ceiling: the row top-k, which
+        // holds only them, continues from here.
+        if now > memory.limit() / KEPT_SHARE || memory.reserve(now).is_err() {
+            return Ok(TopK::Unkept(kept));
+        }
+        reserved = now;
+        cutoff = (rows == k)
+            .then(|| keys.first().and_then(|key| Cutoff::of(&kept, *key)))
+            .flatten();
+    }
+    ColumnarSorted::new(kept, keys, width, collation, Some(k)).map(TopK::Sorted)
+}
+
+/// Each column's type, when every batch gives it the same one.
+fn uniform_types(batches: &[RecordBatch]) -> Option<Vec<DataType>> {
+    let types = batches
+        .first()?
+        .columns()
+        .iter()
+        .map(ColumnVector::data_type)
+        .collect::<Vec<_>>();
+    batches
+        .iter()
+        .all(|batch| {
+            batch.columns().len() == types.len()
+                && batch
+                    .columns()
+                    .iter()
+                    .zip(&types)
+                    .all(|(column, data_type)| column.data_type() == *data_type)
+        })
+        .then_some(types)
+}
+
+/// The first sort key of a top-k sort's k-th row, as ordering units.
+struct Cutoff {
+    data_type: DataType,
+    units: Option<i128>,
+}
+
+impl Cutoff {
+    /// The last kept row's first key, when its column orders as units.
+    fn of(kept: &[RecordBatch], key: BoundOrderKey) -> Option<Self> {
+        let batch = kept.last()?;
+        let row = batch.selection().selected_rows().last()?;
+        let column = batch.column(key.index)?;
+        let years = four_digit_years(column.data_type());
+        let units = units_at(column, row, key, years.as_ref()).ok()?;
+        Some(Self {
+            data_type: column.data_type(),
+            units,
+        })
+    }
+}
+
+/// Leaves out of `batch` the rows whose first key orders after the cutoff.
+/// A column that does not order as units leaves the batch whole.
+fn narrow(batch: &mut RecordBatch, cutoff: &Cutoff, key: BoundOrderKey) -> Result<(), ExecError> {
+    let Some(column) = batch.column(key.index) else {
+        return Ok(());
+    };
+    if column.data_type() != cutoff.data_type {
+        return Ok(());
+    }
+    let years = four_digit_years(cutoff.data_type);
+    let mut selection = batch.selection().clone();
+    for row in batch.selection().selected_rows() {
+        let Ok(units) = units_at(column, row, key, years.as_ref()) else {
+            return Ok(());
+        };
+        let ordering = null_order(key, units.is_none(), cutoff.units.is_none())
+            .unwrap_or_else(|| directed(units.cmp(&cutoff.units), key));
+        if ordering.is_gt() {
+            selection.set(row, false)?;
+        }
+    }
+    batch.set_selection(selection)?;
+    Ok(())
 }
 
 /// The years `0000` to `9999` in `data_type`'s units, where canonical text
@@ -559,13 +728,17 @@ mod tests {
             for keys in &orders {
                 let mut expected = batches.iter().flat_map(rows_of).collect::<Vec<_>>();
                 expected.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                let mut sorted =
-                    ColumnarSorted::new(batches.clone(), keys, None, collation).expect("sorted");
-                let mut actual = Vec::new();
-                while let Some(batch) = sorted.next_batch(&types, &memory).expect("batch") {
-                    actual.extend(rows_of(&batch));
+                for limit in [None, Some(0), Some(1), Some(17), Some(200)] {
+                    let mut sorted =
+                        ColumnarSorted::new(batches.clone(), keys, None, collation, limit)
+                            .expect("sorted");
+                    let mut actual = Vec::new();
+                    while let Some(batch) = sorted.next_batch(&types, &memory).expect("batch") {
+                        actual.extend(rows_of(&batch));
+                    }
+                    let expected = &expected[..limit.unwrap_or(usize::MAX).min(expected.len())];
+                    assert_eq!(actual, expected, "{keys:?} {limit:?} under {collation:?}");
                 }
-                assert_eq!(actual, expected, "{keys:?} under {collation:?}");
             }
         }
     }
@@ -580,7 +753,8 @@ mod tests {
         for row in &mut expected {
             row.truncate(3);
         }
-        let mut sorted = ColumnarSorted::new(batches, &keys, Some(3), collation).expect("sorted");
+        let mut sorted =
+            ColumnarSorted::new(batches, &keys, Some(3), collation, None).expect("sorted");
         let mut actual = Vec::new();
         while let Some(row) = sorted.next_row() {
             actual.push(row);
