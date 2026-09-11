@@ -73,7 +73,7 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    MySQL's exponent notation (`POW` over large ids), fixed in 565ff396.
 8. [x] **Parity gaps.** `CASE` decimal branch scale, `GROUP BY` with a
    trailing no-break space, DECIMAL wider than 38 digits.
-9. [ ] **Lifecycle replay.** Rerun `tests/e2e/parity-replay.ts`; 33 wire and
+9. [x] **Lifecycle replay.** Rerun `tests/e2e/parity-replay.ts`; 33 wire and
    session checks were red (prepared statements, `SHOW WARNINGS`, TIMESTAMP
    under time zones, multi-row scalar subquery errors, invalid JSON paths,
    `@@session.time_zone`).
@@ -84,8 +84,9 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    statement's error or its division-by-zero and GROUP_CONCAT warnings,
    with MySQL's out-of-range message; `NO_UNSIGNED_SUBTRACTION` is
    implemented; a TIMESTAMP reads in the session zone; 1242 and 3143 are
-   answered; a session starts in the source's global zone. The replay rerun
-   follows the branch's gate.
+   answered; a session starts in the source's global zone. After the
+   branch's rc gate the replay passes 870 of 871 checks; the other is the
+   MINIMAL:FULL scope boundary.
 10. [x] **Gate and remeasure.** Full rc gate on the branch, merge to `dev`,
    rerun the corpus benchmark and commit the CSV. The gate passed at
    d787d3a6, the branch merged as 5256ec63, and the rerun's CSV is

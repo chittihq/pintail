@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "9d3e094be7baff643d1b0d3f6c3ef34459156cde",
-    "measuredAt": "2026-09-11T00:00:26.154Z",
+    "commit": "dde199c66ec33d2c74e4afd28cd09384ebcccc4a",
+    "measuredAt": "2026-09-11T00:26:42.853Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "5942ce692de4d308b7eaf33de0962b8371b451271d42b99689e169aafd114408",
+    "ledgerSha256": "c93c9570f4e676293e8de3f234e1bdd34b53e45e06570dca523980afc6780423",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "9d3e094be7baff643d1b0d3f6c3ef34459156cde",
-      "sourceCommit": "84fa4492a816daa79d31d5303edcb95dbd6e0d56",
-      "measuredAt": "2026-09-10T23:52:03.367428013+00:00",
+      "commit": "dde199c66ec33d2c74e4afd28cd09384ebcccc4a",
+      "sourceCommit": "66ac0b83bad6ed7d0b414389aa43bf50cac47454",
+      "measuredAt": "2026-09-11T00:18:19.109063293+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "1973ddd277dd7070f6dae94567d719909c7c43c0941976bce59515b1b6f426f2",
+      "ledgerSha256": "5c9fd4fecf06af4b2b6c39fa0e9966baa575e3461cd6ade7e1fc79dee6f225f2",
       "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d"
     }
   },
@@ -45,7 +45,7 @@
     },
     {
       "path": "crates/pintail-wire/src/server.rs",
-      "sha256": "32198df0dd1bd98e7538d21d1b66c4cbc417b033a6783c60b152d0c14b848969"
+      "sha256": "1ead4eb1c816d48a6cfcaeec641fe486c9da882e9b50d8af5f420336ac7f3ff6"
     },
     {
       "path": "crates/pintail-write/src/engine.rs",
