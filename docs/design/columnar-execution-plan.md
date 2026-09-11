@@ -113,7 +113,11 @@ program and gets its own gate and live-CDC coverage.
 
 ## Progress
 
-- [ ] Phase 0
+- [x] Phase 0 — per-query trace (`PINTAIL_QUERY_TRACE`) and the traced
+  baseline at a2c22194 in `benchmark/corpus/results.csv`. At scale 1 the
+  server-side time splits into freshness checks and short-query
+  classification (about half), then execution, session handling, binding,
+  parsing and plan start.
 - [ ] Phase 1a
 - [ ] Phase 1b
 - [ ] Phase 2
