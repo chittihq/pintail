@@ -282,6 +282,9 @@ struct ReaderTarget {
     /// finished, has a store that is empty or partial; answering from it
     /// would be silently wrong, so its scans are refused as not ready.
     ready: bool,
+    /// Why the table's store could not be opened, when it could not. Its
+    /// snapshot is then empty and its scans are refused with the reason.
+    unreadable: Option<String>,
 }
 
 static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
@@ -561,8 +564,17 @@ impl ReplicaEngine {
             load_started.elapsed().as_secs_f64() * 1_000.0,
             replica.targets.len()
         );
-        self.cache
-            .insert(key, stamp, Arc::clone(&replica), resident, opened);
+        // A table that could not be opened may open on the next attempt with
+        // nothing on disk having moved, so the replica that refuses it is
+        // served but not kept: the next query loads again.
+        if replica
+            .targets
+            .iter()
+            .all(|target| target.unreadable.is_none())
+        {
+            self.cache
+                .insert(key, stamp, Arc::clone(&replica), resident, opened);
+        }
         Ok(replica)
     }
 
@@ -1137,37 +1149,43 @@ impl ReplicaEngine {
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                let prior = previous.and_then(|(replica, stamp)| {
+                    replica
+                        .targets
+                        .iter()
+                        .find(|target| target.source.name.eq_ignore_ascii_case(&source.name))
+                        .filter(|target| target.unreadable.is_none())
+                        .map(|target| (target, stamp))
+                });
                 // Reuse needs all three unchanged: the probe-derived
                 // definition (a reprobe can change columns without a new
                 // schema version), the schema version, and the table's own
                 // files. Everything else in the replica is rebuilt from the
                 // metadata store, which is cheap.
-                let reusable = previous.and_then(|(replica, stamp)| {
-                    let target = replica
-                        .targets
-                        .iter()
-                        .find(|target| target.source.name.eq_ignore_ascii_case(&source.name))?;
+                let reusable = prior.and_then(|(target, stamp)| {
                     (target.version == version
                         && target.source == source
                         && stamp.tables.get(&directory_name) == current.tables.get(&directory_name))
                     .then(|| target.snapshot.clone())
                 });
-                let snapshot = if let Some(snapshot) = reusable {
-                    snapshot
-                } else {
-                    let schema = source
-                        .table_schema_with_version(version)
-                        .map_err(|error| QueryError::Internal(error.to_string()))?;
-                    opened += 1;
-                    TableSnapshot::open(directory, schema)
-                        .map_err(|error| QueryError::NotReady(error.to_string()))?
-                };
-                Ok(ReaderTarget {
+                if let Some(snapshot) = reusable {
+                    return Ok(ReaderTarget {
+                        source,
+                        version,
+                        snapshot,
+                        ready,
+                        unreadable: None,
+                    });
+                }
+                opened += 1;
+                open_target(
+                    database_id,
+                    directory,
                     source,
                     version,
-                    snapshot,
                     ready,
-                })
+                    prior.map(|(target, _)| target),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok((
@@ -1183,6 +1201,72 @@ impl ReplicaEngine {
             opened,
         ))
     }
+}
+
+/// Opens one table's snapshot under `source` at `version`.
+///
+/// A store that refuses that definition is tried under `prior`'s, the one
+/// it was last read under: a source that changed shape without a
+/// transition replication could apply leaves the store holding rows
+/// written under the previous definition, and the table keeps reading them
+/// (differing from its source in content, the documented consequence)
+/// rather than becoming unreadable. A store that opens under neither
+/// refuses its own reads, with the reason, while the rest of its database
+/// answers.
+fn open_target(
+    database_id: &str,
+    directory: PathBuf,
+    source: SourceTable,
+    version: u32,
+    ready: bool,
+    prior: Option<&ReaderTarget>,
+) -> Result<ReaderTarget, QueryError> {
+    let schema = source
+        .table_schema_with_version(version)
+        .map_err(|error| QueryError::Internal(error.to_string()))?;
+    let error = match TableSnapshot::open(&directory, schema.clone()) {
+        Ok(snapshot) => {
+            return Ok(ReaderTarget {
+                source,
+                version,
+                snapshot,
+                ready,
+                unreadable: None,
+            });
+        }
+        Err(error) => error,
+    };
+    let held = prior.and_then(|target| {
+        let schema = target
+            .source
+            .table_schema_with_version(target.version)
+            .ok()?;
+        Some((target, TableSnapshot::open(&directory, schema).ok()?))
+    });
+    if let Some((target, snapshot)) = held {
+        pintail_log::log_info!(
+            "replica.table_definition_held db={database_id} table={}: {error}",
+            source.name
+        );
+        return Ok(ReaderTarget {
+            source: target.source.clone(),
+            version: target.version,
+            snapshot,
+            ready,
+            unreadable: None,
+        });
+    }
+    pintail_log::log_info!(
+        "replica.table_unreadable db={database_id} table={}: {error}",
+        source.name
+    );
+    Ok(ReaderTarget {
+        source,
+        version,
+        snapshot: TableSnapshot::empty(directory, schema),
+        ready,
+        unreadable: Some(error.to_string()),
+    })
 }
 
 /// Statements whose only purpose is a multi-statement transaction boundary.
@@ -1243,7 +1327,9 @@ fn table_copy_is_complete(record: &pintail_meta::TableRecord) -> bool {
 fn query_execution_error(error: ExecError) -> QueryError {
     match error {
         ExecError::QueryTimedOut | ExecError::QueryCancelled => QueryError::Interrupted,
-        ExecError::TableNotReady { .. } => QueryError::NotReady(error.to_string()),
+        ExecError::TableNotReady { .. } | ExecError::TableUnreadable { .. } => {
+            QueryError::NotReady(error.to_string())
+        }
         // MySQL answers a row-wise numeric overflow with 1690/22003, not
         // an internal error - clients branch on the code.
         ExecError::NumericOverflow | ExecError::OutOfRange(_) => QueryError::Rejected {
@@ -1294,7 +1380,7 @@ fn query_explain_error(error: ExplainError) -> QueryError {
         ExplainError::Exec(ExecError::QueryTimedOut | ExecError::QueryCancelled) => {
             QueryError::Interrupted
         }
-        ExplainError::Exec(ExecError::TableNotReady { .. }) => {
+        ExplainError::Exec(ExecError::TableNotReady { .. } | ExecError::TableUnreadable { .. }) => {
             QueryError::NotReady(error.to_string())
         }
         error => QueryError::Invalid(error.to_string()),
@@ -1574,7 +1660,14 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
     let mut provider = SnapshotScanProvider::new(indexed)
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     for (index, target) in replica.targets.iter().enumerate() {
-        if !target.ready {
+        if let Some(reason) = &target.unreadable {
+            provider.mark_unreadable(
+                database_id,
+                table_id(index)?,
+                target.source.name.clone(),
+                reason.clone(),
+            );
+        } else if !target.ready {
             provider.mark_not_ready(database_id, table_id(index)?, target.source.name.clone());
         }
         let storage_key = target.source.key_column_ids();
