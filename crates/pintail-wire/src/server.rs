@@ -16,9 +16,9 @@ use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
     BinaryValue, CapabilityFlags, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch,
     EncodedRows, ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PacketWriter,
-    PreparedStatement, Response, ResultSet, SCRAMBLE_SIZE, TextRow, WatchOutcome,
-    decode_execute_parameters, encode_binary_datetime, encode_binary_int, encode_binary_time,
-    encode_error, packet::put_length_encoded_bytes,
+    PreparedStatement, Response, ResultSet, RowChunk, RowStream, SCRAMBLE_SIZE, TextRow,
+    WatchOutcome, decode_execute_parameters, encode_binary_datetime, encode_binary_int,
+    encode_binary_time, encode_error, packet::put_length_encoded_bytes,
 };
 use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
@@ -32,7 +32,7 @@ use crate::limits::{
     ActiveConnection, WireLimits, record_connection_limit, record_connection_refused,
     record_prepared_refused,
 };
-use crate::result_rows::RowSource;
+use crate::result_rows::{ResultRows, RowSource};
 use crate::{
     DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats, ReplicaEngine,
     SqlRejection,
@@ -656,8 +656,8 @@ struct Condition {
 const MAX_LISTED_CONDITIONS: usize = 1024;
 
 /// The diagnostics area a statement leaves: its error, or its warnings.
-fn statement_conditions(
-    result: &Result<QueryOutput, QueryError>,
+fn statement_conditions<T>(
+    result: &Result<T, QueryError>,
     group_concat: u64,
     division: u64,
 ) -> (Vec<Condition>, u64) {
@@ -802,6 +802,9 @@ struct Backend {
     /// The trace of the statement being answered, from its execution until
     /// its response is encoded (`PINTAIL_QUERY_TRACE`).
     pending_trace: Mutex<Option<crate::trace::Trace>>,
+    /// The statement whose result is streaming, until the connection has
+    /// written it: its worker, and what the statement holds until then.
+    pending_stream: Mutex<Option<PendingStream>>,
     prepared: BTreeMap<u32, Prepared>,
     /// Statement text held by `prepared`, so the byte ceiling is a counter
     /// rather than a walk of the map on every PREPARE.
@@ -821,6 +824,43 @@ struct Backend {
 struct RecordedStatement {
     shape: String,
     full: Option<String>,
+}
+
+/// What a statement's worker leaves once it is done.
+struct Settled {
+    conditions: (Vec<Condition>, u64),
+    rows: Result<usize, QueryError>,
+    trace: Option<crate::trace::Trace>,
+}
+
+/// A statement's outcome as its connection sees it.
+enum Executed<T> {
+    /// The statement is done; here is what its caller made of it.
+    Done(T),
+    /// The result is streaming and the worker still producing it.
+    Streaming(RowStream),
+}
+
+/// Adjusts a result's fields before they are described to the client.
+type Describe = Box<dyn Fn(&mut [QueryField]) + Send>;
+
+/// How a statement's result is encoded should it grow large enough to
+/// stream.
+struct StreamRequest {
+    encoding: WireEncoding,
+    describe: Option<Describe>,
+}
+
+/// A statement whose result is streaming: its worker, and what the
+/// statement holds - its KILL registration, its cancellation - until the
+/// connection has written the result.
+struct PendingStream {
+    worker: std::pin::Pin<Box<dyn Future<Output = Result<Settled, tokio::task::JoinError>> + Send>>,
+    _running: RunningQueryGuard,
+    cancel: CancelExecutionOnDrop,
+    recorded: Option<RecordedStatement>,
+    started: std::time::Instant,
+    sql: String,
 }
 
 struct CancelExecutionOnDrop(Option<pintail_exec::ExecutionCancellation>);
@@ -858,6 +898,7 @@ impl Backend {
             authentication: Mutex::new(None),
             session: Mutex::new(Session::default()),
             pending_trace: Mutex::new(None),
+            pending_stream: Mutex::new(None),
             prepared: BTreeMap::new(),
             prepared_bytes: 0,
             next_statement_id: 1,
@@ -1048,7 +1089,12 @@ impl Backend {
         sql: &str,
         mode: Option<pintail_sql::ParseMode>,
     ) -> Result<QueryOutput, QueryError> {
-        self.execute_then(sql, mode, |result| result).await?
+        match self.execute_then(sql, mode, None, |result| result).await? {
+            Executed::Done(result) => result,
+            Executed::Streaming(_) => Err(QueryError::Internal(
+                "a result streamed with nowhere to go".to_owned(),
+            )),
+        }
     }
 
     /// Runs one statement and hands its result to `finish` on the worker
@@ -1057,14 +1103,19 @@ impl Backend {
     /// A result is turned into packets by `finish` there, not on the
     /// connection's I/O task: encoding a large result is CPU work the size
     /// of the result, and on the I/O task it would stall every other
-    /// connection that task serves. `Err` is a failure before the statement
+    /// connection that task serves. With a `stream` request a result that
+    /// outgrows [`crate::engine::STREAM_AFTER_ROWS`] streams instead, and
+    /// this returns as soon as it starts; the statement is settled in
+    /// [`Handler::finish_stream`]. `Err` is a failure before the statement
     /// reached a worker, or of the worker itself.
+    #[allow(clippy::too_many_lines)]
     async fn execute_then<T, F>(
         &self,
         sql: &str,
         mode: Option<pintail_sql::ParseMode>,
+        stream: Option<StreamRequest>,
         finish: F,
-    ) -> Result<T, QueryError>
+    ) -> Result<Executed<T>, QueryError>
     where
         T: Send + 'static,
         F: FnOnce(Result<QueryOutput, QueryError>) -> T + Send + 'static,
@@ -1079,7 +1130,7 @@ impl Backend {
             .map_err(|error| QueryError::Internal(error.to_string()))?
             .clone();
         if let Some(output) = compatibility_query(sql, &authenticated.database_name, &session) {
-            return Ok(finish(Ok(output)));
+            return Ok(Executed::Done(finish(Ok(output))));
         }
 
         let deadline = (session.max_execution_time_ms > 0)
@@ -1088,8 +1139,20 @@ impl Backend {
             })
             .flatten();
         let cancellation = pintail_exec::ExecutionCancellation::new();
-        let _running_guard = RunningQueryGuard::register(self.connection_id, &cancellation);
+        let running_guard = RunningQueryGuard::register(self.connection_id, &cancellation);
         let mut cancel_on_drop = CancelExecutionOnDrop::new(cancellation.clone());
+        // The sink hands the stream over when the result starts streaming;
+        // it is dropped when the worker ends, so `handed` resolves either way.
+        let (sink, handed) = match stream {
+            Some(request) => {
+                let (handoff, handed) = tokio::sync::oneshot::channel();
+                (
+                    Some(WireSink::new(request.encoding, request.describe, handoff)),
+                    Some(handed),
+                )
+            }
+            None => (None, None),
+        };
         let engine = self.engine.clone();
         let database_id = authenticated.database_id;
         // The shape is logged rather than the text: a literal is a row value,
@@ -1100,6 +1163,7 @@ impl Backend {
             shape: crate::observe::truncated(&crate::observe::digest(sql), 200),
             full: pintail_log::enabled(pintail_log::DEBUG).then(|| sql.to_owned()),
         });
+        let statement_text = sql.to_owned();
         let sql = sql.to_owned();
         let parse_mode =
             mode.unwrap_or_else(|| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode));
@@ -1107,7 +1171,8 @@ impl Backend {
         if let Some(trace) = &mut trace {
             trace.mark("dispatched");
         }
-        let execution = tokio::task::spawn_blocking(move || {
+        let worker = tokio::task::spawn_blocking(move || {
+            let mut sink = sink;
             crate::trace::install(trace);
             crate::trace::mark("worker");
             let _ = pintail_exec::take_exec_counters();
@@ -1124,9 +1189,14 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(Some(
                         session.cte_max_recursion_depth,
                     ));
-                    let result = engine
-                        .execute_with_deadline(&database_id, &sql, max_result_rows(), deadline)
-                        .and_then(refuse_truncated);
+                    let answer = engine.execute_answer(
+                        &database_id,
+                        &sql,
+                        max_result_rows(),
+                        deadline,
+                        sink.as_mut()
+                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
+                    );
                     let warnings = (
                         pintail_exec::take_session_group_concat_warnings(),
                         pintail_exec::take_session_division_warnings(),
@@ -1146,31 +1216,115 @@ impl Backend {
                     } else {
                         0
                     };
-                    let conditions = statement_conditions(&result, group_concat, division);
-                    let rows = result.as_ref().map(|output| output.rows.len());
-                    let rows = rows.map_err(Clone::clone);
-                    (finish(result), conditions, rows, crate::trace::take())
+                    let (finished, rows) = match answer {
+                        Ok(crate::engine::Answer::Whole(output)) => {
+                            let result = refuse_truncated(output);
+                            let rows = result
+                                .as_ref()
+                                .map(|output| output.rows.len())
+                                .map_err(Clone::clone);
+                            (Some(finish(result)), rows)
+                        }
+                        Ok(crate::engine::Answer::Streamed { rows, .. }) => {
+                            if let Some(sink) = &sink {
+                                sink.end(Ok(()));
+                            }
+                            (None, Ok(rows))
+                        }
+                        // After rows went out the error follows them; before,
+                        // it is the whole answer.
+                        Err(error) => match &sink {
+                            Some(sink) if sink.streaming() => {
+                                sink.end(Err(&error));
+                                (None, Err(error))
+                            }
+                            _ => (Some(finish(Err(error.clone()))), Err(error)),
+                        },
+                    };
+                    drop(sink);
+                    let conditions = statement_conditions(&rows, group_concat, division);
+                    let settled = Settled {
+                        conditions,
+                        rows,
+                        trace: crate::trace::take(),
+                    };
+                    (finished, settled)
                 })
             })
-        })
-        .await
-        .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
+        });
+        let worker_failed = |error: tokio::task::JoinError| {
+            QueryError::Internal(format!("query worker failed: {error}"))
+        };
+        if let Some(handed) = handed
+            && let Ok(stream) = handed.await
+        {
+            let pending = PendingStream {
+                worker: Box::pin(async move { worker.await.map(|(_, settled)| settled) }),
+                _running: running_guard,
+                cancel: cancel_on_drop,
+                recorded,
+                started,
+                sql: statement_text,
+            };
+            if let Ok(mut slot) = self.pending_stream.lock() {
+                *slot = Some(pending);
+            }
+            return Ok(Executed::Streaming(stream));
+        }
+        let (finished, settled) = worker.await.map_err(worker_failed)?;
         cancel_on_drop.disarm();
-        let (finished, conditions, rows, trace) = execution;
-        if let Some(mut trace) = trace {
+        drop(running_guard);
+        self.settle(settled, recorded, started);
+        finished
+            .map(Executed::Done)
+            .ok_or_else(|| QueryError::Internal("a statement ended without an answer".to_owned()))
+    }
+
+    /// Runs a wire statement and answers it: the packets `finish` encodes,
+    /// or the stream its result started. `traced` names the statement in
+    /// its trace, written once the answer is.
+    async fn wire_answer<F>(
+        &self,
+        sql: &str,
+        mode: Option<pintail_sql::ParseMode>,
+        stream: StreamRequest,
+        traced: &str,
+        finish: F,
+    ) -> Response
+    where
+        F: FnOnce(Result<QueryOutput, QueryError>) -> Response + Send + 'static,
+    {
+        let response = match self.execute_then(sql, mode, Some(stream), finish).await {
+            Ok(Executed::Done(response)) => response,
+            // Its trace is written when the stream has been.
+            Ok(Executed::Streaming(stream)) => return Response::Stream(Box::new(stream)),
+            Err(error) => Response::Error(error_kind(&error), error.to_string()),
+        };
+        self.finish_trace(traced);
+        response
+    }
+
+    /// Records a finished statement: its trace for the response, its
+    /// diagnostics for `SHOW WARNINGS`, and its query line.
+    fn settle(
+        &self,
+        settled: Settled,
+        recorded: Option<RecordedStatement>,
+        started: std::time::Instant,
+    ) {
+        if let Some(mut trace) = settled.trace {
             trace.mark("returned");
             if let Ok(mut pending) = self.pending_trace.lock() {
                 *pending = Some(trace);
             }
         }
         if let Ok(mut current) = self.session.lock() {
-            (current.conditions, current.condition_count) = conditions;
+            (current.conditions, current.condition_count) = settled.conditions;
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
         // exactly the sessions worth investigating.
-        self.record_query(recorded, started, rows.as_ref().copied());
-        Ok(finished)
+        self.record_query(recorded, started, settled.rows.as_ref().copied());
     }
 
     /// Writes the pending statement trace, once its response is encoded.
@@ -1532,21 +1686,26 @@ impl Handler for Backend {
             );
         };
         let encoded_limit = self.query_memory_limit;
-        let response = self
-            .execute_then(sql, None, move |result| {
-                query_output_to_response(
-                    result,
-                    group_concat_max_len,
-                    &charset,
-                    negotiated,
-                    false,
-                    encoded_limit,
-                )
-            })
-            .await
-            .unwrap_or_else(|error| Response::Error(error_kind(&error), error.to_string()));
-        self.finish_trace(sql);
-        response
+        let stream = StreamRequest {
+            encoding: WireEncoding {
+                group_concat_max_len,
+                charset: charset.clone(),
+                negotiated,
+                binary: false,
+            },
+            describe: None,
+        };
+        self.wire_answer(sql, None, stream, sql, move |result| {
+            query_output_to_response(
+                result,
+                group_concat_max_len,
+                &charset,
+                negotiated,
+                false,
+                encoded_limit,
+            )
+        })
+        .await
     }
 
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
@@ -1700,25 +1859,66 @@ impl Handler for Backend {
         let encoded_limit = self.query_memory_limit;
         let sql = statement.sql.clone();
         let parse_mode = statement.parse_mode;
-        let response = self
-            .execute_then(&query, Some(parse_mode), move |result| {
-                let result = result.map(|mut output| {
-                    describe_parameters(&mut output, &statement, &values);
-                    output
-                });
-                query_output_to_response(
-                    result,
-                    group_concat_max_len,
-                    &charset,
-                    negotiated,
-                    true,
-                    encoded_limit,
-                )
-            })
-            .await
-            .unwrap_or_else(|error| Response::Error(error_kind(&error), error.to_string()));
+        let stream = StreamRequest {
+            encoding: WireEncoding {
+                group_concat_max_len,
+                charset: charset.clone(),
+                negotiated,
+                binary: true,
+            },
+            describe: Some(parameter_description(&statement, &values)),
+        };
+        self.wire_answer(&query, Some(parse_mode), stream, &sql, move |result| {
+            let result = result.map(|mut output| {
+                describe_parameters(&mut output.fields, &statement, &values);
+                output
+            });
+            query_output_to_response(
+                result,
+                group_concat_max_len,
+                &charset,
+                negotiated,
+                true,
+                encoded_limit,
+            )
+        })
+        .await
+    }
+
+    async fn finish_stream(&mut self, delivered: bool) {
+        let pending = self
+            .pending_stream
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take());
+        let Some(pending) = pending else {
+            return;
+        };
+        let PendingStream {
+            worker,
+            _running,
+            cancel,
+            recorded,
+            started,
+            sql,
+        } = pending;
+        // A stream nobody reads any more stops producing: its cancellation
+        // fires, and its worker's next send finds the channel closed.
+        let cancel = if delivered {
+            Some(cancel)
+        } else {
+            drop(cancel);
+            None
+        };
+        let settled = worker.await;
+        if let Some(mut cancel) = cancel {
+            cancel.disarm();
+        }
+        drop(_running);
+        if let Ok(settled) = settled {
+            self.settle(settled, recorded, started);
+        }
         self.finish_trace(&sql);
-        response
     }
 
     async fn send_long_data(&mut self, statement: u32, _parameter: u16, _data: &[u8]) {
@@ -1837,83 +2037,212 @@ fn query_output_to_response(
         .map(|field| mysql_column(field, group_concat_max_len, charset, negotiated))
         .collect::<Vec<_>>();
     let mut rows = EncodedRows::with_capacity(output.rows.len());
-    let mut cells = Vec::new();
-    // Every row goes through here, so the checks stay out of the cell loops.
-    let row_done = |rows: &EncodedRows| {
-        (encoded_limit > 0 && rows.resident_bytes() > encoded_limit).then(|| {
-            Response::Error(
+    let encoded = encode_rows(&output.fields, &output.rows, binary, &mut rows, |rows| {
+        if encoded_limit > 0 && rows.resident_bytes() > encoded_limit {
+            return Err((
                 ErrorKind::ErUnknownError,
                 format!(
                     "query memory limit exceeded: the encoded result set alone is over \
                      {encoded_limit} bytes; narrow the projection or add a LIMIT"
                 ),
-            )
-        })
-    };
-    for source in output.rows.sources() {
-        match source {
-            RowSource::Values(values) => {
-                for row in values {
-                    if binary {
-                        cells.clear();
-                        for (field, value) in output.fields.iter().zip(row) {
-                            match binary_column_value(field, value) {
-                                Ok(cell) => cells.push(cell),
-                                Err(error) => {
-                                    return Response::Error(
-                                        ErrorKind::ErUnknownError,
-                                        error.to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        rows.push_binary_row(&cells);
-                    } else {
-                        let mut text = rows.text_row();
-                        for value in row {
-                            put_text_value(&mut text, value);
-                        }
-                    }
-                    if let Some(refusal) = row_done(&rows) {
-                        return refusal;
-                    }
-                }
-            }
-            RowSource::Batch(batch) => {
-                for row in batch.selection().selected_rows() {
-                    if binary {
-                        cells.clear();
-                        for (field, column) in output.fields.iter().zip(batch.columns()) {
-                            let value = column.value_owned(row).unwrap_or(Value::Null);
-                            match binary_column_value(field, &value) {
-                                Ok(cell) => cells.push(cell),
-                                Err(error) => {
-                                    return Response::Error(
-                                        ErrorKind::ErUnknownError,
-                                        error.to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        rows.push_binary_row(&cells);
-                    } else {
-                        let mut text = rows.text_row();
-                        for column in batch.columns() {
-                            column.with_cell(row, |cell| put_text_cell(&mut text, cell));
-                        }
-                    }
-                    if let Some(refusal) = row_done(&rows) {
-                        return refusal;
-                    }
-                }
-            }
+            ));
         }
+        Ok(())
+    });
+    if let Err((kind, message)) = encoded {
+        return Response::Error(kind, message);
     }
     Response::Rows(Box::new(ResultSet {
         columns,
         rows,
         binary,
     }))
+}
+
+/// Encodes `rows` into `into` in the text or binary protocol, calling
+/// `after_row` after each row - where a caller bounds what it holds, or
+/// hands a chunk on - and stopping at the first error either returns.
+fn encode_rows(
+    fields: &[QueryField],
+    rows: &ResultRows,
+    binary: bool,
+    into: &mut EncodedRows,
+    mut after_row: impl FnMut(&mut EncodedRows) -> Result<(), (ErrorKind, String)>,
+) -> Result<(), (ErrorKind, String)> {
+    let binary_failure = |error: io::Error| (ErrorKind::ErUnknownError, error.to_string());
+    let mut cells = Vec::new();
+    for source in rows.sources() {
+        match source {
+            RowSource::Values(values) => {
+                for row in values {
+                    if binary {
+                        cells.clear();
+                        for (field, value) in fields.iter().zip(row) {
+                            cells.push(binary_column_value(field, value).map_err(binary_failure)?);
+                        }
+                        into.push_binary_row(&cells);
+                    } else {
+                        let mut text = into.text_row();
+                        for value in row {
+                            put_text_value(&mut text, value);
+                        }
+                    }
+                    after_row(into)?;
+                }
+            }
+            RowSource::Batch(batch) => {
+                for row in batch.selection().selected_rows() {
+                    if binary {
+                        cells.clear();
+                        for (field, column) in fields.iter().zip(batch.columns()) {
+                            let value = column.value_owned(row).unwrap_or(Value::Null);
+                            cells.push(binary_column_value(field, &value).map_err(binary_failure)?);
+                        }
+                        into.push_binary_row(&cells);
+                    } else {
+                        let mut text = into.text_row();
+                        for column in batch.columns() {
+                            column.with_cell(row, |cell| put_text_cell(&mut text, cell));
+                        }
+                    }
+                    after_row(into)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Encoded bytes a streamed result gathers before handing them to the
+/// connection: small enough that little waits in memory, large enough that
+/// the writer is not woken for every row.
+const STREAM_CHUNK_BYTES: usize = 256 * 1024;
+
+/// Chunks a streamed result may have waiting for the socket. With the
+/// chunk size, what a stream holds encoded at once.
+const STREAM_CHUNKS: usize = 4;
+
+/// How a wire statement's result is put into packets.
+struct WireEncoding {
+    group_concat_max_len: usize,
+    charset: String,
+    negotiated: u16,
+    binary: bool,
+}
+
+/// Where a wire statement's rows go once its result streams: encoded on
+/// the worker that produces them, then through a bounded channel to the
+/// connection, which writes while the rest is produced.
+struct WireSink {
+    encoding: WireEncoding,
+    /// Adjusts the fields before they are described: a prepared statement's
+    /// parameters decide some of its columns' metadata.
+    describe: Option<Describe>,
+    /// Hands the stream to the connection when the result starts
+    /// streaming; gone once it has.
+    begin: Option<tokio::sync::oneshot::Sender<RowStream>>,
+    fields: Vec<QueryField>,
+    chunks: Option<tokio::sync::mpsc::Sender<RowChunk>>,
+}
+
+impl WireSink {
+    fn new(
+        encoding: WireEncoding,
+        describe: Option<Describe>,
+        begin: tokio::sync::oneshot::Sender<RowStream>,
+    ) -> Self {
+        Self {
+            encoding,
+            describe,
+            begin: Some(begin),
+            fields: Vec::new(),
+            chunks: None,
+        }
+    }
+
+    /// Whether the result started streaming.
+    const fn streaming(&self) -> bool {
+        self.chunks.is_some()
+    }
+
+    /// Ends a streamed result: its terminator, or the error that stopped
+    /// it after the rows already sent.
+    fn end(&self, outcome: Result<(), &QueryError>) {
+        if let Some(chunks) = &self.chunks {
+            let last = match outcome {
+                Ok(()) => RowChunk::Done,
+                Err(error) => RowChunk::Failed(error_kind(error), error.to_string()),
+            };
+            let _ = chunks.blocking_send(last);
+        }
+    }
+}
+
+impl crate::engine::RowSink for WireSink {
+    fn begin(&mut self, fields: &[QueryField]) -> bool {
+        let Some(begin) = self.begin.take() else {
+            return false;
+        };
+        let mut fields = fields.to_vec();
+        if let Some(describe) = &self.describe {
+            describe(&mut fields);
+        }
+        let columns = fields
+            .iter()
+            .map(|field| {
+                mysql_column(
+                    field,
+                    self.encoding.group_concat_max_len,
+                    &self.encoding.charset,
+                    self.encoding.negotiated,
+                )
+            })
+            .collect();
+        let (sender, chunks) = tokio::sync::mpsc::channel(STREAM_CHUNKS);
+        if begin.send(RowStream { columns, chunks }).is_err() {
+            return false;
+        }
+        self.fields = fields;
+        self.chunks = Some(sender);
+        true
+    }
+
+    fn rows(&mut self, rows: ResultRows) -> bool {
+        let Some(chunks) = self.chunks.clone() else {
+            return false;
+        };
+        let mut chunk = EncodedRows::default();
+        // A send that fails means the connection stopped reading.
+        let mut gone = false;
+        let encoded = encode_rows(
+            &self.fields,
+            &rows,
+            self.encoding.binary,
+            &mut chunk,
+            |chunk| {
+                if chunk.resident_bytes() < STREAM_CHUNK_BYTES {
+                    return Ok(());
+                }
+                chunks
+                    .blocking_send(RowChunk::Rows(std::mem::take(chunk)))
+                    .map_err(|_| {
+                        gone = true;
+                        (ErrorKind::ErUnknownError, String::new())
+                    })
+            },
+        );
+        match encoded {
+            Ok(()) => chunk.is_empty() || chunks.blocking_send(RowChunk::Rows(chunk)).is_ok(),
+            Err(_) if gone => false,
+            Err((kind, message)) => {
+                // The rows could not be put into packets: that is how the
+                // result ends, after what was already sent.
+                let _ = chunks.blocking_send(RowChunk::Failed(kind, message));
+                self.chunks = None;
+                false
+            }
+        }
+    }
 }
 
 /// Writes one value as a text-protocol cell, straight into the row: the
@@ -3156,9 +3485,18 @@ fn parameter_integer(text: &str) -> i64 {
 /// that depends on a parameter is nullable, and a text column over string
 /// parameters carries the width `MySQL` derives from them, which decides
 /// between `VARCHAR` and `MEDIUMBLOB`.
-fn describe_parameters(output: &mut QueryOutput, statement: &Prepared, values: &[BinaryValue]) {
-    if output.fields.len() == statement.nullable.len() {
-        for (field, nullable) in output.fields.iter_mut().zip(&statement.nullable) {
+/// [`describe_parameters`] for one execution, to run where the result's
+/// fields are described.
+fn parameter_description(statement: &Prepared, values: &[BinaryValue]) -> Describe {
+    let (statement, values) = (statement.clone(), values.to_vec());
+    Box::new(move |fields: &mut [QueryField]| {
+        describe_parameters(fields, &statement, &values);
+    })
+}
+
+fn describe_parameters(fields: &mut [QueryField], statement: &Prepared, values: &[BinaryValue]) {
+    if fields.len() == statement.nullable.len() {
+        for (field, nullable) in fields.iter_mut().zip(&statement.nullable) {
             if *nullable && !field.nullable {
                 field.nullable = true;
                 if let Some(column) = &mut field.wire_column {
@@ -3167,7 +3505,7 @@ fn describe_parameters(output: &mut QueryOutput, statement: &Prepared, values: &
             }
         }
     }
-    for (field, column) in output.fields.iter_mut().zip(&statement.parameter_columns) {
+    for (field, column) in fields.iter_mut().zip(&statement.parameter_columns) {
         let Some(ParameterColumn {
             parameters,
             width: Some(width),
@@ -4309,11 +4647,7 @@ fn max_result_rows_from(value: Option<&str>) -> usize {
 /// A result the row ceiling stopped is an error, never a shorter answer.
 fn refuse_truncated(output: QueryOutput) -> Result<QueryOutput, QueryError> {
     if output.truncated {
-        return Err(QueryError::Invalid(format!(
-            "the result has more than {} rows, the ceiling PINTAIL_MAX_RESULT_ROWS sets; \
-             narrow it with a filter or LIMIT, or raise the ceiling",
-            output.rows.len()
-        )));
+        return Err(crate::engine::result_ceiling_error(output.rows.len()));
     }
     Ok(output)
 }
@@ -4474,7 +4808,7 @@ mod result_ceiling_tests {
             affected: None,
         };
         super::describe_parameters(
-            &mut output,
+            &mut output.fields,
             &statement,
             &[BinaryValue::Null, BinaryValue::Bytes(vec![0, 255])],
         );
