@@ -349,6 +349,21 @@ impl TableSnapshot {
         ))
     }
 
+    /// A view of no rows under `schema`, for a table whose store cannot be
+    /// opened: it keeps the table's place in a catalog while every read of
+    /// it is refused.
+    #[must_use]
+    pub fn empty(directory: impl Into<PathBuf>, schema: TableSchema) -> Self {
+        Self {
+            instance: super::STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            memtable: Arc::new(BTreeMap::new()),
+            manifest: Arc::new(Manifest::empty(&schema)),
+            directory: directory.into(),
+            schema,
+            estimated_bytes: 0,
+        }
+    }
+
     /// Returns the catalog schema pinned with this reader snapshot.
     #[must_use]
     pub const fn schema(&self) -> &TableSchema {

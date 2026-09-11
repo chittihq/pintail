@@ -71,6 +71,12 @@ pub enum ExecError {
         /// The table's name as the source knows it.
         table: String,
     },
+    /// The table's store could not be opened, so a read of it would answer
+    /// from nothing. The rest of its database still reads.
+    TableUnreadable {
+        /// The table's name and why its store could not be opened.
+        detail: String,
+    },
     /// The scan provider has no pinned reader for a stable table.
     MissingSnapshot {
         /// Stable database identity.
@@ -157,6 +163,7 @@ impl fmt::Display for ExecError {
                 formatter,
                 "table {table} is still being copied from its source; retry once its snapshot completes"
             ),
+            Self::TableUnreadable { detail } => formatter.write_str(detail),
             Self::MissingSnapshot {
                 database_id,
                 table_id,

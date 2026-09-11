@@ -214,6 +214,28 @@ impl std::fmt::Debug for ReplicaEngine {
     }
 }
 
+/// What admission classification settled for one statement: the replica it
+/// proved current, the statement prepared against it when classifying had
+/// to cost it, and whether it runs as a short query.
+struct Classified {
+    replica: Arc<LoadedReplica>,
+    prepared: Option<PreparedSelect>,
+    short: bool,
+}
+
+/// One SELECT bound and planned, with the result metadata binding decided.
+/// Built once per statement: by admission classification when it costs
+/// the statement, otherwise just before execution.
+struct PreparedSelect {
+    physical: pintail_exec::PhysicalPlan,
+    collation: pintail_exec::collation::Collation,
+    wire_columns: Vec<pintail_protocol::Column>,
+    result_nullability: Vec<Option<bool>>,
+    result_collations: Vec<Option<String>>,
+    group_concat: Vec<bool>,
+    wire_hints: Vec<Option<WireTypeHint>>,
+}
+
 struct LoadedReplica {
     server_version: String,
     /// Identifies this load, and only this one. Taken fresh every time a
@@ -260,6 +282,9 @@ struct ReaderTarget {
     /// finished, has a store that is empty or partial; answering from it
     /// would be silently wrong, so its scans are refused as not ready.
     ready: bool,
+    /// Why the table's store could not be opened, when it could not. Its
+    /// snapshot is then empty and its scans are refused with the reason.
+    unreadable: Option<String>,
 }
 
 static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
@@ -409,11 +434,11 @@ impl ReplicaEngine {
     // Classification reads only cached metadata. Freshness is checked under
     // the permit; a stale candidate releases it before requesting general
     // capacity to load storage.
-    fn short_query_replica(
-        &self,
-        database_id: &str,
-        statement: &Statement,
-    ) -> Option<Arc<LoadedReplica>> {
+    //
+    // A statement whose cost must be known is prepared to cost it, and that
+    // preparation is the one execution runs. `None` sends the statement down
+    // the general path, which loads the replica and prepares it there.
+    fn classify(&self, database_id: &str, sql: &str, statement: &Statement) -> Option<Classified> {
         if !pintail_sql::has_bounded_planning_shape(statement) {
             return None;
         }
@@ -445,30 +470,39 @@ impl ReplicaEngine {
                         <= 4 * 1024 * 1024
             };
         if tiny {
-            return revalidated(&self.cache, &key, &stamp, &replica);
+            return revalidated(&self.cache, &key, &stamp, &replica).map(|replica| Classified {
+                replica,
+                prepared: None,
+                short: true,
+            });
         }
-        let catalog = replica.catalog().ok()?;
-        let bound = Binder::new(catalog, Some(&replica.database.name))
-            .bind(statement)
-            .ok()?;
-        let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
-            .unwrap_or_default();
-        let physical =
-            PhysicalPlanner::plan(Optimizer::optimize(LogicalPlanner::plan(bound)), collation)
-                .ok()?;
-        let provider = build_provider(&replica).ok()?;
-        let cost = provider.admission_cost(&physical)?;
-        if QueryClass::from_cost(Some(cost)) != QueryClass::Short {
-            return None;
-        }
-        // Planning took time a commit could land in: prove the replica
+        let prepared = Self::prepare_select(
+            statement,
+            sql,
+            replica.catalog().ok()?,
+            replica.facts(),
+            &replica.database.name,
+            true,
+        )
+        .ok()?;
+        let short = {
+            let provider = build_provider(&replica).ok()?;
+            QueryClass::from_cost(Some(provider.admission_cost(&prepared.physical)?))
+                == QueryClass::Short
+        };
+        // Preparing took time a commit could land in: prove the replica
         // current against the files as they are now.
-        revalidated(
+        let replica = revalidated(
             &self.cache,
             &key,
             &self.replica_stamp(database_id),
             &replica,
-        )
+        )?;
+        Some(Classified {
+            replica,
+            prepared: Some(prepared),
+            short,
+        })
     }
 
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
@@ -530,8 +564,17 @@ impl ReplicaEngine {
             load_started.elapsed().as_secs_f64() * 1_000.0,
             replica.targets.len()
         );
-        self.cache
-            .insert(key, stamp, Arc::clone(&replica), resident, opened);
+        // A table that could not be opened may open on the next attempt with
+        // nothing on disk having moved, so the replica that refuses it is
+        // served but not kept: the next query loads again.
+        if replica
+            .targets
+            .iter()
+            .all(|target| target.unreadable.is_none())
+        {
+            self.cache
+                .insert(key, stamp, Arc::clone(&replica), resident, opened);
+        }
         Ok(replica)
     }
 
@@ -586,33 +629,28 @@ impl ReplicaEngine {
         let started = Instant::now();
         // Bound classification work itself. Large statements acquire general
         // capacity before parsing; small ones may qualify for the reserve.
-        let (statement, short_replica, _permit) = if sql.len() <= 8192 {
+        let (statement, classified, _permit) = if sql.len() <= 8192 {
             let statement =
                 parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
             crate::trace::mark("parsed");
-            let replica = self.short_query_replica(database_id, &statement);
+            let classified = self.classify(database_id, sql, &statement);
+            let short = classified
+                .as_ref()
+                .is_some_and(|classified| classified.short);
             crate::trace::mark("classified");
-            crate::trace::label(
-                "class",
-                if replica.is_some() {
-                    "short"
-                } else {
-                    "general"
-                },
-            );
-            let class = if replica.is_some() {
-                QueryClass::Short
-            } else {
-                QueryClass::General
-            };
-            // Admission does not wait, so the replica short classification
-            // proved current is still the one to answer from.
+            crate::trace::label("class", if short { "short" } else { "general" });
+            // Admission does not wait, so the replica classification proved
+            // current is still the one to answer from.
             let permit = self
                 .admission
-                .try_admit_class(class)
+                .try_admit_class(if short {
+                    QueryClass::Short
+                } else {
+                    QueryClass::General
+                })
                 .ok_or(QueryError::Overloaded)?;
             crate::trace::mark("admitted");
-            (statement, replica, permit)
+            (statement, classified, permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
             let statement =
@@ -628,9 +666,9 @@ impl ReplicaEngine {
         if is_transaction_control(&statement) {
             return Err(self.transaction_control_rejection(database_id));
         }
-        let replica = match short_replica {
-            Some(replica) => replica,
-            None => self.load_replica_cached(database_id)?,
+        let (replica, mut prepared) = match classified {
+            Some(classified) => (classified.replica, classified.prepared),
+            None => (self.load_replica_cached(database_id)?, None),
         };
         crate::trace::mark("replica");
         let catalog = replica.catalog()?;
@@ -679,8 +717,21 @@ impl ReplicaEngine {
         }
         match statement {
             Statement::Query(_) => {
-                let run = || {
-                    self.execute_select(
+                let mut run = || match prepared.take() {
+                    Some(prepared) => {
+                        crate::trace::mark("prepared");
+                        self.run_prepared(
+                            prepared,
+                            sql,
+                            &provider,
+                            &replica.database.name,
+                            provider_stats(&provider, table_count),
+                            started,
+                            max_rows,
+                            deadline,
+                        )
+                    }
+                    None => self.execute_select(
                         &statement,
                         sql,
                         catalog,
@@ -692,7 +743,7 @@ impl ReplicaEngine {
                         max_rows,
                         deadline,
                         true,
-                    )
+                    ),
                 };
                 // Several clients asking the same question of the same
                 // snapshot at the same time is one question. Only a
@@ -813,24 +864,49 @@ impl ReplicaEngine {
         provider: &impl pintail_exec::ScanProvider,
         facts: &SourceFacts,
         database_name: &str,
-        mut stats: QueryStats,
+        stats: QueryStats,
         started: Instant,
         max_rows: usize,
         deadline: Option<Instant>,
         optimize: bool,
     ) -> Result<QueryOutput, QueryError> {
-        // Admission planning may already have folded this statement's
-        // constants; only this execution's divisions by zero are its own.
+        let prepared =
+            Self::prepare_select(statement, sql, catalog, facts, database_name, optimize)?;
+        crate::trace::mark("prepared");
+        self.run_prepared(
+            prepared,
+            sql,
+            provider,
+            database_name,
+            stats,
+            started,
+            max_rows,
+            deadline,
+        )
+    }
+
+    /// Binds and plans one SELECT, keeping everything its response needs
+    /// from binding. Admission classification prepares the statement it
+    /// costs, and execution runs that same preparation rather than a
+    /// second one.
+    fn prepare_select(
+        statement: &Statement,
+        sql: &str,
+        catalog: &CatalogSnapshot,
+        facts: &SourceFacts,
+        database_name: &str,
+        optimize: bool,
+    ) -> Result<PreparedSelect, QueryError> {
+        // Divisions by zero counted from here are this statement's own:
+        // preparation folds its constants once.
         let _ = pintail_exec::take_session_division_warnings();
         pintail_sql::set_session_database_name(Some(database_name));
         let bound = Binder::new(catalog, Some(database_name))
             .with_source(sql)
             .bind(statement)
             .map_err(|error| query_bind_error(&error))?;
-        crate::trace::mark("bound");
         let result_nullability = source_result_nullability(&bound, catalog, facts);
         let wire_columns = crate::presentation::columns(&bound, catalog, facts);
-        crate::trace::mark("presented");
         let result_collations = bound
             .projection
             .iter()
@@ -882,7 +958,39 @@ impl ReplicaEngine {
         };
         let physical = PhysicalPlanner::plan(logical, collation)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
-        crate::trace::mark("planned");
+        Ok(PreparedSelect {
+            physical,
+            collation,
+            wire_columns,
+            result_nullability,
+            result_collations,
+            group_concat,
+            wire_hints,
+        })
+    }
+
+    /// Executes a prepared SELECT and collects its rows.
+    #[allow(clippy::too_many_arguments)]
+    fn run_prepared(
+        &self,
+        prepared: PreparedSelect,
+        sql: &str,
+        provider: &impl pintail_exec::ScanProvider,
+        database_name: &str,
+        mut stats: QueryStats,
+        started: Instant,
+        max_rows: usize,
+        deadline: Option<Instant>,
+    ) -> Result<QueryOutput, QueryError> {
+        let PreparedSelect {
+            physical,
+            collation,
+            wire_columns,
+            result_nullability,
+            result_collations,
+            group_concat,
+            wire_hints,
+        } = prepared;
         let mut execution = Execution::start_with_deadline(
             physical,
             provider,
@@ -1041,37 +1149,43 @@ impl ReplicaEngine {
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_default();
+                let prior = previous.and_then(|(replica, stamp)| {
+                    replica
+                        .targets
+                        .iter()
+                        .find(|target| target.source.name.eq_ignore_ascii_case(&source.name))
+                        .filter(|target| target.unreadable.is_none())
+                        .map(|target| (target, stamp))
+                });
                 // Reuse needs all three unchanged: the probe-derived
                 // definition (a reprobe can change columns without a new
                 // schema version), the schema version, and the table's own
                 // files. Everything else in the replica is rebuilt from the
                 // metadata store, which is cheap.
-                let reusable = previous.and_then(|(replica, stamp)| {
-                    let target = replica
-                        .targets
-                        .iter()
-                        .find(|target| target.source.name.eq_ignore_ascii_case(&source.name))?;
+                let reusable = prior.and_then(|(target, stamp)| {
                     (target.version == version
                         && target.source == source
                         && stamp.tables.get(&directory_name) == current.tables.get(&directory_name))
                     .then(|| target.snapshot.clone())
                 });
-                let snapshot = if let Some(snapshot) = reusable {
-                    snapshot
-                } else {
-                    let schema = source
-                        .table_schema_with_version(version)
-                        .map_err(|error| QueryError::Internal(error.to_string()))?;
-                    opened += 1;
-                    TableSnapshot::open(directory, schema)
-                        .map_err(|error| QueryError::NotReady(error.to_string()))?
-                };
-                Ok(ReaderTarget {
+                if let Some(snapshot) = reusable {
+                    return Ok(ReaderTarget {
+                        source,
+                        version,
+                        snapshot,
+                        ready,
+                        unreadable: None,
+                    });
+                }
+                opened += 1;
+                open_target(
+                    database_id,
+                    directory,
                     source,
                     version,
-                    snapshot,
                     ready,
-                })
+                    prior.map(|(target, _)| target),
+                )
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok((
@@ -1087,6 +1201,72 @@ impl ReplicaEngine {
             opened,
         ))
     }
+}
+
+/// Opens one table's snapshot under `source` at `version`.
+///
+/// A store that refuses that definition is tried under `prior`'s, the one
+/// it was last read under: a source that changed shape without a
+/// transition replication could apply leaves the store holding rows
+/// written under the previous definition, and the table keeps reading them
+/// (differing from its source in content, the documented consequence)
+/// rather than becoming unreadable. A store that opens under neither
+/// refuses its own reads, with the reason, while the rest of its database
+/// answers.
+fn open_target(
+    database_id: &str,
+    directory: PathBuf,
+    source: SourceTable,
+    version: u32,
+    ready: bool,
+    prior: Option<&ReaderTarget>,
+) -> Result<ReaderTarget, QueryError> {
+    let schema = source
+        .table_schema_with_version(version)
+        .map_err(|error| QueryError::Internal(error.to_string()))?;
+    let error = match TableSnapshot::open(&directory, schema.clone()) {
+        Ok(snapshot) => {
+            return Ok(ReaderTarget {
+                source,
+                version,
+                snapshot,
+                ready,
+                unreadable: None,
+            });
+        }
+        Err(error) => error,
+    };
+    let held = prior.and_then(|target| {
+        let schema = target
+            .source
+            .table_schema_with_version(target.version)
+            .ok()?;
+        Some((target, TableSnapshot::open(&directory, schema).ok()?))
+    });
+    if let Some((target, snapshot)) = held {
+        pintail_log::log_info!(
+            "replica.table_definition_held db={database_id} table={}: {error}",
+            source.name
+        );
+        return Ok(ReaderTarget {
+            source: target.source.clone(),
+            version: target.version,
+            snapshot,
+            ready,
+            unreadable: None,
+        });
+    }
+    pintail_log::log_info!(
+        "replica.table_unreadable db={database_id} table={}: {error}",
+        source.name
+    );
+    Ok(ReaderTarget {
+        source,
+        version,
+        snapshot: TableSnapshot::empty(directory, schema),
+        ready,
+        unreadable: Some(error.to_string()),
+    })
 }
 
 /// Statements whose only purpose is a multi-statement transaction boundary.
@@ -1147,7 +1327,9 @@ fn table_copy_is_complete(record: &pintail_meta::TableRecord) -> bool {
 fn query_execution_error(error: ExecError) -> QueryError {
     match error {
         ExecError::QueryTimedOut | ExecError::QueryCancelled => QueryError::Interrupted,
-        ExecError::TableNotReady { .. } => QueryError::NotReady(error.to_string()),
+        ExecError::TableNotReady { .. } | ExecError::TableUnreadable { .. } => {
+            QueryError::NotReady(error.to_string())
+        }
         // MySQL answers a row-wise numeric overflow with 1690/22003, not
         // an internal error - clients branch on the code.
         ExecError::NumericOverflow | ExecError::OutOfRange(_) => QueryError::Rejected {
@@ -1198,7 +1380,7 @@ fn query_explain_error(error: ExplainError) -> QueryError {
         ExplainError::Exec(ExecError::QueryTimedOut | ExecError::QueryCancelled) => {
             QueryError::Interrupted
         }
-        ExplainError::Exec(ExecError::TableNotReady { .. }) => {
+        ExplainError::Exec(ExecError::TableNotReady { .. } | ExecError::TableUnreadable { .. }) => {
             QueryError::NotReady(error.to_string())
         }
         error => QueryError::Invalid(error.to_string()),
@@ -1478,7 +1660,14 @@ fn build_provider(replica: &LoadedReplica) -> Result<SnapshotScanProvider<'_>, Q
     let mut provider = SnapshotScanProvider::new(indexed)
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     for (index, target) in replica.targets.iter().enumerate() {
-        if !target.ready {
+        if let Some(reason) = &target.unreadable {
+            provider.mark_unreadable(
+                database_id,
+                table_id(index)?,
+                target.source.name.clone(),
+                reason.clone(),
+            );
+        } else if !target.ready {
             provider.mark_not_ready(database_id, table_id(index)?, target.source.name.clone());
         }
         let storage_key = target.source.key_column_ids();

@@ -32,11 +32,13 @@ pub struct SnapshotScanProvider<'snapshot> {
     collation: Collation,
     snapshots: BTreeMap<(DatabaseId, TableId), &'snapshot TableSnapshot>,
     unique_visibility: BTreeMap<(DatabaseId, TableId), Vec<Vec<u32>>>,
-    /// Tables whose copy from the source has not completed. They stay in
-    /// the catalog so metadata queries see them, but opening a scan fails
-    /// with [`ExecError::TableNotReady`] rather than answering from a
-    /// partial store.
-    not_ready: BTreeMap<(DatabaseId, TableId), String>,
+    /// Tables that cannot answer: their copy from the source has not
+    /// completed, or, with a reason, their store could not be opened. They
+    /// stay in the catalog so metadata queries see them, but opening a scan
+    /// fails with [`ExecError::TableNotReady`] or
+    /// [`ExecError::TableUnreadable`] rather than answering from a partial
+    /// or absent store.
+    not_ready: BTreeMap<(DatabaseId, TableId), (String, Option<String>)>,
     stats: Arc<Mutex<BTreeMap<(DatabaseId, TableId), PhysicalScanStats>>>,
 }
 
@@ -199,7 +201,22 @@ impl<'snapshot> SnapshotScanProvider<'snapshot> {
     /// [`ExecError::TableNotReady`] naming `table` until the provider is
     /// rebuilt without the mark.
     pub fn mark_not_ready(&mut self, database_id: DatabaseId, table_id: TableId, table: String) {
-        self.not_ready.insert((database_id, table_id), table);
+        self.not_ready
+            .insert((database_id, table_id), (table, None));
+    }
+
+    /// Marks one table whose store could not be opened: every scan of it
+    /// fails with [`ExecError::TableUnreadable`] naming `table` and
+    /// `reason`.
+    pub fn mark_unreadable(
+        &mut self,
+        database_id: DatabaseId,
+        table_id: TableId,
+        table: String,
+        reason: String,
+    ) {
+        self.not_ready
+            .insert((database_id, table_id), (table, Some(reason)));
     }
 
     /// Opts one table into higher-version visibility for transient secondary
@@ -295,9 +312,14 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         memory_limit: usize,
     ) -> Result<Box<dyn BatchStream>, ExecError> {
         let key = (scan.table.database_id, scan.table.table_id);
-        if let Some(table) = self.not_ready.get(&key) {
-            return Err(ExecError::TableNotReady {
-                table: table.clone(),
+        if let Some((table, reason)) = self.not_ready.get(&key) {
+            return Err(match reason {
+                None => ExecError::TableNotReady {
+                    table: table.clone(),
+                },
+                Some(reason) => ExecError::TableUnreadable {
+                    detail: format!("table {table} cannot be read: {reason}"),
+                },
             });
         }
         let snapshot = self.snapshots.get(&key).ok_or(ExecError::MissingSnapshot {

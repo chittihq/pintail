@@ -1467,10 +1467,14 @@ impl CompiledExpr {
     #[allow(clippy::too_many_lines)] // a flat per-function bound table reads best unsplit
     fn string_value_upper_bound(&self, batch: &RecordBatch, row: usize) -> usize {
         match self {
-            Self::Column(index) => batch
-                .column(*index)
-                .and_then(|column| column.value(row))
-                .map_or(0, scalar_string_upper_bound),
+            // Read where the value lies: asking the column for a `Value`
+            // materialized all its rows to size one of them.
+            Self::Column(index) => batch.column(*index).map_or(0, |column| {
+                column.cached_value(row).map_or_else(
+                    || column.packed_text_upper_bound(row),
+                    scalar_string_upper_bound,
+                )
+            }),
             Self::Literal(value) => scalar_string_upper_bound(value),
             Self::Unary { data_type, .. } | Self::Binary { data_type, .. } => {
                 if data_type.is_some_and(|data_type| data_type == DataType::Utf8) {

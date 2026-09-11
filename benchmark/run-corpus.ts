@@ -830,7 +830,8 @@ function statementHash(sql: string): string {
 
 // Phase marks are microseconds since the statement arrived; each segment is
 // the time between one mark and the one before it.
-const TRACE_SEGMENTS: Array<[segment: string, from: string | undefined, to: string]> = [
+function traceSegments(): Array<[segment: string, from: string | undefined, to: string]> {
+  return [
   ['session', undefined, 'dispatched'],
   ['hop_in', 'dispatched', 'worker'],
   ['parse', 'worker', 'parsed'],
@@ -839,15 +840,17 @@ const TRACE_SEGMENTS: Array<[segment: string, from: string | undefined, to: stri
   ['replica', 'admitted', 'replica'],
   ['catalog', 'replica', 'catalog'],
   ['metadata', 'catalog', 'metadata'],
-  ['bind', 'metadata', 'bound'],
-  ['present', 'bound', 'presented'],
-  ['plan', 'presented', 'planned'],
-  ['start', 'planned', 'started'],
+  // Preparation happens here only when classification did not do it.
+  ['prepare', 'metadata', 'prepared'],
+  ['start', 'prepared', 'started'],
   ['execute', 'started', 'collected'],
   ['hop_out', 'collected', 'returned'],
   ['encode', 'returned', 'encoded'],
-]
-const TRACE_COUNTERS = ['rows', 'materialized', 'scalar_rows', 'sorted_rows', 'regathered']
+  ]
+}
+function traceCounters(): string[] {
+  return ['rows', 'materialized', 'scalar_rows', 'sorted_rows', 'regathered']
+}
 
 function summarizeTrace(scale: number, lines: string, outcomes: Outcome[]) {
   const byHash = new Map<string, Array<Record<string, string>>>()
@@ -866,7 +869,7 @@ function summarizeTrace(scale: number, lines: string, outcomes: Outcome[]) {
     const records = byHash.get(statementHash(outcome.sql))
     if (!records) return []
     const segments: Record<string, number> = {}
-    for (const [segment, from, to] of TRACE_SEGMENTS) {
+    for (const [segment, from, to] of traceSegments()) {
       const value = median(
         records
           .filter((record) => record[to] !== undefined && (from === undefined || record[from] !== undefined))
@@ -875,7 +878,7 @@ function summarizeTrace(scale: number, lines: string, outcomes: Outcome[]) {
       if (value !== undefined) segments[segment] = value
     }
     const counters = Object.fromEntries(
-      TRACE_COUNTERS.map((name) => [name, Math.max(0, ...records.map((record) => Number(record[name] ?? 0)))]),
+      traceCounters().map((name) => [name, Math.max(0, ...records.map((record) => Number(record[name] ?? 0)))]),
     )
     const timing = (engine: Engine) => (outcome[engine].status === 'ok' ? outcome[engine].medianMs : undefined)
     return [{

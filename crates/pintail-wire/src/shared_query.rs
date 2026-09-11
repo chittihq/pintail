@@ -270,8 +270,21 @@ impl SharedQueries {
 
     /// Publishes an outcome and wakes everyone waiting on it.
     fn settle(&self, key: &SharedQueryKey, flight: &Arc<Flight>, outcome: Outcome) {
+        self.settle_with(key, flight, |_| outcome);
+    }
+
+    /// Publishes the outcome `decide` makes of the final follower count,
+    /// and wakes everyone waiting on it.
+    fn settle_with(
+        &self,
+        key: &SharedQueryKey,
+        flight: &Arc<Flight>,
+        decide: impl FnOnce(usize) -> Outcome,
+    ) {
         // Removed from the map first, so a request arriving after this
-        // point starts a new flight rather than joining a finished one.
+        // point starts a new flight rather than joining a finished one -
+        // and a follower joins only under the map's lock, so the count read
+        // below can no longer grow.
         self.flights
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -280,7 +293,7 @@ impl SharedQueries {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.outcome = outcome;
+        state.outcome = decide(state.followers);
         drop(state);
         flight.ready.notify_all();
     }
@@ -326,14 +339,20 @@ pub(crate) struct Leader {
 }
 
 impl Leader {
-    /// Hands this output to everyone waiting.
+    /// Hands this output to everyone waiting. The copy is made only when
+    /// someone is: the follower count is final once the flight has left the
+    /// map, so a flight nobody joined settles without copying its result.
     pub(crate) fn succeeded(mut self, output: &QueryOutput) {
         self.finished = true;
-        self.coordinator.settle(
-            &self.key,
-            &self.flight,
-            Outcome::Ready(Arc::new(output.clone())),
-        );
+        self.coordinator
+            .settle_with(&self.key, &self.flight, |followers| {
+                if followers == 0 {
+                    // Nobody is waiting, and nobody can start to.
+                    Outcome::Failed
+                } else {
+                    Outcome::Ready(Arc::new(output.clone()))
+                }
+            });
     }
 }
 
