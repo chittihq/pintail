@@ -736,13 +736,18 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
         BoundExprKind::Scalar {
-            function: ScalarFunction::DateInterval { .. },
+            function:
+                ScalarFunction::DateInterval { .. }
+                | ScalarFunction::Cast(_)
+                | ScalarFunction::DeclaredCast { .. },
             args,
         } if args
             .iter()
             .all(|arg| matches!(arg.kind, BoundExprKind::Literal(_))) =>
         {
-            // A literal interval is statement-invariant. Use the runtime
+            // A literal interval or cast is statement-invariant - the binder
+            // casts a literal compared with a TIME or a mixed temporal, and
+            // left unfolded it was re-cast for every row. Use the runtime
             // evaluator to retain its month-end, NULL and precision rules;
             // an error stays in the original expression for execution.
             let collation = crate::collation::Collation::from_mysql_name(

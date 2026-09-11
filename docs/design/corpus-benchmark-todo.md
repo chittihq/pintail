@@ -58,10 +58,18 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    `ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, `RANGE` peer
    groups over a low-cardinality key, and numeric and temporal `RANGE`
    offsets, each recomputing its frame per row.
-6. [ ] **Fixed per-query cost.** `COUNT(*) … WHERE status BETWEEN …` takes
+6. [x] **Fixed per-query cost.** `COUNT(*) … WHERE status BETWEEN …` takes
    30 ms against 17 ms on MySQL and 1.5 to 3 ms on ClickHouse; `DATE(day)`
    over 80k rows takes 169 ms against 19 ms; a query that reads no table
    costs 0.35 ms more than on MySQL.
+   Done on `perf/per-query-cost`: ordering comparisons, BETWEEN and IN over
+   a low-cardinality text column answer per distinct value (the ENUM range
+   count from 17 to 0.5 ms in process); DATE(), casts to DATE and DATETIME
+   and a TIME read as a number slice canonical text instead of parsing it
+   (`DATE(placed_at) = placed_at` over 130,000 rows from 390 to 74 ms); a
+   cast of literals folds at plan time; and each query stamps the replica
+   once and reuses the catalog its load built (SELECT 1 over the wire from
+   55 to 41.5 us).
 7. [x] **Confirm the expected differences.** 26 differences are `LIMIT` over
    tied rows and 25 are `GROUP_CONCAT` without `ORDER BY`; capture the rows
    for differing cases to prove it.

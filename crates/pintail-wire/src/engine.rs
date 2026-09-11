@@ -224,6 +224,25 @@ struct LoadedReplica {
     database: DatabaseRecord,
     tables: Vec<TableRecord>,
     targets: Vec<ReaderTarget>,
+    /// The catalog and column facts this load answers with. Both follow
+    /// from the load alone, so they are built on first use and shared by
+    /// every query the load serves rather than rebuilt per query.
+    catalog: OnceLock<CatalogSnapshot>,
+    facts: OnceLock<SourceFacts>,
+}
+
+impl LoadedReplica {
+    fn catalog(&self) -> Result<&CatalogSnapshot, QueryError> {
+        if let Some(catalog) = self.catalog.get() {
+            return Ok(catalog);
+        }
+        let catalog = build_catalog(self)?;
+        Ok(self.catalog.get_or_init(|| catalog))
+    }
+
+    fn facts(&self) -> &SourceFacts {
+        self.facts.get_or_init(|| column_facts(self))
+    }
 }
 
 /// Hands out [`LoadedReplica::load_id`]. Monotonic, so a number is never
@@ -428,8 +447,8 @@ impl ReplicaEngine {
         if tiny {
             return revalidated(&self.cache, &key, &stamp, &replica);
         }
-        let catalog = build_catalog(&replica).ok()?;
-        let bound = Binder::new(&catalog, Some(&replica.database.name))
+        let catalog = replica.catalog().ok()?;
+        let bound = Binder::new(catalog, Some(&replica.database.name))
             .bind(statement)
             .ok()?;
         let collation = pintail_exec::collation::Collation::from_mysql_name(bound.text_collation)
@@ -442,7 +461,14 @@ impl ReplicaEngine {
         if QueryClass::from_cost(Some(cost)) != QueryClass::Short {
             return None;
         }
-        revalidated(&self.cache, &key, &stamp, &replica)
+        // Planning took time a commit could land in: prove the replica
+        // current against the files as they are now.
+        revalidated(
+            &self.cache,
+            &key,
+            &self.replica_stamp(database_id),
+            &replica,
+        )
     }
 
     fn load_replica_cached(&self, database_id: &str) -> Result<Arc<LoadedReplica>, QueryError> {
@@ -569,18 +595,12 @@ impl ReplicaEngine {
             } else {
                 QueryClass::General
             };
-            let mut permit = self
+            // Admission does not wait, so the replica short classification
+            // proved current is still the one to answer from.
+            let permit = self
                 .admission
                 .try_admit_class(class)
                 .ok_or(QueryError::Overloaded)?;
-            let replica = replica.filter(|candidate| {
-                matches!(self.cache.lookup(&self.cache_key(database_id), &self.replica_stamp(database_id)),
-                    Lookup::Hit(current) if Arc::ptr_eq(candidate, &current))
-            });
-            if class == QueryClass::Short && replica.is_none() {
-                drop(permit);
-                permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
-            }
             (statement, replica, permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
@@ -601,7 +621,7 @@ impl ReplicaEngine {
             Some(replica) => replica,
             None => self.load_replica_cached(database_id)?,
         };
-        let catalog = build_catalog(&replica)?;
+        let catalog = replica.catalog()?;
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
         // `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and
@@ -616,8 +636,8 @@ impl ReplicaEngine {
                 .or(deadline),
             _ => deadline,
         };
-        let facts = column_facts(&replica);
-        match execute_metadata(&statement, &catalog, Some(&replica.database.name), &facts) {
+        let facts = replica.facts();
+        match execute_metadata(&statement, catalog, Some(&replica.database.name), facts) {
             Ok(result) => return Ok(metadata_output(result, started)),
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
@@ -628,7 +648,7 @@ impl ReplicaEngine {
             let mut statement = statement.clone();
             pintail_sql::resolve_database_function(&mut statement, &replica.database.name);
             let (metadata_catalog, metadata_provider) =
-                crate::metadata_provider::MetadataProvider::new(&catalog, &facts)?;
+                crate::metadata_provider::MetadataProvider::new(catalog, facts)?;
             return self.execute_select(
                 &statement,
                 sql,
@@ -649,9 +669,9 @@ impl ReplicaEngine {
                     self.execute_select(
                         &statement,
                         sql,
-                        &catalog,
+                        catalog,
                         &provider,
-                        &facts,
+                        facts,
                         &replica.database.name,
                         provider_stats(&provider, table_count),
                         started,
@@ -683,7 +703,7 @@ impl ReplicaEngine {
             }
             Statement::Explain { .. } => self.execute_explain(
                 &statement,
-                &catalog,
+                catalog,
                 &mut provider,
                 &replica.database.name,
                 table_count,
@@ -1034,6 +1054,8 @@ impl ReplicaEngine {
                 database,
                 tables,
                 targets,
+                catalog: OnceLock::new(),
+                facts: OnceLock::new(),
             },
             opened,
         ))
