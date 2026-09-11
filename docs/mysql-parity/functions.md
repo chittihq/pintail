@@ -6,9 +6,9 @@ MySQL source: **8.4.11**, branch **8.4**, commit [99960bf74fa9](https://github.c
 
 467 distinct callable names; 47 operator/construct rows. Aliases count as separate names; overloads are not separate rows. Source-only entries and internal helpers remain visible. No row is certified by this static audit.
 
-Differential evidence: 220 passing corpus cases, measured 2026-09-11T06:43:39.989Z, bank [5334c6a66447](https://github.com/chittihq/pintail/commit/5334c6a664477dbfc72b87f0183b793cc46eb968). Tested means at least one linked case, not all overloads or edge cases.
+Differential evidence: 220 passing corpus cases, measured 2026-09-11T08:13:43.605Z, bank [3344b49be402](https://github.com/chittihq/pintail/commit/3344b49be40243c53e3b68c9f78e9857dfade351). Tested means at least one linked case, not all overloads or edge cases.
 
-Fixed oracle evidence: 1895 passing cases, measured 2026-09-11T06:35:14.464476286+00:00, bank [5334c6a66447](https://github.com/chittihq/pintail/commit/5334c6a664477dbfc72b87f0183b793cc46eb968). Exact text comparison except the oracle's documented floating-point tolerance.
+Fixed oracle evidence: 1895 passing cases, measured 2026-09-11T08:05:04.337591792+00:00, bank [3344b49be402](https://github.com/chittihq/pintail/commit/3344b49be40243c53e3b68c9f78e9857dfade351). Exact text comparison except the oracle's documented floating-point tolerance.
 
 | Coverage | Callable names |
 |---|---:|
