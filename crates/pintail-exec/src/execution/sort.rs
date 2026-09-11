@@ -445,6 +445,9 @@ fn materialize_with_spill(
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             rows.push(values);
+            crate::counters::count(|counters| {
+                counters.rows_sorted = counters.rows_sorted.saturating_add(1);
+            });
             // Proactive spill at half the ceiling: upstream operators size
             // their own working sets from the remaining headroom, so a sort
             // that hoards the budget until hard failure starves the scan.

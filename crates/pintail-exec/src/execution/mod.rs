@@ -3922,6 +3922,11 @@ impl PullOperator {
                     let data_type = data_type.unwrap_or(DataType::Utf8);
                     columns.push(ColumnVector::new(data_type, values)?);
                 }
+                crate::counters::count(|counters| {
+                    counters.rows_projected_scalar = counters
+                        .rows_projected_scalar
+                        .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
+                });
                 let mut output = RecordBatch::new(batch.row_count(), columns)?;
                 output.set_selection(batch.selection().clone())?;
                 memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
@@ -4921,6 +4926,11 @@ fn rows_to_columns(
     rows: &[Vec<Value>],
     column_types: &[DataType],
 ) -> Result<Vec<ColumnVector>, ExecError> {
+    crate::counters::count(|counters| {
+        counters.cells_regathered = counters.cells_regathered.saturating_add(
+            u64::try_from(rows.len().saturating_mul(column_types.len())).unwrap_or(u64::MAX),
+        );
+    });
     column_types
         .iter()
         .enumerate()

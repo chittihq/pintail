@@ -8,6 +8,7 @@ mod presentation;
 mod replica_cache;
 mod server;
 mod shared_query;
+mod trace;
 
 pub use admission::{
     DEFAULT_QUEUE_WAIT, QueryAdmission, QueryClass, QueryPermit, default_max_concurrent_queries,

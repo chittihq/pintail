@@ -589,7 +589,17 @@ impl ReplicaEngine {
         let (statement, short_replica, _permit) = if sql.len() <= 8192 {
             let statement =
                 parse_statement(sql).map_err(|error| QueryError::Invalid(error.to_string()))?;
+            crate::trace::mark("parsed");
             let replica = self.short_query_replica(database_id, &statement);
+            crate::trace::mark("classified");
+            crate::trace::label(
+                "class",
+                if replica.is_some() {
+                    "short"
+                } else {
+                    "general"
+                },
+            );
             let class = if replica.is_some() {
                 QueryClass::Short
             } else {
@@ -601,6 +611,7 @@ impl ReplicaEngine {
                 .admission
                 .try_admit_class(class)
                 .ok_or(QueryError::Overloaded)?;
+            crate::trace::mark("admitted");
             (statement, replica, permit)
         } else {
             let permit = self.admission.try_admit().ok_or(QueryError::Overloaded)?;
@@ -621,9 +632,11 @@ impl ReplicaEngine {
             Some(replica) => replica,
             None => self.load_replica_cached(database_id)?,
         };
+        crate::trace::mark("replica");
         let catalog = replica.catalog()?;
         let mut provider = build_provider(&replica)?;
         let table_count = replica.targets.len();
+        crate::trace::mark("catalog");
         // `/*+ MAX_EXECUTION_TIME(ms) */` is scoped to the statement and
         // tightens whatever the session already allows - never loosens it, so
         // a hint cannot be used to escape an administrator's ceiling. A hint
@@ -642,6 +655,7 @@ impl ReplicaEngine {
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
+        crate::trace::mark("metadata");
         if matches!(statement, Statement::Query(_))
             && sql.to_ascii_lowercase().contains("information_schema")
         {
@@ -690,9 +704,16 @@ impl ReplicaEngine {
                 }
                 let key = SharedQueryKey::for_current_session(replica.load_id, sql, max_rows);
                 match shared_queries().join(&key, deadline) {
-                    Join::Alone => run(),
-                    Join::Followed(output) => Ok(followed_output(&output, started)),
+                    Join::Alone => {
+                        crate::trace::label("shared", "alone");
+                        run()
+                    }
+                    Join::Followed(output) => {
+                        crate::trace::label("shared", "followed");
+                        Ok(followed_output(&output, started))
+                    }
                     Join::Lead(leader) => {
+                        crate::trace::label("shared", "lead");
                         let result = run();
                         if let Ok(output) = &result {
                             leader.succeeded(output);
@@ -806,8 +827,10 @@ impl ReplicaEngine {
             .with_source(sql)
             .bind(statement)
             .map_err(|error| query_bind_error(&error))?;
+        crate::trace::mark("bound");
         let result_nullability = source_result_nullability(&bound, catalog, facts);
         let wire_columns = crate::presentation::columns(&bound, catalog, facts);
+        crate::trace::mark("presented");
         let result_collations = bound
             .projection
             .iter()
@@ -859,6 +882,7 @@ impl ReplicaEngine {
         };
         let physical = PhysicalPlanner::plan(logical, collation)
             .map_err(|error| QueryError::Invalid(error.to_string()))?;
+        crate::trace::mark("planned");
         let mut execution = Execution::start_with_deadline(
             physical,
             provider,
@@ -867,6 +891,7 @@ impl ReplicaEngine {
             collation,
         )
         .map_err(query_execution_error)?;
+        crate::trace::mark("started");
         let fields = execution
             .output_fields()
             .iter()
@@ -888,6 +913,8 @@ impl ReplicaEngine {
             })
             .collect();
         let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
+        crate::trace::mark("collected");
+        crate::trace::label("rows", rows.len());
         // Development profiling (PINTAIL_PROFILE): one block per query with
         // every operator's time, rows and peak reservation.
         if let Some(profile) = execution.profile() {

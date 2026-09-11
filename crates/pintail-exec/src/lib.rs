@@ -6,6 +6,7 @@ pub use admission::AdmissionCost;
 pub mod array;
 mod batch;
 pub mod collation;
+mod counters;
 mod execution;
 mod explain;
 mod expression;
@@ -20,6 +21,7 @@ pub use batch::{
     BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SPILL_SERVE_BATCH_ROWS,
     SelectedRows, SelectionMask,
 };
+pub use counters::{ExecCounters, take_exec_counters};
 pub use execution::compare_collated_text;
 pub use execution::take_fold_phase_timings;
 pub use execution::{
