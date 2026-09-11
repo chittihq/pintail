@@ -28,9 +28,15 @@ pub(super) fn plain_text(column: &ColumnVector) -> Option<(&StrColumn, &Validity
     }
 }
 
+/// Whether `column` is packed in a form [`gather`] copies units from, with
+/// text, where it has any, derived from those units.
+pub(crate) fn packed(column: &ColumnVector) -> bool {
+    packing(column).is_some()
+}
+
 /// The column of `data_type` holding, in order, row `row` of
 /// `sources[source]` for each `(source, row)` of `picks`.
-pub(super) fn gather(
+pub(crate) fn gather(
     sources: &[&ColumnVector],
     picks: &[(u32, u32)],
     data_type: DataType,

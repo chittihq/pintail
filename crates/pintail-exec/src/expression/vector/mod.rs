@@ -29,6 +29,7 @@ use super::CompiledExpr;
 use crate::batch::{ColumnVector, RecordBatch};
 
 mod compare;
+mod conditional;
 mod numeric;
 mod temporal;
 
@@ -113,6 +114,34 @@ fn kernel(
             data_type: Some(DataType::Int64),
             ..
         } => numeric::integer_column(batch, *op, left, right, data_type, effects),
+        CompiledExpr::Scalar {
+            function:
+                function @ (ScalarFunction::If | ScalarFunction::Coalesce | ScalarFunction::NullIf),
+            args,
+            argument_types,
+            data_type: own,
+            collation,
+            ..
+        } => {
+            // The answer takes the node's own type, as row evaluation's does.
+            if data_type.is_some_and(|declared| Some(declared) != *own) {
+                return None;
+            }
+            match function {
+                ScalarFunction::If => conditional::if_column(batch, args, *own, effects),
+                ScalarFunction::Coalesce => {
+                    conditional::coalesce_column(batch, args, *own, effects)
+                }
+                _ => conditional::null_if_column(
+                    batch,
+                    args,
+                    argument_types,
+                    *own,
+                    *collation,
+                    effects,
+                ),
+            }
+        }
         CompiledExpr::Scalar { function, args, .. } => match function {
             ScalarFunction::DatePart(part) => {
                 temporal::date_part_column(batch, args, *part, data_type, effects)

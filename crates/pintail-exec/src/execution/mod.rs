@@ -3,7 +3,7 @@ pub use aggregate::take_fold_phase_timings;
 mod budget;
 mod columnar_sort;
 mod error;
-mod gather;
+pub(crate) mod gather;
 mod join;
 mod key_lookup;
 pub(crate) mod membership;
