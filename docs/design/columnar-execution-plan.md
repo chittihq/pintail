@@ -118,7 +118,11 @@ program and gets its own gate and live-CDC coverage.
   server-side time splits into freshness checks and short-query
   classification (about half), then execution, session handling, binding,
   parsing and plan start.
-- [ ] Phase 1a
+- [x] Phase 1a — one parse and one preparation per query, shared by
+  short-query admission and execution. Its gate also found that one table
+  whose store would not open took its whole database down; that table now
+  keeps reading under the definition its rows were written with, or refuses
+  only its own reads.
 - [ ] Phase 1b
 - [ ] Phase 2
 - [ ] Phase 3
