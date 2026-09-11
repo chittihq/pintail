@@ -8,9 +8,9 @@ use pintail_sql::BoundOrderKey;
 use pintail_types::{DataType, Value};
 
 use super::{
-    ExecError, MaterializedRows, MemoryTracker, PullOperator, batch_row, compare_decimal_text,
-    estimated_batch_row_bytes, estimated_record_batch_bytes, estimated_row_payload_bytes,
-    next_materialized_batch, reserve_vec_elements, rows_to_columns,
+    ExecError, MaterializedRows, MemoryTracker, PullOperator, batch_row, columnar_sort,
+    compare_decimal_text, estimated_batch_row_bytes, estimated_record_batch_bytes,
+    estimated_row_payload_bytes, next_materialized_batch, reserve_vec_elements, rows_to_columns,
 };
 use crate::{DEFAULT_BATCH_ROWS, RecordBatch, expression::compare_utf8_mysql, spill};
 
@@ -19,6 +19,8 @@ use crate::{DEFAULT_BATCH_ROWS, RecordBatch, expression::compare_utf8_mysql, spi
 /// exceeded the query memory ceiling.
 pub(super) enum SortedRows {
     Memory(MaterializedRows),
+    /// The input's own batches, ordered by reference.
+    Columnar(columnar_sort::ColumnarSorted),
     Spilled(SpilledMerge),
 }
 
@@ -30,6 +32,7 @@ impl SortedRows {
                 rows.position = rows.position.saturating_add(usize::from(row.is_some()));
                 Ok(row)
             }
+            Self::Columnar(sorted) => Ok(sorted.next_row()),
             Self::Spilled(merge) => merge.next_row(),
         }
     }
@@ -41,6 +44,7 @@ impl SortedRows {
     ) -> Result<Option<RecordBatch>, ExecError> {
         match self {
             Self::Memory(rows) => next_materialized_batch(rows, column_types, memory),
+            Self::Columnar(sorted) => sorted.next_batch(column_types, memory),
             Self::Spilled(merge) => merge.next_batch(column_types, memory),
         }
     }
@@ -347,11 +351,50 @@ pub(super) fn build_sort(
             spilled: None,
         }));
     }
+    // Sorted as columns while the input fits beside its operators: its
+    // batches are kept whole and only row references move. Past that the
+    // rows it holds so far go to the spilling row sort with the rest.
+    let threshold = memory.limit() / 2;
+    let mut retained = Vec::new();
+    let mut reserved = 0_usize;
+    while let Some(batch) = input.next_batch(memory)? {
+        let bytes = columnar_sort::retained_bytes(&batch, keys.len());
+        if reserved.saturating_add(bytes) <= threshold && memory.reserve(bytes).is_ok() {
+            reserved = reserved.saturating_add(bytes);
+            retained.push(batch);
+            continue;
+        }
+        memory.release(reserved);
+        let mut materializer = RowMaterializer::new(keys, memory, collation);
+        for held in retained.drain(..).chain(std::iter::once(batch)) {
+            materializer.push(&held)?;
+        }
+        while let Some(batch) = input.next_batch(memory)? {
+            materializer.push(&batch)?;
+        }
+        return sort_rows(materializer.finish(), keys, trim_to, memory, collation);
+    }
+    Ok(SortedRows::Columnar(columnar_sort::ColumnarSorted::new(
+        retained, keys, trim_to, collation,
+    )?))
+}
+
+/// The spilling row sort's tail: sorts what stayed resident and merges it
+/// with the runs it spilled.
+fn sort_rows(
+    materialized: SpillMaterialization,
+    keys: &[BoundOrderKey],
+    trim_to: Option<usize>,
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<SortedRows, ExecError> {
+    let compare =
+        |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys, collation);
     let SpillMaterialization {
         mut rows,
         runs,
         reserved: rows_reserved,
-    } = materialize_with_spill(input, keys, memory, collation)?;
+    } = materialized;
     rows.sort_by(compare);
     if runs.is_empty() {
         if let Some(width) = trim_to {
@@ -380,61 +423,79 @@ struct SpillMaterialization {
     reserved: usize,
 }
 
-fn materialize_with_spill(
-    input: &mut PullOperator,
-    keys: &[BoundOrderKey],
-    memory: &MemoryTracker,
+/// Materializes sort input as rows, spilling the accumulated rows as a
+/// sorted on-disk run whenever the memory ceiling would be exceeded.
+struct RowMaterializer<'sort> {
+    keys: &'sort [BoundOrderKey],
+    memory: &'sort MemoryTracker,
     collation: Collation,
-) -> Result<SpillMaterialization, ExecError> {
-    let mut rows: Vec<Vec<Value>> = Vec::new();
-    let mut retained = 0_usize;
-    let mut vector_reserved = 0_usize;
-    let mut runs: Vec<spill::ClosedRun> = Vec::new();
-    while let Some(batch) = input.next_batch(memory)? {
+    rows: Vec<Vec<Value>>,
+    retained: usize,
+    vector_reserved: usize,
+    runs: Vec<spill::ClosedRun>,
+}
+
+impl<'sort> RowMaterializer<'sort> {
+    const fn new(
+        keys: &'sort [BoundOrderKey],
+        memory: &'sort MemoryTracker,
+        collation: Collation,
+    ) -> Self {
+        Self {
+            keys,
+            memory,
+            collation,
+            rows: Vec::new(),
+            retained: 0,
+            vector_reserved: 0,
+            runs: Vec::new(),
+        }
+    }
+
+    /// Writes the buffered rows as one sorted run and frees their whole
+    /// footprint: the row payloads and the vector's capacity reservation.
+    fn spill(&mut self) -> Result<(), ExecError> {
+        let (keys, collation) = (self.keys, self.collation);
+        self.rows
+            .sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
+        self.runs.push(write_sorted_run(&self.rows, self.memory)?);
+        self.rows = Vec::new();
+        self.memory
+            .release(self.retained.saturating_add(self.vector_reserved));
+        self.retained = 0;
+        self.vector_reserved = 0;
+        Ok(())
+    }
+
+    fn push(&mut self, batch: &RecordBatch) -> Result<(), ExecError> {
+        let memory = self.memory;
         let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
         memory.ensure_transient(
             batch_bytes.saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
         )?;
-        match reserve_vec_elements(&mut rows, additional_rows, 0, memory) {
-            Ok(reserved) => vector_reserved = vector_reserved.saturating_add(reserved),
-            Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
-                rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                runs.push(write_sorted_run(&rows, memory)?);
-                rows = Vec::new();
-                memory.release(retained.saturating_add(vector_reserved));
-                retained = 0;
-                vector_reserved = 0;
-                vector_reserved = vector_reserved.saturating_add(reserve_vec_elements(
-                    &mut rows,
-                    additional_rows,
-                    0,
-                    memory,
-                )?);
+        match reserve_vec_elements(&mut self.rows, additional_rows, 0, memory) {
+            Ok(reserved) => self.vector_reserved = self.vector_reserved.saturating_add(reserved),
+            Err(ExecError::MemoryLimitExceeded { .. }) if !self.rows.is_empty() => {
+                self.spill()?;
+                self.vector_reserved =
+                    reserve_vec_elements(&mut self.rows, additional_rows, 0, memory)?;
             }
             Err(error) => return Err(error),
         }
         for row in batch.selection().selected_rows() {
             let row_bytes =
-                estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
+                estimated_batch_row_bytes(batch, row)?.saturating_sub(size_of::<Vec<Value>>());
             memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
             match memory.reserve(row_bytes) {
                 Ok(()) => {}
-                Err(ExecError::MemoryLimitExceeded { .. }) if !rows.is_empty() => {
-                    // Spill the buffered rows as one sorted run and retry;
-                    // releasing both the row payloads and the vector's
-                    // capacity reservation frees the sort's whole footprint.
-                    rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                    runs.push(write_sorted_run(&rows, memory)?);
-                    rows = Vec::new();
-                    memory.release(retained.saturating_add(vector_reserved));
-                    retained = 0;
-                    vector_reserved = 0;
+                Err(ExecError::MemoryLimitExceeded { .. }) if !self.rows.is_empty() => {
+                    self.spill()?;
                     memory.reserve(row_bytes)?;
                 }
                 Err(error) => return Err(error),
             }
-            retained = retained.saturating_add(row_bytes);
+            self.retained = self.retained.saturating_add(row_bytes);
             let values = batch
                 .columns()
                 .iter()
@@ -444,28 +505,29 @@ fn materialize_with_spill(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            rows.push(values);
+            self.rows.push(values);
             crate::counters::count(|counters| {
                 counters.rows_sorted = counters.rows_sorted.saturating_add(1);
             });
             // Proactive spill at half the ceiling: upstream operators size
             // their own working sets from the remaining headroom, so a sort
             // that hoards the budget until hard failure starves the scan.
-            if retained.saturating_add(vector_reserved) > memory.limit() / 2 && rows.len() > 1 {
-                rows.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
-                runs.push(write_sorted_run(&rows, memory)?);
-                rows = Vec::new();
-                memory.release(retained.saturating_add(vector_reserved));
-                retained = 0;
-                vector_reserved = 0;
+            if self.retained.saturating_add(self.vector_reserved) > memory.limit() / 2
+                && self.rows.len() > 1
+            {
+                self.spill()?;
             }
         }
+        Ok(())
     }
-    Ok(SpillMaterialization {
-        rows,
-        runs,
-        reserved: retained.saturating_add(vector_reserved),
-    })
+
+    fn finish(self) -> SpillMaterialization {
+        SpillMaterialization {
+            rows: self.rows,
+            runs: self.runs,
+            reserved: self.retained.saturating_add(self.vector_reserved),
+        }
+    }
 }
 
 /// Writes sorted rows as one closed run: length-framed binary rows in a
