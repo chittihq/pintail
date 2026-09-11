@@ -1,36 +1,26 @@
-//! Compiled expressions evaluated a batch at a time over packed columns.
-//!
-//! Row-at-a-time evaluation turns every input cell into a [`Value`] and a
-//! temporal one into text, parses that text back, and formats its answer as
-//! text again: per row, per expression. Here an expression whose every node
-//! has a kernel is evaluated once per batch over the packed units the scan
-//! already produced, and answers with a packed column whose text is derived
-//! only when something reads it as text.
-//!
-//! A kernel answers exactly what row evaluation would, or declines: given
-//! an input shape, a declared type or a result it does not mirror - text
-//! kept as written, a year outside what canonical text can spell - it
-//! returns `None` and the caller evaluates the batch row by row. Rows the
-//! batch's selection excludes are computed but never fail the batch.
-
-use std::borrow::Cow;
+//! Date and time kernels over packed temporal units: parts, interval
+//! arithmetic, dates of a moment, differences, and casts between temporal
+//! types. Row evaluation reads a temporal as its canonical text and parses
+//! it back; these read the units the text is derived from, and decline
+//! where the text would not be canonical.
 
 use chrono::{NaiveDateTime, Timelike as _};
 use pintail_sql::{DatePart, IntervalUnit, ScalarFunction};
 use pintail_types::{DataType, Value};
 
-use super::CompiledExpr;
-use super::temporal::{apply_interval, date_part};
+use super::{Effects, Operand, operand};
 use crate::array::ValidityMask;
 use crate::batch::{ColumnVector, LazyText, RecordBatch, TypedValues};
 use crate::execution::ExecError;
+use crate::expression::CompiledExpr;
+use crate::expression::temporal::{apply_interval, date_part};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
 /// A temporal column's packed units, when its text is derived from them.
-struct Temporal<'batch> {
+pub(super) struct Temporal<'batch> {
     units: &'batch [i64],
-    validity: &'batch ValidityMask,
+    pub(super) validity: &'batch ValidityMask,
     /// `None` for a date (units are days), the precision for a datetime
     /// (units are microseconds).
     fsp: Option<u8>,
@@ -39,22 +29,46 @@ struct Temporal<'batch> {
 impl Temporal<'_> {
     /// Row `row` as the date-time row evaluation parses from its text.
     fn datetime(&self, row: usize) -> Option<NaiveDateTime> {
-        let unit = self.units[row];
         let micros = match self.fsp {
-            None => unit.checked_mul(MICROS_PER_DAY)?,
-            // The text carries `fsp` fraction digits, so that is all the
-            // precision a parse of it recovers.
+            None => self.units[row].checked_mul(MICROS_PER_DAY)?,
+            Some(_) => self.spelled(row),
+        };
+        Some(chrono::DateTime::from_timestamp_micros(micros)?.naive_utc())
+    }
+
+    /// Row `row`'s units at the precision its text spells: the text
+    /// carries `fsp` fraction digits, so that is all a parse of it
+    /// recovers.
+    pub(super) fn spelled(&self, row: usize) -> i64 {
+        let unit = self.units[row];
+        match self.fsp {
+            None => unit,
             Some(fsp) => {
                 let step = 10_i64.pow(6 - u32::from(fsp.min(6)));
                 unit - unit.rem_euclid(step)
             }
+        }
+    }
+
+    /// The units whose canonical text has a four-digit year, where text
+    /// order is time order.
+    pub(super) fn four_digit_years(&self) -> std::ops::RangeInclusive<i64> {
+        let day = |year, month, day| {
+            chrono::NaiveDate::from_ymd_opt(year, month, day).map_or(0, |date| {
+                date.signed_duration_since(chrono::NaiveDate::default())
+                    .num_days()
+            })
         };
-        Some(chrono::DateTime::from_timestamp_micros(micros)?.naive_utc())
+        let (first, last) = (day(0, 1, 1), day(9999, 12, 31));
+        match self.fsp {
+            None => first..=last,
+            Some(_) => first * MICROS_PER_DAY..=(last + 1) * MICROS_PER_DAY - 1,
+        }
     }
 }
 
 /// A column's packed temporal units, when it has them.
-fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
+pub(super) fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
     let fsp = match column.data_type() {
         DataType::Date32 => None,
         DataType::DateTime64 { fsp } => Some(fsp),
@@ -74,90 +88,6 @@ fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
 fn spellable(value: NaiveDateTime) -> bool {
     use chrono::Datelike as _;
     (0..=9999).contains(&value.year())
-}
-
-impl CompiledExpr {
-    /// The expression evaluated over every row of `batch` as one column of
-    /// `data_type`, when every node has a kernel; `None` sends the caller
-    /// to row-at-a-time evaluation.
-    ///
-    /// # Errors
-    ///
-    /// Returns the error row evaluation would raise for a selected row.
-    pub(crate) fn evaluate_column(
-        &self,
-        batch: &RecordBatch,
-        data_type: Option<DataType>,
-    ) -> Result<Option<ColumnVector>, ExecError> {
-        match self {
-            Self::Column(index) => Ok(batch
-                .column(*index)
-                .filter(|column| data_type.is_none_or(|declared| declared == column.data_type()))
-                .cloned()),
-            Self::Scalar {
-                function: ScalarFunction::DatePart(part),
-                args,
-                ..
-            } => date_part_column(batch, args, *part, data_type),
-            Self::Scalar {
-                function: ScalarFunction::DateInterval { unit, subtract },
-                args,
-                ..
-            } => date_interval_column(batch, args, *unit, *subtract, data_type),
-            Self::Scalar {
-                function: function @ (ScalarFunction::Date | ScalarFunction::LastDay),
-                args,
-                ..
-            } => date_of_column(batch, args, *function, data_type),
-            Self::Scalar {
-                function:
-                    function @ (ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. }),
-                args,
-                ..
-            } => difference_column(batch, args, *function, data_type),
-            _ => Ok(None),
-        }
-    }
-}
-
-/// The type an expression node declares for its answer; a column or a
-/// constant declares none of its own.
-fn declared(expr: &CompiledExpr) -> Option<DataType> {
-    match expr {
-        CompiledExpr::Unary { data_type, .. }
-        | CompiledExpr::Binary { data_type, .. }
-        | CompiledExpr::Scalar { data_type, .. } => *data_type,
-        _ => None,
-    }
-}
-
-/// One argument of a batch kernel, evaluated over the batch: a column the
-/// batch holds or a kernel produced, or a constant.
-enum Operand<'batch> {
-    Column(Cow<'batch, ColumnVector>),
-    Constant(&'batch Value),
-}
-
-impl Operand<'_> {
-    const fn varies(&self) -> bool {
-        matches!(self, Self::Column(_))
-    }
-}
-
-/// `argument` over `batch`, or `None` when no kernel evaluates it.
-fn operand<'batch>(
-    batch: &'batch RecordBatch,
-    argument: &'batch CompiledExpr,
-) -> Result<Option<Operand<'batch>>, ExecError> {
-    Ok(match argument {
-        CompiledExpr::Column(index) => batch
-            .column(*index)
-            .map(|column| Operand::Column(Cow::Borrowed(column))),
-        CompiledExpr::Literal(value) => Some(Operand::Constant(value)),
-        nested => nested
-            .evaluate_column(batch, declared(nested))?
-            .map(|column| Operand::Column(Cow::Owned(column))),
-    })
 }
 
 /// One date-time argument of a batch kernel: a packed temporal column, or
@@ -187,30 +117,34 @@ impl Moment<'_> {
 fn moment<'operand>(operand: &'operand Operand<'_>) -> Option<Moment<'operand>> {
     match operand {
         Operand::Column(column) => temporal_column(column).map(Moment::Column),
-        Operand::Constant(Value::Utf8(text)) => super::temporal::parse_mysql_datetime(text)
-            .ok()
-            .map(Moment::Fixed),
+        Operand::Constant(Value::Utf8(text)) => {
+            crate::expression::temporal::parse_mysql_datetime(text)
+                .ok()
+                .map(Moment::Fixed)
+        }
         Operand::Constant(_) => None,
     }
 }
 
 /// `DATE(x)` and `LAST_DAY(x)`: a date from a packed temporal.
-fn date_of_column(
+pub(super) fn date_of_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     function: ScalarFunction,
     data_type: Option<DataType>,
-) -> Result<Option<ColumnVector>, ExecError> {
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
     let [argument] = args else {
-        return Ok(None);
+        return None;
     };
     if data_type != Some(DataType::Date32) {
-        return Ok(None);
+        return None;
     }
-    let Some(input) = operand(batch, argument)?.filter(Operand::varies) else {
-        return Ok(None);
-    };
-    Ok(dates_of(batch, &input, function))
+    let input = operand(batch, argument, effects)?;
+    if !input.varies() {
+        return None;
+    }
+    dates_of(batch, &input, function)
 }
 
 fn dates_of(
@@ -264,26 +198,26 @@ fn dates_of(
 
 /// `DATEDIFF(a, b)` and `TIMESTAMPDIFF(unit, from, to)` over packed
 /// temporals and constants.
-fn difference_column(
+pub(super) fn difference_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     function: ScalarFunction,
     data_type: Option<DataType>,
-) -> Result<Option<ColumnVector>, ExecError> {
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
     let [left, right] = args else {
-        return Ok(None);
+        return None;
     };
     if data_type != Some(DataType::Int64) {
-        return Ok(None);
+        return None;
     }
-    let (Some(left), Some(right)) = (operand(batch, left)?, operand(batch, right)?) else {
-        return Ok(None);
-    };
+    let left = operand(batch, left, effects)?;
+    let right = operand(batch, right, effects)?;
     // At least one side varies by row, or there is nothing to vectorize.
     if !left.varies() && !right.varies() {
-        return Ok(None);
+        return None;
     }
-    Ok(differences_of(batch, &left, &right, function))
+    differences_of(batch, &left, &right, function)
 }
 
 fn differences_of(
@@ -303,7 +237,7 @@ fn differences_of(
         };
         differences.push(match function {
             ScalarFunction::TimestampDiff { unit } => {
-                super::temporal::timestamp_diff(from, to, unit)
+                crate::expression::temporal::timestamp_diff(from, to, unit)
             }
             _ => from.date().signed_duration_since(to.date()).num_days(),
         });
@@ -317,24 +251,25 @@ fn differences_of(
 }
 
 /// `YEAR(x)`, `MONTH(x)` and the other single parts of a packed temporal.
-fn date_part_column(
+pub(super) fn date_part_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     part: DatePart,
     data_type: Option<DataType>,
-) -> Result<Option<ColumnVector>, ExecError> {
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
     let [argument] = args else {
-        return Ok(None);
+        return None;
     };
     // Row evaluation answers a plain integer.
     let declared = data_type.unwrap_or(DataType::Int64);
     if declared.storage_type() != DataType::Int64 {
-        return Ok(None);
+        return None;
     }
-    let Some(Operand::Column(input)) = operand(batch, argument)? else {
-        return Ok(None);
+    let Operand::Column(input) = operand(batch, argument, effects)? else {
+        return None;
     };
-    Ok(parts_of(&input, part, declared))
+    parts_of(&input, part, declared)
 }
 
 fn parts_of(input: &ColumnVector, part: DatePart, declared: DataType) -> Option<ColumnVector> {
@@ -359,29 +294,37 @@ fn parts_of(input: &ColumnVector, part: DatePart, declared: DataType) -> Option<
 }
 
 /// `DATE_ADD`/`DATE_SUB` of a packed temporal and a constant amount.
-fn date_interval_column(
+pub(super) fn date_interval_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
     unit: IntervalUnit,
     subtract: bool,
     data_type: Option<DataType>,
-) -> Result<Option<ColumnVector>, ExecError> {
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
     let [argument, CompiledExpr::Literal(amount)] = args else {
-        return Ok(None);
-    };
-    let Some(Operand::Column(input)) = operand(batch, argument)? else {
-        return Ok(None);
-    };
-    let Some(input) = temporal_column(&input) else {
-        return Ok(None);
+        return None;
     };
     // A NULL amount makes every row NULL; that is row evaluation's to say.
     if matches!(amount, Value::Null) {
-        return Ok(None);
+        return None;
     }
-    let Ok(amount) = super::mysql_i64(amount) else {
-        return Ok(None);
+    let amount = crate::expression::mysql_i64(amount).ok()?;
+    let Operand::Column(input) = operand(batch, argument, effects)? else {
+        return None;
     };
+    shifted(batch, &input, amount, unit, subtract, data_type)
+}
+
+fn shifted(
+    batch: &RecordBatch,
+    input: &ColumnVector,
+    amount: i64,
+    unit: IntervalUnit,
+    subtract: bool,
+    data_type: Option<DataType>,
+) -> Option<ColumnVector> {
+    let input = temporal_column(input)?;
     // Row evaluation answers a date where a date moves by whole days or
     // more, and a datetime otherwise, at the declared precision.
     let date_only = input.fsp.is_none()
@@ -392,7 +335,7 @@ fn date_interval_column(
     let out_fsp = match (date_only, data_type) {
         (true, Some(DataType::Date32)) => None,
         (false, Some(DataType::DateTime64 { fsp })) => Some(fsp),
-        _ => return Ok(None),
+        _ => return None,
     };
     let selection = batch.selection();
     let mut units = Vec::with_capacity(input.units.len());
@@ -403,9 +346,7 @@ fn date_interval_column(
             valid.push(false);
             continue;
         }
-        let Some(value) = input.datetime(row) else {
-            return Ok(None);
-        };
+        let value = input.datetime(row)?;
         let shifted = match apply_interval(value, amount, unit, subtract) {
             Ok(shifted) => shifted,
             // Row evaluation answers an impossible date-time with NULL.
@@ -414,7 +355,9 @@ fn date_interval_column(
                 valid.push(false);
                 continue;
             }
-            Err(error) if selection.is_selected(row) => return Err(error),
+            // Row evaluation raises this for a row it reads; the batch goes
+            // to it, so the error is its own.
+            Err(_) if selection.is_selected(row) => return None,
             Err(_) => {
                 units.push(0);
                 valid.push(false);
@@ -422,7 +365,7 @@ fn date_interval_column(
             }
         };
         if !spellable(shifted) {
-            return Ok(None);
+            return None;
         }
         let unit = match out_fsp {
             None => shifted.and_utc().timestamp().div_euclid(86_400),
@@ -441,11 +384,58 @@ fn date_interval_column(
         None => (DataType::Date32, LazyText::date()),
         Some(fsp) => (DataType::DateTime64 { fsp }, LazyText::datetime(fsp)),
     };
-    Ok(Some(ColumnVector::from_typed(
+    Some(ColumnVector::from_typed(
         declared,
         TypedValues::Temporal { units, text },
         ValidityMask::from_bools(&valid),
-    )))
+    ))
+}
+
+/// `CAST(x AS DATETIME(n))` of a date, or of a date-time at no more
+/// precision than `n`: the same instant, spelled with `n` fraction digits.
+/// Comparisons between temporal types are bound as these casts, so both
+/// sides meet as one type.
+pub(super) fn cast_column(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    target: DataType,
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let [argument] = args else {
+        return None;
+    };
+    let DataType::DateTime64 { fsp: out_fsp } = target else {
+        return None;
+    };
+    if data_type.is_some_and(|declared| declared != target) {
+        return None;
+    }
+    let Operand::Column(input) = operand(batch, argument, effects)? else {
+        return None;
+    };
+    let input = temporal_column(&input)?;
+    let scale = match input.fsp {
+        None => MICROS_PER_DAY,
+        Some(fsp) if fsp <= out_fsp => 1,
+        Some(_) => return None,
+    };
+    let mut units = Vec::with_capacity(input.units.len());
+    for (row, unit) in input.units.iter().enumerate() {
+        units.push(if input.validity.is_valid(row) {
+            unit.checked_mul(scale)?
+        } else {
+            0
+        });
+    }
+    Some(ColumnVector::from_typed(
+        target,
+        TypedValues::Temporal {
+            units,
+            text: LazyText::datetime(out_fsp),
+        },
+        input.validity.clone(),
+    ))
 }
 
 #[cfg(test)]
@@ -453,10 +443,10 @@ mod tests {
     use pintail_sql::{DatePart, IntervalUnit, ScalarFunction};
     use pintail_types::{DataType, Value};
 
+    use super::super::testing::{agrees_with_rows, batch_of, scalar};
     use super::CompiledExpr;
     use crate::array::ValidityMask;
     use crate::batch::{ColumnVector, LazyText, RecordBatch, SelectionMask, TypedValues};
-    use crate::collation::Collation;
 
     /// Calendar edges and ordinary dates, with a NULL.
     const DATES: [Option<&str>; 12] = [
@@ -545,56 +535,8 @@ mod tests {
         }
     }
 
-    /// Every row selected but the fourth, which a kernel must compute and
-    /// never fail on.
     fn batch(column: ColumnVector) -> RecordBatch {
-        let rows = column.len();
-        let mut batch = RecordBatch::new(rows, vec![column]).expect("batch");
-        let mut selection = SelectionMask::all(rows);
-        selection.set(3, false).expect("row");
-        batch.set_selection(selection).expect("selection");
-        batch
-    }
-
-    fn scalar(
-        function: ScalarFunction,
-        args: Vec<CompiledExpr>,
-        data_type: DataType,
-    ) -> CompiledExpr {
-        CompiledExpr::Scalar {
-            function,
-            argument_types: vec![None; args.len()],
-            args,
-            literal_regex: None,
-            data_type: Some(data_type),
-            collation: Collation::default(),
-            overflow: None,
-        }
-    }
-
-    /// The kernel's answer, when it gives one, is row evaluation's at every
-    /// selected row. Returns whether it gave one.
-    fn agrees_with_rows(
-        expression: &CompiledExpr,
-        batch: &RecordBatch,
-        data_type: DataType,
-    ) -> bool {
-        let Some(column) = expression
-            .evaluate_column(batch, Some(data_type))
-            .expect("the kernel evaluates")
-        else {
-            return false;
-        };
-        assert_eq!(column.data_type(), data_type);
-        for row in batch.selection().selected_rows() {
-            let expected = expression.evaluate(batch, row).expect("row evaluation");
-            assert_eq!(
-                column.value(row),
-                Some(&expected),
-                "{expression:?} at row {row}"
-            );
-        }
-        true
+        batch_of(vec![column])
     }
 
     #[test]
@@ -876,7 +818,6 @@ mod tests {
         assert!(
             expression
                 .evaluate_column(&batch, Some(DataType::Int64))
-                .expect("evaluates")
                 .is_none()
         );
         // A declared type that disagrees with row evaluation's answer.
@@ -895,7 +836,6 @@ mod tests {
         assert!(
             expression
                 .evaluate_column(&batch, Some(DataType::DateTime64 { fsp: 0 }))
-                .expect("evaluates")
                 .is_none()
         );
     }

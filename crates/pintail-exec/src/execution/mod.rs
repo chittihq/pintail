@@ -122,7 +122,12 @@ pub fn take_session_group_concat_warnings() -> u64 {
 
 /// Counts one division by zero answered with NULL, `MySQL`'s warning 1365.
 pub(crate) fn note_division_by_zero() {
-    SESSION_DIVISION_WARNINGS.set(SESSION_DIVISION_WARNINGS.get().saturating_add(1));
+    note_divisions_by_zero(1);
+}
+
+/// Counts `count` divisions by zero answered with NULL.
+pub(crate) fn note_divisions_by_zero(count: u64) {
+    SESSION_DIVISION_WARNINGS.set(SESSION_DIVISION_WARNINGS.get().saturating_add(count));
 }
 
 /// Takes the number of divisions by zero the last statement answered with
@@ -3918,7 +3923,7 @@ impl PullOperator {
                     }
                     // A whole batch at a time over packed units where the
                     // expression has kernels; row by row where it has not.
-                    if let Some(column) = expression.evaluate_column(&batch, *data_type)? {
+                    if let Some(column) = expression.evaluate_column(&batch, *data_type) {
                         columns.push(column);
                         continue;
                     }
