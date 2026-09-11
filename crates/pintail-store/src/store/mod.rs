@@ -23,6 +23,7 @@ use crate::{
     StoreError,
     manifest::{self, Manifest},
     memtable::Memtable,
+    publication::Publisher,
     segment,
     wal::{RecoveredBatch, Wal, WalColumn},
 };
@@ -364,6 +365,9 @@ pub(crate) static STORE_INSTANCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
 pub struct TableStore {
+    /// Declared before the lock so it is released first: readers stop
+    /// trusting this writer's generation before another writer can exist.
+    publication: Publisher,
     _writer_lock: File,
     /// Distinguishes this open from any other, including an earlier table
     /// at the same path. Never persisted: a reopen is a new instance, and
@@ -447,6 +451,10 @@ impl TableStore {
 
         let writer_lock = open_lock(&directory.join(WRITER_LOCK_FILE))?;
         lock_writer(&writer_lock, "lock table writer")?;
+        let publication = Publisher::register(&directory);
+        // Recovery can rewrite the manifest, truncate the log and sweep
+        // orphans; all of it is published once the open ends.
+        let _opening = publication.publishing();
 
         let mut manifest = manifest::load(&directory, &schema)?;
         let schema_upgrade = manifest.schema_version < schema.version();
@@ -523,6 +531,7 @@ impl TableStore {
         let manifest = Arc::new(manifest);
 
         Ok(Self {
+            publication,
             _writer_lock: writer_lock,
             instance: STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             directory,
@@ -586,6 +595,7 @@ impl TableStore {
             .last_sequence
             .checked_add(1)
             .ok_or(StoreError::SequenceOverflow)?;
+        let _published = self.publication.publishing();
         if !rows.is_empty() {
             self.wal
                 .append(sequence, self.table_id, &self.schema, &rows)?;
@@ -806,6 +816,7 @@ impl TableStore {
                 self.last_sequence
             )));
         }
+        let _published = self.publication.publishing();
         self.wal
             .append(sequence, self.table_id, &self.schema, &rows)?;
 
@@ -866,6 +877,7 @@ impl TableStore {
         for segment in &self.manifest.segments {
             segment::read(&self.directory, segment, &schema)?;
         }
+        let _published = self.publication.publishing();
         let mut next_manifest = self.manifest.as_ref().clone();
         next_manifest.generation = next_manifest
             .generation
@@ -897,6 +909,7 @@ impl TableStore {
         // Old inputs must no longer be read when reclaimed, and a completed
         // result must never be published into the new empty generation.
         self.discard_background_merge();
+        let _published = self.publication.publishing();
         self.wal.reset()?;
         let mut next_manifest = Manifest::empty(&self.schema);
         next_manifest.generation = self
@@ -989,6 +1002,7 @@ impl TableStore {
             rows = deduplicated;
         }
 
+        let _published = self.publication.publishing();
         let segment = segment::write(
             &self.directory,
             self.manifest.next_segment_id,
@@ -1058,6 +1072,7 @@ impl TableStore {
         // the columnar direct path it unlocks applies no tombstone filter — so
         // a flush that carries even one tombstone stays off the direct path.
         let unique_keys = rows.iter().all(|row| !row.is_deleted());
+        let _published = self.publication.publishing();
         let segment = segment::write(
             &self.directory,
             self.manifest.next_segment_id,
@@ -1199,6 +1214,7 @@ impl TableStore {
             .segments
             .retain(|meta| !inputs.contains(&meta.file_name));
         next_manifest.segments.extend(outputs);
+        let _published = self.publication.publishing();
         manifest::publish(&self.directory, &next_manifest)?;
         let previous = std::mem::replace(&mut self.manifest, Arc::new(next_manifest));
         self.retired.push(RetiredGeneration {
@@ -1242,6 +1258,7 @@ impl TableStore {
             .next_segment_id
             .checked_add(RESERVED_SEGMENT_IDS)
             .ok_or(StoreError::SequenceOverflow)?;
+        let _published = self.publication.publishing();
         manifest::publish(&self.directory, &next_manifest)?;
         self.manifest = Arc::new(next_manifest);
         let directory = self.directory.clone();
@@ -1315,6 +1332,7 @@ impl TableStore {
             });
         }
         let full_merge = plan.indices.len() == self.manifest.segments.len();
+        let _published = self.publication.publishing();
         let mut streams = Vec::with_capacity(plan.indices.len());
         for index in &plan.indices {
             let meta = &self.manifest.segments[*index];
@@ -1462,6 +1480,7 @@ impl TableStore {
     ///
     /// Returns an error when an eligible obsolete file cannot be removed.
     pub fn reclaim_obsolete_segments(&mut self) -> Result<usize, StoreError> {
+        let published = self.publication.publishing();
         let mut reclaimed = 0;
         let mut retained = Vec::new();
         for generation in self.retired.drain(..) {
@@ -1485,6 +1504,8 @@ impl TableStore {
         self.retired = retained;
         if reclaimed > 0 {
             segment::sync_directory(&self.directory)?;
+        } else {
+            published.unchanged();
         }
         Ok(reclaimed)
     }
@@ -1533,10 +1554,13 @@ impl TableStore {
                 ),
             ));
         }
+        let published = self.publication.publishing();
         std::fs::rename(&self.directory, new_directory)
             .map_err(|error| StoreError::io("rename table directory", error))?;
         self.directory = std::fs::canonicalize(new_directory)
             .map_err(|error| StoreError::io("canonicalize renamed table directory", error))?;
+        drop(published);
+        self.publication.relocate(&self.directory);
         Ok(())
     }
 

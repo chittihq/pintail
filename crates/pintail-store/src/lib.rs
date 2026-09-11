@@ -11,12 +11,14 @@ mod database;
 mod error;
 mod manifest;
 mod memtable;
+mod publication;
 mod segment;
 mod store;
 mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
+pub use publication::{publish_changes_under, published_generation};
 pub use segment::{
     BoundDomain, ColumnBounds, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum,
 };

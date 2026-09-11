@@ -18893,7 +18893,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150032 sync_runs rows for db_29a31ed5311858970119fb6473100aad"
+    "detail": "150034 sync_runs rows for db_e65a39d9ebf04abb51a06c8dded4e4d5"
   },
   {
     "phase": "activity-history",
@@ -18911,19 +18911,19 @@
     "phase": "activity-history",
     "check": "activity-history:workspace feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 1ms"
+    "detail": "p50 1ms p95 2ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 27ms p99 33ms"
+    "detail": "p50 41ms p99 140ms"
   },
   {
     "phase": "activity-history",
     "check": "activity-history:health answers while the feed is hammered",
     "status": "PASS",
-    "detail": "health p95 2ms"
+    "detail": "health p95 6ms"
   },
   {
     "phase": "activity-history",
@@ -20170,13 +20170,13 @@
     "phase": "poll-storm",
     "check": "poll-storm:no request fails under 25 open dashboards",
     "status": "PASS",
-    "detail": "0 failed of 4935"
+    "detail": "0 failed of 4933"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:latency stays bounded",
     "status": "PASS",
-    "detail": "4935 requests: p50 1ms p99 7ms"
+    "detail": "4933 requests: p50 1ms p99 10ms"
   },
   {
     "phase": "poll-storm",
@@ -20188,7 +20188,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 5181 vs source 5181"
+    "detail": "orders replica 7479 vs source 7479"
   },
   {
     "phase": "poll-storm",
@@ -26585,7 +26585,8 @@
   {
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
-    "status": "PASS"
+    "status": "WARN",
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_e65a39d9ebf04abb51a06c8dded4e4d5\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-11T08:06:25.297480797+00:00\",\"updated_at\":\"2026-09-11T08:12:42.797117581+00:00\"},\"tables\":30,\"rows\":11392}"
   },
   {
     "phase": "drop-table-polling",
@@ -30393,7 +30394,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 108 ok, dashboards 96 ok; no errors"
+    "detail": "wire 240 ok, http 79 ok, dashboards 102 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -30405,25 +30406,25 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 108"
+    "detail": "wire 240 of 240, http 79"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 171ms p99 948ms over 240 queries"
+    "detail": "wire p50 192ms p99 861ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 14ms over 7 samples"
+    "detail": "health p99 17ms over 7 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 185MB with a 256MB budget"
+    "detail": "peak RSS 184MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -31711,7 +31712,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 59MB before, peak 204MB during (margin 768MB)"
+    "detail": "RSS 63MB before, peak 214MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
