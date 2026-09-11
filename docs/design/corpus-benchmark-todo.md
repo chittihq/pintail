@@ -51,9 +51,19 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    Done: the estimate is gone (c3ff1de6), and constant ON conjuncts,
    exact-decimal IN keys, self-join and null-safe EXISTS decorrelation and
    the anti join's first-match stop cleared 16 of the 19 join and
-   subquery timeouts at scale 10,000. Open: a correlated IN inside an ON
-   clause, a doubly nested scalar subquery, and a second NOT EXISTS reusing
-   the first's alias; join-proof waits on its own qualification.
+   subquery timeouts at scale 10,000. On `perf/correlated-leftovers`, a
+   second NOT EXISTS reusing the first's alias now decorrelates (224 ms,
+   MySQL 145 ms), and a semi or anti join over duplicate keys stops copying
+   the hash bucket per probe row (63 ms, MySQL 49 ms). Open, by owner
+   decision recorded as follow-ups:
+   - a correlated IN inside a LEFT JOIN's ON clause (`o.id IN (SELECT o2.id
+     … WHERE u2.id = u.id …)`): carry the correlation through the ON
+     equality (`o.user_id = u.id`) so the IN becomes a semi join on the
+     joined side;
+   - a scalar subquery whose projection is itself a correlated scalar
+     subquery: decorrelate the inner one into the middle query first, then
+     let scalar decorrelation accept a middle query that holds a join.
+   Join-proof waits on its own qualification.
 5. [x] **Window frames.** Six window queries time out at scale 10,000:
    `ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING`, `RANGE` peer
    groups over a low-cardinality key, and numeric and temporal `RANGE`

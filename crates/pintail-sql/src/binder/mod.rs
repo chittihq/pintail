@@ -792,6 +792,7 @@ impl<'catalog> Binder<'catalog> {
     /// Rewrites a correlated `[NOT] EXISTS` conjunct into a semi/anti join
     /// when the subquery is the canonical single-table, single-equality
     /// form; anything else keeps the original unsupported-subquery error.
+    #[allow(clippy::too_many_lines)] // linear canonical-shape validation reads best unsplit
     fn decorrelate_exists(
         &self,
         subquery: &Query,
@@ -820,13 +821,14 @@ impl<'catalog> Binder<'catalog> {
             return Err(unsupported());
         }
         let probe_table = self.bind_table(&inner.from[0].relation, ctes)?;
-        if tables.iter().any(|existing| {
-            existing
-                .relation_name
-                .eq_ignore_ascii_case(&probe_table.relation_name)
-        }) {
-            return Err(unsupported());
-        }
+        // Inside the subquery its own alias hides an outer relation of the
+        // same name, as SQL scoping has it: the correlated conjuncts bind
+        // without the hidden one, and the decorrelated relation takes a name
+        // of its own, so the two never share an identity.
+        let alias = probe_table.relation_name.clone();
+        let collides = tables
+            .iter()
+            .any(|existing| existing.relation_name.eq_ignore_ascii_case(&alias));
         let Some(selection) = &inner.selection else {
             return Err(unsupported());
         };
@@ -852,19 +854,20 @@ impl<'catalog> Binder<'catalog> {
             self.filtered_join_input(subquery, &probe_table, &inner_only, ctes)
                 .ok_or_else(unsupported)?
         };
-        tables.push(inner_table.clone());
+        let mut scope = tables
+            .iter()
+            .filter(|existing| !existing.relation_name.eq_ignore_ascii_case(&alias))
+            .cloned()
+            .collect::<Vec<_>>();
+        scope.push(inner_table.clone());
         // Every correlated conjunct must be an equality spanning exactly
         // the inner table and the outer scope; together they become the
         // (possibly multi-key) join condition.
         let inner_key = relation_key(&inner_table);
         let mut condition: Option<BoundExpr> = None;
         for conjunct in correlated {
-            let bound = bind_expr(conjunct, tables, None).map_err(|_| {
-                tables.pop();
-                unsupported()
-            })?;
+            let bound = bind_expr(conjunct, &scope, None).map_err(|_| unsupported())?;
             if !is_correlation_equality(&bound, &inner_key) {
-                tables.pop();
                 return Err(unsupported());
             }
             condition = Some(match condition {
@@ -872,11 +875,31 @@ impl<'catalog> Binder<'catalog> {
                 Some(existing) => and_bound(existing, bound),
             });
         }
-        let condition = condition.expect("correlated conjuncts are non-empty");
+        let mut condition = condition.expect("correlated conjuncts are non-empty");
+        let mut inner_table = inner_table;
+        if collides {
+            // More candidates than relations, so one is always free.
+            let renamed = (2..=tables.len() + 2)
+                .map(|suffix| format!("{alias}#{suffix}"))
+                .find(|candidate| {
+                    tables
+                        .iter()
+                        .all(|existing| !existing.relation_name.eq_ignore_ascii_case(candidate))
+                })
+                .expect("an unused suffix exists");
+            let identity = (inner_table.database_id, inner_table.table_id);
+            if !rename_relation(&mut condition, identity, &alias, &renamed) {
+                return Err(unsupported());
+            }
+            inner_table.relation_name.clone_from(&renamed);
+            for column in &mut inner_table.columns {
+                column.relation_name.clone_from(&renamed);
+            }
+        }
         let Some(last) = from.last_mut() else {
-            tables.pop();
             return Err(unsupported());
         };
+        tables.push(inner_table.clone());
         last.joins.push(BoundJoin {
             scalar_aggregate: false,
             kind: if negated {
@@ -4143,6 +4166,43 @@ fn bind_is_null(
 /// only to decide which outer rows survive; in SQL its columns are not in the
 /// outer query's scope, and leaving them visible made an outer column the
 /// inner table shares - `id` - ambiguous.
+/// Moves every reference to one relation - `relation` over the table
+/// `identity` - onto the name `renamed`. False where the walk cannot see
+/// every column, as inside a nested subquery, so the caller keeps the
+/// dependent path rather than leave a reference behind.
+fn rename_relation(
+    expr: &mut BoundExpr,
+    identity: (pintail_catalog::DatabaseId, pintail_catalog::TableId),
+    relation: &str,
+    renamed: &str,
+) -> bool {
+    match &mut expr.kind {
+        BoundExprKind::Column(column) => {
+            if column.relation_name.eq_ignore_ascii_case(relation)
+                && (column.database_id, column.table_id) == identity
+            {
+                renamed.clone_into(&mut column.relation_name);
+            }
+            true
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            rename_relation(expr, identity, relation, renamed)
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            rename_relation(left, identity, relation, renamed)
+                && rename_relation(right, identity, relation, renamed)
+        }
+        BoundExprKind::Scalar { args, .. } => args
+            .iter_mut()
+            .all(|argument| rename_relation(argument, identity, relation, renamed)),
+        BoundExprKind::Literal(_)
+        | BoundExprKind::GroupKey(_)
+        | BoundExprKind::Aggregate(_)
+        | BoundExprKind::Window(_) => true,
+        _ => false,
+    }
+}
+
 fn shadow_joined_table(tables: &mut [BoundTable]) {
     if let Some(table) = tables.last_mut() {
         for column in &mut table.columns {
@@ -6940,6 +7000,30 @@ mod tests {
             ),
             Err(BindError::UngroupedColumn(_)),
         ));
+    }
+
+    /// Each subquery's alias hides an outer relation of the same name, so a
+    /// second EXISTS reusing the first's alias still becomes a join - under a
+    /// name of its own, so the two relations never share an identity.
+    #[test]
+    fn exists_subqueries_reusing_an_alias_both_decorrelate() {
+        let query = bind(
+            "SELECT e.id FROM Events e \
+             WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = e.id AND u.email = 'a') \
+             AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = e.id AND u.email = 'b')",
+        )
+        .expect("both subqueries decorrelate");
+        let joins = &query.from[0].joins;
+        assert_eq!(
+            joins.iter().map(|join| join.kind).collect::<Vec<_>>(),
+            [BoundJoinKind::Semi, BoundJoinKind::Anti]
+        );
+        assert!(
+            !joins[0]
+                .table
+                .relation_name
+                .eq_ignore_ascii_case(&joins[1].table.relation_name)
+        );
     }
 
     /// Chitti LMS PT-3, both directions. The negative case is the

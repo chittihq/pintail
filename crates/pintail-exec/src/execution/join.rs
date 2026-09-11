@@ -1427,7 +1427,7 @@ impl SkewReplay {
                 }
                 if residual.is_some() {
                     let candidates = vec![right.clone()];
-                    if apply_join_residual(residual, columns, left, Some(&candidates))?
+                    if apply_join_residual(residual, columns, left, Some(&candidates), false)?
                         .is_none_or(|rows| rows.is_empty())
                     {
                         continue;
@@ -1581,11 +1581,14 @@ pub(super) fn split_grace_partition(
 /// with an empty bucket and is NULL-extended, exactly as `MySQL` does. Moving
 /// the same predicate into WHERE drops that row instead, which is why it is
 /// not a workaround.
+/// The bucket rows the residual keeps. A semi or anti join asks only
+/// whether any row survives, so `first_only` stops at the first.
 fn apply_join_residual(
     residual: Option<&CompiledExpr>,
     columns: &[BoundColumn],
     left_values: &[Value],
     matches: Option<&Vec<Vec<Value>>>,
+    first_only: bool,
 ) -> Result<Option<Vec<Vec<Value>>>, ExecError> {
     let (Some(residual), Some(matches)) = (residual, matches) else {
         return Ok(matches.cloned());
@@ -1602,6 +1605,9 @@ fn apply_join_residual(
         let batch = RecordBatch::new(1, vectors)?;
         if predicate_truth(&residual.evaluate(&batch, 0)?)? {
             kept.push(right_values.clone());
+            if first_only {
+                break;
+            }
         }
     }
     // An empty bucket must read as "no match", not as a match producing
@@ -1719,9 +1725,17 @@ pub(super) fn next_hash_join_batch(
         let matches = state.left_key.as_ref().and_then(|key| state.build.get(key));
         // Recomputed only when this left row is first seen; match_index walks
         // the filtered bucket across successive emits for the same row.
-        if state.match_index == 0 {
-            state.residual_matches =
-                apply_join_residual(residual, residual_columns, left_values, matches)?;
+        // Without a residual the bucket is the answer as it stands; copying
+        // it for every probe row cost a semi or anti join over duplicate
+        // keys a full bucket clone per row.
+        if state.match_index == 0 && residual.is_some() {
+            state.residual_matches = apply_join_residual(
+                residual,
+                residual_columns,
+                left_values,
+                matches,
+                matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti),
+            )?;
         }
         let filtered = if residual.is_some() {
             state.residual_matches.as_ref()
@@ -1961,7 +1975,17 @@ pub(super) fn next_grace_join_batch(
             continue;
         };
         let matches = state.build.get(&key);
-        let filtered = apply_join_residual(residual, residual_columns, &left_values, matches)?;
+        let filtered = if residual.is_some() {
+            apply_join_residual(
+                residual,
+                residual_columns,
+                &left_values,
+                matches,
+                matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti),
+            )?
+        } else {
+            None
+        };
         let matches = if residual.is_some() {
             filtered.as_ref()
         } else {
