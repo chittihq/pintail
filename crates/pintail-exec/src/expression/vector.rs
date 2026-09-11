@@ -13,6 +13,8 @@
 //! returns `None` and the caller evaluates the batch row by row. Rows the
 //! batch's selection excludes are computed but never fail the batch.
 
+use std::borrow::Cow;
+
 use chrono::{NaiveDateTime, Timelike as _};
 use pintail_sql::{DatePart, IntervalUnit, ScalarFunction};
 use pintail_types::{DataType, Value};
@@ -51,9 +53,8 @@ impl Temporal<'_> {
     }
 }
 
-/// The packed temporal units of column `index` of `batch`, when it has them.
-fn temporal_column(batch: &RecordBatch, index: usize) -> Option<Temporal<'_>> {
-    let column = batch.column(index)?;
+/// A column's packed temporal units, when it has them.
+fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
     let fsp = match column.data_type() {
         DataType::Date32 => None,
         DataType::DateTime64 { fsp } => Some(fsp),
@@ -97,7 +98,7 @@ impl CompiledExpr {
                 function: ScalarFunction::DatePart(part),
                 args,
                 ..
-            } => Ok(date_part_column(batch, args, *part, data_type)),
+            } => date_part_column(batch, args, *part, data_type),
             Self::Scalar {
                 function: ScalarFunction::DateInterval { unit, subtract },
                 args,
@@ -107,16 +108,56 @@ impl CompiledExpr {
                 function: function @ (ScalarFunction::Date | ScalarFunction::LastDay),
                 args,
                 ..
-            } => Ok(date_of_column(batch, args, *function, data_type)),
+            } => date_of_column(batch, args, *function, data_type),
             Self::Scalar {
                 function:
                     function @ (ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. }),
                 args,
                 ..
-            } => Ok(difference_column(batch, args, *function, data_type)),
+            } => difference_column(batch, args, *function, data_type),
             _ => Ok(None),
         }
     }
+}
+
+/// The type an expression node declares for its answer; a column or a
+/// constant declares none of its own.
+fn declared(expr: &CompiledExpr) -> Option<DataType> {
+    match expr {
+        CompiledExpr::Unary { data_type, .. }
+        | CompiledExpr::Binary { data_type, .. }
+        | CompiledExpr::Scalar { data_type, .. } => *data_type,
+        _ => None,
+    }
+}
+
+/// One argument of a batch kernel, evaluated over the batch: a column the
+/// batch holds or a kernel produced, or a constant.
+enum Operand<'batch> {
+    Column(Cow<'batch, ColumnVector>),
+    Constant(&'batch Value),
+}
+
+impl Operand<'_> {
+    const fn varies(&self) -> bool {
+        matches!(self, Self::Column(_))
+    }
+}
+
+/// `argument` over `batch`, or `None` when no kernel evaluates it.
+fn operand<'batch>(
+    batch: &'batch RecordBatch,
+    argument: &'batch CompiledExpr,
+) -> Result<Option<Operand<'batch>>, ExecError> {
+    Ok(match argument {
+        CompiledExpr::Column(index) => batch
+            .column(*index)
+            .map(|column| Operand::Column(Cow::Borrowed(column))),
+        CompiledExpr::Literal(value) => Some(Operand::Constant(value)),
+        nested => nested
+            .evaluate_column(batch, declared(nested))?
+            .map(|column| Operand::Column(Cow::Owned(column))),
+    })
 }
 
 /// One date-time argument of a batch kernel: a packed temporal column, or
@@ -143,13 +184,13 @@ impl Moment<'_> {
     }
 }
 
-fn moment<'batch>(batch: &'batch RecordBatch, argument: &CompiledExpr) -> Option<Moment<'batch>> {
-    match argument {
-        CompiledExpr::Column(index) => temporal_column(batch, *index).map(Moment::Column),
-        CompiledExpr::Literal(Value::Utf8(text)) => super::temporal::parse_mysql_datetime(text)
+fn moment<'operand>(operand: &'operand Operand<'_>) -> Option<Moment<'operand>> {
+    match operand {
+        Operand::Column(column) => temporal_column(column).map(Moment::Column),
+        Operand::Constant(Value::Utf8(text)) => super::temporal::parse_mysql_datetime(text)
             .ok()
             .map(Moment::Fixed),
-        _ => None,
+        Operand::Constant(_) => None,
     }
 }
 
@@ -159,15 +200,26 @@ fn date_of_column(
     args: &[CompiledExpr],
     function: ScalarFunction,
     data_type: Option<DataType>,
-) -> Option<ColumnVector> {
-    use chrono::Datelike as _;
-    let [argument @ CompiledExpr::Column(_)] = args else {
-        return None;
+) -> Result<Option<ColumnVector>, ExecError> {
+    let [argument] = args else {
+        return Ok(None);
     };
     if data_type != Some(DataType::Date32) {
-        return None;
+        return Ok(None);
     }
-    let input = moment(batch, argument)?;
+    let Some(input) = operand(batch, argument)?.filter(Operand::varies) else {
+        return Ok(None);
+    };
+    Ok(dates_of(batch, &input, function))
+}
+
+fn dates_of(
+    batch: &RecordBatch,
+    input: &Operand<'_>,
+    function: ScalarFunction,
+) -> Option<ColumnVector> {
+    use chrono::Datelike as _;
+    let input = moment(input)?;
     let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)?;
     let mut days = Vec::with_capacity(batch.row_count());
     let mut valid = Vec::with_capacity(batch.row_count());
@@ -217,18 +269,30 @@ fn difference_column(
     args: &[CompiledExpr],
     function: ScalarFunction,
     data_type: Option<DataType>,
-) -> Option<ColumnVector> {
+) -> Result<Option<ColumnVector>, ExecError> {
     let [left, right] = args else {
-        return None;
+        return Ok(None);
+    };
+    if data_type != Some(DataType::Int64) {
+        return Ok(None);
+    }
+    let (Some(left), Some(right)) = (operand(batch, left)?, operand(batch, right)?) else {
+        return Ok(None);
     };
     // At least one side varies by row, or there is nothing to vectorize.
-    if !matches!(left, CompiledExpr::Column(_)) && !matches!(right, CompiledExpr::Column(_)) {
-        return None;
+    if !left.varies() && !right.varies() {
+        return Ok(None);
     }
-    if data_type != Some(DataType::Int64) {
-        return None;
-    }
-    let (left, right) = (moment(batch, left)?, moment(batch, right)?);
+    Ok(differences_of(batch, &left, &right, function))
+}
+
+fn differences_of(
+    batch: &RecordBatch,
+    left: &Operand<'_>,
+    right: &Operand<'_>,
+    function: ScalarFunction,
+) -> Option<ColumnVector> {
+    let (left, right) = (moment(left)?, moment(right)?);
     let mut differences = Vec::with_capacity(batch.row_count());
     let mut valid = Vec::with_capacity(batch.row_count());
     for row in 0..batch.row_count() {
@@ -258,16 +322,23 @@ fn date_part_column(
     args: &[CompiledExpr],
     part: DatePart,
     data_type: Option<DataType>,
-) -> Option<ColumnVector> {
-    let [CompiledExpr::Column(index)] = args else {
-        return None;
+) -> Result<Option<ColumnVector>, ExecError> {
+    let [argument] = args else {
+        return Ok(None);
     };
     // Row evaluation answers a plain integer.
     let declared = data_type.unwrap_or(DataType::Int64);
     if declared.storage_type() != DataType::Int64 {
-        return None;
+        return Ok(None);
     }
-    let input = temporal_column(batch, *index)?;
+    let Some(Operand::Column(input)) = operand(batch, argument)? else {
+        return Ok(None);
+    };
+    Ok(parts_of(&input, part, declared))
+}
+
+fn parts_of(input: &ColumnVector, part: DatePart, declared: DataType) -> Option<ColumnVector> {
+    let input = temporal_column(input)?;
     let mut parts = Vec::with_capacity(input.units.len());
     let mut valid = Vec::with_capacity(input.units.len());
     for row in 0..input.units.len() {
@@ -295,10 +366,13 @@ fn date_interval_column(
     subtract: bool,
     data_type: Option<DataType>,
 ) -> Result<Option<ColumnVector>, ExecError> {
-    let [CompiledExpr::Column(index), CompiledExpr::Literal(amount)] = args else {
+    let [argument, CompiledExpr::Literal(amount)] = args else {
         return Ok(None);
     };
-    let Some(input) = temporal_column(batch, *index) else {
+    let Some(Operand::Column(input)) = operand(batch, argument)? else {
+        return Ok(None);
+    };
+    let Some(input) = temporal_column(&input) else {
         return Ok(None);
     };
     // A NULL amount makes every row NULL; that is row evaluation's to say.
@@ -686,6 +760,101 @@ mod tests {
                         "{function:?} {args:?} has a kernel"
                     );
                 }
+            }
+        }
+    }
+
+    /// A kernel's argument may itself be a kernel's answer: the nested
+    /// expression is evaluated a batch at a time and read as packed units.
+    #[test]
+    fn nested_kernels_match_row_evaluation() {
+        let shift = |fsp: Option<u8>, unit: IntervalUnit, amount: i64| {
+            let declared = match (fsp, unit) {
+                (None, IntervalUnit::Year | IntervalUnit::Month | IntervalUnit::Day) => {
+                    DataType::Date32
+                }
+                _ => DataType::DateTime64 {
+                    fsp: fsp.unwrap_or(0),
+                },
+            };
+            scalar(
+                ScalarFunction::DateInterval {
+                    unit,
+                    subtract: amount < 0,
+                },
+                vec![
+                    CompiledExpr::Column(0),
+                    CompiledExpr::Literal(Value::Int64(amount.abs())),
+                ],
+                declared,
+            )
+        };
+        for fsp in [None, Some(0), Some(6)] {
+            let batch = batch(temporal_from(&ORDINARY, fsp));
+            let last_day = scalar(
+                ScalarFunction::LastDay,
+                vec![CompiledExpr::Column(0)],
+                DataType::Date32,
+            );
+            let expressions = [
+                (
+                    scalar(
+                        ScalarFunction::DateDiff,
+                        vec![last_day.clone(), CompiledExpr::Column(0)],
+                        DataType::Int64,
+                    ),
+                    DataType::Int64,
+                ),
+                (
+                    scalar(
+                        ScalarFunction::TimestampDiff {
+                            unit: IntervalUnit::Second,
+                        },
+                        vec![CompiledExpr::Column(0), shift(fsp, IntervalUnit::Day, 1)],
+                        DataType::Int64,
+                    ),
+                    DataType::Int64,
+                ),
+                (
+                    scalar(
+                        ScalarFunction::DateDiff,
+                        vec![shift(fsp, IntervalUnit::Month, -1), last_day.clone()],
+                        DataType::Int64,
+                    ),
+                    DataType::Int64,
+                ),
+                (
+                    scalar(
+                        ScalarFunction::DatePart(DatePart::Quarter),
+                        vec![shift(fsp, IntervalUnit::Month, 1)],
+                        DataType::Int64,
+                    ),
+                    DataType::Int64,
+                ),
+                (
+                    scalar(
+                        ScalarFunction::Date,
+                        vec![shift(fsp, IntervalUnit::Hour, -30)],
+                        DataType::Date32,
+                    ),
+                    DataType::Date32,
+                ),
+                (
+                    shift(fsp, IntervalUnit::Day, 3),
+                    if fsp.is_none() {
+                        DataType::Date32
+                    } else {
+                        DataType::DateTime64 {
+                            fsp: fsp.unwrap_or(0),
+                        }
+                    },
+                ),
+            ];
+            for (expression, declared) in &expressions {
+                assert!(
+                    agrees_with_rows(expression, &batch, *declared),
+                    "{expression:?} over {fsp:?} has a kernel"
+                );
             }
         }
     }
