@@ -290,6 +290,8 @@ pub(crate) enum CompiledExpr {
         op: UnaryOp,
         expr: Box<Self>,
         data_type: Option<DataType>,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
     Binary {
         op: BinaryOp,
@@ -300,6 +302,8 @@ pub(crate) enum CompiledExpr {
         /// Comparison is the one operation here whose answer depends on it,
         /// and the node is the smallest thing that knows it needs one.
         collation: Collation,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
     IsNull {
         expr: Box<Self>,
@@ -313,6 +317,8 @@ pub(crate) enum CompiledExpr {
         data_type: Option<DataType>,
         /// Needed by `IN`, which compares its needle against every element.
         collation: Collation,
+        /// `MySQL`'s message should this node leave its type's range.
+        overflow: Option<std::sync::Arc<str>>,
     },
 }
 
@@ -428,6 +434,7 @@ impl DecimalRational {
 
     fn divide(self, other: Self) -> Result<Option<Self>, ExecError> {
         if other.numerator == 0 {
+            crate::execution::note_division_by_zero();
             return Ok(None);
         }
         let numerator_cancel = decimal_gcd(self.numerator, other.numerator)?;
@@ -774,6 +781,7 @@ impl CompiledExpr {
                 op: *op,
                 expr: Box::new(Self::compile(child, columns, collation)?),
                 data_type: expr.data_type,
+                overflow: overflow_message(expr),
             }),
             // The node's OWN operands decide how it compares, not the plan.
             // A query may hold a general_ci join beside a 0900_ai_ci grouping;
@@ -791,6 +799,7 @@ impl CompiledExpr {
                     .text_collation()
                     .and_then(Collation::from_mysql_name)
                     .unwrap_or(collation),
+                overflow: overflow_message(expr),
             }),
             BoundExprKind::IsNull {
                 expr: child,
@@ -814,6 +823,7 @@ impl CompiledExpr {
                         .text_collation()
                         .and_then(Collation::from_mysql_name)
                         .unwrap_or(collation),
+                    overflow: overflow_message(expr),
                 })
             }
             BoundExprKind::ScalarSubquery(_)
@@ -837,6 +847,7 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type,
+                overflow: _,
             } => Some(format!(
                 "u{op:?}({}){data_type:?}",
                 expr.deterministic_signature()?
@@ -847,6 +858,7 @@ impl CompiledExpr {
                 right,
                 data_type,
                 collation: _,
+                overflow: _,
             } => Some(format!(
                 "b{op:?}({},{}){data_type:?}",
                 left.deterministic_signature()?,
@@ -862,6 +874,7 @@ impl CompiledExpr {
                 literal_regex: _,
                 data_type,
                 collation: _,
+                overflow: _,
             } => {
                 if matches!(
                     function,
@@ -886,6 +899,7 @@ impl CompiledExpr {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one arm per expression node
     pub(crate) fn evaluate(&self, batch: &RecordBatch, row: usize) -> Result<Value, ExecError> {
         match self {
             Self::PreparedIn {
@@ -915,9 +929,11 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type,
+                overflow,
             } => {
                 let value = expr.evaluate(batch, row)?;
                 evaluate_unary(*op, &value, *data_type)
+                    .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
             Self::Binary {
                 op,
@@ -925,6 +941,7 @@ impl CompiledExpr {
                 right,
                 data_type,
                 collation,
+                overflow,
             } => {
                 if let Some(DataType::Decimal { scale, .. }) = data_type
                     && matches!(
@@ -949,6 +966,7 @@ impl CompiledExpr {
                 let left = left.evaluate(batch, row)?;
                 let right = right.evaluate(batch, row)?;
                 evaluate_binary(*op, &left, &right, *data_type, *collation)
+                    .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
             Self::IsNull { expr, negated } => {
                 let is_null = matches!(expr.evaluate(batch, row)?, Value::Null);
@@ -961,6 +979,7 @@ impl CompiledExpr {
                 literal_regex,
                 data_type,
                 collation,
+                overflow,
             } => {
                 if let ScalarFunction::DatePart(part) = function
                     && let [argument] = args.as_slice()
@@ -990,6 +1009,7 @@ impl CompiledExpr {
                     row,
                     *collation,
                 )
+                .map_err(|error| out_of_range(error, overflow.as_ref()))
             }
         }
     }
@@ -1026,6 +1046,7 @@ impl CompiledExpr {
                 op,
                 expr,
                 data_type: Some(DataType::Decimal { .. }),
+                overflow: _,
             } if matches!(op, UnaryOp::Plus | UnaryOp::Minus) => {
                 let Some(value) = expr.evaluate_decimal_chain(batch, row)? else {
                     return Ok(None);
@@ -1045,6 +1066,7 @@ impl CompiledExpr {
                 right,
                 data_type: Some(DataType::Decimal { scale, .. }),
                 collation: _,
+                overflow: _,
             } if matches!(
                 op,
                 BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide
@@ -1171,6 +1193,7 @@ impl CompiledExpr {
                 argument_types: _,
                 literal_regex,
                 collation: _,
+                overflow: _,
             } => {
                 let string_arguments = args
                     .iter()
@@ -1276,6 +1299,7 @@ impl CompiledExpr {
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
+                    | ScalarFunction::SessionTimestamp
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
@@ -1463,6 +1487,7 @@ impl CompiledExpr {
                     | ScalarFunction::Curtime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
+                    | ScalarFunction::SessionTimestamp
                     | ScalarFunction::Char
                     | ScalarFunction::Rand
                     | ScalarFunction::Pi
@@ -3010,6 +3035,14 @@ fn evaluate_eager_scalar_inner(
             let to = scalar_string(&values[2])?;
             Ok(convert_tz(&text, &from, &to).map_or(Value::Null, Value::Utf8))
         }
+        ScalarFunction::SessionTimestamp => {
+            if matches!(values[0], Value::Null) {
+                return Ok(Value::Null);
+            }
+            let text = scalar_string(&values[0])?;
+            let zone = scalar_string(&values[1])?;
+            Ok(convert_tz(&text, "+00:00", &zone).map_or(Value::Null, Value::Utf8))
+        }
         ScalarFunction::Char => {
             let mut bytes = Vec::with_capacity(values.len() * 4);
             for value in values {
@@ -3446,7 +3479,7 @@ fn scalar_string(value: &Value) -> Result<String, ExecError> {
         Value::Boolean(value) => Ok(if *value { "1" } else { "0" }.to_owned()),
         Value::Int64(value) => Ok(value.to_string()),
         Value::UInt64(value) => Ok(value.to_string()),
-        Value::Float64(value) => Ok(value.get().to_string()),
+        Value::Float64(value) => Ok(value.mysql_text()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => Ok(value.clone()),
         Value::DecimalAverage(average) => {
             let value = &average.label;
@@ -3866,7 +3899,7 @@ fn divide_decimal(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
         (decimal_units_of(left), decimal_units_of(right))
     {
         if right_units == 0 {
-            return Ok(Value::Null);
+            return Ok(divided_by_zero());
         }
         // value = (lu/10^ls) / (ru/10^rs); at the target scale the numerator
         // carries 10^(target + rs - ls), which the binder's scale rule keeps
@@ -3896,7 +3929,7 @@ fn decimal_modulo(left: &Value, right: &Value, target: u8) -> Result<Value, Exec
         return decimal_modulo_wide(left, right, target);
     };
     if right_units == 0 {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let rescale = |units: i128, scale: u8| {
         (scale <= target)
@@ -4112,7 +4145,7 @@ fn divide_decimal_wide(left: &Value, right: &Value, target: u8) -> Result<Value,
         return Err(ExecError::NumericOverflow);
     };
     if right_units.is_zero() {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let units = u32::from(target)
         .checked_add(u32::from(right_scale))
@@ -4131,7 +4164,7 @@ fn decimal_modulo_wide(left: &Value, right: &Value, target: u8) -> Result<Value,
         return Err(ExecError::NumericOverflow);
     };
     if right_units.is_zero() {
-        return Ok(Value::Null);
+        return Ok(divided_by_zero());
     }
     let units = wide_rescale(left_units, left_scale, target)
         .zip(wide_rescale(right_units, right_scale, target))
@@ -5035,82 +5068,95 @@ fn parse_json_bound(text: &str) -> Result<JsonBound, ExecError> {
 /// goes through this, so a path cannot mean one thing in one function and
 /// something else in another.
 fn json_path_steps(path: &str) -> Result<Vec<JsonStep>, ExecError> {
-    let rest = path
-        .strip_prefix('$')
-        .ok_or(ExecError::InvalidExpressionType)?;
+    // A malformed path reports the position `MySQL`'s parser names: where it
+    // stood when the path stopped making sense. A missing `$` counts the
+    // character read in its place.
+    let invalid = |position: usize| ExecError::InvalidJsonPath { position };
+    let Some(rest) = path.strip_prefix('$') else {
+        return Err(invalid(usize::from(!path.is_empty())));
+    };
+    let end = path.len();
     let mut steps = Vec::new();
-    let mut chars = rest.chars().peekable();
-    while let Some(step) = chars.next() {
+    let mut chars = rest.char_indices().map(|(at, c)| (at + 1, c)).peekable();
+    loop {
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
+        let Some((at, step)) = chars.next() else {
+            break;
+        };
         match step {
             '.' => {
-                if chars.peek() == Some(&'*') {
-                    chars.next();
+                if chars.next_if(|&(_, c)| c == '*').is_some() {
                     steps.push(JsonStep::WildMember);
                     continue;
                 }
                 let mut key = String::new();
-                if chars.peek() == Some(&'"') {
-                    chars.next();
-                    for inner in chars.by_ref() {
+                if chars.next_if(|&(_, c)| c == '"').is_some() {
+                    let mut closed = false;
+                    for (_, inner) in chars.by_ref() {
                         if inner == '"' {
+                            closed = true;
                             break;
                         }
                         key.push(inner);
                     }
+                    if !closed {
+                        return Err(invalid(end));
+                    }
                 } else {
-                    while let Some(&next) = chars.peek() {
-                        if next == '.' || next == '[' {
-                            break;
-                        }
+                    while let Some((_, next)) =
+                        chars.next_if(|&(_, c)| !matches!(c, '.' | '[') && !c.is_whitespace())
+                    {
                         key.push(next);
-                        chars.next();
                     }
                 }
                 if key.is_empty() || key.contains('*') {
-                    return Err(ExecError::InvalidExpressionType);
+                    return Err(invalid(at + 1));
                 }
                 steps.push(JsonStep::Member(key));
             }
             '*' => {
                 // `**` is its own leg: `$**.b`. A single `*` here, or a
                 // path that ENDS with `**`, is invalid in MySQL too.
-                if chars.next() != Some('*') {
-                    return Err(ExecError::InvalidExpressionType);
+                if chars.next_if(|&(_, c)| c == '*').is_none() {
+                    return Err(invalid(at + 1));
                 }
                 if chars.peek().is_none() {
-                    return Err(ExecError::InvalidExpressionType);
+                    return Err(invalid(end));
                 }
                 steps.push(JsonStep::Descent);
             }
             '[' => {
                 let mut inside = String::new();
-                for inner in chars.by_ref() {
+                let mut closed = false;
+                for (_, inner) in chars.by_ref() {
                     if inner == ']' {
+                        closed = true;
                         break;
                     }
                     inside.push(inner);
                 }
+                if !closed {
+                    return Err(invalid(end));
+                }
+                let content = at + 1 + (inside.len() - inside.trim_start().len());
                 let inside = inside.trim();
+                let bound = |text: &str| parse_json_bound(text).map_err(|_| invalid(content));
                 if inside == "*" {
                     steps.push(JsonStep::WildIndex);
                 } else if let Some((from, to)) = inside.split_once(" to ") {
-                    steps.push(JsonStep::Range(
-                        parse_json_bound(from)?,
-                        parse_json_bound(to)?,
-                    ));
+                    steps.push(JsonStep::Range(bound(from)?, bound(to)?));
                 } else {
-                    steps.push(match parse_json_bound(inside)? {
+                    steps.push(match bound(inside)? {
                         JsonBound::Forward(index) => JsonStep::Index(index),
                         JsonBound::Last(back) => JsonStep::LastIndex(back),
                     });
                 }
             }
-            _ => return Err(ExecError::InvalidExpressionType),
+            _ => return Err(invalid(at)),
         }
     }
     Ok(steps)
 }
-
 /// Object members in `MySQL`'s binary-JSON order: shortest key first, then
 /// bytewise. Wildcard and descent traversal must agree with `JSON_KEYS`
 /// and the object renderer about what "document order" means.
@@ -5974,18 +6020,21 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left * right,
                 BinaryOp::Divide => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     left / right
                 }
                 BinaryOp::IntegerDivide => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     (left / right).trunc()
                 }
                 BinaryOp::Modulo => {
                     if right == 0.0 {
+                        crate::execution::note_division_by_zero();
                         return Ok(Value::Null);
                     }
                     left % right
@@ -6029,9 +6078,9 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left.checked_mul(right),
                 BinaryOp::IntegerDivide if right != 0 => Some(left / right),
                 BinaryOp::Modulo if right != 0 => Some(left % right),
-                BinaryOp::Divide if right == 0 => return Ok(Value::Null),
+                BinaryOp::Divide if right == 0 => return Ok(divided_by_zero()),
                 BinaryOp::IntegerDivide | BinaryOp::Modulo if right == 0 => {
-                    return Ok(Value::Null);
+                    return Ok(divided_by_zero());
                 }
                 _ => None,
             };
@@ -6046,9 +6095,9 @@ fn evaluate_arithmetic(
                 BinaryOp::Multiply => left.checked_mul(right),
                 BinaryOp::IntegerDivide if right != 0 => left.checked_div(right),
                 BinaryOp::Modulo if right != 0 => left.checked_rem(right),
-                BinaryOp::Divide if right == 0 => return Ok(Value::Null),
+                BinaryOp::Divide if right == 0 => return Ok(divided_by_zero()),
                 BinaryOp::IntegerDivide | BinaryOp::Modulo if right == 0 => {
-                    return Ok(Value::Null);
+                    return Ok(divided_by_zero());
                 }
                 _ => None,
             };
@@ -6252,6 +6301,27 @@ fn parse_mysql_number(value: &str) -> f64 {
         end = exponent;
     }
     value[..end].parse().unwrap_or(0.0)
+}
+
+/// `MySQL`'s out-of-range message for an arithmetic node, computed while
+/// the bound expression still names its columns.
+fn overflow_message(expr: &pintail_sql::BoundExpr) -> Option<std::sync::Arc<str>> {
+    expr.out_of_range_message().map(std::sync::Arc::from)
+}
+
+/// A node's own overflow, reported with `MySQL`'s message when it has one.
+/// An operand's error has already been named by the operand.
+fn out_of_range(error: ExecError, overflow: Option<&std::sync::Arc<str>>) -> ExecError {
+    match (error, overflow) {
+        (ExecError::NumericOverflow, Some(message)) => ExecError::OutOfRange(message.to_string()),
+        (error, _) => error,
+    }
+}
+
+/// The NULL a division by zero answers, counted as `MySQL`'s warning 1365.
+fn divided_by_zero() -> Value {
+    crate::execution::note_division_by_zero();
+    Value::Null
 }
 
 #[cfg(test)]
@@ -7091,6 +7161,7 @@ mod tests {
             right: Box::new(CompiledExpr::Literal(Value::Utf8("2024-01-01".to_owned()))),
             data_type: Some(DataType::Boolean),
             collation: Collation::default(),
+            overflow: None,
         };
         let between = CompiledExpr::Scalar {
             function: ScalarFunction::Between { negated: false },
@@ -7107,6 +7178,7 @@ mod tests {
             ],
             literal_regex: None,
             collation: Collation::default(),
+            overflow: None,
         };
 
         assert_eq!(
@@ -7161,5 +7233,32 @@ mod tests {
         assert_eq!(convert("2026-06-15 10:00:00", "Bad/Zone", "UTC"), None);
         assert_eq!(convert("not a datetime", "+00:00", "+01:00"), None);
         assert_eq!(convert("2026-06-15 10:00:00", "+15:00", "+00:00"), None);
+    }
+
+    #[test]
+    fn a_malformed_json_path_names_mysqls_character_position() {
+        // Positions MySQL 8.4 reports for the same paths.
+        for (path, position) in [
+            ("$[", 2),
+            ("abc", 1),
+            ("$.", 2),
+            ("$..a", 2),
+            ("$[a]", 2),
+            ("$.a[", 4),
+            ("$**", 3),
+            ("", 0),
+            ("$ x", 2),
+            ("$.a.b[1", 7),
+        ] {
+            assert!(
+                matches!(
+                    super::json_path_steps(path),
+                    Err(super::ExecError::InvalidJsonPath { position: at }) if at == position
+                ),
+                "{path}"
+            );
+        }
+        assert!(super::json_path_steps("$.a[0].b").is_ok());
+        assert!(super::json_path_steps("$**.b").is_ok());
     }
 }

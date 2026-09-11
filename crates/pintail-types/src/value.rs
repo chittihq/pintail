@@ -119,6 +119,20 @@ impl Float64 {
         f64::from_bits(self.0)
     }
 
+    /// The value as `MySQL` prints a DOUBLE: the shortest digits that read
+    /// back to it, in fixed notation from 1e-15 up to 1e15 and in exponent
+    /// notation (`1e20`, `1.5e-16`) outside that range.
+    #[must_use]
+    pub fn mysql_text(self) -> String {
+        let value = self.get();
+        let magnitude = value.abs();
+        if magnitude != 0.0 && !(1e-15..1e15).contains(&magnitude) {
+            format!("{value:e}")
+        } else {
+            value.to_string()
+        }
+    }
+
     /// Returns the original IEEE-754 bits.
     #[must_use]
     pub fn to_bits(self) -> u64 {
@@ -151,6 +165,10 @@ impl std::hash::Hash for Float64 {
         self.0.hash(state);
     }
 }
+
+/// The widest DECIMAL the store keeps as native scaled integers (it fits an
+/// `i64`); wider columns are stored as canonical text.
+pub const NATIVE_DECIMAL_MAX_PRECISION: u8 = 18;
 
 /// The scaled sum and count retained by a finished decimal average.
 #[derive(
@@ -340,6 +358,29 @@ impl std::hash::Hash for Value {
 mod tests {
     use super::{DecimalQuotient, Value};
     use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn a_double_prints_as_mysql_prints_it() {
+        // Measured against MySQL 8.4.
+        for (value, text) in [
+            (3.131_521_611_192e19, "3.131521611192e19"),
+            (6.4e9, "6400000000"),
+            (1e14, "100000000000000"),
+            (999_999_999_999_999.9, "999999999999999.9"),
+            (1e15, "1e15"),
+            (1e-15, "0.000000000000001"),
+            (1.5e-16, "1.5e-16"),
+            (-1e20, "-1e20"),
+            (0.1, "0.1"),
+            (1.0 / 3.0, "0.3333333333333333"),
+            (100.0, "100"),
+            (-0.0, "-0"),
+            (5e-324, "5e-324"),
+            (1.797_693_134_862_315_7e308, "1.7976931348623157e308"),
+        ] {
+            assert_eq!(super::Float64::new(value).mysql_text(), text, "{value}");
+        }
+    }
 
     #[test]
     fn decimal_precision_does_not_change_scalar_identity_or_layout() {

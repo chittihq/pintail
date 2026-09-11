@@ -81,6 +81,9 @@ pub(crate) struct SharedQueryKey {
     pub(crate) collation: &'static str,
     pub(crate) group_concat_max_len: usize,
     pub(crate) cte_max_recursion_depth: u64,
+    /// The session's `sql_mode` flags: the same text binds to a different
+    /// statement, or evaluates differently, under another mode.
+    pub(crate) parse_mode: pintail_sql::ParseMode,
 }
 
 impl SharedQueryKey {
@@ -96,6 +99,7 @@ impl SharedQueryKey {
             collation: pintail_sql::session_default_collation(),
             group_concat_max_len: pintail_exec::session_group_concat_max_len(),
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
+            parse_mode: pintail_sql::session_parse_mode(),
         }
     }
 }
@@ -378,6 +382,7 @@ mod tests {
             collation: "utf8mb4_0900_ai_ci",
             group_concat_max_len: 1024,
             cte_max_recursion_depth: 1000,
+            parse_mode: pintail_sql::ParseMode::default(),
         }
     }
 
@@ -469,6 +474,13 @@ mod tests {
             },
             SharedQueryKey {
                 cte_max_recursion_depth: 10,
+                ..base.clone()
+            },
+            SharedQueryKey {
+                parse_mode: pintail_sql::ParseMode {
+                    no_unsigned_subtraction: true,
+                    ..pintail_sql::ParseMode::default()
+                },
                 ..base.clone()
             },
         ];

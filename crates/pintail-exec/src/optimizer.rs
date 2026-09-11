@@ -487,11 +487,13 @@ pub fn session_time_zone_key() -> Option<String> {
 pub fn set_session_time_zone(zone: Option<&str>) -> bool {
     let Some(zone) = zone else {
         SESSION_TIME_ZONE.set(None);
+        pintail_sql::set_session_timestamp_zone(None);
         return true;
     };
     let trimmed = zone.trim();
     if trimmed.eq_ignore_ascii_case("system") {
         SESSION_TIME_ZONE.set(None);
+        pintail_sql::set_session_timestamp_zone(None);
         return true;
     }
     if trimmed.starts_with(['+', '-']) {
@@ -515,12 +517,15 @@ pub fn set_session_time_zone(zone: Option<&str>) -> bool {
             return false;
         };
         SESSION_TIME_ZONE.set(Some(SessionZone::Fixed(offset)));
+        // Stored TIMESTAMP values are UTC: only another offset converts them.
+        pintail_sql::set_session_timestamp_zone((seconds != 0).then_some(trimmed));
         return true;
     }
     let Ok(zone) = chrono_tz::Tz::from_str_insensitive(trimmed) else {
         return false;
     };
     SESSION_TIME_ZONE.set(Some(SessionZone::Named(zone)));
+    pintail_sql::set_session_timestamp_zone(Some(zone.name()));
     true
 }
 
@@ -595,6 +600,42 @@ fn fold_binary(
     }
 }
 
+/// Folds a binary node whose operands fold to constants. A constant that
+/// cannot evaluate - an overflow - fails the same way at run time; its
+/// operands stay as written, so the error prints the expression the
+/// statement wrote, as `MySQL`'s does.
+fn fold_arithmetic(
+    op: BinaryOp,
+    left: BoundExpr,
+    right: BoundExpr,
+    data_type: Option<DataType>,
+    nullable: bool,
+) -> BoundExpr {
+    let (written_left, written_right) = (left.clone(), right.clone());
+    let folded = fold_binary(op, fold_expr(left), fold_expr(right), data_type, nullable);
+    if let Some(value) = evaluate_constant(&folded) {
+        return BoundExpr {
+            nullable: matches!(value, Value::Null),
+            data_type: folded.data_type.or_else(|| value.data_type()),
+            kind: BoundExprKind::Literal(value),
+        };
+    }
+    if let BoundExprKind::Binary { left, right, .. } = &folded.kind
+        && matches!(left.kind, BoundExprKind::Literal(_))
+        && matches!(right.kind, BoundExprKind::Literal(_))
+    {
+        return BoundExpr {
+            kind: BoundExprKind::Binary {
+                op,
+                left: Box::new(written_left),
+                right: Box::new(written_right),
+            },
+            ..folded
+        };
+    }
+    folded
+}
+
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     // Keep exact-decimal arithmetic as a tree. The executor evaluates a
     // chain as one reduced rational so enclosing operations see MySQL's
@@ -642,13 +683,9 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             data_type: expr.data_type,
             nullable: expr.nullable,
         },
-        BoundExprKind::Binary { op, left, right } => fold_binary(
-            op,
-            fold_expr(*left),
-            fold_expr(*right),
-            expr.data_type,
-            expr.nullable,
-        ),
+        BoundExprKind::Binary { op, left, right } => {
+            return fold_arithmetic(op, *left, *right, expr.data_type, expr.nullable);
+        }
         BoundExprKind::IsNull {
             expr: child,
             negated,

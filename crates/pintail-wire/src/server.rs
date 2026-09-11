@@ -605,7 +605,6 @@ const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     "IGNORE_SPACE",
     // Evaluation.
     "REAL_AS_FLOAT",
-    "NO_UNSIGNED_SUBTRACTION",
     // Would ask ingestion to keep values it normalizes to NULL.
     "ALLOW_INVALID_DATES",
 ];
@@ -642,6 +641,55 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// One entry of a statement's diagnostics area.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Condition {
+    level: &'static str,
+    code: u16,
+    message: String,
+}
+
+/// `MySQL`'s default `max_error_count`: the conditions a diagnostics area
+/// lists.
+const MAX_LISTED_CONDITIONS: usize = 1024;
+
+/// The diagnostics area a statement leaves: its error, or its warnings.
+fn statement_conditions(
+    result: &Result<QueryOutput, QueryError>,
+    group_concat: u64,
+    division: u64,
+) -> (Vec<Condition>, u64) {
+    if let Err(error) = result {
+        let condition = Condition {
+            level: "Error",
+            code: error_kind(error).code(),
+            message: error.to_string(),
+        };
+        return (vec![condition], 1);
+    }
+    let warning = |code: u16, message: String| Condition {
+        level: "Warning",
+        code,
+        message,
+    };
+    let conditions = (0..division)
+        .map(|_| warning(1365, "Division by 0".to_owned()))
+        .chain(
+            (1..=group_concat)
+                .map(|row| warning(1260, format!("Row {row} was cut by GROUP_CONCAT()"))),
+        )
+        .take(MAX_LISTED_CONDITIONS)
+        .collect();
+    (conditions, division.saturating_add(group_concat))
+}
+
+/// Whether a comma-separated `sql_mode` holds `mode`.
+fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
+    sql_mode
+        .split(',')
+        .any(|member| member.trim().eq_ignore_ascii_case(mode))
+}
+
 /// Per-connection session variables with real semantics: `time_zone`
 /// shifts the statement-pinned time functions, `NAMES` accepts only the
 /// utf8 charsets Pintail actually serves, and `sql_mode` accepts only
@@ -663,7 +711,11 @@ struct Session {
     /// negotiates `utf8mb4_unicode_ci`, approximated by `general_ci` (both
     /// are case-insensitive PAD SPACE; their UCA weights differ in corners).
     collation_connection: &'static str,
-    group_concat_warnings: u64,
+    /// The last statement's conditions, as `SHOW WARNINGS` lists them.
+    conditions: Vec<Condition>,
+    /// How many conditions the last statement raised, including any past
+    /// the listed ones.
+    condition_count: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
 }
@@ -681,7 +733,8 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             charset_byte: 255,
             group_concat_max_len: 1024,
             collation_connection: "utf8mb4_0900_ai_ci",
-            group_concat_warnings: 0,
+            conditions: Vec::new(),
+            condition_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
         }
@@ -703,6 +756,10 @@ struct Authenticated {
     /// would tell a client its writes were transactional when each of them
     /// autocommitted.
     local: bool,
+    /// The source's `@@global.time_zone`: a session starts in it, as it
+    /// would on the source. Absent for a source probed before it was
+    /// recorded, which keeps `SYSTEM`.
+    source_time_zone: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -720,6 +777,17 @@ struct Prepared {
     /// parameters, EXECUTE on a statement that received one rejects
     /// explicitly.
     used_long_data: bool,
+    /// Which parameters sit in a LIMIT or OFFSET, where `MySQL` refuses a
+    /// floating-point value.
+    limit_parameters: Vec<bool>,
+    /// Which parameters are the operand of `CAST(? AS SIGNED|UNSIGNED)`.
+    integer_cast_parameters: Vec<bool>,
+    /// Result columns that read parameters, by projection position.
+    parameter_columns: Vec<Option<ParameterColumn>>,
+    /// Each result column's nullability with every parameter NULL: a
+    /// column that depends on a parameter is nullable, whatever value a
+    /// later EXECUTE binds.
+    nullable: Vec<bool>,
 }
 
 struct Backend {
@@ -858,7 +926,9 @@ impl Backend {
             database_name: database.name,
             key_name: key.name,
             local: database.kind == "local",
+            source_time_zone: source_time_zone(database.probe_json.as_deref()),
         });
+        self.start_in_source_zone();
         Ok(true)
     }
 
@@ -879,8 +949,32 @@ impl Backend {
         )
     }
 
+    /// A new session's state: the defaults, in the source's global time
+    /// zone when its probe recorded one.
+    fn fresh_session(&self) -> Session {
+        let zone = self.authentication.lock().ok().and_then(|current| {
+            current
+                .as_ref()
+                .and_then(|authenticated| authenticated.source_time_zone.clone())
+        });
+        Session {
+            time_zone: zone.unwrap_or_else(|| Session::default().time_zone),
+            ..Session::default()
+        }
+    }
+
+    /// Starts the session in the source's global time zone, as a new
+    /// session on the source would.
+    fn start_in_source_zone(&self) {
+        let zone = self.fresh_session().time_zone;
+        if let Ok(mut session) = self.session.lock() {
+            session.time_zone = zone;
+        }
+    }
+
     fn reset_session_state(&mut self) -> io::Result<()> {
-        *self.session.lock().map_err(io_other)? = Session::default();
+        let fresh = self.fresh_session();
+        *self.session.lock().map_err(io_other)? = fresh;
         self.prepared.clear();
         self.prepared_bytes = 0;
         self.next_statement_id = 1;
@@ -999,7 +1093,10 @@ impl Backend {
                     let result = engine
                         .execute_with_deadline(&database_id, &sql, max_result_rows(), deadline)
                         .and_then(refuse_truncated);
-                    let warnings = pintail_exec::take_session_group_concat_warnings();
+                    let warnings = (
+                        pintail_exec::take_session_group_concat_warnings(),
+                        pintail_exec::take_session_division_warnings(),
+                    );
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
@@ -1012,7 +1109,15 @@ impl Backend {
         .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
         cancel_on_drop.disarm();
         if let Ok(mut current) = self.session.lock() {
-            current.group_concat_warnings = execution.1;
+            // Division by zero is a warning only under ERROR_FOR_DIVISION_BY_ZERO.
+            let (group_concat, division) = execution.1;
+            let division = if sql_mode_has(&current.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO") {
+                division
+            } else {
+                0
+            };
+            (current.conditions, current.condition_count) =
+                statement_conditions(&execution.0, group_concat, division);
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
@@ -1311,13 +1416,17 @@ impl Handler for Backend {
         let Ok(Ok(Some(authenticated))) = verified else {
             return false;
         };
-        match self.authentication.lock() {
+        let stored = match self.authentication.lock() {
             Ok(mut current) => {
                 *current = Some(authenticated);
                 true
             }
             Err(_) => false,
+        };
+        if stored {
+            self.start_in_source_zone();
         }
+        stored
     }
 
     fn full_auth_public_key(&self) -> Option<Vec<u8>> {
@@ -1392,12 +1501,17 @@ impl Handler for Backend {
             .lock()
             .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
             .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?;
-        let (parameters, preview) = pintail_sql::with_parse_mode(parse_mode, || {
-            (
-                placeholder_count(sql),
-                substitute_parameters(sql, &placeholder_preview_literals(sql)),
-            )
-        });
+        let (parameters, preview, limit_parameters, integer_cast_parameters, parameter_columns) =
+            pintail_sql::with_parse_mode(parse_mode, || {
+                let previews = placeholder_preview_literals(sql);
+                (
+                    placeholder_count(sql),
+                    substitute_parameters(sql, &previews),
+                    previews.iter().map(|preview| preview == "0").collect(),
+                    integer_cast_parameters(sql),
+                    parameter_columns(sql),
+                )
+            });
         let preview = preview.map_err(|error| (ErrorKind::ErParseError, error))?;
         let output = Backend::execute(self, &preview)
             .await
@@ -1413,6 +1527,10 @@ impl Handler for Backend {
                 parameters,
                 parameter_types: None,
                 used_long_data: false,
+                limit_parameters,
+                integer_cast_parameters,
+                parameter_columns,
+                nullable: output.fields.iter().map(|field| field.nullable).collect(),
             },
         );
         let (group_concat_max_len, charset, negotiated) =
@@ -1471,10 +1589,32 @@ impl Handler for Backend {
         if let Some(entry) = self.prepared.get_mut(&id) {
             entry.parameter_types = Some(types);
         }
+        // MySQL refuses a LIMIT or OFFSET bound to a floating-point value.
+        if statement
+            .limit_parameters
+            .iter()
+            .zip(&values)
+            .any(|(limit, value)| {
+                *limit && matches!(value, BinaryValue::Float(_) | BinaryValue::Double(_))
+            })
+        {
+            return Response::Error(
+                ErrorKind::ErWrongArguments,
+                "Incorrect arguments to mysqld_stmt_execute".to_owned(),
+            );
+        }
         let literals = match values
             .iter()
-            .map(|value| {
-                pintail_sql::with_parse_mode(statement.parse_mode, || parameter_literal(value))
+            .enumerate()
+            .map(|(index, value)| match value {
+                BinaryValue::Bytes(bytes)
+                    if statement.integer_cast_parameters.get(index) == Some(&true) =>
+                {
+                    Ok(parameter_integer(&String::from_utf8_lossy(bytes)).to_string())
+                }
+                value => {
+                    pintail_sql::with_parse_mode(statement.parse_mode, || parameter_literal(value))
+                }
             })
             .collect::<Result<Vec<_>, _>>()
         {
@@ -1493,8 +1633,15 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
+        let result = self
+            .execute_mode(&query, Some(statement.parse_mode))
+            .await
+            .map(|mut output| {
+                describe_parameters(&mut output, &statement, &values);
+                output
+            });
         query_output_to_response(
-            self.execute_mode(&query, Some(statement.parse_mode)).await,
+            result,
             group_concat_max_len,
             &charset,
             negotiated,
@@ -1571,6 +1718,8 @@ impl Handler for Backend {
             return false;
         };
         *current = Some(authenticated);
+        drop(current);
+        self.start_in_source_zone();
         true
     }
 }
@@ -1664,7 +1813,7 @@ fn text_column_value(value: &Value) -> Option<Vec<u8>> {
         Value::Boolean(value) => Some(i8::from(*value).to_string().into_bytes()),
         Value::Int64(value) => Some(value.to_string().into_bytes()),
         Value::UInt64(value) => Some(value.to_string().into_bytes()),
-        Value::Float64(value) => Some(value.get().to_string().into_bytes()),
+        Value::Float64(value) => Some(value.mysql_text().into_bytes()),
         // Clients see an ENUM as its label, exactly as MySQL sends it.
         Value::Utf8(value) | Value::Enum { label: value, .. } => Some(value.clone().into_bytes()),
         Value::DecimalAverage(average) => {
@@ -2201,6 +2350,8 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::TableExists => ErrorKind::ErTableExistsError,
             SqlRejection::DuplicateKey => ErrorKind::ErDupEntry,
             SqlRejection::NotNull => ErrorKind::ErBadNullError,
+            SqlRejection::SubqueryRows => ErrorKind::ErSubqueryNo1Row,
+            SqlRejection::InvalidJsonPath => ErrorKind::ErInvalidJsonPath,
         },
         QueryError::Interrupted => ErrorKind::ErQueryInterrupted,
         QueryError::Overloaded => ErrorKind::ErConCountError,
@@ -2235,7 +2386,7 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
 fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
     let normalized = sql.trim().trim_end_matches(';').trim().to_ascii_lowercase();
     if normalized.starts_with("show warnings") {
-        return Some(group_concat_warnings_output(session));
+        return Some(diagnostics_output(session));
     }
     let (name, value) = if matches!(
         normalized.as_str(),
@@ -2306,11 +2457,18 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             "@@group_concat_max_len",
             Value::UInt64(u64::try_from(session.group_concat_max_len).unwrap_or(u64::MAX)),
         )
-    } else if normalized.contains("@@warning_count") {
+    } else if normalized.contains("@@error_count") {
         (
-            "@@warning_count",
-            Value::UInt64(session.group_concat_warnings),
+            "@@error_count",
+            Value::UInt64(u64::from(
+                session
+                    .conditions
+                    .iter()
+                    .any(|condition| condition.level == "Error"),
+            )),
         )
+    } else if normalized.contains("@@warning_count") {
+        ("@@warning_count", Value::UInt64(session.condition_count))
     } else if normalized.contains("@@cte_max_recursion_depth") {
         (
             "@@cte_max_recursion_depth",
@@ -2354,24 +2512,35 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
     })
 }
 
-fn group_concat_warnings_output(session: &Session) -> QueryOutput {
+/// `SHOW WARNINGS`: the last statement's conditions, with `MySQL`'s column
+/// metadata (text columns carry 31 decimals; `Code` is an unsigned INT).
+fn diagnostics_output(session: &Session) -> QueryOutput {
+    let text = |name: &str, characters: u32| {
+        let mut column = Column::new(name.to_owned(), ColumnType::MysqlTypeVarString);
+        column.column_length = characters * 4;
+        // Any text set: the connection's result charset replaces it.
+        column.character_set = 255;
+        column.decimals = 31;
+        column.colflags.set(ColumnFlags::NOT_NULL_FLAG, true);
+        QueryField {
+            wire_column: Some(column),
+            name: name.to_owned(),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+            collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
+            group_concat: false,
+            geometry: false,
+            timestamp: false,
+            wire_hint: None,
+        }
+    };
     QueryOutput {
         fields: vec![
-            QueryField {
-                wire_column: None,
-                name: "Level".to_owned(),
-                data_type: Some(DataType::Utf8),
-                nullable: false,
-                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
-                group_concat: false,
-                geometry: false,
-                timestamp: false,
-                wire_hint: None,
-            },
+            text("Level", 7),
             QueryField {
                 wire_column: None,
                 name: "Code".to_owned(),
-                data_type: Some(DataType::UInt64),
+                data_type: Some(DataType::UInt32),
                 nullable: false,
                 collation: None,
                 group_concat: false,
@@ -2379,29 +2548,21 @@ fn group_concat_warnings_output(session: &Session) -> QueryOutput {
                 timestamp: false,
                 wire_hint: None,
             },
-            QueryField {
-                wire_column: None,
-                name: "Message".to_owned(),
-                data_type: Some(DataType::Utf8),
-                nullable: false,
-                collation: Some(DEFAULT_TEXT_COLLATION.to_owned()),
-                group_concat: false,
-                geometry: false,
-                timestamp: false,
-                wire_hint: None,
-            },
+            text("Message", 512),
         ],
-        rows: (1..=session.group_concat_warnings)
-            .map(|row| {
+        rows: session
+            .conditions
+            .iter()
+            .map(|condition| {
                 vec![
-                    Value::Utf8("Warning".to_owned()),
-                    Value::UInt64(1260),
-                    Value::Utf8(format!("Row {row} was cut by GROUP_CONCAT()")),
+                    Value::Utf8(condition.level.to_owned()),
+                    Value::UInt64(u64::from(condition.code)),
+                    Value::Utf8(condition.message.clone()),
                 ]
             })
             .collect(),
         stats: QueryStats {
-            rows: usize::try_from(session.group_concat_warnings).unwrap_or(usize::MAX),
+            rows: session.conditions.len(),
             ..QueryStats::default()
         },
         truncated: false,
@@ -2613,6 +2774,276 @@ fn placeholder_preview_literals(sql: &str) -> Vec<String> {
     previews
 }
 
+/// The width `MySQL` gives a string parameter it has no declared type for:
+/// `VARCHAR(16383)`, in characters.
+const STRING_PARAMETER_CHARACTERS: u64 = 16_383;
+
+/// A prepared statement's result column that reads parameters.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParameterColumn {
+    /// The parameters it reads, by position.
+    parameters: Vec<usize>,
+    /// The maximum width `MySQL` derives for it, in characters, when its
+    /// parameters are strings; `None` where no rule here derives one.
+    width: Option<u64>,
+}
+
+/// The result columns of a prepared `SELECT` that read parameters, by
+/// projection position. Empty when the projection's positions are unknown
+/// (a wildcard) or the statement is not a plain `SELECT`.
+fn parameter_columns(sql: &str) -> Vec<Option<ParameterColumn>> {
+    use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement, Value, visit_expressions};
+    let Ok(Statement::Query(query)) = pintail_sql::parse_statement(sql) else {
+        return Vec::new();
+    };
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return Vec::new();
+    };
+    let offsets = placeholder_offsets(sql);
+    let mut columns = Vec::new();
+    for item in &select.projection {
+        let (SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }) = item else {
+            return Vec::new();
+        };
+        let mut parameters = Vec::new();
+        let _ = visit_expressions(expr, |expr| {
+            if let Expr::Value(value) = expr
+                && matches!(value.value, Value::Placeholder(_))
+                && let Some(at) = byte_offset(sql, value.span.start.line, value.span.start.column)
+                && let Some(index) = offsets.iter().position(|offset| *offset == at)
+            {
+                parameters.push(index);
+            }
+            std::ops::ControlFlow::<()>::Continue(())
+        });
+        columns.push((!parameters.is_empty()).then(|| ParameterColumn {
+            parameters,
+            width: parameter_width(expr),
+        }));
+    }
+    columns
+}
+
+/// The byte offset of a one-based line and character column.
+fn byte_offset(sql: &str, line: u64, column: u64) -> Option<usize> {
+    let line = usize::try_from(line.checked_sub(1)?).ok()?;
+    let start = if line == 0 {
+        0
+    } else {
+        sql.match_indices('\n').nth(line - 1)?.0 + 1
+    };
+    let column = usize::try_from(column.checked_sub(1)?).ok()?;
+    sql[start..]
+        .char_indices()
+        .nth(column)
+        .map(|(at, _)| start + at)
+}
+
+/// `MySQL`'s character width for an expression over string parameters, for
+/// the handful of functions whose width follows their arguments.
+fn parameter_width(expr: &sqlparser::ast::Expr) -> Option<u64> {
+    use sqlparser::ast::{Expr, FunctionArg, FunctionArgExpr, FunctionArguments, Value};
+    match expr {
+        Expr::Value(value) => match &value.value {
+            Value::Placeholder(_) => Some(STRING_PARAMETER_CHARACTERS),
+            Value::SingleQuotedString(text) | Value::DoubleQuotedString(text) => {
+                u64::try_from(text.chars().count()).ok()
+            }
+            _ => None,
+        },
+        Expr::Nested(inner) => parameter_width(inner),
+        Expr::Function(function) => {
+            let FunctionArguments::List(list) = &function.args else {
+                return None;
+            };
+            let arguments = list
+                .args
+                .iter()
+                .map(|argument| match argument {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => Some(expr),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let name = function.name.to_string().to_ascii_uppercase();
+            match (name.as_str(), arguments.as_slice()) {
+                ("HEX", [argument]) => parameter_width(argument)?.checked_mul(2),
+                (
+                    "UPPER" | "UCASE" | "LOWER" | "LCASE" | "LTRIM" | "RTRIM" | "REVERSE",
+                    [argument],
+                ) => parameter_width(argument),
+                ("CONCAT", arguments) if !arguments.is_empty() => arguments
+                    .iter()
+                    .map(|argument| parameter_width(argument))
+                    .sum(),
+                ("LEFT" | "RIGHT", [argument, Expr::Value(length)]) => {
+                    let Value::Number(length, _) = &length.value else {
+                        return None;
+                    };
+                    Some(parameter_width(argument)?.min(length.parse().ok()?))
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Which parameters are the direct operand of `CAST(? AS SIGNED|UNSIGNED)`.
+/// `MySQL` types such a parameter as BIGINT, so a string bound to it becomes
+/// an integer before the cast applies.
+fn integer_cast_parameters(sql: &str) -> Vec<bool> {
+    fn keyword<'a>(text: &'a [u8], word: &[u8]) -> Option<&'a [u8]> {
+        let rest = text.strip_prefix(word)?;
+        if rest
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            return None;
+        }
+        Some(rest.trim_ascii_start())
+    }
+    let code = sql_code_only(sql).to_ascii_lowercase();
+    placeholder_offsets(sql)
+        .into_iter()
+        .map(|offset| {
+            let Some(before) = code[..offset].trim_ascii_end().strip_suffix(b"(") else {
+                return false;
+            };
+            let Some(head) = before.trim_ascii_end().strip_suffix(b"cast") else {
+                return false;
+            };
+            if head
+                .last()
+                .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+            {
+                return false;
+            }
+            let Some(target) = keyword(code[offset + 1..].trim_ascii_start(), b"as") else {
+                return false;
+            };
+            let Some(rest) = keyword(target, b"unsigned").or_else(|| keyword(target, b"signed"))
+            else {
+                return false;
+            };
+            let rest = keyword(rest, b"integer")
+                .or_else(|| keyword(rest, b"int"))
+                .unwrap_or(rest);
+            rest.starts_with(b")")
+        })
+        .collect()
+}
+
+/// A string converted to BIGINT the way `MySQL` converts a string parameter:
+/// its leading number, rounded half away from zero and saturated at the
+/// signed range. Text with no leading number is 0.
+fn parameter_integer(text: &str) -> i64 {
+    let text = text.trim_start();
+    let bytes = text.as_bytes();
+    let digits = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    let mut end = digits;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+    }
+    let integer_end = end;
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+    }
+    if end == digits || text[digits..end] == *"." {
+        return 0;
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let mut exponent = end + 1;
+        if matches!(bytes.get(exponent), Some(b'+' | b'-')) {
+            exponent += 1;
+        }
+        let exponent_digits = exponent;
+        while bytes.get(exponent).is_some_and(u8::is_ascii_digit) {
+            exponent += 1;
+        }
+        if exponent > exponent_digits {
+            let value = text[..exponent].parse::<f64>().unwrap_or(0.0).round();
+            // The saturating float-to-integer conversion is MySQL's.
+            #[allow(clippy::cast_possible_truncation)]
+            return value as i64;
+        }
+    }
+    let negative = bytes.first() == Some(&b'-');
+    let mut magnitude = 0_i128;
+    for digit in &bytes[digits..integer_end] {
+        magnitude = (magnitude * 10 + i128::from(digit - b'0')).min(i128::from(u64::MAX));
+    }
+    if bytes.get(integer_end) == Some(&b'.')
+        && bytes
+            .get(integer_end + 1)
+            .is_some_and(|digit| *digit >= b'5')
+    {
+        magnitude += 1;
+    }
+    let value = if negative { -magnitude } else { magnitude };
+    i64::try_from(value).unwrap_or(if negative { i64::MIN } else { i64::MAX })
+}
+
+/// Result metadata as `MySQL` reports it for a prepared statement: a column
+/// that depends on a parameter is nullable, and a text column over string
+/// parameters carries the width `MySQL` derives from them, which decides
+/// between `VARCHAR` and `MEDIUMBLOB`.
+fn describe_parameters(output: &mut QueryOutput, statement: &Prepared, values: &[BinaryValue]) {
+    if output.fields.len() == statement.nullable.len() {
+        for (field, nullable) in output.fields.iter_mut().zip(&statement.nullable) {
+            if *nullable && !field.nullable {
+                field.nullable = true;
+                if let Some(column) = &mut field.wire_column {
+                    column.colflags.set(ColumnFlags::NOT_NULL_FLAG, false);
+                }
+            }
+        }
+    }
+    for (field, column) in output.fields.iter_mut().zip(&statement.parameter_columns) {
+        let Some(ParameterColumn {
+            parameters,
+            width: Some(width),
+        }) = column
+        else {
+            continue;
+        };
+        let text = parameters.iter().all(|index| {
+            matches!(
+                values.get(*index),
+                Some(BinaryValue::Bytes(_) | BinaryValue::Null)
+            )
+        });
+        // What the parameters make the column replaces what presentation
+        // declared for the placeholder's preview value.
+        if !text
+            || field.wire_hint.is_some()
+            || field.group_concat
+            || !matches!(field.data_type, None | Some(DataType::Utf8))
+        {
+            continue;
+        }
+        let bytes = width.saturating_mul(4);
+        let coltype = if bytes <= 65_535 {
+            ColumnType::MysqlTypeVarString
+        } else if bytes <= 16_777_215 {
+            ColumnType::MysqlTypeMediumBlob
+        } else {
+            ColumnType::MysqlTypeLongBlob
+        };
+        let mut wire = Column::new(field.name.clone(), coltype);
+        wire.column_length = u32::try_from(bytes).unwrap_or(u32::MAX);
+        // Any text set: the connection's result charset replaces it.
+        wire.character_set = 255;
+        wire.decimals = 31;
+        wire.colflags
+            .set(ColumnFlags::NOT_NULL_FLAG, !field.nullable);
+        field.data_type = Some(DataType::Utf8);
+        field.wire_column = Some(wire);
+    }
+}
+
 fn substitute_parameters(sql: &str, parameters: &[String]) -> Result<String, String> {
     let offsets = placeholder_offsets(sql);
     if offsets.len() != parameters.len() {
@@ -2795,6 +3226,16 @@ fn connection_worth_recording(key_id: &str) -> bool {
     }
 }
 
+/// The source's `@@global.time_zone` from its stored probe report.
+fn source_time_zone(probe_json: Option<&str>) -> Option<String> {
+    let report: serde_json::Value = serde_json::from_str(probe_json?).ok()?;
+    report
+        .get("server")?
+        .get("time_zone")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 /// Resolves a scrambled wire login against the keys of the database named
 /// by `username`. Free of the connection so the handshake can run it on a
 /// blocking thread: it reads the metadata store, and on the first
@@ -2840,6 +3281,7 @@ fn verify_wire_key_at(
             database_name: database.name,
             key_name: key.name,
             local: database.kind == "local",
+            source_time_zone: source_time_zone(database.probe_json.as_deref()),
         }));
     }
     metadata
@@ -2879,6 +3321,7 @@ fn verify_wire_key_at(
         database_name: database.name,
         key_name: key.name,
         local: database.kind == "local",
+        source_time_zone: source_time_zone(database.probe_json.as_deref()),
     }))
 }
 #[cfg(test)]
@@ -3719,5 +4162,170 @@ mod result_ceiling_tests {
         assert_eq!(max_result_rows_from(Some("0")), usize::MAX);
         assert_eq!(max_result_rows_from(Some("not a number")), usize::MAX);
         assert_eq!(max_result_rows_from(Some(" 250000 ")), 250_000);
+    }
+
+    #[test]
+    fn a_session_starts_in_the_sources_global_time_zone() {
+        assert_eq!(
+            super::source_time_zone(Some(
+                r#"{"server":{"version":"8.4.0","time_zone":"+00:00"}}"#
+            )),
+            Some("+00:00".to_owned())
+        );
+        assert_eq!(
+            super::source_time_zone(Some(r#"{"server":{"version":"8.4.0"}}"#)),
+            None
+        );
+        assert_eq!(super::source_time_zone(None), None);
+    }
+
+    #[test]
+    fn a_string_cast_to_an_integer_parameter_converts_as_mysql_does() {
+        assert_eq!(super::parameter_integer("18446744073709551615"), i64::MAX);
+        assert_eq!(super::parameter_integer("-99999999999999999999"), i64::MIN);
+        assert_eq!(super::parameter_integer("-1"), -1);
+        assert_eq!(super::parameter_integer("1.5"), 2);
+        assert_eq!(super::parameter_integer(" 5"), 5);
+        assert_eq!(super::parameter_integer("2.5e1"), 25);
+        assert_eq!(super::parameter_integer("abc"), 0);
+        assert_eq!(
+            super::integer_cast_parameters(
+                "SELECT CAST(? AS UNSIGNED), cast( ? as signed integer ), ?, CAST(? AS DECIMAL(5,2)), ?"
+            ),
+            [true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn prepared_text_columns_carry_mysqls_parameter_widths() {
+        let columns = super::parameter_columns(
+            "SELECT ? AS value, HEX(?), UPPER(?), CONCAT(?, 'x'), LEFT(?, 2), id FROM t WHERE id = ?",
+        );
+        let described = columns
+            .iter()
+            .map(|column| {
+                column
+                    .as_ref()
+                    .map(|column| (column.parameters.clone(), column.width))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            [
+                Some((vec![0], Some(16_383))),
+                Some((vec![1], Some(32_766))),
+                Some((vec![2], Some(16_383))),
+                Some((vec![3], Some(16_384))),
+                Some((vec![4], Some(2))),
+                None,
+            ]
+        );
+        assert!(super::parameter_columns("SELECT * FROM t WHERE id = ?").is_empty());
+    }
+
+    #[test]
+    fn a_statement_leaves_its_error_or_its_warnings_in_the_diagnostics_area() {
+        let failed: Result<super::QueryOutput, super::QueryError> =
+            Err(super::QueryError::Rejected {
+                rejection: super::SqlRejection::OutOfRange,
+                message: "BIGINT UNSIGNED value is out of range in '(cast(0 as unsigned) - 1)'"
+                    .to_owned(),
+            });
+        let (conditions, count) = super::statement_conditions(&failed, 0, 1);
+        assert_eq!(count, 1);
+        assert_eq!(
+            conditions,
+            [super::Condition {
+                level: "Error",
+                code: 1690,
+                message: "BIGINT UNSIGNED value is out of range in '(cast(0 as unsigned) - 1)'"
+                    .to_owned(),
+            }]
+        );
+        let (conditions, count) = super::statement_conditions(
+            &Ok(super::diagnostics_output(&super::Session::default())),
+            1,
+            2,
+        );
+        assert_eq!(count, 3);
+        assert_eq!(
+            conditions
+                .iter()
+                .map(|condition| (condition.code, condition.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                (1365, "Division by 0"),
+                (1365, "Division by 0"),
+                (1260, "Row 1 was cut by GROUP_CONCAT()"),
+            ]
+        );
+        assert!(super::sql_mode_has(
+            "STRICT_TRANS_TABLES, error_for_division_by_zero",
+            "ERROR_FOR_DIVISION_BY_ZERO"
+        ));
+        assert!(!super::sql_mode_has("", "ERROR_FOR_DIVISION_BY_ZERO"));
+    }
+
+    #[test]
+    fn parameter_metadata_replaces_what_presentation_declared() {
+        use pintail_protocol::{BinaryValue, Column, ColumnType};
+        use pintail_types::DataType;
+
+        let sql = "SELECT ? AS value, HEX(?)";
+        let statement = super::Prepared {
+            parse_mode: pintail_sql::ParseMode::default(),
+            sql: sql.to_owned(),
+            parameters: 2,
+            parameter_types: None,
+            used_long_data: false,
+            limit_parameters: vec![false, false],
+            integer_cast_parameters: vec![false, false],
+            parameter_columns: super::parameter_columns(sql),
+            nullable: vec![true, true],
+        };
+        let declared = |name: &str, coltype, character_set| {
+            let mut column = Column::new(name.to_owned(), coltype);
+            column.character_set = character_set;
+            super::QueryField {
+                wire_column: Some(column),
+                name: name.to_owned(),
+                data_type: None,
+                nullable: true,
+                collation: None,
+                group_concat: false,
+                geometry: false,
+                timestamp: false,
+                wire_hint: None,
+            }
+        };
+        let mut hex = declared("HEX(?)", ColumnType::MysqlTypeVarString, 255);
+        hex.data_type = Some(DataType::Utf8);
+        let mut output = super::QueryOutput {
+            fields: vec![declared("value", ColumnType::MysqlTypeNull, 63), hex],
+            rows: Vec::new(),
+            stats: super::QueryStats::default(),
+            truncated: false,
+            affected: None,
+        };
+        super::describe_parameters(
+            &mut output,
+            &statement,
+            &[BinaryValue::Null, BinaryValue::Bytes(vec![0, 255])],
+        );
+        let described = output
+            .fields
+            .iter()
+            .map(|field| {
+                let column = field.wire_column.as_ref().expect("described");
+                (column.coltype, column.decimals, column.character_set)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            described,
+            [
+                (ColumnType::MysqlTypeVarString, 31, 255),
+                (ColumnType::MysqlTypeMediumBlob, 31, 255),
+            ]
+        );
     }
 }

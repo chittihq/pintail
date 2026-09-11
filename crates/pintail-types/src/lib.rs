@@ -18,5 +18,5 @@ pub use canonical::{
 };
 pub use row::{KeyPart, PrimaryKey, StoredRow};
 pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
-pub use value::{DataType, DecimalQuotient, Float64, Value};
+pub use value::{DataType, DecimalQuotient, Float64, NATIVE_DECIMAL_MAX_PRECISION, Value};
 pub use wide::{WideInt, format_decimal_wide, parse_decimal_wide, parse_decimal_wide_rounded};

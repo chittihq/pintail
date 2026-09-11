@@ -52,6 +52,8 @@ pub enum ColumnType {
     MysqlTypeBlob = 0xfc,
     /// `LONGBLOB`/`LONGTEXT` - what `JSON_UNQUOTE` results advertise.
     MysqlTypeLongBlob = 0xfb,
+    /// `MEDIUMBLOB`/`MEDIUMTEXT`: a variable-length value of up to 16 MiB.
+    MysqlTypeMediumBlob = 0xfa,
     /// Spatial types, carried as `MySQL`'s internal SRID + WKB bytes.
     MysqlTypeGeometry = 0xff,
 }
@@ -268,6 +270,10 @@ pub enum ErrorKind {
     ErBadNullError = 1048,
     /// 1461: the session holds as many prepared statements as it may.
     ErMaxPreparedStmtCountReached = 1461,
+    /// 1242: a scalar subquery produced more than one row.
+    ErSubqueryNo1Row = 1242,
+    /// 3143: a JSON path expression does not parse.
+    ErInvalidJsonPath = 3143,
 }
 
 impl ErrorKind {
@@ -288,13 +294,15 @@ impl ErrorKind {
             | Self::ErSyntaxError
             | Self::ErOptionPreventsStatement
             | Self::ErWrongFieldWithGroup
-            | Self::ErMaxPreparedStmtCountReached => b"42000",
+            | Self::ErMaxPreparedStmtCountReached
+            | Self::ErInvalidJsonPath => b"42000",
             Self::ErNoSuchTable => b"42S02",
             Self::ErTableExistsError => b"42S01",
             Self::ErBadFieldError => b"42S22",
             // MySQL reports integrity violations in class 23.
             Self::ErNonUniqError | Self::ErDupEntry | Self::ErBadNullError => b"23000",
             Self::ErDataOutOfRange => b"22003",
+            Self::ErSubqueryNo1Row => b"21000",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",
@@ -362,5 +370,9 @@ mod tests {
             ErrorKind::ErMaxPreparedStmtCountReached.sql_state(),
             b"42000"
         );
+        assert_eq!(ErrorKind::ErSubqueryNo1Row.code(), 1242);
+        assert_eq!(ErrorKind::ErSubqueryNo1Row.sql_state(), b"21000");
+        assert_eq!(ErrorKind::ErInvalidJsonPath.code(), 3143);
+        assert_eq!(ErrorKind::ErInvalidJsonPath.sql_state(), b"42000");
     }
 }

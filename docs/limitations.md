@@ -150,7 +150,7 @@ stays readable as a list of things to fix.
 - Locale-specific collation profiles, full per-expression coercibility, and
   collation-sensitive execution over mixed source profiles remain unsupported
   (#10).
-- `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, and the session zone does not affect `CONVERT_TZ` or stored temporal values.
+- `NOW()`, `CURDATE()`, `CURTIME()`, and no-argument `UNIX_TIMESTAMP()` are pinned to one timestamp per statement, read at plan time from the session time zone where one is set and the host clock and timezone otherwise. The MySQL wire endpoint implements `SET time_zone` per connection; the HTTP endpoint has no equivalent session state, so it reads `TIMESTAMP` columns as stored, in UTC.
 
 - Date parsing is limited to canonical date and date-time forms. Compound
   interval quantities must be literals; dynamic compound interval expressions
@@ -471,8 +471,8 @@ stays readable as a list of things to fix.
   against the stored verifiers. Keys from before metadata schema version 6
   lack both verifiers and must still be rotated.
 - The endpoint is read-only. Parsing modes `HIGH_NOT_PRECEDENCE` and
-  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT`, `NO_UNSIGNED_SUBTRACTION`
-  and `ALLOW_INVALID_DATES`, and combination modes (`ANSI`, `DB2`, `MAXDB`,
+  `IGNORE_SPACE`, evaluation modes `REAL_AS_FLOAT` and `ALLOW_INVALID_DATES`,
+  and combination modes (`ANSI`, `DB2`, `MAXDB`,
   `MSSQL`, `ORACLE`, `POSTGRESQL`) remain refused.
 - Variable-width expressions outside the declaration rules use a type-derived
   `column_length` fallback of 1024. Only a

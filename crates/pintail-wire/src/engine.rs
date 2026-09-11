@@ -167,6 +167,10 @@ pub enum SqlRejection {
     DuplicateKey,
     /// 1048: a `NOT NULL` column received no value.
     NotNull,
+    /// 1242: a scalar subquery produced more than one row.
+    SubqueryRows,
+    /// 3143: a JSON path expression does not parse.
+    InvalidJsonPath,
 }
 
 /// The metadata files a database's signature was last read against, and
@@ -774,6 +778,10 @@ impl ReplicaEngine {
         deadline: Option<Instant>,
         optimize: bool,
     ) -> Result<QueryOutput, QueryError> {
+        // Admission planning may already have folded this statement's
+        // constants; only this execution's divisions by zero are its own.
+        let _ = pintail_exec::take_session_division_warnings();
+        pintail_sql::set_session_database_name(Some(database_name));
         let bound = Binder::new(catalog, Some(database_name))
             .with_source(sql)
             .bind(statement)
@@ -1093,8 +1101,17 @@ fn query_execution_error(error: ExecError) -> QueryError {
         ExecError::TableNotReady { .. } => QueryError::NotReady(error.to_string()),
         // MySQL answers a row-wise numeric overflow with 1690/22003, not
         // an internal error - clients branch on the code.
-        ExecError::NumericOverflow => QueryError::Rejected {
+        ExecError::NumericOverflow | ExecError::OutOfRange(_) => QueryError::Rejected {
             rejection: SqlRejection::OutOfRange,
+            message: error.to_string(),
+        },
+        // MySQL's own texts: clients and ORMs match on them.
+        ExecError::ScalarSubqueryRows { .. } => QueryError::Rejected {
+            rejection: SqlRejection::SubqueryRows,
+            message: "Subquery returns more than 1 row".to_owned(),
+        },
+        ExecError::InvalidJsonPath { .. } => QueryError::Rejected {
+            rejection: SqlRejection::InvalidJsonPath,
             message: error.to_string(),
         },
         error => QueryError::Internal(error.to_string()),

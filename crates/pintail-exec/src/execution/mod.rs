@@ -65,6 +65,8 @@ thread_local! {
         const { std::cell::Cell::new(DEFAULT_GROUP_CONCAT_MAX_LEN) };
     static SESSION_GROUP_CONCAT_WARNINGS: std::cell::Cell<u64> =
         const { std::cell::Cell::new(0) };
+    static SESSION_DIVISION_WARNINGS: std::cell::Cell<u64> =
+        const { std::cell::Cell::new(0) };
     static SESSION_CTE_MAX_RECURSION_DEPTH: std::cell::Cell<u64> =
         const { std::cell::Cell::new(DEFAULT_CTE_MAX_RECURSION_DEPTH) };
     static EXECUTION_CANCELLATION: std::cell::RefCell<Option<ExecutionCancellation>> =
@@ -97,6 +99,7 @@ pub fn with_execution_cancellation<T>(
 pub fn set_session_group_concat_max_len(limit: Option<usize>) {
     SESSION_GROUP_CONCAT_MAX_LEN.set(limit.unwrap_or(DEFAULT_GROUP_CONCAT_MAX_LEN).max(4));
     SESSION_GROUP_CONCAT_WARNINGS.set(0);
+    SESSION_DIVISION_WARNINGS.set(0);
 }
 
 /// The `group_concat_max_len` this thread's executions observe.
@@ -115,6 +118,18 @@ pub fn session_cte_max_recursion_depth() -> u64 {
 #[must_use]
 pub fn take_session_group_concat_warnings() -> u64 {
     SESSION_GROUP_CONCAT_WARNINGS.replace(0)
+}
+
+/// Counts one division by zero answered with NULL, `MySQL`'s warning 1365.
+pub(crate) fn note_division_by_zero() {
+    SESSION_DIVISION_WARNINGS.set(SESSION_DIVISION_WARNINGS.get().saturating_add(1));
+}
+
+/// Takes the number of divisions by zero the last statement answered with
+/// NULL, each `MySQL`'s warning 1365 under `ERROR_FOR_DIVISION_BY_ZERO`.
+#[must_use]
+pub fn take_session_division_warnings() -> u64 {
+    SESSION_DIVISION_WARNINGS.replace(0)
 }
 
 /// Installs the recursive-CTE iteration cap for queries on this thread.
@@ -347,10 +362,7 @@ impl PhysicalPlan {
                         &expression.expr.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
-                    timestamp: matches!(
-                        &expression.expr.kind,
-                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
-                    ),
+                    timestamp: expression.expr.is_source_timestamp(),
                 })
                 .collect(),
             Self::SetOp { left: input, .. }
@@ -388,10 +400,7 @@ impl PhysicalPlan {
                         &expression.kind,
                         pintail_sql::BoundExprKind::Column(column) if column.geometry
                     ),
-                    timestamp: matches!(
-                        &expression.kind,
-                        pintail_sql::BoundExprKind::Column(column) if column.timestamp
-                    ),
+                    timestamp: expression.is_source_timestamp(),
                 })
                 .chain(aggregates.iter().map(|aggregate| OutputField {
                     name: String::new(),

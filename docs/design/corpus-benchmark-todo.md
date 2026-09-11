@@ -12,6 +12,11 @@ memo off.
 | Pintail ÷ ClickHouse | 2.4× faster | 3.44× slower |
 | Pintail failures where MySQL answered | 3 | 50 (37 timeouts, 13 errors) |
 
+The rerun on `dev` at 5256ec63, after items 1 to 8, on an idle docker host:
+Pintail ÷ MySQL 2.29× and 2.79× slower, Pintail ÷ ClickHouse 2.4× faster
+and 3.37× slower. Pintail fails 0 and 4 cases where MySQL answers, and
+answers 12 at scale 10,000 that MySQL times out on.
+
 ## Decisions (owner, 2026-09-10)
 
 - The cross-join safety estimate goes: runaway joins are stopped by the
@@ -57,14 +62,32 @@ first, then the fix, clippy and the touched crates' unit tests, and a commit.
    30 ms against 17 ms on MySQL and 1.5 to 3 ms on ClickHouse; `DATE(day)`
    over 80k rows takes 169 ms against 19 ms; a query that reads no table
    costs 0.35 ms more than on MySQL.
-7. [ ] **Confirm the expected differences.** 26 differences are `LIMIT` over
+7. [x] **Confirm the expected differences.** 26 differences are `LIMIT` over
    tied rows and 25 are `GROUP_CONCAT` without `ORDER BY`; capture the rows
    for differing cases to prove it.
+   Confirmed on the rerun: of 61 differences at scale 10,000, 26 are
+   `LIMIT` over tied rows and 34 are orders MySQL leaves unspecified
+   (`GROUP_CONCAT`, `JSON_ARRAYAGG` and `JSON_OBJECTAGG` without
+   `ORDER BY`, and `ROW_NUMBER`, `FIRST_VALUE` and `LAST_VALUE` over tied
+   sort keys). The one real difference was a DOUBLE printed without
+   MySQL's exponent notation (`POW` over large ids), fixed in 565ff396.
 8. [x] **Parity gaps.** `CASE` decimal branch scale, `GROUP BY` with a
    trailing no-break space, DECIMAL wider than 38 digits.
-9. [ ] **Lifecycle replay.** Rerun `tests/e2e/parity-replay.ts`; 33 wire and
+9. [x] **Lifecycle replay.** Rerun `tests/e2e/parity-replay.ts`; 33 wire and
    session checks were red (prepared statements, `SHOW WARNINGS`, TIMESTAMP
    under time zones, multi-row scalar subquery errors, invalid JSON paths,
    `@@session.time_zone`).
-10. [ ] **Gate and remeasure.** Full rc gate on the branch, merge to `dev`,
-   rerun the corpus benchmark and commit the CSV.
+   Done on `fix/wire-session-parity`: a text-stored DECIMAL widens its scale
+   in place; prepared-statement results carry MySQL's nullability and
+   parameter widths, a string cast to an integer parameter saturates, and
+   a floating-point LIMIT is refused; `SHOW WARNINGS` lists the last
+   statement's error or its division-by-zero and GROUP_CONCAT warnings,
+   with MySQL's out-of-range message; `NO_UNSIGNED_SUBTRACTION` is
+   implemented; a TIMESTAMP reads in the session zone; 1242 and 3143 are
+   answered; a session starts in the source's global zone. After the
+   branch's rc gate the replay passes 870 of 871 checks; the other is the
+   MINIMAL:FULL scope boundary.
+10. [x] **Gate and remeasure.** Full rc gate on the branch, merge to `dev`,
+   rerun the corpus benchmark and commit the CSV. The gate passed at
+   d787d3a6, the branch merged as 5256ec63, and the rerun's CSV is
+   3bc2054b.

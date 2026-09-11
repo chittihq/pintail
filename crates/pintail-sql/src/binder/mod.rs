@@ -414,11 +414,7 @@ impl<'catalog> Binder<'catalog> {
             .cloned()
             .map(|column| BoundProjection {
                 name: column.name.clone(),
-                expr: BoundExpr {
-                    data_type: Some(column.data_type),
-                    nullable: column.nullable,
-                    kind: BoundExprKind::Column(column),
-                },
+                expr: BoundExpr::column(column),
             })
             .collect();
         BoundQuery {
@@ -1791,11 +1787,7 @@ impl<'catalog> Binder<'catalog> {
             .cloned()
             .map(|column| BoundProjection {
                 name: column.name.clone(),
-                expr: BoundExpr {
-                    data_type: Some(column.data_type),
-                    nullable: column.nullable,
-                    kind: BoundExprKind::Column(column),
-                },
+                expr: BoundExpr::column(column),
             })
             .collect();
         let input = BoundQuery {
@@ -2519,11 +2511,7 @@ fn bind_projection(
                         .cloned()
                         .map(|column| BoundProjection {
                             name: column.name.clone(),
-                            expr: BoundExpr {
-                                data_type: Some(column.data_type),
-                                nullable: column.nullable,
-                                kind: BoundExprKind::Column(column),
-                            },
+                            expr: BoundExpr::column(column),
                         }),
                 );
             }
@@ -2656,11 +2644,7 @@ fn reject_wildcard_options(options: &WildcardAdditionalOptions) -> Result<(), Bi
 fn extend_wildcard(projection: &mut Vec<BoundProjection>, table: &BoundTable) {
     projection.extend(table.columns.iter().cloned().map(|column| BoundProjection {
         name: column.name.clone(),
-        expr: BoundExpr {
-            data_type: Some(column.data_type),
-            nullable: column.nullable,
-            kind: BoundExprKind::Column(column),
-        },
+        expr: BoundExpr::column(column),
     }));
 }
 
@@ -3316,11 +3300,7 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
         }
     };
 
-    Ok(BoundExpr {
-        data_type: Some(column.data_type),
-        nullable: column.nullable,
-        kind: BoundExprKind::Column(column),
-    })
+    Ok(BoundExpr::column(column))
 }
 
 fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
@@ -3716,6 +3696,17 @@ fn bind_binary(
                 _ => unreachable!("matched arithmetic operators"),
             };
             let result = arithmetic_type(op, left.data_type, right.data_type);
+            // NO_UNSIGNED_SUBTRACTION makes a subtraction signed whatever its
+            // operands: CAST(0 AS UNSIGNED) - 1 is -1, and an unsigned operand
+            // past the signed range is out of range rather than wrapped.
+            let result = if op == BinaryOp::Subtract
+                && result == Some(DataType::UInt64)
+                && crate::session_parse_mode().no_unsigned_subtraction
+            {
+                Some(DataType::Int64)
+            } else {
+                result
+            };
             (op, result)
         }
         BinaryOperator::BitwiseAnd
@@ -5672,7 +5663,9 @@ fn canonical_literal_operand(
         // Refused against a column, where `MySQL` raises ERROR 1525; against
         // an expression such as `DATE(c)` it compares and matches nothing,
         // which the literal left as written already does.
-        if !matches!(target.kind, BoundExprKind::Column(_)) {
+        if !matches!(target.kind, BoundExprKind::Column(_))
+            && target.session_timestamp_source().is_none()
+        {
             return Ok(operand);
         }
         return Err(BindError::UnsupportedExpression(format!(
