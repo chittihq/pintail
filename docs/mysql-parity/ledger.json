@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "9325b8ce89911433b720006f38c96be84a93d57e",
-    "measuredAt": "2026-09-11T21:50:39.024Z",
+    "commit": "59627dd5464c8a613a47829c00c6ef7e78dfa04a",
+    "measuredAt": "2026-09-11T23:18:43.822Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "79a8ca83a6d76a18540c759825429acc2969cfda6763a7c253fa177904cc92ff",
+    "ledgerSha256": "39fc4c9fe4925542b9cf19a1780b3414e7d0d6d908de88dc4f1ea1fabe1194bb",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "9325b8ce89911433b720006f38c96be84a93d57e",
-      "sourceCommit": "0bf211379b925832876b9ab4dcac7139f8de1a25",
-      "measuredAt": "2026-09-11T21:41:31.080747475+00:00",
+      "commit": "59627dd5464c8a613a47829c00c6ef7e78dfa04a",
+      "sourceCommit": "3f2837a9301206e1b83f355e8a1bf0c94e122229",
+      "measuredAt": "2026-09-11T23:09:35.611633454+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "4d511e9bd00e5ec0f2384db926ddb07c4ba082081338fbaa4a4b9c1815f8bd6b",
+      "ledgerSha256": "a9186bef21ea18b1bb81cb3a0c74044d4745e7c0a6f9407ee2a012e6820ccbc0",
       "corpusSha256": "37cd5ba5bb4524fa26998fa687f56f3d4dd8303fd831b74ac2ee33b6660b2030"
     }
   },
@@ -10067,6 +10067,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/dictionary_text.rs:153",
         "crates/pintail-exec/tests/filter_kernels.rs:142",
         "tests/sqllogic/tests/mysql_oracle.rs:1775",
         "tests/sqllogic/tests/support/oracle_boundaries.rs:397"
@@ -10698,6 +10699,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/dictionary_text.rs:142",
         "tests/sqllogic/tests/mysql_oracle.rs:840",
         "tests/sqllogic/tests/support/oracle_boundaries.rs:410"
       ],
@@ -19557,6 +19559,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/dictionary_text.rs:138",
         "crates/pintail-exec/tests/filter_kernels.rs:134",
         "tests/sqllogic/tests/mysql_oracle.rs:1520",
         "tests/sqllogic/tests/support/oracle_boundaries.rs:411"

@@ -29,8 +29,27 @@ fn text_of(column: &ColumnVector) -> Option<(&StrColumn, &ValidityMask)> {
 
 /// `f` over each row's text, `None` for NULL rows; `None` overall for text
 /// that is not UTF-8.
-fn each_text<R>(column: &ColumnVector, mut f: impl FnMut(&str) -> R) -> Option<Vec<Option<R>>> {
+fn each_text<R: Clone>(
+    column: &ColumnVector,
+    mut f: impl FnMut(&str) -> R,
+) -> Option<Vec<Option<R>>> {
     let (text, validity) = text_of(column)?;
+    // A coded column calls `f` once per distinct value and gathers the
+    // answers by code: a hundred thousand rows of ten distinct names run it
+    // ten times, and the per-row views are never built.
+    if let Some((codes, values)) = text.dictionary() {
+        let mapped = values.iter().map(|value| f(value)).collect::<Vec<_>>();
+        return codes
+            .iter()
+            .enumerate()
+            .map(|(row, code)| {
+                if !validity.is_valid(row) {
+                    return Some(None);
+                }
+                mapped.get(usize::try_from(*code).ok()?).cloned().map(Some)
+            })
+            .collect();
+    }
     (0..text.len())
         .map(|row| {
             if !validity.is_valid(row) {
@@ -55,7 +74,23 @@ pub(super) fn packed_text(
     match (function, &operands[1..]) {
         (ScalarFunction::Upper | ScalarFunction::Lower, []) if declared == DataType::Utf8 => {
             let upper = function == ScalarFunction::Upper;
-            let (_, validity) = text_of(column)?;
+            let (source, validity) = text_of(column)?;
+            // A coded column answers from its distinct values, and stays
+            // coded; reading it row by row would materialize every view
+            // first, which is the cost this avoids.
+            if let Some(coded) = source.map_dictionary(|text| {
+                if upper {
+                    text.to_uppercase()
+                } else {
+                    text.to_lowercase()
+                }
+            }) {
+                return Some(ColumnVector::from_typed(
+                    declared,
+                    TypedValues::Utf8(coded),
+                    validity.clone(),
+                ));
+            }
             let mapped = each_text(column, |text| {
                 if upper {
                     text.to_uppercase()
@@ -113,6 +148,95 @@ mod tests {
     use crate::batch::ColumnVector;
     use crate::collation::Collation;
     use crate::expression::CompiledExpr;
+
+    /// The same values as a coded column, the way a dictionary-encoded
+    /// block arrives from storage.
+    fn coded(values: &[Option<&str>]) -> ColumnVector {
+        let mut distinct: Vec<&str> = Vec::new();
+        let mut codes = Vec::with_capacity(values.len());
+        let mut valid = Vec::with_capacity(values.len());
+        for value in values {
+            let text = value.unwrap_or_default();
+            let code = distinct
+                .iter()
+                .position(|held| *held == text)
+                .unwrap_or_else(|| {
+                    distinct.push(text);
+                    distinct.len() - 1
+                });
+            codes.push(u32::try_from(code).expect("small dictionary"));
+            valid.push(value.is_some());
+        }
+        let mut heap = Vec::new();
+        let mut offsets = vec![0];
+        for text in &distinct {
+            heap.extend_from_slice(text.as_bytes());
+            offsets.push(heap.len());
+        }
+        let validity = pintail_store::ColumnValidity::Bytes(valid.clone());
+        let column = crate::array::StrColumn::from_dictionary(&heap, &offsets, &codes, &validity);
+        ColumnVector::from_typed(
+            DataType::Utf8,
+            crate::batch::TypedValues::Utf8(column),
+            crate::array::ValidityMask::from_bools(&valid),
+        )
+    }
+
+    /// A function of a coded column is a function of its distinct values.
+    ///
+    /// Two things have to hold: the answer is the one the row path gives,
+    /// and the work is proportional to the dictionary rather than the rows,
+    /// which shows as the answer still being coded, with one entry per
+    /// distinct input rather than one per row.
+    #[test]
+    fn a_coded_column_answers_from_its_distinct_values() {
+        let values = [
+            Some("red"),
+            Some("green"),
+            Some("red"),
+            Some("blue"),
+            None,
+            Some("green"),
+            Some("red"),
+        ];
+        let batch = batch_of(vec![coded(&values)]);
+        for function in [ScalarFunction::Upper, ScalarFunction::Lower] {
+            let call = scalar(function, vec![CompiledExpr::Column(0)], DataType::Utf8);
+            assert!(
+                agrees_with_rows(&call, &batch, DataType::Utf8),
+                "a coded column has a kernel"
+            );
+            let answer = call
+                .evaluate_column(&batch, Some(DataType::Utf8))
+                .expect("a coded column has a kernel");
+            let (typed, _) = answer.typed().expect("typed");
+            let crate::batch::TypedValues::Utf8(text) = typed else {
+                panic!("text answers as text");
+            };
+            let (codes, distinct) = text.dictionary().expect("the answer stays coded");
+            assert_eq!(codes.len(), values.len());
+            // Three colours, plus the placeholder the NULL row codes to:
+            // one entry per distinct stored value, not one per row.
+            assert_eq!(
+                distinct.len(),
+                4,
+                "one entry per distinct input, not one per row"
+            );
+        }
+        // LIKE reads the same dictionary and answers a plain Boolean column.
+        let call = scalar(
+            ScalarFunction::Like {
+                negated: false,
+                escape: None,
+            },
+            vec![
+                CompiledExpr::Column(0),
+                CompiledExpr::Literal(Value::Utf8("re%".to_owned())),
+            ],
+            DataType::Boolean,
+        );
+        assert!(agrees_with_rows(&call, &batch, DataType::Boolean));
+    }
 
     fn texts(values: &[Option<&str>]) -> ColumnVector {
         ColumnVector::new(
