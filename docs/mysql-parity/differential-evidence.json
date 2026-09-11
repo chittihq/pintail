@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "commit": "5334c6a664477dbfc72b87f0183b793cc46eb968",
-  "measuredAt": "2026-09-11T06:43:39.989Z",
+  "commit": "60c53e42a50a8eebe7c7025f56c55fa82386542d",
+  "measuredAt": "2026-09-11T08:02:55.348Z",
   "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-  "ledgerSha256": "e38cebc4f364426e937fb08f032aa166904ac73c5f7ab279d135948710d6cb28",
+  "ledgerSha256": "97e7421de1a3a518fef37f2b9cbfbb564eb57a02c80ce4b385b3fe8fb32c575c",
   "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
   "cases": [
     {
@@ -8159,11 +8159,11 @@
   ],
   "oracle": {
     "schemaVersion": 1,
-    "commit": "5334c6a664477dbfc72b87f0183b793cc46eb968",
-    "sourceCommit": "b74ff9dba89ec9434f564d3f2c3005b592ea3f8b",
-    "measuredAt": "2026-09-11T06:35:14.464476286+00:00",
+    "commit": "60c53e42a50a8eebe7c7025f56c55fa82386542d",
+    "sourceCommit": "5d729a6230eedbb04c24eddd16c74a0d69c8a462",
+    "measuredAt": "2026-09-11T07:55:20.887349165+00:00",
     "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-    "ledgerSha256": "5e72f9200146dfeafda5942763583d762fca7344ab46e5493c70a50b96d10fe5",
+    "ledgerSha256": "59366af81ed6ff9600d540b8f4f0b2ab1d094354e0c9e73e581af08bc5c203c1",
     "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d",
     "cases": [
       {
