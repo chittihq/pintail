@@ -455,7 +455,7 @@ async fn execute_query(
             blocks_pruned: output.stats.blocks_pruned,
             blocks_decoded: output.stats.blocks_decoded,
         },
-        rows: JsonRows(output.rows),
+        rows: JsonRows(output.rows.into_values()),
         truncated: output.truncated,
     };
     // `rows` above only wraps the values; the actual conversion happens

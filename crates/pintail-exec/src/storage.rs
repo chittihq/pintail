@@ -989,10 +989,31 @@ impl SnapshotStream {
     /// planned so a budget below a single row fails on the real reservation
     /// with a truthful number rather than silently yielding nothing.
     fn planned_batch_rows(&self, budget: usize) -> usize {
-        let per_row = batch_memory_upper_bound(&self.types, 1).max(1);
-        let affordable = (budget / per_row).max(1);
-        DEFAULT_BATCH_ROWS.min(affordable)
+        planned_scan_rows(&self.types, budget)
     }
+}
+
+/// Share of what a query has left that a scan's next batch may plan for;
+/// the store's decode chunk takes up to half of the budget less the batch.
+///
+/// Planning used to divide the whole budget by a one-row batch's bound,
+/// which counted each column's vector header once per row. That header is
+/// a fixed cost, and how big it happened to be was all that kept the batch
+/// to a tenth of the budget: when it shrank, the batch claimed a third and
+/// starved the decode chunk, and a scan under a tight ceiling failed on a
+/// chunk it could have taken. The split is now stated, not inherited.
+const SCAN_BATCH_SHARE: usize = 8;
+
+/// Rows the scan plans its next batch at: as many as fit its share of
+/// `budget`, with each column's fixed cost counted once, never fewer than
+/// one and never more than [`DEFAULT_BATCH_ROWS`].
+fn planned_scan_rows(types: &[pintail_types::DataType], budget: usize) -> usize {
+    let fixed = batch_memory_upper_bound(types, 0);
+    let per_row = batch_memory_upper_bound(types, 1)
+        .saturating_sub(fixed)
+        .max(1);
+    let share = (budget / SCAN_BATCH_SHARE).saturating_sub(fixed);
+    DEFAULT_BATCH_ROWS.min((share / per_row).max(1))
 }
 
 impl BatchStream for SnapshotStream {
@@ -1024,10 +1045,7 @@ impl BatchStream for SnapshotStream {
             // Reserve headroom for the batch this pull will actually build,
             // not for a full-size one: subtracting the maximum leaves a zero
             // chunk budget under a tight ceiling, which the store then refuses.
-            let planned_rows = {
-                let per_row = batch_memory_upper_bound(&self.types, 1).max(1);
-                DEFAULT_BATCH_ROWS.min((available_memory / per_row).max(1))
-            };
+            let planned_rows = planned_scan_rows(&self.types, available_memory);
             let batch_overhead = batch_memory_upper_bound(&self.types, planned_rows);
             if self.prefetched.is_empty() {
                 // One segment per scan-pool thread. These chunks decode inside
@@ -2290,6 +2308,41 @@ mod tests {
         ExecError, Execution, LogicalPlanner, Optimizer, PhysicalPlanner, ScanProvider,
         SnapshotScanProvider, explain_analyze_statement,
     };
+
+    /// The batch a scan plans takes its stated share of the budget and no
+    /// more, whatever the column types, so the decode chunk beside it keeps
+    /// three eighths: a tight ceiling must not depend on how large a
+    /// column's in-memory header happens to be.
+    #[test]
+    fn a_planned_scan_batch_leaves_the_decode_chunk_its_share() {
+        let layouts = [
+            vec![DataType::UInt64],
+            vec![DataType::UInt64, DataType::Int64, DataType::Utf8],
+            vec![DataType::Utf8; 12],
+        ];
+        for types in &layouts {
+            for budget in [256 * 1024, 12 * 1024 * 1024, 256 * 1024 * 1024] {
+                let rows = super::planned_scan_rows(types, budget);
+                let batch = super::batch_memory_upper_bound(types, rows);
+                assert!(rows >= 1);
+                assert!(
+                    batch <= budget / super::SCAN_BATCH_SHARE,
+                    "{} columns at {budget} bytes: a {rows}-row batch is {batch} bytes",
+                    types.len()
+                );
+                // Conservative, since each planned row is charged a whole
+                // selection word, but not wasteful: the batch still uses
+                // most of its share.
+                if rows > 1 && rows < crate::batch::DEFAULT_BATCH_ROWS {
+                    assert!(
+                        batch.saturating_mul(2) >= budget / super::SCAN_BATCH_SHARE,
+                        "{} columns at {budget} bytes: a {rows}-row batch leaves most of its share",
+                        types.len()
+                    );
+                }
+            }
+        }
+    }
 
     fn execute_values(
         sql: &str,

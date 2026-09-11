@@ -2005,3 +2005,193 @@ async fn per_query_cost() {
         .expect("wire server task")
         .expect("wire server");
 }
+
+/// Times a large result end to end: 130,000 rows from segments, read in
+/// full by a real client, so execution, collection, encoding and delivery
+/// all count. Run it in release:
+/// `cargo test --release -p pintail-wire --test wire_compat large_result_cost
+/// -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing probe, not a gate"]
+async fn large_result_cost() {
+    const ROWS: u64 = 130_000;
+    const RUNS: u32 = 20;
+    let _serial = wire_serial();
+    let replica = LargeReplica::serve(ROWS).await;
+    let pool = replica.pool();
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    for sql in [
+        "SELECT id, name FROM events",
+        "SELECT id, name, id + 1 FROM events",
+    ] {
+        let rows: Vec<mysql_async::Row> = connection.query(sql).await.expect("warm-up query");
+        assert_eq!(rows.len(), usize::try_from(ROWS).unwrap());
+        let started = std::time::Instant::now();
+        for _ in 0..RUNS {
+            let rows: Vec<mysql_async::Row> = connection.query(sql).await.expect("timed query");
+            assert_eq!(rows.len(), usize::try_from(ROWS).unwrap());
+        }
+        eprintln!(
+            "{sql}: {:.1} ms per query",
+            started.elapsed().as_secs_f64() * 1e3 / f64::from(RUNS)
+        );
+    }
+    drop(connection);
+    pool.disconnect().await.ok();
+    replica.stop().await;
+}
+
+/// A result past the streaming threshold arrives whole and in order over
+/// both protocols; one that fails part-way sends its error after the rows
+/// already streamed, and the connection carries on.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_result_streams_whole_and_a_late_error_follows_its_rows() {
+    const ROWS: u64 = 150_000;
+    let _serial = wire_serial();
+    let replica = LargeReplica::serve(ROWS).await;
+    let pool = replica.pool();
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    let expected = usize::try_from(ROWS).unwrap();
+    assert!(
+        expected > pintail_wire::STREAM_AFTER_ROWS,
+        "the result streams"
+    );
+
+    let rows: Vec<(u64, String)> = connection
+        .query("SELECT id, name FROM events ORDER BY id")
+        .await
+        .expect("streamed text result");
+    assert_eq!(rows.len(), expected);
+    assert_eq!(rows[0], (1, "launch".to_owned()));
+    assert_eq!(rows[expected - 1], (ROWS, format!("event number {ROWS}")));
+    assert!(rows.windows(2).all(|pair| pair[0].0 < pair[1].0));
+
+    let rows: Vec<(u64, String)> = connection
+        .exec("SELECT id, name FROM events WHERE id > ?", (0_u64,))
+        .await
+        .expect("streamed binary result");
+    assert_eq!(rows.len(), expected);
+    assert_eq!(rows[expected - 1].0, ROWS);
+
+    // Rows past the first batch overflow an unsigned subtraction: the
+    // result has started streaming by then, so MySQL's error follows the
+    // rows already sent.
+    let mut result = connection
+        .query_iter("SELECT id, IF(id > 140000, id - 999999999, id) FROM events")
+        .await
+        .expect("the result starts");
+    let mut received = 0_usize;
+    let failed = loop {
+        match result.next().await {
+            Ok(Some(_)) => received += 1,
+            Ok(None) => panic!("the overflow must end the result"),
+            Err(error) => break error,
+        }
+    };
+    drop(result);
+    assert!(
+        received > pintail_wire::STREAM_AFTER_ROWS && received < expected,
+        "{received} rows arrived before the error"
+    );
+    let mysql_async::Error::Server(error) = failed else {
+        panic!("a server error, not {failed:?}");
+    };
+    assert_eq!(error.code, 1690, "{}", error.message);
+    let still: Vec<u64> = connection.query("SELECT 1").await.expect("usable");
+    assert_eq!(still, [1]);
+
+    drop(connection);
+    pool.disconnect().await.ok();
+    replica.stop().await;
+}
+
+/// The wire fixture with `rows` rows in `events`, flushed to segments, and
+/// a server answering on a local port.
+struct LargeReplica {
+    _data: tempfile::TempDir,
+    address: std::net::SocketAddr,
+    shutdown: oneshot::Sender<()>,
+    server: tokio::task::JoinHandle<std::io::Result<()>>,
+}
+
+impl LargeReplica {
+    async fn serve(rows: u64) -> Self {
+        let data = tempfile::tempdir().expect("wire data directory");
+        let metadata_path = data.path().join("pintail-meta.db");
+        seed_replica(data.path(), &metadata_path);
+        {
+            let root = data.path().join("databases").join("db-1").join("tables");
+            let mut store = TableStore::open(
+                pintail_wire::table_directory(&root, "events"),
+                source_table().table_schema().unwrap(),
+                StoreOptions::default(),
+            )
+            .unwrap();
+            for chunk in (3..=rows).collect::<Vec<_>>().chunks(10_000) {
+                store
+                    .ingest(
+                        chunk
+                            .iter()
+                            .map(|id| {
+                                StoredRow::new(
+                                    PrimaryKey::new(vec![KeyPart::UInt64(*id)]).unwrap(),
+                                    vec![
+                                        Value::UInt64(*id),
+                                        Value::Utf8(format!("event number {id}")),
+                                    ],
+                                    *id,
+                                    false,
+                                )
+                            })
+                            .collect(),
+                    )
+                    .unwrap();
+            }
+            store.flush().unwrap();
+        }
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("wire listener");
+        let address = listener.local_addr().expect("wire address");
+        let (shutdown, stopped) = oneshot::channel();
+        let data_dir = data.path().to_path_buf();
+        let server = tokio::spawn(async move {
+            pintail_wire::serve_until_with_options(
+                listener,
+                data_dir,
+                metadata_path,
+                pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+                None,
+                Duration::from_secs(30),
+                async {
+                    let _ = stopped.await;
+                },
+            )
+            .await
+        });
+        Self {
+            _data: data,
+            address,
+            shutdown,
+            server,
+        }
+    }
+
+    fn pool(&self) -> Pool {
+        Pool::new(
+            Opts::from_url(&format!(
+                "mysql://analytics:pk_wire_secret@{}/analytics",
+                self.address
+            ))
+            .expect("wire DSN"),
+        )
+    }
+
+    async fn stop(self) {
+        let _ = self.shutdown.send(());
+        self.server
+            .await
+            .expect("wire server task")
+            .expect("wire server");
+    }
+}

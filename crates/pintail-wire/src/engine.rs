@@ -18,6 +18,7 @@ use crate::admission::{QueryAdmission, QueryClass, shared_admission};
 use crate::replica_cache::{
     self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp, TableStamp,
 };
+use crate::result_rows::ResultRows;
 use crate::shared_query::{Join, SharedQueryKey, shared_queries};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
@@ -105,7 +106,7 @@ pub struct QueryStats {
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryOutput {
     pub fields: Vec<QueryField>,
-    pub rows: Vec<Vec<Value>>,
+    pub rows: ResultRows,
     pub stats: QueryStats,
     pub truncated: bool,
     /// Rows a WRITE changed, when the statement changed rows instead of
@@ -114,6 +115,37 @@ pub struct QueryOutput {
     /// server answer with an OK packet carrying this count.
     pub affected: Option<u64>,
 }
+
+/// Where a result too large to hold whole goes while execution produces
+/// it.
+pub trait RowSink {
+    /// The result's fields, once, before any rows. `false` when whoever
+    /// reads the rows has gone; the query then stops.
+    fn begin(&mut self, fields: &[QueryField]) -> bool;
+
+    /// The next rows, in order. `false` stops the query the same way.
+    fn rows(&mut self, rows: ResultRows) -> bool;
+}
+
+/// How a statement answered.
+#[derive(Debug)]
+pub enum Answer {
+    /// Every row, held.
+    Whole(QueryOutput),
+    /// The rows went to the sink as they were produced.
+    Streamed {
+        /// How many rows went.
+        rows: usize,
+        /// The statement's work.
+        stats: QueryStats,
+    },
+}
+
+/// Rows a result holds whole before it streams. A result this small is
+/// answered at once and can be handed to identical requests waiting on it;
+/// a larger one goes to the reader as it is produced, holding a bounded
+/// part of itself at a time.
+pub const STREAM_AFTER_ROWS: usize = 16_384;
 
 /// Failure from loading or querying one mirrored database.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -662,7 +694,6 @@ impl ReplicaEngine {
     ///
     /// Returns the same errors as [`Self::execute`], plus
     /// [`QueryError::Interrupted`] when the deadline elapses.
-    #[allow(clippy::too_many_lines)]
     pub fn execute_with_deadline(
         &self,
         database_id: &str,
@@ -670,6 +701,34 @@ impl ReplicaEngine {
         max_rows: usize,
         deadline: Option<Instant>,
     ) -> Result<QueryOutput, QueryError> {
+        match self.execute_answer(database_id, sql, max_rows, deadline, None)? {
+            Answer::Whole(output) => Ok(output),
+            Answer::Streamed { .. } => Err(QueryError::Internal(
+                "a result streamed with nowhere to go".to_owned(),
+            )),
+        }
+    }
+
+    /// Executes one statement, streaming a result larger than
+    /// [`STREAM_AFTER_ROWS`] into `sink` when there is one.
+    ///
+    /// A streamed result is never handed to identical requests waiting on
+    /// this one: they execute on their own, as they would after a failure.
+    /// Reaching `max_rows` while streaming is an error after the rows
+    /// already sent, where a held result reports itself truncated.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::execute_with_deadline`].
+    #[allow(clippy::too_many_lines)]
+    pub fn execute_answer(
+        &self,
+        database_id: &str,
+        sql: &str,
+        max_rows: usize,
+        deadline: Option<Instant>,
+        mut sink: Option<&mut dyn RowSink>,
+    ) -> Result<Answer, QueryError> {
         let started = Instant::now();
         // Bound classification work itself. Large statements acquire general
         // capacity before parsing; small ones may qualify for the reserve.
@@ -705,7 +764,9 @@ impl ReplicaEngine {
         // catalog snapshot, and a local database that has not created its
         // first table has none to load.
         if matches!(statement, Statement::CreateTable(_) | Statement::Insert(_)) {
-            return self.execute_write(database_id, &statement, started);
+            return self
+                .execute_write(database_id, &statement, started)
+                .map(Answer::Whole);
         }
         if is_transaction_control(&statement) {
             return Err(self.transaction_control_rejection(database_id));
@@ -733,7 +794,7 @@ impl ReplicaEngine {
         };
         let facts = replica.facts();
         match execute_metadata(&statement, catalog, Some(&replica.database.name), facts) {
-            Ok(result) => return Ok(metadata_output(result, started)),
+            Ok(result) => return Ok(Answer::Whole(metadata_output(result, started))),
             Err(MetadataError::Unsupported(_)) => {}
             Err(error) => return Err(QueryError::Invalid(error.to_string())),
         }
@@ -757,6 +818,7 @@ impl ReplicaEngine {
                 max_rows,
                 deadline,
                 false,
+                None,
             );
         }
         match statement {
@@ -773,6 +835,7 @@ impl ReplicaEngine {
                             started,
                             max_rows,
                             deadline,
+                            sink.take(),
                         )
                     }
                     None => self.execute_select(
@@ -787,6 +850,7 @@ impl ReplicaEngine {
                         max_rows,
                         deadline,
                         true,
+                        sink.take(),
                     ),
                 };
                 // Several clients asking the same question of the same
@@ -805,27 +869,31 @@ impl ReplicaEngine {
                     }
                     Join::Followed(output) => {
                         crate::trace::label("shared", "followed");
-                        Ok(followed_output(&output, started))
+                        Ok(Answer::Whole(followed_output(&output, started)))
                     }
                     Join::Lead(leader) => {
                         crate::trace::label("shared", "lead");
                         let result = run();
-                        if let Ok(output) = &result {
+                        // A streamed result went to one reader and is not
+                        // held: whoever waits executes on their own.
+                        if let Ok(Answer::Whole(output)) = &result {
                             leader.succeeded(output);
                         }
                         result
                     }
                 }
             }
-            Statement::Explain { .. } => self.execute_explain(
-                &statement,
-                catalog,
-                &mut provider,
-                &replica.database.name,
-                table_count,
-                started,
-                deadline,
-            ),
+            Statement::Explain { .. } => self
+                .execute_explain(
+                    &statement,
+                    catalog,
+                    &mut provider,
+                    &replica.database.name,
+                    table_count,
+                    started,
+                    deadline,
+                )
+                .map(Answer::Whole),
             _ => Err(QueryError::Invalid(
                 "Pintail's query surfaces are read-only".to_owned(),
             )),
@@ -892,7 +960,7 @@ impl ReplicaEngine {
         };
         Ok(QueryOutput {
             fields: Vec::new(),
-            rows: Vec::new(),
+            rows: ResultRows::default(),
             stats,
             truncated: false,
             affected: Some(affected),
@@ -913,7 +981,8 @@ impl ReplicaEngine {
         max_rows: usize,
         deadline: Option<Instant>,
         optimize: bool,
-    ) -> Result<QueryOutput, QueryError> {
+        sink: Option<&mut dyn RowSink>,
+    ) -> Result<Answer, QueryError> {
         let prepared =
             Self::prepare_select(statement, sql, catalog, facts, database_name, optimize)?;
         crate::trace::mark("prepared");
@@ -926,6 +995,7 @@ impl ReplicaEngine {
             started,
             max_rows,
             deadline,
+            sink,
         )
     }
 
@@ -1025,7 +1095,8 @@ impl ReplicaEngine {
         started: Instant,
         max_rows: usize,
         deadline: Option<Instant>,
-    ) -> Result<QueryOutput, QueryError> {
+        sink: Option<&mut dyn RowSink>,
+    ) -> Result<Answer, QueryError> {
         let PreparedSelect {
             physical,
             collation,
@@ -1063,30 +1134,38 @@ impl ReplicaEngine {
                 timestamp: field.timestamp,
                 wire_hint: wire_hints.get(index).copied().flatten(),
             })
-            .collect();
-        let (rows, batches, truncated) = collect_rows(&mut execution, max_rows)?;
+            .collect::<Vec<_>>();
+        let collected = collect_rows(&mut execution, max_rows, &fields, sink)?;
+        let (row_count, batches) = match &collected {
+            Collected::Whole { rows, batches, .. } => (rows.len(), *batches),
+            Collected::Streamed { rows, batches } => (*rows, *batches),
+        };
         crate::trace::mark("collected");
-        crate::trace::label("rows", rows.len());
+        crate::trace::label("rows", row_count);
         // Development profiling (PINTAIL_PROFILE): one block per query with
         // every operator's time, rows and peak reservation.
         if let Some(profile) = execution.profile() {
             let statement = sql.trim();
             let shown: String = statement.chars().take(160).collect();
             pintail_log::log_info!(
-                "pintail profile db={database_name} rows={} sql={shown:?}\n{}",
-                rows.len(),
+                "pintail profile db={database_name} rows={row_count} sql={shown:?}\n{}",
                 profile.render().trim_end()
             );
         }
         stats.duration_ms = elapsed_ms(started);
-        stats.rows = rows.len();
+        stats.rows = row_count;
         stats.batches = batches;
-        Ok(QueryOutput {
-            fields,
-            rows,
-            stats,
-            truncated,
-            affected: None,
+        Ok(match collected {
+            Collected::Whole {
+                rows, truncated, ..
+            } => Answer::Whole(QueryOutput {
+                fields,
+                rows,
+                stats,
+                truncated,
+                affected: None,
+            }),
+            Collected::Streamed { rows, .. } => Answer::Streamed { rows, stats },
         })
     }
 
@@ -1127,7 +1206,7 @@ impl ReplicaEngine {
                 timestamp: false,
                 wire_hint: None,
             }],
-            rows: vec![vec![Value::Utf8(plan)]],
+            rows: vec![vec![Value::Utf8(plan)]].into(),
             stats,
             truncated: false,
             affected: None,
@@ -1317,31 +1396,99 @@ fn is_transaction_control(statement: &Statement) -> bool {
     )
 }
 
+/// A result as collection left it.
+enum Collected {
+    /// Every row, held; `truncated` when a row lay beyond the limit.
+    Whole {
+        rows: ResultRows,
+        batches: usize,
+        truncated: bool,
+    },
+    /// The rows went to the sink.
+    Streamed { rows: usize, batches: usize },
+}
+
+/// Collects the result as the batches execution produces, up to `max_rows`
+/// rows.
+///
+/// A held result keeps the rows under the limit from the batch that
+/// crosses it and reports itself truncated. With a sink, a result that
+/// grows past [`STREAM_AFTER_ROWS`] starts streaming: the sink gets the
+/// fields and the rows so far, then each batch as it comes, and a streamed
+/// result that crosses the limit ends with the ceiling's error after the
+/// rows under it.
 fn collect_rows(
     execution: &mut Execution,
     max_rows: usize,
-) -> Result<(Vec<Vec<Value>>, usize, bool), QueryError> {
-    let mut rows = Vec::new();
+    fields: &[QueryField],
+    mut sink: Option<&mut dyn RowSink>,
+) -> Result<Collected, QueryError> {
+    let mut rows = ResultRows::default();
+    let mut sent = 0_usize;
+    let mut streaming = false;
     let mut batches = 0;
-    while let Some(batch) = execution.next_batch().map_err(query_execution_error)? {
+    while let Some(mut batch) = execution.next_batch().map_err(query_execution_error)? {
         batches += 1;
-        for row in batch.selection().selected_rows() {
-            if rows.len() == max_rows {
-                return Ok((rows, batches, true));
+        let room = max_rows - sent - rows.len();
+        let over = batch.visible_row_count() > room;
+        if over {
+            let mut selection = batch.selection().clone();
+            for row in batch.selection().selected_rows().skip(room) {
+                selection
+                    .set(row, false)
+                    .map_err(|error| QueryError::Internal(error.to_string()))?;
             }
-            let values = batch
-                .columns()
-                .iter()
-                .map(|column| {
-                    column.value(row).cloned().ok_or_else(|| {
-                        QueryError::Internal("query batch has a missing value".to_owned())
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            rows.push(values);
+            batch
+                .set_selection(selection)
+                .map_err(|error| QueryError::Internal(error.to_string()))?;
+        }
+        rows.push_batch(batch);
+        if over && !streaming {
+            return Ok(Collected::Whole {
+                rows,
+                batches,
+                truncated: true,
+            });
+        }
+        let Some(sink) = sink.as_deref_mut() else {
+            continue;
+        };
+        if !streaming && rows.len() > STREAM_AFTER_ROWS {
+            if !sink.begin(fields) {
+                return Err(QueryError::Interrupted);
+            }
+            streaming = true;
+        }
+        if streaming && !rows.is_empty() {
+            sent += rows.len();
+            if !sink.rows(std::mem::take(&mut rows)) {
+                return Err(QueryError::Interrupted);
+            }
+        }
+        if over {
+            return Err(result_ceiling_error(max_rows));
         }
     }
-    Ok((rows, batches, false))
+    Ok(if streaming {
+        Collected::Streamed {
+            rows: sent,
+            batches,
+        }
+    } else {
+        Collected::Whole {
+            rows,
+            batches,
+            truncated: false,
+        }
+    })
+}
+
+/// The refusal of a result with more rows than the wire's ceiling allows.
+pub(crate) fn result_ceiling_error(ceiling: usize) -> QueryError {
+    QueryError::Invalid(format!(
+        "the result has more than {ceiling} rows, the ceiling PINTAIL_MAX_RESULT_ROWS sets; \
+         narrow it with a filter or LIMIT, or raise the ceiling"
+    ))
 }
 
 /// Whether a table's store holds everything its source had when the copy
@@ -1442,7 +1589,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
             rows: result.rows.len(),
             ..QueryStats::default()
         },
-        rows: result.rows,
+        rows: result.rows.into(),
         truncated: false,
         affected: None,
     }

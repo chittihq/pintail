@@ -6,6 +6,7 @@ mod limits;
 mod observe;
 mod presentation;
 mod replica_cache;
+mod result_rows;
 mod server;
 mod shared_query;
 mod trace;
@@ -16,8 +17,8 @@ pub use admission::{
     shared_admission,
 };
 pub use engine::{
-    DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats,
-    ReplicaEngine, SqlRejection, table_directory,
+    Answer, DEFAULT_MAX_ROWS, DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput,
+    QueryStats, ReplicaEngine, RowSink, STREAM_AFTER_ROWS, SqlRejection, table_directory,
 };
 pub mod managed_tls;
 
@@ -32,6 +33,7 @@ pub use server::{
 
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
+pub use result_rows::ResultRows;
 pub use shared_query::{SharedQueryStats, shared_query_stats};
 
 mod metadata_provider;

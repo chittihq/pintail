@@ -18,7 +18,7 @@ mod storage;
 mod temporal_rewrite;
 
 pub use batch::{
-    BatchError, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SPILL_SERVE_BATCH_ROWS,
+    BatchError, Cell, ColumnVector, DEFAULT_BATCH_ROWS, RecordBatch, SPILL_SERVE_BATCH_ROWS,
     SelectedRows, SelectionMask,
 };
 pub use counters::{ExecCounters, take_exec_counters};
