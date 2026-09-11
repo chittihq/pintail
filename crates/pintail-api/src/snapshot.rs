@@ -125,6 +125,7 @@ pub(crate) async fn reset(
             .join("tables");
         if tables_dir.exists() {
             std::fs::remove_dir_all(&tables_dir).map_err(ApiError::internal)?;
+            pintail_store::publish_changes_under(&tables_dir);
         }
         Ok(())
     })();
@@ -800,6 +801,7 @@ pub(crate) fn open_tracked_store(
             // rebuild the store around the source's current shape instead of
             // refusing forever.
             std::fs::remove_dir_all(&directory).map_err(display)?;
+            pintail_store::publish_changes_under(&directory);
             let version = match history.last() {
                 None => 1,
                 Some(record) => {

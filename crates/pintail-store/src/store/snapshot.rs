@@ -137,6 +137,27 @@ impl TableSnapshot {
         self.estimated_bytes
     }
 
+    /// How many immutable segments this view reads.
+    #[must_use]
+    pub fn segment_count(&self) -> usize {
+        self.manifest.segments.len()
+    }
+
+    /// Bytes a full read of this view touches: its segment files as they
+    /// are on disk plus the rows it holds in memory. One `stat` per
+    /// segment, so a caller asking repeatedly should keep the answer.
+    #[must_use]
+    pub fn stored_bytes(&self) -> u64 {
+        self.manifest.segments.iter().fold(
+            u64::try_from(self.estimated_bytes).unwrap_or(u64::MAX),
+            |bytes, segment| {
+                let length = std::fs::metadata(self.directory.join(&segment.file_name))
+                    .map_or(0, |metadata| metadata.len());
+                bytes.saturating_add(length)
+            },
+        )
+    }
+
     /// This snapshot's opening; see `TableStore::instance`.
     ///
     /// Anything caching a result against the table's directory has to carry

@@ -115,6 +115,7 @@ impl LocalDatabase {
             let directory = table_directory(&self.tables_root, table);
             if directory.exists() {
                 std::fs::remove_dir_all(&directory).map_err(internal)?;
+                pintail_store::publish_changes_under(&directory);
             }
             metadata
                 .remove_local_table(&self.database_id, table)
