@@ -713,6 +713,34 @@ impl CompiledExpr {
     /// (and AND conjunctions of them): one tight loop over packed values
     /// instead of a per-row `Value` walk. Returns `None` when the shape or
     /// physical types don't qualify — the caller falls back to row-at-a-time.
+    /// The predicate over `batch` as a selection mask, evaluated by the
+    /// batch kernels.
+    ///
+    /// [`Self::evaluate_filter_mask`] reads packed comparisons straight from
+    /// their buffers and answers nothing else; this reaches the whole kernel
+    /// tree, so a function of a column - `DATE(placed_at) = '2024-03-01'`,
+    /// `UPPER(name) = 'A'`, an arithmetic or decimal comparison - is answered
+    /// a batch at a time instead of row by row. A row survives only where
+    /// the answer is TRUE, which is what [`predicate_truth`] decides for the
+    /// row path; NULL and FALSE both drop it. `None` when no kernel answers
+    /// the expression, and the caller falls to rows.
+    pub(crate) fn evaluate_mask(&self, batch: &RecordBatch) -> Option<crate::SelectionMask> {
+        mask_of(
+            &self.evaluate_column(batch, Some(DataType::Boolean))?,
+            batch,
+        )
+    }
+
+    /// [`Self::evaluate_mask`] for a pass that decides only which rows to
+    /// read: the warnings it raises are dropped, since the operator that
+    /// keeps the rows evaluates the same expression again.
+    pub(crate) fn evaluate_skip_mask(&self, batch: &RecordBatch) -> Option<crate::SelectionMask> {
+        mask_of(
+            &self.evaluate_vector_column_quietly(batch, Some(DataType::Boolean))?,
+            batch,
+        )
+    }
+
     pub(crate) fn evaluate_filter_mask(
         &self,
         batch: &RecordBatch,
@@ -6009,6 +6037,19 @@ fn evaluate_between(
         Value::Null => Ok(Value::Null),
         _ => Err(ExecError::InvalidExpressionType),
     }
+}
+
+/// A Boolean answer column as a selection mask: a row survives only where
+/// the answer is TRUE, which is what [`predicate_truth`] decides for the
+/// row path - NULL and FALSE both drop it.
+fn mask_of(column: &crate::ColumnVector, batch: &RecordBatch) -> Option<crate::SelectionMask> {
+    let mut mask = crate::SelectionMask::all(batch.row_count());
+    for row in 0..batch.row_count() {
+        if !matches!(column.value(row), Some(Value::Boolean(true))) {
+            mask.set(row, false).ok()?;
+        }
+    }
+    Some(mask)
 }
 
 pub(crate) fn predicate_truth(value: &Value) -> Result<bool, ExecError> {

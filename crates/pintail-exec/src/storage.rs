@@ -1792,13 +1792,20 @@ fn prewhere_ranges(
             .map_err(|error| error.to_string())?;
         let batch = RecordBatch::new(row_count, vectors).map_err(|error| error.to_string())?;
         for predicate in &spec.predicates {
-            let Some(mask) = predicate
+            // The packed comparison first, then the kernel tree over the
+            // columns this round already decoded: a function of a column
+            // skips ranges here rather than paying the decode and skipping
+            // nothing. A predicate neither answers keeps every row, and the
+            // Filter operator above applies the exact mask.
+            let mask = match predicate
                 .evaluate_filter_mask(&batch)
                 .map_err(|error| error.to_string())?
-            else {
-                // A predicate outside the typed kernels: keep every row; the
-                // Filter operator above applies the exact mask.
-                return Ok(None);
+            {
+                Some(mask) => mask,
+                None => match predicate.evaluate_skip_mask(&batch) {
+                    Some(mask) => mask,
+                    None => return Ok(None),
+                },
             };
             match &mut combined {
                 None => combined = Some(mask),

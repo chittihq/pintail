@@ -3917,9 +3917,16 @@ impl PullOperator {
                     return Ok(None);
                 };
                 // Typed batch kernel: comparison predicates over packed
-                // columns resolve in one pass; anything else falls back to
-                // the row-at-a-time path below.
-                if let Some(mask) = predicate.evaluate_filter_mask(&batch)? {
+                // columns resolve in one pass. Anything else the kernel tree
+                // answers - a function of a column, arithmetic, a decimal
+                // comparison - resolves as a Boolean column, which is the
+                // same answer a batch at a time. Only an expression no
+                // kernel answers falls to the row-at-a-time path below.
+                let mask = match predicate.evaluate_filter_mask(&batch)? {
+                    Some(mask) => Some(mask),
+                    None => predicate.evaluate_mask(&batch),
+                };
+                if let Some(mask) = mask {
                     batch.selection_mut().intersect(&mask)?;
                     if batch.visible_row_count() > 0 {
                         return Ok(Some(batch));
