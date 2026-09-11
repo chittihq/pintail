@@ -718,20 +718,37 @@ fn range_bound_for_target(
             NumericRangeTarget::NegativeInfinity => Ordering::Greater,
             NumericRangeTarget::PositiveInfinity => Ordering::Less,
             NumericRangeTarget::ExactDecimal { units, scale } => {
-                let candidate = match candidate {
-                    Value::Boolean(value) => i8::from(*value).to_string(),
-                    Value::Int64(value) => value.to_string(),
-                    Value::UInt64(value) => value.to_string(),
-                    value if *decimal && value.text().is_some() => {
-                        value.text().expect("guarded text").to_owned()
-                    }
-                    _ => return Ordering::Equal,
+                // An integer key compares with the target in units, without
+                // rendering either side as text.
+                let integer = match candidate {
+                    Value::Boolean(value) => Some(i128::from(*value)),
+                    Value::Int64(value) => Some(i128::from(*value)),
+                    Value::UInt64(value) => Some(i128::from(*value)),
+                    _ => None,
+                }
+                .and_then(|integer| {
+                    10_i128
+                        .checked_pow(u32::from(*scale))
+                        .and_then(|factor| integer.checked_mul(factor))
+                });
+                let ordering = if let Some(integer) = integer {
+                    integer.cmp(units)
+                } else {
+                    let candidate = match candidate {
+                        Value::Boolean(value) => i8::from(*value).to_string(),
+                        Value::Int64(value) => value.to_string(),
+                        Value::UInt64(value) => value.to_string(),
+                        value if *decimal && value.text().is_some() => {
+                            value.text().expect("guarded text").to_owned()
+                        }
+                        _ => return Ordering::Equal,
+                    };
+                    compare_decimal_text(
+                        &candidate,
+                        &pintail_types::format_decimal_scaled(*units, *scale),
+                    )
+                    .unwrap_or(Ordering::Equal)
                 };
-                let ordering = compare_decimal_text(
-                    &candidate,
-                    &pintail_types::format_decimal_scaled(*units, *scale),
-                )
-                .unwrap_or(Ordering::Equal);
                 if *ascending {
                     ordering
                 } else {
@@ -868,10 +885,22 @@ fn compute_window_column(
         memory.reserve(peer_bytes)?;
         let peer_start = |from: usize| peer_firsts[from];
         let peer_end = |from: usize| peer_ends[from];
+        // A RANGE frame's extent follows from the row's ordering value alone,
+        // so the rows of one peer group share it. Resolving an offset bound
+        // per row repeated two searches for every peer.
+        let range_extent =
+            std::cell::Cell::new(None::<(usize, pintail_sql::BoundWindowFrame, (usize, usize))>);
         let frame_extent = |frame: pintail_sql::BoundWindowFrame,
                             index: usize|
          -> Result<(usize, usize), ExecError> {
             use pintail_sql::{BoundFrameBound as Edge, BoundFrameOffset as Offset};
+            if frame.range
+                && let Some((peer, cached, extent)) = range_extent.get()
+                && cached == frame
+                && peer == peer_start(index)
+            {
+                return Ok(extent);
+            }
             let len = partition.len();
             let row_offset = |offset: Offset| match offset {
                 Offset::Rows(value) => Ok(usize::try_from(value).unwrap_or(usize::MAX)),
@@ -939,6 +968,9 @@ fn compute_window_column(
                     .min(len),
                 Edge::UnboundedFollowing => len,
             };
+            if frame.range {
+                range_extent.set(Some((peer_start(index), frame, (start, end))));
+            }
             Ok((start, end))
         };
         match &window.function {
