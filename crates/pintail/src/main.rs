@@ -76,6 +76,10 @@ async fn main() -> Result<()> {
     );
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
     raise_open_file_limit();
+    // This process is its data directory's only writer: a table stays
+    // locked to it between replication cycles, so queries prove the replica
+    // current from its generation instead of walking the table's files.
+    pintail_store::retain_writer_locks();
     report_effective_limits(&config);
 
     let api_state = ApiState::new(
