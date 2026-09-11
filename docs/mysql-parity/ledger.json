@@ -2,19 +2,19 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "5334c6a664477dbfc72b87f0183b793cc46eb968",
-    "measuredAt": "2026-09-11T06:43:39.989Z",
+    "commit": "f763c463ffe05e63eb3bbc4296cc5319008e61d5",
+    "measuredAt": "2026-09-11T09:56:09.383Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "e38cebc4f364426e937fb08f032aa166904ac73c5f7ab279d135948710d6cb28",
+    "ledgerSha256": "1fa57912d22206eba4728bdda1c5447f7bc88f1a029ea5738de0fef5226d5a2f",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "5334c6a664477dbfc72b87f0183b793cc46eb968",
-      "sourceCommit": "b74ff9dba89ec9434f564d3f2c3005b592ea3f8b",
-      "measuredAt": "2026-09-11T06:35:14.464476286+00:00",
+      "commit": "f763c463ffe05e63eb3bbc4296cc5319008e61d5",
+      "sourceCommit": "38f8669cbd849cd3990a9ee608f598a5d2ce7025",
+      "measuredAt": "2026-09-11T09:46:50.831963181+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "5e72f9200146dfeafda5942763583d762fca7344ab46e5493c70a50b96d10fe5",
-      "corpusSha256": "e13a156b4c2f5163ad728f0d4d951a0358d8dcd2db6c644d0fb7007a9a16bd4d"
+      "ledgerSha256": "9003ba0ecdcbeadebe0fa0b45844aee729c76302ffe481b870c7b904cbc2b96a",
+      "corpusSha256": "2ca9498dc82019ba8bd224066f900ff3e0799183f459b8b3cebc80e5546fcf0f"
     }
   },
   "baseline": {
@@ -45,11 +45,11 @@
     },
     {
       "path": "crates/pintail-wire/src/server.rs",
-      "sha256": "5cbe3ebaf0bf000a531188df78c9674ac7a031370f7e85b2f2fda0eaa8ea4718"
+      "sha256": "0616986d0d11f3079ec801841d378548b0194f670ca14431c4b5489b243eb0a1"
     },
     {
       "path": "crates/pintail-write/src/engine.rs",
-      "sha256": "d9537e46cf3a67872ba980a256fe359c8360d0ac9eef25d5ee38e5e933812048"
+      "sha256": "5ddb74f49ec41a1a7251f65997a793e95971da9bc924dda2b4855a75351983ee"
     }
   ],
   "verification": "Static review plus linked historical MySQL differential cases; no new run or full semantic certification",
