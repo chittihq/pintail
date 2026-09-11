@@ -709,10 +709,6 @@ impl CompiledExpr {
         }
     }
 
-    /// Batch-level typed evaluation for `column <cmp> literal` predicates
-    /// (and AND conjunctions of them): one tight loop over packed values
-    /// instead of a per-row `Value` walk. Returns `None` when the shape or
-    /// physical types don't qualify — the caller falls back to row-at-a-time.
     /// The predicate over `batch` as a selection mask, evaluated by the
     /// batch kernels.
     ///
@@ -741,6 +737,10 @@ impl CompiledExpr {
         )
     }
 
+    /// Batch-level typed evaluation for `column <cmp> literal` predicates
+    /// (and AND conjunctions of them): one tight loop over packed values
+    /// instead of a per-row `Value` walk. Returns `None` when the shape or
+    /// physical types don't qualify — the caller falls back to row-at-a-time.
     pub(crate) fn evaluate_filter_mask(
         &self,
         batch: &RecordBatch,
