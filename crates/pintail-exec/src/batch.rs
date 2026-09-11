@@ -746,6 +746,30 @@ impl ColumnVector {
         })
     }
 
+    /// One row's value, when the column already holds its values.
+    pub(crate) fn cached_value(&self, row: usize) -> Option<&Value> {
+        self.values.get().and_then(|values| values.get(row))
+    }
+
+    /// Upper bound on one packed scalar's length as text, read without
+    /// materializing the column: a number renders in at most 24
+    /// characters, and text is measured where it lies.
+    pub(crate) fn packed_text_upper_bound(&self, row: usize) -> usize {
+        match self.typed() {
+            Some((
+                TypedValues::Int64(_) | TypedValues::UInt64(_) | TypedValues::Float64(_),
+                validity,
+            )) => {
+                if validity.is_valid(row) {
+                    24
+                } else {
+                    0
+                }
+            }
+            _ => self.scalar_heap_bytes(row).unwrap_or(0),
+        }
+    }
+
     /// Heap allowance for copying one scalar, without formatting other rows.
     pub(crate) fn scalar_heap_bytes(&self, row: usize) -> Option<usize> {
         if row >= self.len {
