@@ -6,8 +6,11 @@ MySQL oracle byte-exact at every step.
 
 ## Where the gap is
 
-Source: [`benchmark/corpus/results.csv`](../../benchmark/corpus/results.csv),
-measured at 5256ec63 (before the per-query-cost and correlated fixes).
+Source: a corpus run at 5256ec63 (before the per-query-cost and correlated
+fixes). [`benchmark/corpus/results.csv`](../../benchmark/corpus/results.csv)
+holds the newest run - the closing one, at 56e254b5; the traced baseline
+this program's progress is measured against, at a2c22194, is that file at
+commit 75f9968f.
 
 | | Scale 1 | Scale 10,000 |
 |---|---:|---:|
@@ -127,15 +130,26 @@ program and gets its own gate and live-CDC coverage.
 
 ## Progress
 
-Measured at scale 10,000 after the second slice of phase 5 (9074d2be),
-against the baseline above: the excess over MySQL fell from 73.3 s to
-30.9 s, queries at least twice MySQL's time from 1,293 to 393, timeouts
-from 62 to 29 and errors from 20 to 3, with no answer that differs where
-it agreed before. Plain projections now carry the largest share (12.4 s,
-7.0 s of it scalar expressions), then joins and subqueries under a sort.
+Closed at 56e254b5. Measured against the traced baseline at a2c22194,
+over the same 1,895 cases on the same idle host:
+
+| | Scale 1 | Scale 10,000 |
+|---|---:|---:|
+| Median case (Pintail / MySQL, ms) | 0.37 / 0.25 | 15.7 / 16.9 |
+| Pintail faster than MySQL | 50 | 477 |
+| At least 2× slower (was) | 68 (1,324) | 316 (1,293) |
+| At least 10× slower (was) | 0 (0) | 68 (102) |
+| Excess over MySQL (was) | 0.2 s (0.6 s) | 22.2 s (73.3 s) |
+
+At scale 10,000 Pintail answers 1,863 of the cases against MySQL's
+1,853: thirty-one pass the ten-second limit, twenty-nine of them past
+MySQL's too. Every answer matches MySQL at scale 1; the sixty that differ
+at scale 10,000 are the LIMIT ties and unordered aggregations amplified
+copies produce, which MySQL leaves unspecified, and they are the same
+cases as before this program.
 
 - [x] Phase 0 — per-query trace (`PINTAIL_QUERY_TRACE`) and the traced
-  baseline at a2c22194 in `benchmark/corpus/results.csv`. At scale 1 the
+  baseline at a2c22194, banked at 75f9968f. At scale 1 the
   server-side time splits into freshness checks and short-query
   classification (about half), then execution, session handling, binding,
   parsing and plan start.
@@ -159,7 +173,7 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   and a result over 16,384 rows streams to the client through a bounded
   queue while it is produced; an error after streamed rows follows them.
   A 130,000-row result went from 58.9 ms to 32.0 ms on the wire.
-- [ ] Phase 3 — first slice merged: batch kernels for date parts, interval
+- [x] Phase 3 — first slice: batch kernels for date parts, interval
   arithmetic, `DATE`/`LAST_DAY`, `DATEDIFF`/`TIMESTAMPDIFF`, comparisons,
   `IS NULL`, `AND`/`OR`/`XOR`, signed integer and exact decimal arithmetic,
   decimal comparison and the widening casts compared operands carry. A
@@ -177,7 +191,7 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   108 ms. JSON and `TIME` functions run through the adapter only: their
   cost is parsing each document or time value per row, which a parsed
   JSON form or packed `TIME` units would remove.
-- [ ] Phase 4 — merged so far: a sort the scan's key order already
+- [x] Phase 4 — a sort the scan's key order already
   satisfies is left out, where the order is proven (integer key columns
   that are never NULL, named in key order, ascending, from the scan's own
   relation); the in-memory sort orders row references over the input's
@@ -191,7 +205,7 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   (137 ms to 2 ms at scale 10,000). A top-k sort keeps its rows as
   columns, cutting them to their first k as they arrive, with the k-th
   row's key as a cutoff for the rows after it.
-- [ ] Phase 5 — merged so far: a resident hash join with no residual
+- [x] Phase 5 — a resident hash join with no residual
   probes a batch at a time, gathering its probe columns and copying each
   build row once. A three-table join over 100,000 rows went from 355 ms to
   215 ms, a left join from 203 ms to 80 ms. A join's residual is evaluated
@@ -208,4 +222,30 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   100,000 rows with a handful of distinct keys ran past its time limit and
   now takes about 80 ms); and reads a pinned scalar subquery's row by key,
   so a scalar subquery nested in another costs about 0.3 ms per outer row
-  instead of 57 ms.
+  instead of 57 ms. The last slice keeps a resident build's rows in the
+  batches they arrived in, mapping each key to references, and gathers the
+  build's output columns from those batches - a left join over a derived
+  inner join went from 337 ms to 131 ms at scale 10,000, two chained right
+  joins under `COUNT(*)` from 254 ms to 111 ms - and answers window
+  functions over the input's own batches, ordered by the columnar sort's
+  packed keys, where the row path copied every cell into a row twice and
+  compared values to order them: `ROW_NUMBER() OVER (ORDER BY total, id)`
+  over 130,000 rows went from 135 ms to 42 ms.
+
+## What is left
+
+Measured at the close, in the order of what they cost:
+
+- Aggregates over many groups: `SUM(DISTINCT)`/`COUNT(DISTINCT)` and
+  `GROUP_CONCAT` fold through per-group state that allocates per row.
+- JSON and `TIME` functions evaluate through the batch adapter, parsing
+  each document or time value per row; a parsed JSON form and packed
+  `TIME` units would remove that.
+- A scalar subquery nested in another still runs per outer row (about
+  0.3 ms each). Decorrelating it would evaluate its inner subquery for
+  rows the outer query never reaches, which can raise errors the query
+  never would, so it needs a form that proves the inner lookup answers at
+  most one row.
+- A correlated `IN` inside an outer join's `ON` clause runs per pair.
+- The spilled window path is still row-at-a-time, and a window ordered by
+  a text key under a collation weighs that text at every comparison.
