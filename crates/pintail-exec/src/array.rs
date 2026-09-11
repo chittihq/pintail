@@ -490,6 +490,34 @@ impl StrColumn {
             .map(|dict| (dict.codes.as_slice(), dict.values.as_slice()))
     }
 
+    /// This column's distinct values mapped through `f`, over the same
+    /// codes; `None` when the column carries no dictionary.
+    ///
+    /// A function of a coded column is a function of its distinct values: a
+    /// hundred thousand rows of ten distinct names uppercase ten strings,
+    /// not a hundred thousand, and the answer stays coded for whatever
+    /// reads it next. The mapped values are plain text, so ENUM and SET
+    /// provenance does not carry: `UPPER` of an ENUM is a string, and
+    /// `MySQL` orders it as one.
+    #[must_use]
+    pub fn map_dictionary(&self, f: impl FnMut(&str) -> String) -> Option<Self> {
+        let dict = self.dict.as_ref()?;
+        let mut f = f;
+        Some(Self {
+            views: Vec::new(),
+            heap: Vec::new(),
+            dict: Some(StrDictionary {
+                codes: dict.codes.clone(),
+                values: dict.values.iter().map(|value| f(value)).collect(),
+                validity: dict.validity.clone(),
+            }),
+            lazy: Some(Box::new(std::sync::OnceLock::new())),
+            enum_labels: None,
+            enum_labels_exhaustive: false,
+            set_members: None,
+        })
+    }
+
     #[must_use]
     pub fn from_dictionary(
         dict_heap: &[u8],
