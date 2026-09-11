@@ -1492,6 +1492,97 @@ fn assert_compatibility_rows(label: &str, targets: &[CdcTarget]) {
     assert_eq!(myisam[0].values()[1], Value::Utf8("updated".to_owned()));
 }
 
+/// A DDL this engine cannot parse quarantines the tables it names and the
+/// stream moves past it. "Past it" has to reach the checkpoint: a statement
+/// nothing follows would otherwise be read again by every later pass, which
+/// quarantines the same tables again and holds the rows before it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn an_unreadable_ddl_with_nothing_after_it_still_advances_the_checkpoint() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE quarantine_me (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(32), \
+               INDEX value_idx (value));\
+             INSERT INTO quarantine_me VALUES (1,'before');",
+        )
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("unreadable DSN"));
+    let report = probe(&pool, "app").await.expect("probe unreadable source");
+    let workspace = tempfile::tempdir().expect("unreadable workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("unreadable metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register unreadable source");
+    let source = report.tables.first().expect("quarantine_me source");
+    let store = TableStore::open(
+        workspace.path().join("quarantine_me"),
+        source.table_schema().expect("quarantine_me schema"),
+        StoreOptions::default(),
+    )
+    .expect("quarantine_me store");
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![SnapshotTarget::new(source.clone(), store).expect("unreadable snapshot target")],
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("unreadable baseline snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("unreadable CDC target")
+        })
+        .collect::<Vec<_>>();
+
+    // Valid MySQL that this engine's parser refuses, and the last event in
+    // the log.
+    mysql
+        .query_batch("ALTER TABLE quarantine_me ALTER INDEX value_idx INVISIBLE;")
+        .expect("unreadable DDL");
+    let result = finite_catch_up(&pool, &metadata_path, &report, targets)
+        .await
+        .expect("catch up past the unreadable DDL");
+    let flagged = MetaStore::open(&metadata_path)
+        .expect("unreadable state")
+        .tables(DATABASE_ID)
+        .expect("unreadable tables")
+        .into_iter()
+        .filter(|table| table.state == "needs_resync")
+        .map(|table| table.name)
+        .collect::<Vec<_>>();
+    assert_eq!(flagged, ["quarantine_me"], "the statement's table resyncs");
+    let status = mysql
+        .query_batch("SHOW BINARY LOG STATUS;")
+        .expect("source position");
+    let mut fields = status.split_whitespace();
+    let file = fields.next().expect("binlog file").to_owned();
+    let pos: u64 = fields
+        .next()
+        .expect("binlog position")
+        .parse()
+        .expect("binlog position is a number");
+    assert_eq!(result.checkpoint.binlog_file, file);
+    assert_eq!(
+        result.checkpoint.binlog_pos, pos,
+        "the checkpoint names the source's own position, so no later pass reads the statement again"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires the configured Docker host and mysql:8.4 image"]
 async fn purged_file_position_marks_the_source_for_resnapshot() {

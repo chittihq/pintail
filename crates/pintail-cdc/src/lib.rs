@@ -751,6 +751,25 @@ async fn run_cdc_inner(
                                     None,
                                 )?;
                             }
+                            // Past it, as a readable DDL moves past itself:
+                            // the rows before it commit, and the checkpoint
+                            // names the statement's own position. Leaving
+                            // both behind re-read the statement on every
+                            // later pass - quarantining the same tables
+                            // again - and held those rows until some other
+                            // event arrived, which for the last event in the
+                            // log is never.
+                            position.pos = event_position;
+                            let outcome = commit_pending(
+                                &mut targets,
+                                &mut metadata,
+                                database_id,
+                                &mut position,
+                                &mut pending,
+                            )?;
+                            commits += 1;
+                            mutations += outcome;
+                            emit_progress(&progress, commits, mutations, &position)?;
                             continue;
                         }
                     };
