@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "2b4ebef109bf7332c5919bfab8eb2fb08cd31da3",
-    "measuredAt": "2026-09-11T20:08:24.451Z",
+    "commit": "9325b8ce89911433b720006f38c96be84a93d57e",
+    "measuredAt": "2026-09-11T21:50:39.024Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "5d0e6cfa8429775f03414f8b62b67dd86924f549fdcca282848b9cdbdd1fc19d",
+    "ledgerSha256": "79a8ca83a6d76a18540c759825429acc2969cfda6763a7c253fa177904cc92ff",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "2b4ebef109bf7332c5919bfab8eb2fb08cd31da3",
-      "sourceCommit": "80348276245256216d6b5b336719d871a6c9094d",
-      "measuredAt": "2026-09-11T19:59:46.089100801+00:00",
+      "commit": "9325b8ce89911433b720006f38c96be84a93d57e",
+      "sourceCommit": "0bf211379b925832876b9ab4dcac7139f8de1a25",
+      "measuredAt": "2026-09-11T21:41:31.080747475+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "acaf4e9ffcfa3c62e5ab030104e256c99fb67e72e4602b83e81240f836f54536",
+      "ledgerSha256": "4d511e9bd00e5ec0f2384db926ddb07c4ba082081338fbaa4a4b9c1815f8bd6b",
       "corpusSha256": "37cd5ba5bb4524fa26998fa687f56f3d4dd8303fd831b74ac2ee33b6660b2030"
     }
   },
@@ -3406,10 +3406,10 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/filter_kernels.rs:146",
         "crates/pintail-exec/tests/temporal_predicate_rewrite.rs:1",
         "tests/sqllogic/tests/mysql_oracle.rs:1145",
-        "tests/sqllogic/tests/report_shapes.rs:390",
-        "tests/sqllogic/tests/support/oracle_boundaries.rs:459"
+        "tests/sqllogic/tests/report_shapes.rs:390"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
@@ -10067,6 +10067,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/filter_kernels.rs:142",
         "tests/sqllogic/tests/mysql_oracle.rs:1775",
         "tests/sqllogic/tests/support/oracle_boundaries.rs:397"
       ],
@@ -19556,6 +19557,7 @@
         "if args.len() == 1"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/filter_kernels.rs:134",
         "tests/sqllogic/tests/mysql_oracle.rs:1520",
         "tests/sqllogic/tests/support/oracle_boundaries.rs:411"
       ],
