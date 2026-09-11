@@ -2827,12 +2827,15 @@ async function phaseExecutionBudget() {
 
   // A self-join with no selective predicate: output grows with the square of
   // the rows per join key, so it is the shape that runs away in production
-  // and the one an execution ceiling exists for.
+  // and the one an execution ceiling exists for. The key is the quantity,
+  // nine values over the fixture's few hundred lines, so four copies join
+  // to tens of millions of rows; an order's one to three lines joined in a
+  // millisecond once joins stopped copying their rows.
   const runaway =
     'SELECT COUNT(*) AS n FROM order_items a ' +
-    'JOIN order_items b ON a.order_id = b.order_id ' +
-    'JOIN order_items c ON c.order_id = b.order_id ' +
-    'JOIN order_items d ON d.order_id = c.order_id'
+    'JOIN order_items b ON a.qty = b.qty ' +
+    'JOIN order_items c ON c.qty = b.qty ' +
+    'JOIN order_items d ON d.qty = c.qty'
 
   // 1. The hint is honoured, and the error is MySQL's 1317 - drivers key
   //    their retry and timeout handling on the code, not the message.
