@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "582c220a004b73523da7fedaa5a0a9253068bafa",
-    "measuredAt": "2026-09-11T10:27:05.869Z",
+    "commit": "7a588d1974e76f8759915ee3ee88ce05c347f544",
+    "measuredAt": "2026-09-11T12:12:53.261Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "0a6d36db5f769900adc8a28962d03102f9e24e69e714b53de4f000b37bb9d9d0",
+    "ledgerSha256": "e9039cca2214c37848534df8852bdcb1737cfe3f6655257987ee33b0c8c0dea1",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "582c220a004b73523da7fedaa5a0a9253068bafa",
-      "sourceCommit": "ac1bbc98313695146064a234cedabaac300a4237",
-      "measuredAt": "2026-09-11T10:17:54.406210973+00:00",
+      "commit": "7a588d1974e76f8759915ee3ee88ce05c347f544",
+      "sourceCommit": "1b237a98fa2d3a28dfdc3d91fc3f68fec9fba191",
+      "measuredAt": "2026-09-11T12:04:22.832477345+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "e8cbdf622a601a5fd764e02af70b9e9eff9d74053c4b6e645b72152412e67b4f",
+      "ledgerSha256": "e088ee9c8ca0a03e757ee34fa40749075e7766942f9a50631be092a28778850b",
       "corpusSha256": "2ca9498dc82019ba8bd224066f900ff3e0799183f459b8b3cebc80e5546fcf0f"
     }
   },
@@ -6540,10 +6540,10 @@
         "if args.len() == 4"
       ],
       "testOccurrences": [
+        "crates/pintail-exec/tests/key_order_scan.rs:155",
         "crates/pintail-exec/tests/live_replication_queries.rs:204",
         "crates/pintail-exec/tests/memtable_overlay.rs:87",
-        "crates/pintail-exec/tests/multi_core.rs:82",
-        "crates/pintail-exec/tests/runtime_join_filter.rs:189"
+        "crates/pintail-exec/tests/multi_core.rs:82"
       ],
       "verification": "not-run",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",
