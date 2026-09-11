@@ -19,7 +19,7 @@ use super::{
     resolve_dependent_expr_subqueries, rows_to_columns,
 };
 use crate::{
-    RecordBatch, SPILL_SERVE_BATCH_ROWS,
+    ColumnVector, RecordBatch, SPILL_SERVE_BATCH_ROWS,
     expression::{CompiledExpr, mysql_f64, predicate_truth},
     spill,
 };
@@ -1696,6 +1696,19 @@ pub(super) fn next_hash_join_batch(
             memory,
         );
     }
+    if residual.is_none() {
+        return next_hash_join_columns(
+            left,
+            kind,
+            left_key,
+            key_mode,
+            extra_keys,
+            right_width,
+            column_types,
+            state,
+            memory,
+        );
+    }
     let mut rows = Vec::<Vec<Value>>::with_capacity(SPILL_SERVE_BATCH_ROWS);
     let mut buffered_bytes = 0_usize;
     while rows.len() < SPILL_SERVE_BATCH_ROWS {
@@ -1775,6 +1788,196 @@ pub(super) fn next_hash_join_batch(
     )?;
     let columns = rows_to_columns(&rows, column_types)?;
     Ok(Some(RecordBatch::new(rows.len(), columns)?))
+}
+
+/// The next probe batch the join reads: one read ahead of the build first,
+/// its read-ahead reservation handed back before the probe takes its own
+/// so the bytes are charged once. `false` once the probe side is exhausted.
+fn load_probe_batch(
+    left: &mut PullOperator,
+    state: &mut HashJoinState,
+    memory: &MemoryTracker,
+) -> Result<bool, ExecError> {
+    state.clear_batch(memory);
+    let next = match state.prefetched.pop_front() {
+        Some((batch, bytes)) => {
+            memory.release(bytes);
+            Some(batch)
+        }
+        None => left.next_batch(memory)?,
+    };
+    let Some(batch) = next else {
+        memory.release(state.filter_reserved);
+        state.filter_reserved = 0;
+        return Ok(false);
+    };
+    let batch_bytes = batch.estimated_bytes();
+    memory.reserve(batch_bytes)?;
+    state.batch_reserved = batch_bytes;
+    state.batch = Some(batch);
+    Ok(true)
+}
+
+/// A resident join with no residual, probed a batch at a time.
+///
+/// Each probe row's matches are the build rows its key finds, in bucket
+/// order, and each join kind emits them as [`join_emit`] does. The output's
+/// probe columns are gathered from the probe batch - packed where it packs
+/// them - and each matched build row's values are copied once, where the
+/// row probe copied every cell into a row and then into a column.
+#[allow(clippy::too_many_arguments)]
+fn next_hash_join_columns(
+    left: &mut PullOperator,
+    kind: BoundJoinKind,
+    left_key: &CompiledExpr,
+    key_mode: JoinKeyMode,
+    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    right_width: usize,
+    column_types: &[DataType],
+    state: &mut HashJoinState,
+    memory: &MemoryTracker,
+) -> Result<Option<RecordBatch>, ExecError> {
+    let pairs_rows = matches!(
+        kind,
+        BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar
+    );
+    let left_width = if pairs_rows {
+        column_types.len().saturating_sub(right_width)
+    } else {
+        column_types.len()
+    };
+    loop {
+        let exhausted = state
+            .batch
+            .as_ref()
+            .is_none_or(|batch| state.row >= batch.row_count());
+        if exhausted && !load_probe_batch(left, state, memory)? {
+            return Ok(None);
+        }
+        let batch = state.batch.as_ref().expect("probe batch loaded");
+        let mut picks = Picks {
+            probe_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
+            build_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
+            probe_row_bytes: batch.estimated_bytes() / batch.row_count().max(1),
+            bytes: 0,
+        };
+        while state.row < batch.row_count() && picks.probe_rows.len() < SPILL_SERVE_BATCH_ROWS {
+            // Turning the picked rows into columns needs about as much again,
+            // so under a tight ceiling the batch is cut where that still fits.
+            if !picks.probe_rows.is_empty() && picks.bytes.saturating_mul(2) > memory.remaining() {
+                break;
+            }
+            let row = state.row;
+            if !batch.selection().is_selected(row) {
+                state.row += 1;
+                continue;
+            }
+            let key = match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? {
+                Some(primary) => {
+                    composite_join_key(primary, batch, row, extra_keys, JoinSide::Probe)?
+                }
+                None => None,
+            };
+            let matches = key.as_ref().and_then(|key| state.build.get(key));
+            let probe_row = u32::try_from(row).map_err(|_| {
+                ExecError::InvalidBatch("a probe batch holds more rows than a join can address")
+            })?;
+            let room = SPILL_SERVE_BATCH_ROWS - picks.probe_rows.len();
+            match (kind, matches) {
+                (BoundJoinKind::Scalar, Some(rows)) if rows.len() > 1 => {
+                    return Err(ExecError::ScalarSubqueryRows { rows: rows.len() });
+                }
+                (
+                    BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar,
+                    Some(rows),
+                ) => {
+                    // A bucket larger than what is left of the batch resumes
+                    // at `match_index` on the next call.
+                    let end = rows.len().min(state.match_index + room);
+                    for build_row in &rows[state.match_index..end] {
+                        picks.push(probe_row, Some(build_row));
+                    }
+                    state.match_index = end;
+                    if state.match_index < rows.len() {
+                        break;
+                    }
+                }
+                (BoundJoinKind::Left | BoundJoinKind::Scalar | BoundJoinKind::Anti, None)
+                | (BoundJoinKind::Semi, Some(_)) => picks.push(probe_row, None),
+                (BoundJoinKind::Inner | BoundJoinKind::Semi | BoundJoinKind::Anti, _) => {}
+                (BoundJoinKind::Cross, _) => {
+                    return Err(ExecError::InvalidPhysicalPlan(
+                        "cross semantics reached hash join",
+                    ));
+                }
+            }
+            state.match_index = 0;
+            state.row += 1;
+        }
+        if picks.probe_rows.is_empty() {
+            continue;
+        }
+        let output = picks.output(batch, column_types, left_width)?;
+        memory.ensure_transient(output.estimated_bytes())?;
+        return Ok(Some(output));
+    }
+}
+
+/// The rows one output batch of a batch probe pairs.
+struct Picks<'build> {
+    /// Each output row's probe row, as a gather pick from the one batch.
+    probe_rows: Vec<(u32, u32)>,
+    /// Each output row's build row, `None` where the probe row stands alone.
+    build_rows: Vec<Option<&'build Vec<Value>>>,
+    /// A probe row's share of its batch, for the output's size.
+    probe_row_bytes: usize,
+    /// What the output will hold, for the memory valve.
+    bytes: usize,
+}
+
+impl<'build> Picks<'build> {
+    fn push(&mut self, probe_row: u32, build_row: Option<&'build Vec<Value>>) {
+        self.bytes = self
+            .bytes
+            .saturating_add(self.probe_row_bytes)
+            .saturating_add(build_row.map_or(0, |row| estimated_row_payload_bytes(row)));
+        self.probe_rows.push((0, probe_row));
+        self.build_rows.push(build_row);
+    }
+
+    /// The output batch: the probe columns gathered from `batch`, then the
+    /// build rows' values, NULL where a probe row stands alone.
+    fn output(
+        &self,
+        batch: &RecordBatch,
+        column_types: &[DataType],
+        probe_width: usize,
+    ) -> Result<RecordBatch, ExecError> {
+        let mut columns = Vec::with_capacity(column_types.len());
+        for (column, data_type) in column_types.iter().take(probe_width).enumerate() {
+            let source = batch.column(column).ok_or(ExecError::InvalidBatch(
+                "join output is outside a probe column",
+            ))?;
+            columns.push(super::gather::gather(
+                &[source],
+                &self.probe_rows,
+                *data_type,
+            )?);
+        }
+        for (column, data_type) in column_types.iter().skip(probe_width).enumerate() {
+            let values = self
+                .build_rows
+                .iter()
+                .map(|build_row| {
+                    build_row.map_or(Value::Null, |row| {
+                        row.get(column).cloned().unwrap_or(Value::Null)
+                    })
+                })
+                .collect();
+            columns.push(ColumnVector::new(*data_type, values)?);
+        }
+        Ok(RecordBatch::new(self.probe_rows.len(), columns)?)
+    }
 }
 
 /// Serves a grace-partitioned join: routes remaining probe rows to their
