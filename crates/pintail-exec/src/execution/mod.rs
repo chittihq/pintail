@@ -10,6 +10,7 @@ pub(crate) mod membership;
 mod memo;
 mod morsel;
 mod order;
+mod points;
 mod sort;
 mod two_pass;
 mod watchdog;
@@ -656,7 +657,9 @@ impl PhysicalPlanner {
                 let build_estimate = right.estimated_rows();
                 let left_input = filtered(Self::plan(*left, collation)?, left_filter);
                 let right_input = filtered(Self::plan(*right, collation)?, right_filter);
-                Ok(PhysicalPlan::HashJoin {
+                // A left input pinned to a few of its keys reads the right
+                // input's matches by key rather than building it whole.
+                Ok(key_lookup::pinned_lookup(PhysicalPlan::HashJoin {
                     left: Box::new(left_input),
                     right: Box::new(right_input),
                     kind,
@@ -666,7 +669,7 @@ impl PhysicalPlanner {
                     probe_estimate,
                     build_estimate,
                     residual,
-                })
+                }))
             }
         }
     }
@@ -4202,7 +4205,10 @@ fn build_operator_inner(
                 .iter()
                 .map(|predicate| CompiledExpr::compile(predicate, &columns, collation))
                 .collect::<Result<Vec<_>, _>>()?;
-            let stream = provider.open_scan(&scan, memory.remaining())?;
+            let stream = match points::open(&scan, provider, memory.remaining())? {
+                Some(runs) => runs,
+                None => provider.open_scan(&scan, memory.remaining())?,
+            };
             memory.reserve(stream.retained_bytes())?;
             let mut operator = PullOperator::Scan {
                 stream,

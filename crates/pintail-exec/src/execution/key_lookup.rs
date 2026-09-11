@@ -40,14 +40,14 @@ const UNKNOWN_TABLE_ROWS: u64 = 1 << 20;
 
 type Matches = HashMap<i128, Vec<Vec<Value>>>;
 
-fn unsigned_type(data_type: Option<DataType>) -> bool {
+pub(super) fn unsigned_type(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
         Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
     )
 }
 
-fn integer_key(value: &Value) -> Option<i128> {
+pub(super) fn integer_key(value: &Value) -> Option<i128> {
     match value {
         Value::Int64(value) => Some(i128::from(*value)),
         Value::UInt64(value) => Some(i128::from(*value)),
@@ -169,6 +169,95 @@ pub(super) fn ordered_input(
             ),
         },
         other => (other, false),
+    }
+}
+
+/// Keys a driving input may be pinned to for its join to read the other
+/// input by key instead of building it whole.
+const MAX_PINNED_KEYS: usize = 64;
+
+/// Whether the scan under `plan` pins its whole integer key to at most
+/// `MAX_PINNED_KEYS` constants: a conjunct `key = constant` or
+/// `key IN (constants)`, in the scan's predicates or the filter over it.
+fn pinned(plan: &PhysicalPlan) -> bool {
+    let Some(scan) = base_scan(plan) else {
+        return false;
+    };
+    let [key] = scan.table.key_column_ids.as_slice() else {
+        return false;
+    };
+    let names_key = |expr: &BoundExpr| {
+        integer_type(expr.data_type)
+            && matches!(&expr.kind, BoundExprKind::Column(column) if names_column(scan, column, *key))
+    };
+    let constant = |expr: &BoundExpr| matches!(expr.kind, BoundExprKind::Literal(_));
+    let pins = |predicate: &BoundExpr| match &predicate.kind {
+        BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left,
+            right,
+        } => (names_key(left) && constant(right)) || (constant(left) && names_key(right)),
+        BoundExprKind::Scalar {
+            function: pintail_sql::ScalarFunction::InList { negated: false },
+            args,
+        } => {
+            args.first().is_some_and(names_key)
+                && args.len() - 1 <= MAX_PINNED_KEYS
+                && args[1..].iter().all(constant)
+        }
+        _ => false,
+    };
+    let mut conjuncts = Vec::new();
+    if let PhysicalPlan::Filter { predicate, .. } = plan {
+        super::and_conjuncts(predicate, &mut conjuncts);
+    }
+    scan.predicates.iter().chain(&conjuncts).any(pins)
+}
+
+/// A hash join whose left input is pinned to a few of its keys and whose
+/// right input is found by its whole integer key, as a key lookup join:
+/// the right rows those keys name are read by key, where the hash join
+/// read the whole right table to build it. Both emit in the left input's
+/// order, each left row with its match. Any other plan comes back as it
+/// was.
+pub(super) fn pinned_lookup(join: PhysicalPlan) -> PhysicalPlan {
+    let converts = match &join {
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            kind,
+            left_key,
+            extra_keys,
+            right_key,
+            ..
+        } => {
+            extra_keys.is_empty()
+                && matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Left)
+                && integer_type(left_key.data_type)
+                && pinned(left)
+                && base_scan(right).is_some_and(|scan| found_by_key(scan, right_key))
+        }
+        _ => false,
+    };
+    match join {
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            kind,
+            left_key,
+            right_key,
+            residual,
+            ..
+        } if converts => PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            kind,
+            driving_left: true,
+            driving_key: left_key,
+            lookup_key: right_key,
+            residual,
+        },
+        other => other,
     }
 }
 
@@ -521,7 +610,7 @@ fn read_table(
 /// Sorted, distinct keys grouped into the ranges one read each covers: keys
 /// closer than `RANGE_GAP` share a read. A key the column cannot hold
 /// matches nothing and is dropped.
-fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
+pub(super) fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
     let held = if unsigned {
         0..=i128::from(u64::MAX)
     } else {
@@ -538,7 +627,7 @@ fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
 }
 
 /// `key <op> value`, as a scan predicate storage prunes its key range by.
-fn bound(key: &BoundExpr, op: BinaryOp, value: i128) -> BoundExpr {
+pub(super) fn bound(key: &BoundExpr, op: BinaryOp, value: i128) -> BoundExpr {
     let (value, data_type) = match i64::try_from(value) {
         Ok(value) => (Value::Int64(value), DataType::Int64),
         Err(_) => (
