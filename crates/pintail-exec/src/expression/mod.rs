@@ -186,22 +186,44 @@ fn typed_comparison_mask(
         // row path uses), then match rows by 16-byte view comparison against
         // the matching distincts. Ordering comparisons and high-cardinality
         // batches fall back to the row path.
+        // Ordering comparisons take the same per-distinct path over text;
+        // a DECIMAL or JSON value on the text carrier does not order by
+        // collation, so only plain text qualifies.
         (TypedValues::Utf8(column), Value::Utf8(text))
-            if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual) =>
+            if matches!(op, BinaryOp::Equal | BinaryOp::NotEqual)
+                || (logical_type == DataType::Utf8
+                    && matches!(
+                        op,
+                        BinaryOp::Less
+                            | BinaryOp::LessOrEqual
+                            | BinaryOp::Greater
+                            | BinaryOp::GreaterOrEqual
+                    )) =>
         {
+            let keeps = |candidate: &[u8]| match std::str::from_utf8(candidate) {
+                Ok(candidate) => {
+                    let ordering = compare_utf8_mysql(candidate, text, collation);
+                    match op {
+                        BinaryOp::Equal => ordering == Ordering::Equal,
+                        BinaryOp::NotEqual => ordering != Ordering::Equal,
+                        BinaryOp::Less => ordering == Ordering::Less,
+                        BinaryOp::LessOrEqual => ordering != Ordering::Greater,
+                        BinaryOp::Greater => ordering == Ordering::Greater,
+                        _ => ordering != Ordering::Less,
+                    }
+                }
+                Err(_) => op == BinaryOp::NotEqual,
+            };
             // Dictionary fast path: casefold each distinct value once,
             // then one code lookup per row (the Q2 profile spent ~25% of
             // the query in per-row view comparisons here).
             if let Some((codes, values)) = column.dictionary() {
-                let matching: Vec<bool> = values
-                    .iter()
-                    .map(|value| compare_utf8_mysql(value, text, collation) == Ordering::Equal)
-                    .collect();
-                let want = op == BinaryOp::Equal;
+                let matching: Vec<bool> =
+                    values.iter().map(|value| keeps(value.as_bytes())).collect();
                 let mut mask = SelectionMask::none(codes.len());
                 for (row, code) in codes.iter().enumerate() {
                     if validity.is_valid(row)
-                        && matching[usize::try_from(*code).expect("dict code fits usize")] == want
+                        && matching[usize::try_from(*code).expect("dict code fits usize")]
                     {
                         mask.set(row, true).expect("row within mask bounds");
                     }
@@ -224,33 +246,87 @@ fn typed_comparison_mask(
                     distinct.push(*view);
                 }
             }
-            let matching: Vec<crate::array::StrView> = distinct
+            let decisions: Vec<(crate::array::StrView, bool)> = distinct
                 .iter()
-                .filter(|view| {
-                    view.with_bytes(heap, |bytes| {
-                        std::str::from_utf8(bytes).is_ok_and(|candidate| {
-                            compare_utf8_mysql(candidate, text, collation) == Ordering::Equal
-                        })
-                    })
-                })
-                .copied()
+                .map(|view| (*view, view.with_bytes(heap, keeps)))
                 .collect();
-            let want = op == BinaryOp::Equal;
             let mut mask = SelectionMask::none(views.len());
             for (row, view) in views.iter().enumerate() {
                 if validity.is_valid(row) {
-                    let hit = matching.iter().any(|m| m.same_bytes(view, heap));
-                    if hit == want {
+                    let keep = decisions
+                        .iter()
+                        .find(|(seen, _)| seen.same_bytes(view, heap))
+                        .is_some_and(|(_, keep)| *keep);
+                    if keep {
                         mask.set(row, true).expect("row within mask bounds");
                     }
                 }
             }
             Some(mask)
         }
-        // Remaining Utf8 shapes (ordering, high cardinality) fall back to the
-        // collation-aware row path.
+        // Remaining Utf8 shapes (high cardinality, non-text carriers) fall
+        // back to the collation-aware row path.
         _ => None,
     }
+}
+
+/// `column IN (text literals)` over a text column, answered per distinct
+/// value; `None` for any other shape.
+fn literal_list_mask(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    negated: bool,
+    collation: Collation,
+) -> Option<SelectionMask> {
+    let CompiledExpr::Column(column) = &args[0] else {
+        return None;
+    };
+    let needles = args[1..]
+        .iter()
+        .map(|argument| match argument {
+            CompiledExpr::Literal(Value::Utf8(needle)) => Some(needle.as_str()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let vector = batch.column(*column)?;
+    if vector.data_type() != DataType::Utf8 {
+        return None;
+    }
+    let (TypedValues::Utf8(text), validity) = vector.typed()? else {
+        return None;
+    };
+    text_membership_mask(text, validity, &needles, negated, collation)
+}
+
+/// `IN` over a dictionary-encoded text column: each distinct value is
+/// tested against the literal list once, under the comparison's collation,
+/// and rows take their code's answer. Rows that are NULL answer NULL, which
+/// a filter drops either way.
+fn text_membership_mask(
+    column: &crate::array::StrColumn,
+    validity: &ValidityMask,
+    needles: &[&str],
+    negated: bool,
+    collation: Collation,
+) -> Option<SelectionMask> {
+    let (codes, values) = column.dictionary()?;
+    let members: Vec<bool> = values
+        .iter()
+        .map(|value| {
+            needles
+                .iter()
+                .any(|needle| compare_utf8_mysql(value, needle, collation) == Ordering::Equal)
+                != negated
+        })
+        .collect();
+    let mut mask = SelectionMask::none(codes.len());
+    for (row, code) in codes.iter().enumerate() {
+        if validity.is_valid(row) && members[usize::try_from(*code).expect("dict code fits usize")]
+        {
+            mask.set(row, true).expect("row within mask bounds");
+        }
+    }
+    Some(mask)
 }
 
 #[derive(Clone)]
@@ -725,6 +801,12 @@ impl CompiledExpr {
                 mask.intersect(&other)?;
                 Ok(Some(mask))
             }
+            Self::Scalar {
+                function: ScalarFunction::InList { negated },
+                args,
+                collation,
+                ..
+            } if args.len() > 1 => Ok(literal_list_mask(batch, args, *negated, *collation)),
             _ => Ok(None),
         }
     }
