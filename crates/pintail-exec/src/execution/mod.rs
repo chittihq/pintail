@@ -3787,7 +3787,13 @@ impl PullOperator {
                         );
                     }
                     let mut built = build_hash_join_state(
-                        right, right_key, *key_mode, extra_keys, memory, *collation,
+                        right,
+                        right_key,
+                        *key_mode,
+                        extra_keys,
+                        left.scan_transient_floor(),
+                        memory,
+                        *collation,
                     )?;
                     // Inner and semi joins cannot match probe rows outside
                     // the build side's key range, so the probe scan can prune

@@ -676,8 +676,10 @@ fn insert_resident_row(
         memory,
     )?;
     memory.reserve(key_bytes)?;
+    // A reference is small and most keys name one row, so a bucket grows
+    // from a few slots rather than from a batch's worth.
     let bucket = build.entry_or_default(key);
-    reserve_vec_elements(bucket, 1, 64, memory)?;
+    reserve_vec_elements(bucket, 1, 0, memory)?;
     bucket.push(row);
     Ok(())
 }
@@ -727,6 +729,7 @@ pub(super) fn build_hash_join_state(
     right_key: &CompiledExpr,
     key_mode: JoinKeyMode,
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    probe_floor: usize,
     memory: &MemoryTracker,
     collation: Collation,
 ) -> Result<HashJoinState, ExecError> {
@@ -743,9 +746,47 @@ pub(super) fn build_hash_join_state(
         decimal: false,
         collation: None,
     };
-    while let Some(batch) = right.next_batch(memory)? {
+    // The resident build's batches are what leaves no room to pull the next
+    // one, or to work through it: they go to partitions first, as they
+    // would when an insert is refused.
+    let make_room = |build: &mut PartitionedBuild,
+                     grace: &mut Option<GraceJoin>,
+                     build_reserved: &mut usize,
+                     bytes: usize|
+     -> Result<(), ExecError> {
+        if grace.is_none()
+            && !build.is_empty()
+            && matches!(
+                memory.ensure_transient(bytes),
+                Err(ExecError::MemoryLimitExceeded { .. })
+            )
+        {
+            let mut partitions = GraceJoin::create();
+            spill_resident(build, &mut partitions, memory)?;
+            memory.release(*build_reserved);
+            *build_reserved = 0;
+            *grace = Some(partitions);
+        }
+        Ok(())
+    };
+    loop {
+        make_room(
+            &mut build,
+            &mut grace,
+            &mut build_reserved,
+            right.scan_transient_floor(),
+        )?;
+        let Some(batch) = right.next_batch(memory)? else {
+            break;
+        };
         let batch = compacted(batch)?;
         let batch_bytes = batch.estimated_bytes();
+        make_room(
+            &mut build,
+            &mut grace,
+            &mut build_reserved,
+            batch_bytes.saturating_mul(2),
+        )?;
         // A wide upstream join can return more than a scan-sized batch.
         // Bin it in bounded pieces when it occupies most of the headroom,
         // so resident insertion reaches its spill valve before keys alone
@@ -892,6 +933,21 @@ pub(super) fn build_hash_join_state(
                 grace = Some(partitions);
             }
         }
+    }
+    // Under a shared budget a build that fitted can still leave no room for
+    // the probe to pull its next batch; it goes to partitions now, while it
+    // still can, rather than failing the probe.
+    if grace.is_none()
+        && !build.is_empty()
+        && matches!(
+            memory.ensure_transient(probe_floor),
+            Err(ExecError::MemoryLimitExceeded { .. })
+        )
+    {
+        let mut partitions = GraceJoin::create();
+        spill_resident(&mut build, &mut partitions, memory)?;
+        memory.release(build_reserved);
+        grace = Some(partitions);
     }
     // A build that stayed resident (no grace spill) is never mutated again:
     // every remaining reader only probes it. Dense direct-address probe
