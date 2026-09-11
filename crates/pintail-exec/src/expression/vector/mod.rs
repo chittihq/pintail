@@ -36,9 +36,28 @@ mod temporal;
 mod text;
 
 /// Warnings a batch's evaluation raised, for the selected rows only.
-#[derive(Default)]
 pub(super) struct Effects {
     divisions_by_zero: u64,
+    /// Whether a function without a kernel of its own may still be answered
+    /// by the adapter that evaluates it over the batch's selected rows.
+    ///
+    /// A projection takes that trade: the adapter reads the same rows the
+    /// row path would and saves the rest of the expression from going row
+    /// by row. A filter does not. It already has a row path of its own, so
+    /// an adapted answer costs a column built for every row on top of the
+    /// per-row evaluation it was meant to replace - measured at 102 ms
+    /// against 155 ms for `DATE(placed_at) IN (placed_at, '2025-02-28')`
+    /// over 130,000 rows.
+    adapter: bool,
+}
+
+impl Default for Effects {
+    fn default() -> Self {
+        Self {
+            divisions_by_zero: 0,
+            adapter: true,
+        }
+    }
 }
 
 impl Effects {
@@ -52,6 +71,16 @@ impl Effects {
 
     fn record(self) {
         crate::execution::note_divisions_by_zero(self.divisions_by_zero);
+    }
+
+    /// Whether a function with no packed kernel may be read row by row.
+    pub(super) const fn adapts(&self) -> bool {
+        self.adapter
+    }
+
+    /// Whether the evaluation raised nothing to report.
+    const fn quiet(&self) -> bool {
+        self.divisions_by_zero == 0
     }
 }
 
@@ -68,6 +97,30 @@ impl CompiledExpr {
         let column = kernel(self, batch, data_type, &mut effects)?;
         effects.record();
         Some(column)
+    }
+
+    /// [`Self::evaluate_column`] for a pass that decides only which rows to
+    /// read, and whose rows another pass evaluates again.
+    ///
+    /// Two differences follow from that. A function with no packed kernel
+    /// declines rather than being read row by row, because those rows are
+    /// read again by the operator that keeps them. And what the evaluation
+    /// raises is dropped, because that operator records it: counting it
+    /// here would report one row's warning twice.
+    pub(crate) fn evaluate_vector_column_quietly(
+        &self,
+        batch: &RecordBatch,
+        data_type: Option<DataType>,
+    ) -> Option<ColumnVector> {
+        let mut effects = Effects {
+            adapter: false,
+            ..Effects::default()
+        };
+        let column = kernel(self, batch, data_type, &mut effects)?;
+        // A row this pass skips is a row the operator above never reads, so
+        // a warning raised here would never be reported at all. A batch
+        // that raised one is left to that operator whole.
+        effects.quiet().then_some(column)
     }
 }
 

@@ -101,6 +101,13 @@ pub(super) fn scalar_column(
     if let Some(packed) = packed(batch, call, &operands, declared) {
         return Some(packed);
     }
+    // Nothing packed answers this call, so what follows reads the selected
+    // rows one at a time. A caller with a row path of its own declines here
+    // instead: adapting would build a column for every row on top of the
+    // per-row evaluation it was meant to replace.
+    if !effects.adapts() {
+        return None;
+    }
     let rows = batch.row_count();
     let mut values = Vec::with_capacity(rows);
     let mut arguments = Vec::with_capacity(operands.len());
