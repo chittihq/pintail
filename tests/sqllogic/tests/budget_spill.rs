@@ -167,8 +167,10 @@ fn a_join_refused_by_the_shared_budget_partitions_instead_of_failing() {
     assert_eq!(inner_metrics.files, 0, "the reference must not spill");
     // A budget the build side cannot fit in, under a query ceiling it
     // easily would: every refusal comes from the budget, and each one used
-    // to be `server memory limit exceeded` back to the client.
-    init_shared_memory_budget(40 * 1024 * 1024);
+    // to be `server memory limit exceeded` back to the client. The build
+    // keeps its input's batches and references to their rows, so the budget
+    // sits below what those batches hold.
+    init_shared_memory_budget(24 * 1024 * 1024);
     let inner = run_query(INNER_SQL);
     let left = run_query(LEFT_SQL);
     init_shared_memory_budget(0);

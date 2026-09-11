@@ -1,7 +1,10 @@
 //! Window function compilation and evaluation.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
+use crate::RecordBatch;
+use crate::batch::ColumnVector;
 use crate::collation::Collation;
 
 use pintail_sql::{
@@ -24,6 +27,8 @@ pub(super) struct CompiledWindow {
     order: Vec<(CompiledExpr, bool, bool, bool)>,
     /// Explicit `ROWS`/`RANGE` frame; `None` keeps `MySQL`'s default frame.
     frame: Option<pintail_sql::BoundWindowFrame>,
+    /// The declared type of each of [`Self::key_exprs`], where one is known.
+    key_types: Vec<Option<DataType>>,
 }
 
 enum CompiledWindowFunction {
@@ -54,6 +59,31 @@ impl CompiledWindow {
         columns: &[BoundColumn],
         collation: Collation,
     ) -> Result<Self, ExecError> {
+        let mut key_types = window
+            .partition_by
+            .iter()
+            .map(|expr| expr.data_type)
+            .chain(window.order_by.iter().map(|key| key.expr.data_type))
+            .collect::<Vec<_>>();
+        match &window.function {
+            WindowFunction::Offset { expr, default, .. } => {
+                key_types.push(expr.data_type);
+                if let Some(default) = default {
+                    key_types.push(default.data_type);
+                }
+            }
+            WindowFunction::Extreme { expr, .. } => key_types.push(expr.data_type),
+            WindowFunction::Aggregate(aggregate) => key_types.push(
+                aggregate
+                    .expr
+                    .as_ref()
+                    .map_or(Some(DataType::Int64), |expr| expr.data_type),
+            ),
+            WindowFunction::RowNumber
+            | WindowFunction::Rank
+            | WindowFunction::DenseRank
+            | WindowFunction::NTile(_) => {}
+        }
         let function = match &window.function {
             WindowFunction::Offset {
                 lead,
@@ -116,7 +146,48 @@ impl CompiledWindow {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             frame: window.frame,
+            key_types,
         })
+    }
+
+    /// The expressions each row's keys hold, in the order
+    /// [`compute_window_column`] reads them: partition, order, then the
+    /// function's arguments.
+    fn key_exprs(&self) -> Vec<&CompiledExpr> {
+        let mut exprs = self
+            .partition
+            .iter()
+            .chain(self.order.iter().map(|(expr, _, _, _)| expr))
+            .collect::<Vec<_>>();
+        match &self.function {
+            CompiledWindowFunction::Aggregate(_, argument)
+            | CompiledWindowFunction::Extreme { argument, .. } => exprs.push(argument),
+            CompiledWindowFunction::Offset {
+                argument, default, ..
+            } => {
+                exprs.push(argument);
+                exprs.extend(default);
+            }
+            CompiledWindowFunction::RowNumber
+            | CompiledWindowFunction::Rank
+            | CompiledWindowFunction::DenseRank
+            | CompiledWindowFunction::NTile(_) => {}
+        }
+        exprs
+    }
+
+    /// The sort keys ordering this window's rows: its partition keys, then
+    /// its order keys, by their positions among [`Self::key_exprs`].
+    fn sort_keys(&self) -> Vec<BoundOrderKey> {
+        let partition = self.partition.len();
+        (0..partition)
+            .map(|index| window_order_key(index, true, true, false))
+            .chain(self.order.iter().enumerate().map(
+                |(index, (_, ascending, nulls_first, decimal))| {
+                    window_order_key(partition + index, *ascending, *nulls_first, *decimal)
+                },
+            ))
+            .collect()
     }
 }
 
@@ -131,11 +202,18 @@ pub(super) fn build_window(
     collation: Collation,
 ) -> Result<super::SortedRows, ExecError> {
     let input_types = &column_types[..column_types.len() - windows.len()];
+    let mut pending = match over_batches(input, windows, column_types, memory, collation)? {
+        Ok(answered) => return Ok(answered),
+        Err(pending) => pending.into_iter(),
+    };
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut reserved = 0;
     let mut writer = None;
     let mut ordinal = 0_u64;
-    while let Some(batch) = input.next_batch(memory)? {
+    while let Some(batch) = match pending.next() {
+        Some(batch) => Some(batch),
+        None => input.next_batch(memory)?,
+    } {
         for row in batch.selection().selected_rows() {
             let values = super::batch_row(&batch, row)?;
             let bytes = estimated_row_payload_bytes(&values);
@@ -225,6 +303,194 @@ pub(super) fn build_window(
     sorter
         .finish(Some(width), memory)
         .map(super::SortedRows::Spilled)
+}
+
+/// The windows answered over the input's own batches, when the input ends
+/// within the memory path's share of the ceiling and every key column
+/// builds; otherwise `Err` with the batches read so far, which the row
+/// path continues from.
+fn over_batches(
+    input: &mut PullOperator,
+    windows: &[CompiledWindow],
+    column_types: &[DataType],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Result<super::SortedRows, Vec<RecordBatch>>, ExecError> {
+    let mut kept = Vec::new();
+    let mut kept_bytes = 0_usize;
+    while let Some(batch) = input.next_batch(memory)? {
+        let bytes = batch.estimated_bytes();
+        if kept_bytes.saturating_add(bytes) > memory.limit() / 8 || memory.reserve(bytes).is_err() {
+            memory.release(kept_bytes);
+            kept.push(batch);
+            return Ok(Err(kept));
+        }
+        kept_bytes += bytes;
+        kept.push(batch);
+    }
+    let before = memory.used();
+    match columnar_window(&kept, windows, column_types, memory, collation) {
+        Ok(Some(batches)) => Ok(Ok(super::SortedRows::Batches { batches, next: 0 })),
+        // Keys the columnar path declined, or frames that outgrew the
+        // ceiling: the rows go the row path's way.
+        Ok(None) | Err(ExecError::MemoryLimitExceeded { .. }) => {
+            memory.release(
+                memory
+                    .used()
+                    .saturating_sub(before)
+                    .saturating_add(kept_bytes),
+            );
+            Ok(Err(kept))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// The memory path over the input's own batches. Each window's keys are
+/// evaluated a column at a time, the rows are ordered by the columnar
+/// sort's packed keys - the row sort's exact order, ties in arrival order,
+/// as the row path orders them - and each window's values join the batches
+/// as a trailing column. The row path copied every input cell into a row
+/// and ordered the rows by comparing values. `None` when a key column
+/// cannot be built from the values its expression gives; the row path
+/// answers then.
+fn columnar_window(
+    batches: &[RecordBatch],
+    windows: &[CompiledWindow],
+    column_types: &[DataType],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Option<VecDeque<RecordBatch>>, ExecError> {
+    let input_width = column_types.len() - windows.len();
+    // Each batch's selected rows take consecutive indexes, in arrival order.
+    let mut offsets = Vec::with_capacity(batches.len());
+    let mut row_count = 0_usize;
+    for batch in batches {
+        offsets.push(row_count);
+        row_count += batch.visible_row_count();
+    }
+    let mut results = Vec::with_capacity(windows.len());
+    for window in windows {
+        let held = memory.used();
+        let mut key_batches = Vec::with_capacity(batches.len());
+        let mut keys = Vec::with_capacity(row_count);
+        for batch in batches {
+            let mut columns = Vec::with_capacity(window.key_types.len());
+            for (expr, data_type) in window.key_exprs().into_iter().zip(&window.key_types) {
+                let Some(column) = key_column(expr, *data_type, batch)? else {
+                    return Ok(None);
+                };
+                columns.push(column);
+            }
+            let mut key_batch = RecordBatch::new(batch.row_count(), columns)?;
+            key_batch.set_selection(batch.selection().clone())?;
+            memory.reserve(key_batch.estimated_bytes())?;
+            for row in batch.selection().selected_rows() {
+                let values = key_batch
+                    .columns()
+                    .iter()
+                    .map(|column| {
+                        column.value_owned(row).ok_or(ExecError::InvalidBatch(
+                            "window row is outside an input column",
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                memory.reserve(estimated_row_payload_bytes(&values))?;
+                keys.push(values);
+            }
+            key_batches.push(key_batch);
+        }
+        let order = columnar_order(window, key_batches, &offsets, memory, collation)?;
+        results.push(compute_window_column(
+            window, &keys, row_count, &order, memory, collation,
+        )?);
+        drop(keys);
+        memory.release(memory.used().saturating_sub(held));
+    }
+    let mut output = VecDeque::with_capacity(batches.len());
+    for (batch, offset) in batches.iter().zip(offsets) {
+        let mut columns = batch.columns().to_vec();
+        for (index, result) in results.iter().enumerate() {
+            let mut values = vec![Value::Null; batch.row_count()];
+            for (position, row) in batch.selection().selected_rows().enumerate() {
+                values[row] = result[offset + position].clone();
+            }
+            memory.reserve(estimated_row_payload_bytes(&values))?;
+            columns.push(ColumnVector::new(
+                column_types[input_width + index],
+                values,
+            )?);
+        }
+        let mut answered = RecordBatch::new(batch.row_count(), columns)?;
+        answered.set_selection(batch.selection().clone())?;
+        output.push_back(answered);
+    }
+    Ok(Some(output))
+}
+
+/// One window key over `batch` as a column: from the batch kernels where
+/// they answer, else row by row over the selected rows. `None` when the
+/// values do not fit the key's declared type.
+fn key_column(
+    expr: &CompiledExpr,
+    data_type: Option<DataType>,
+    batch: &RecordBatch,
+) -> Result<Option<ColumnVector>, ExecError> {
+    if let Some(column) = expr.evaluate_column(batch, None) {
+        return Ok(Some(column));
+    }
+    let values = (0..batch.row_count())
+        .map(|row| {
+            if batch.selection().is_selected(row) {
+                expr.evaluate(batch, row)
+            } else {
+                Ok(Value::Null)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let data_type = data_type
+        .or_else(|| values.iter().find_map(Value::data_type))
+        .unwrap_or(DataType::Utf8);
+    Ok(ColumnVector::new(data_type, values).ok())
+}
+
+/// The window's rows in (partition, order) order, as indexes of the rows
+/// `offsets` number: the columnar sort over the key batches, whose stable
+/// order keeps rows with equal keys in the order they arrived.
+fn columnar_order(
+    window: &CompiledWindow,
+    key_batches: Vec<RecordBatch>,
+    offsets: &[usize],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Vec<usize>, ExecError> {
+    // Each row's index among its batch's selected rows.
+    let positions = key_batches
+        .iter()
+        .map(|batch| {
+            let mut positions = vec![0_usize; batch.row_count()];
+            for (position, row) in batch.selection().selected_rows().enumerate() {
+                positions[row] = position;
+            }
+            positions
+        })
+        .collect::<Vec<_>>();
+    let rows = key_batches
+        .iter()
+        .map(RecordBatch::visible_row_count)
+        .sum::<usize>();
+    memory.reserve(rows.saturating_mul(size_of::<usize>() + size_of::<(u32, u32)>()))?;
+    Ok(super::columnar_sort::ColumnarSorted::new(
+        key_batches,
+        &window.sort_keys(),
+        None,
+        collation,
+        None,
+    )?
+    .into_order()
+    .into_iter()
+    .map(|(batch, row)| offsets[batch as usize] + positions[batch as usize][row as usize])
+    .collect())
 }
 
 // Result::map_err passes ownership of its error to this adapter.
@@ -441,7 +707,8 @@ fn finish_window_partition(
         .map(|row| row[key_start..].to_vec())
         .collect::<Vec<_>>();
     memory.reserve(rows.len() * size_of::<Value>())?;
-    let results = compute_window_column(window, &keys, rows.len(), memory, collation)?;
+    let order = window_order(window, &keys, memory, collation)?;
+    let results = compute_window_column(window, &keys, rows.len(), &order, memory, collation)?;
     for (mut row, value) in rows.drain(..).zip(results) {
         row.truncate(key_start);
         let ordinal = row.pop().expect("window ordinal");
@@ -515,7 +782,9 @@ fn build_memory_window(
     }
     let row_count = rows.len();
     for (index, window) in windows.iter().enumerate() {
-        let result = compute_window_column(window, &keys[index], row_count, memory, collation)?;
+        let order = window_order(window, &keys[index], memory, collation)?;
+        let result =
+            compute_window_column(window, &keys[index], row_count, &order, memory, collation)?;
         for (row, value) in rows.iter_mut().zip(&result) {
             memory.reserve(value.heap_bytes().saturating_add(size_of::<Value>()))?;
             row.push(value.clone());
@@ -793,18 +1062,14 @@ fn range_bound_for_target(
     Ok(low)
 }
 
-/// Computes one window's value per row: sorts a permutation by
-/// (partition, order) keys, then walks each partition assigning ranks or
-/// aggregate frames (whole partition without ORDER BY; running frame
-/// including the current row's peers with it — `MySQL`'s default frames).
-#[allow(clippy::too_many_lines)]
-fn compute_window_column(
+/// The rows of `keys` in (partition, order) order, rows with equal keys in
+/// the order they arrived.
+fn window_order(
     window: &CompiledWindow,
     keys: &[Vec<Value>],
-    row_count: usize,
     memory: &MemoryTracker,
     collation: Collation,
-) -> Result<Vec<Value>, ExecError> {
+) -> Result<Vec<usize>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
         index: 0,
@@ -840,6 +1105,33 @@ fn compute_window_column(
         }
         Ordering::Equal
     };
+    let mut order = (0..keys.len()).collect::<Vec<_>>();
+    memory.reserve(keys.len().saturating_mul(size_of::<usize>()))?;
+    order.sort_by(|left, right| compare_rows(*left, *right));
+    Ok(order)
+}
+
+/// Computes one window's value per row, given the rows in (partition,
+/// order) order: walks each partition assigning ranks or aggregate frames
+/// (whole partition without ORDER BY; running frame including the current
+/// row's peers with it — `MySQL`'s default frames).
+#[allow(clippy::too_many_lines)]
+fn compute_window_column(
+    window: &CompiledWindow,
+    keys: &[Vec<Value>],
+    row_count: usize,
+    order: &[usize],
+    memory: &MemoryTracker,
+    collation: Collation,
+) -> Result<Vec<Value>, ExecError> {
+    let partition_len = window.partition.len();
+    let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
+        index: 0,
+        ascending,
+        nulls_first,
+        decimal,
+        collation: None,
+    };
     let same_partition = |left: usize, right: usize| {
         (0..partition_len).all(|position| {
             compare_sort_values(
@@ -860,10 +1152,6 @@ fn compute_window_column(
             ) == Ordering::Equal
         })
     };
-
-    let mut order = (0..row_count).collect::<Vec<_>>();
-    memory.reserve(row_count.saturating_mul(size_of::<usize>()))?;
-    order.sort_by(|left, right| compare_rows(*left, *right));
 
     let mut results = vec![Value::Null; row_count];
     let mut start = 0;
@@ -1267,5 +1555,232 @@ fn order_insensitive(aggregate: &CompiledAggregate) -> bool {
                 )
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pintail_catalog::{
+        CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
+    };
+    use pintail_sql::{Binder, parse_statement};
+    use pintail_types::{Column, DataType, TableSchema, Value};
+
+    use super::{CompiledWindow, build_memory_window, columnar_window};
+    use crate::RecordBatch;
+    use crate::batch::{ColumnVector, SelectionMask};
+    use crate::collation::Collation;
+    use crate::execution::{MemoryTracker, PhysicalPlan, PhysicalPlanner, PullOperator};
+    use crate::{LogicalPlanner, Optimizer};
+
+    const ROWS: usize = 3_000;
+
+    fn schema() -> TableSchema {
+        TableSchema::new(
+            1,
+            vec![
+                Column::new(1, "id", DataType::Int64, false),
+                Column::new(2, "grp", DataType::Int64, true),
+                Column::new(3, "note", DataType::Utf8, true),
+                Column::new(
+                    4,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 10,
+                        scale: 2,
+                    },
+                    true,
+                ),
+                Column::new(5, "seen", DataType::DateTime64 { fsp: 0 }, true),
+            ],
+        )
+        .expect("schema")
+    }
+
+    /// Column `id` of row `row`, with NULLs, ties and text that folds under
+    /// the collation.
+    fn cell(id: u32, row: usize) -> Value {
+        let spread = (row * 7_919) % 1_009;
+        let null = |every: usize| spread.is_multiple_of(every);
+        match id {
+            1 => Value::Int64(i64::try_from(row).expect("small")),
+            2 if null(13) => Value::Null,
+            2 => Value::Int64(i64::try_from(spread % 7).expect("small")),
+            3 if null(11) => Value::Null,
+            3 => Value::Utf8(["b", "B", "a", "\u{e9}", "e"][spread % 5].to_owned()),
+            4 if null(17) => Value::Null,
+            4 => Value::Utf8(format!(
+                "{}.{:02}",
+                i64::try_from(spread % 40).expect("small") - 20,
+                spread % 100
+            )),
+            5 if null(19) => Value::Null,
+            5 => Value::Utf8(format!("2026-01-{:02} 10:00:00", spread % 28 + 1)),
+            _ => unreachable!("five columns"),
+        }
+    }
+
+    /// The window node of `sql`'s plan, its windows compiled against its
+    /// input, and that input as batches of `batch_rows` rows with every
+    /// seventh row unselected.
+    fn window_input(
+        sql: &str,
+        batch_rows: usize,
+    ) -> (Vec<CompiledWindow>, Vec<DataType>, Vec<RecordBatch>) {
+        let table = TableEntry::new(
+            TableId::new(1),
+            "t",
+            schema(),
+            TableStatistics::with_row_count(ROWS as u64),
+        )
+        .expect("table");
+        let catalog =
+            CatalogSnapshot::new([
+                DatabaseEntry::new(DatabaseId::new(1), "app", [table]).expect("database")
+            ])
+            .expect("catalog");
+        let bound = Binder::new(&catalog, Some("app"))
+            .bind(&parse_statement(sql).expect("parse"))
+            .expect("bind");
+        let mut plan = PhysicalPlanner::plan(
+            Optimizer::optimize(LogicalPlanner::plan(bound)),
+            Collation::default(),
+        )
+        .expect("plan");
+        let (scan, windows, outputs) = loop {
+            match plan {
+                PhysicalPlan::Window {
+                    input,
+                    windows,
+                    outputs,
+                } => match *input {
+                    PhysicalPlan::Scan(scan) => break (scan, windows, outputs),
+                    other => panic!("window over {other:?}"),
+                },
+                PhysicalPlan::Project { input, .. } | PhysicalPlan::Sort { input, .. } => {
+                    plan = *input;
+                }
+                other => panic!("no window in {other:?}"),
+            }
+        };
+        let columns = scan
+            .projected_column_ids
+            .iter()
+            .map(|id| {
+                scan.table
+                    .columns
+                    .iter()
+                    .find(|column| column.column_id == *id)
+                    .cloned()
+                    .expect("column")
+            })
+            .collect::<Vec<_>>();
+        let compiled = windows
+            .iter()
+            .map(|window| CompiledWindow::compile(window, &columns, Collation::default()))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("compile");
+        let types = columns
+            .iter()
+            .chain(&outputs)
+            .map(|column| column.data_type)
+            .collect::<Vec<_>>();
+        let batches = (0..ROWS)
+            .step_by(batch_rows)
+            .map(|first| {
+                let rows = first..(first + batch_rows).min(ROWS);
+                let mut batch = RecordBatch::new(
+                    rows.len(),
+                    columns
+                        .iter()
+                        .map(|column| {
+                            ColumnVector::new(
+                                column.data_type,
+                                rows.clone()
+                                    .map(|row| cell(column.column_id, row))
+                                    .collect(),
+                            )
+                            .expect("column")
+                        })
+                        .collect(),
+                )
+                .expect("batch");
+                let mut selection = SelectionMask::all(rows.len());
+                for (position, row) in rows.enumerate() {
+                    if row % 7 == 3 {
+                        selection.set(position, false).expect("row");
+                    }
+                }
+                batch.set_selection(selection).expect("selection");
+                batch
+            })
+            .collect();
+        (compiled, types, batches)
+    }
+
+    fn rows_of(batch: &RecordBatch) -> Vec<Vec<Value>> {
+        batch
+            .selection()
+            .selected_rows()
+            .map(|row| {
+                batch
+                    .columns()
+                    .iter()
+                    .map(|column| column.value(row).cloned().unwrap_or(Value::Null))
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn windows_over_batches_answer_as_the_row_path_does() {
+        let memory = MemoryTracker::new(usize::MAX);
+        for window in [
+            "ROW_NUMBER() OVER (ORDER BY amount, id)",
+            "ROW_NUMBER() OVER (PARTITION BY note ORDER BY seen DESC, id)",
+            "RANK() OVER (PARTITION BY grp ORDER BY note)",
+            "DENSE_RANK() OVER (ORDER BY amount DESC)",
+            "SUM(amount) OVER (PARTITION BY grp ORDER BY id)",
+            "SUM(amount) OVER (PARTITION BY note)",
+            "COUNT(*) OVER (PARTITION BY grp, note ORDER BY seen)",
+            "AVG(amount) OVER (ORDER BY id ROWS BETWEEN 3 PRECEDING AND 2 FOLLOWING)",
+            "MAX(note) OVER (PARTITION BY grp ORDER BY amount \
+             RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+            "LAG(note, 2, 'none') OVER (PARTITION BY grp ORDER BY id)",
+            "LEAD(amount) OVER (ORDER BY seen, id)",
+            "FIRST_VALUE(id) OVER (PARTITION BY note ORDER BY amount)",
+            "LAST_VALUE(id) OVER (PARTITION BY grp ORDER BY note)",
+            "NTILE(7) OVER (PARTITION BY note ORDER BY id)",
+            "SUM(grp) OVER (ORDER BY amount RANGE BETWEEN 2 PRECEDING AND 1 FOLLOWING)",
+            "MIN(id + grp) OVER (PARTITION BY grp % 3 ORDER BY amount * 2)",
+        ] {
+            let sql = format!(
+                "SELECT id, {window} AS w, ROW_NUMBER() OVER (PARTITION BY grp ORDER BY id) AS r \
+                 FROM t"
+            );
+            for batch_rows in [ROWS, 700] {
+                let (windows, types, batches) = window_input(&sql, batch_rows);
+                let input_types = types[..types.len() - windows.len()].to_vec();
+                let mut rows = PullOperator::Rows {
+                    rows: batches.iter().flat_map(rows_of).collect(),
+                    cursor: 0,
+                    column_types: input_types,
+                };
+                let expected =
+                    build_memory_window(&mut rows, &windows, &memory, Collation::default())
+                        .expect("row path")
+                        .rows;
+                let answered =
+                    columnar_window(&batches, &windows, &types, &memory, Collation::default())
+                        .expect("columnar path")
+                        .expect("key columns build");
+                let actual = answered.iter().flat_map(rows_of).collect::<Vec<_>>();
+                assert_eq!(actual.len(), expected.len(), "{sql}");
+                assert!(
+                    actual == expected,
+                    "{sql} over batches of {batch_rows}: the answers differ"
+                );
+            }
+        }
     }
 }

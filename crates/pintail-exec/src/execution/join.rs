@@ -43,8 +43,12 @@ pub(super) const BUILD_PARTITIONS: usize = 64;
 /// scatter across the partitions and miss just as often. The locality comes
 /// from filling the partitions first and building their tables one at a time,
 /// each small enough to stay in cache while it is written.
-pub(super) struct PartitionedBuild {
-    partitions: Vec<HashMap<JoinHashKey, Vec<Vec<Value>>>>,
+///
+/// A resident build keeps its input's batches and maps each key to
+/// references to its rows there; a grace partition read back from disk
+/// holds its rows as values.
+pub(super) struct PartitionedBuild<R = BuildRow> {
+    partitions: Vec<HashMap<JoinHashKey, Vec<R>>>,
     /// Set once, after every build row was inserted, when the keys are a
     /// plain integer set spanning fewer than [`MAX_DENSE_SPAN`] values:
     /// (minimum key, per-offset index into `dense_buckets`). `get` and the
@@ -55,15 +59,71 @@ pub(super) struct PartitionedBuild {
     /// (`entry_or_default`, `reserve_for_key`, `slot`, `drain`, `clear`)
     /// touches it, and that phase is over by the time this is set.
     dense_index: Option<(i128, Vec<Option<usize>>)>,
-    dense_buckets: Vec<Vec<Vec<Value>>>,
+    dense_buckets: Vec<Vec<R>>,
+    /// The batches a resident build's row references point into.
+    batches: Vec<RecordBatch>,
 }
 
-impl PartitionedBuild {
+/// A resident build row: its batch among the build's kept batches, and its
+/// row in that batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct BuildRow {
+    batch: u32,
+    row: u32,
+}
+
+impl PartitionedBuild<BuildRow> {
+    /// Keeps `batch` for the rows about to reference it: its index.
+    fn keep(&mut self, batch: RecordBatch) -> Result<u32, ExecError> {
+        let index = u32::try_from(self.batches.len()).map_err(|_| {
+            ExecError::InvalidBatch("a join build holds more batches than it can address")
+        })?;
+        self.batches.push(batch);
+        Ok(index)
+    }
+
+    /// Column `column` of `row`.
+    pub(super) fn value(&self, row: BuildRow, column: usize) -> Option<&Value> {
+        self.batches
+            .get(row.batch as usize)?
+            .column(column)?
+            .value(row.row as usize)
+    }
+
+    /// About what one row of the build holds.
+    fn row_bytes(&self) -> usize {
+        let rows = self
+            .batches
+            .iter()
+            .map(RecordBatch::row_count)
+            .sum::<usize>();
+        self.batches
+            .iter()
+            .map(RecordBatch::estimated_bytes)
+            .sum::<usize>()
+            / rows.max(1)
+    }
+
+    /// Each build column across the kept batches, as gather sources.
+    fn sources(&self, column: usize) -> Result<Vec<&ColumnVector>, ExecError> {
+        self.batches
+            .iter()
+            .map(|batch| {
+                batch.column(column).ok_or(ExecError::InvalidBatch(
+                    "join output is outside a build column",
+                ))
+            })
+            .collect()
+    }
+}
+
+impl<R> PartitionedBuild<R> {
     fn with_partitions(count: usize) -> Self {
         Self {
             partitions: (0..count.max(1)).map(|_| HashMap::new()).collect(),
             dense_index: None,
             dense_buckets: Vec::new(),
+            batches: Vec::new(),
         }
     }
 
@@ -94,7 +154,7 @@ impl PartitionedBuild {
         *index.get(usize::try_from(value.checked_sub(*min)?).ok()?)?
     }
 
-    pub(super) fn get(&self, key: &JoinHashKey) -> Option<&Vec<Vec<Value>>> {
+    pub(super) fn get(&self, key: &JoinHashKey) -> Option<&Vec<R>> {
         if self.dense_index.is_some() {
             return self
                 .dense_offset(key)
@@ -108,7 +168,7 @@ impl PartitionedBuild {
     /// entry per distinct key, built once) aligned to this bucket - the
     /// fused join-aggregate's precomputed group indexes, in particular.
     /// `None` whenever `get` would return through the hashed path instead.
-    pub(super) fn dense_get(&self, key: &JoinHashKey) -> Option<(usize, &Vec<Vec<Value>>)> {
+    pub(super) fn dense_get(&self, key: &JoinHashKey) -> Option<(usize, &Vec<R>)> {
         let offset = self.dense_offset(key)?;
         Some((offset, &self.dense_buckets[offset]))
     }
@@ -119,7 +179,7 @@ impl PartitionedBuild {
 
     /// Every distinct bucket, in the order [`Self::dense_get`]'s flat index
     /// addresses - only meaningful once [`Self::is_dense`].
-    pub(super) fn dense_buckets(&self) -> &[Vec<Vec<Value>>] {
+    pub(super) fn dense_buckets(&self) -> &[Vec<R>] {
         &self.dense_buckets
     }
 
@@ -177,7 +237,7 @@ impl PartitionedBuild {
         self.partitions[self.slot(key)].contains_key(key)
     }
 
-    fn entry_or_default(&mut self, key: JoinHashKey) -> &mut Vec<Vec<Value>> {
+    fn entry_or_default(&mut self, key: JoinHashKey) -> &mut Vec<R> {
         let slot = self.slot(&key);
         self.partitions[slot].entry(key).or_default()
     }
@@ -197,7 +257,7 @@ impl PartitionedBuild {
         self.partitions.iter().map(HashMap::len).sum()
     }
 
-    pub(super) fn values(&self) -> Box<dyn Iterator<Item = &Vec<Vec<Value>>> + '_> {
+    pub(super) fn values(&self) -> Box<dyn Iterator<Item = &Vec<R>> + '_> {
         if self.dense_index.is_some() {
             Box::new(self.dense_buckets.iter())
         } else {
@@ -209,7 +269,7 @@ impl PartitionedBuild {
         self.partitions.iter().flat_map(HashMap::keys)
     }
 
-    fn drain(&mut self) -> impl Iterator<Item = (JoinHashKey, Vec<Vec<Value>>)> + '_ {
+    fn drain(&mut self) -> impl Iterator<Item = (JoinHashKey, Vec<R>)> + '_ {
         self.partitions.iter_mut().flat_map(HashMap::drain)
     }
 
@@ -245,6 +305,7 @@ impl PartitionedBuild {
         for partition in &mut self.partitions {
             partition.clear();
         }
+        self.batches.clear();
     }
 }
 
@@ -468,11 +529,15 @@ pub(super) fn resolve_join_group_plan(
         let mut indexes = Vec::with_capacity(bucket.len());
         for row in bucket {
             key.clear();
+            let group_value = |column: usize| {
+                build
+                    .value(*row, column)
+                    .ok_or(ExecError::InvalidPhysicalPlan(
+                        "join aggregate group is outside the build-side layout",
+                    ))
+            };
             for column in right_group_columns {
-                let value = row.get(*column).ok_or(ExecError::InvalidPhysicalPlan(
-                    "join aggregate group is outside the build-side layout",
-                ))?;
-                encode_group_value(value, collation, &mut keys, &mut key);
+                encode_group_value(group_value(*column)?, collation, &mut keys, &mut key);
             }
             // Borrowed lookup: `Vec<u8>` keys probe by slice, so the hit path
             // - the common one - neither allocates nor copies.
@@ -481,8 +546,8 @@ pub(super) fn resolve_join_group_plan(
             } else {
                 let group_values = right_group_columns
                     .iter()
-                    .map(|column| row[*column].clone())
-                    .collect::<Vec<_>>();
+                    .map(|column| group_value(*column).cloned())
+                    .collect::<Result<Vec<_>, _>>()?;
                 values.push(group_values);
                 index.insert(key.clone(), values.len() - 1);
                 values.len() - 1
@@ -586,55 +651,75 @@ impl HashJoinState {
     }
 }
 
-/// Reserves for and inserts one build row into the resident map. Every
-/// reservation happens here so a failure can be matched on by the caller,
-/// which decides whether the map has anything to spill.
-#[allow(clippy::too_many_arguments)]
+/// Reserves for and inserts one build row's reference into the resident
+/// map; the row's batch is kept, and charged, once for all of its rows.
+/// Every reservation happens here so a failure can be matched on by the
+/// caller, which decides whether the map has anything to spill.
 fn insert_resident_row(
     build: &mut PartitionedBuild,
     key: JoinHashKey,
-    batch: &RecordBatch,
-    row: usize,
+    row: BuildRow,
     batch_bytes: usize,
-    right_key: &CompiledExpr,
     memory: &MemoryTracker,
 ) -> Result<(), ExecError> {
-    let row_bytes = estimated_batch_row_bytes(batch, row)?;
-    let key_memory = right_key
-        .allocation_upper_bound(batch, row)
-        .saturating_mul(12);
-    memory.ensure_transient(
-        batch_bytes
-            .saturating_add(row_bytes)
-            .saturating_add(key_memory),
-    )?;
     let key_bytes = if build.contains_key(&key) {
         0
     } else {
         key.heap_bytes()
     };
-    let row_payload = row_bytes.saturating_sub(size_of::<Vec<Value>>());
-    memory.ensure_transient(
-        batch_bytes
-            .saturating_add(key_memory)
-            .saturating_add(row_payload)
-            .saturating_add(64_usize.saturating_mul(size_of::<Vec<Value>>()))
-            .saturating_add(key_bytes),
-    )?;
     build.reserve_for_key(
         &key,
         size_of::<JoinHashKey>()
-            .saturating_add(size_of::<Vec<Vec<Value>>>())
+            .saturating_add(size_of::<Vec<BuildRow>>())
             .saturating_add(HASH_ENTRY_OVERHEAD),
         batch_bytes,
         memory,
     )?;
     memory.reserve(key_bytes)?;
+    // A reference is small and most keys name one row, so a bucket grows
+    // from a few slots rather than from a batch's worth.
     let bucket = build.entry_or_default(key);
-    reserve_vec_elements(bucket, 1, 64, memory)?;
-    memory.reserve(row_payload)?;
-    let values = batch_row(batch, row)?;
-    bucket.push(values);
+    reserve_vec_elements(bucket, 1, 0, memory)?;
+    bucket.push(row);
+    Ok(())
+}
+
+/// `batch` as a batch of only its selected rows, when its selection leaves
+/// most of its rows out. A build keeps the batches its rows are in, so a
+/// batch a filter thinned would otherwise hold the rows the filter dropped.
+fn compacted(batch: RecordBatch) -> Result<RecordBatch, ExecError> {
+    if batch.visible_row_count().saturating_mul(2) >= batch.row_count() {
+        return Ok(batch);
+    }
+    let picks = batch
+        .selection()
+        .selected_rows()
+        .map(|row| probe_row_index(row).map(|row| (0, row)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let columns = batch
+        .columns()
+        .iter()
+        .map(|column| super::gather::gather(&[column], &picks, column.data_type()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RecordBatch::new(picks.len(), columns)?)
+}
+
+/// Moves a resident build to grace partitions: each row it references is
+/// copied out of its kept batch into its key's partition file, and the
+/// batches go with the map.
+fn spill_resident(
+    build: &mut PartitionedBuild,
+    partitions: &mut GraceJoin,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    let batches = std::mem::take(&mut build.batches);
+    for (key, bucket) in build.drain() {
+        let target = grace_partition(&key, 0);
+        for row in bucket {
+            let values = batch_row(&batches[row.batch as usize], row.row as usize)?;
+            partitions.build_files[target].append(&key, &values, memory)?;
+        }
+    }
     Ok(())
 }
 
@@ -644,6 +729,7 @@ pub(super) fn build_hash_join_state(
     right_key: &CompiledExpr,
     key_mode: JoinKeyMode,
     extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    probe_floor: usize,
     memory: &MemoryTracker,
     collation: Collation,
 ) -> Result<HashJoinState, ExecError> {
@@ -660,8 +746,47 @@ pub(super) fn build_hash_join_state(
         decimal: false,
         collation: None,
     };
-    while let Some(batch) = right.next_batch(memory)? {
+    // The resident build's batches are what leaves no room to pull the next
+    // one, or to work through it: they go to partitions first, as they
+    // would when an insert is refused.
+    let make_room = |build: &mut PartitionedBuild,
+                     grace: &mut Option<GraceJoin>,
+                     build_reserved: &mut usize,
+                     bytes: usize|
+     -> Result<(), ExecError> {
+        if grace.is_none()
+            && !build.is_empty()
+            && matches!(
+                memory.ensure_transient(bytes),
+                Err(ExecError::MemoryLimitExceeded { .. })
+            )
+        {
+            let mut partitions = GraceJoin::create();
+            spill_resident(build, &mut partitions, memory)?;
+            memory.release(*build_reserved);
+            *build_reserved = 0;
+            *grace = Some(partitions);
+        }
+        Ok(())
+    };
+    loop {
+        make_room(
+            &mut build,
+            &mut grace,
+            &mut build_reserved,
+            right.scan_transient_floor(),
+        )?;
+        let Some(batch) = right.next_batch(memory)? else {
+            break;
+        };
+        let batch = compacted(batch)?;
         let batch_bytes = batch.estimated_bytes();
+        make_room(
+            &mut build,
+            &mut grace,
+            &mut build_reserved,
+            batch_bytes.saturating_mul(2),
+        )?;
         // A wide upstream join can return more than a scan-sized batch.
         // Bin it in bounded pieces when it occupies most of the headroom,
         // so resident insertion reaches its spill valve before keys alone
@@ -672,6 +797,9 @@ pub(super) fn build_hash_join_state(
             batch.row_count().max(1)
         };
         let mut rows = batch.selection().selected_rows().peekable();
+        // The batch's index among the build's kept batches, once a row of
+        // it is inserted resident.
+        let mut kept: Option<u32> = None;
         while rows.peek().is_some() {
             let mut used_before_batch = memory.used();
             // Keys first, binned by the partition each will land in; the inserts
@@ -727,17 +855,30 @@ pub(super) fn build_hash_join_state(
                     grace.build_files[grace_partition(&key, 0)].append(&key, &values, memory)?;
                     continue;
                 }
-                match insert_resident_row(
-                    &mut build,
-                    key,
-                    &batch,
-                    row,
-                    batch_bytes,
-                    right_key,
-                    memory,
-                ) {
+                let inserted = match kept {
+                    Some(index) => Ok(index),
+                    None => memory
+                        .reserve(batch_bytes)
+                        .and_then(|()| build.keep(batch.clone())),
+                }
+                .and_then(|index| {
+                    kept = Some(index);
+                    let row = u32::try_from(row).map_err(|_| {
+                        ExecError::InvalidBatch(
+                            "a build batch holds more rows than a join addresses",
+                        )
+                    })?;
+                    insert_resident_row(
+                        &mut build,
+                        key,
+                        BuildRow { batch: index, row },
+                        batch_bytes,
+                        memory,
+                    )
+                });
+                match inserted {
                     Ok(()) => {}
-                    Err(ExecError::MemoryLimitExceeded { .. }) if !build.is_empty() => {
+                    Err(ExecError::MemoryLimitExceeded { .. }) => {
                         // Out of memory with rows to spill: either the query's
                         // own ceiling landed inside one batch, past the
                         // proactive half-ceiling valve below, or the process
@@ -746,14 +887,11 @@ pub(super) fn build_hash_join_state(
                         // the common one: every admitted query is entitled to
                         // its own ceiling, but their sum is not, so the budget
                         // is a spill signal here, not a verdict. Drain the map
-                        // to partitions and route this row there.
+                        // to partitions and route this row there; a batch the
+                        // ceiling could not keep goes there whole.
                         let mut partitions = GraceJoin::create();
-                        for (key, bucket) in build.drain() {
-                            let target = grace_partition(&key, 0);
-                            for values in bucket {
-                                partitions.build_files[target].append(&key, &values, memory)?;
-                            }
-                        }
+                        spill_resident(&mut build, &mut partitions, memory)?;
+                        kept = None;
                         // Everything this batch reserved beyond its binned keys,
                         // plus the map from earlier batches; a partial insert's
                         // reservations are included because the map is empty now.
@@ -788,17 +926,28 @@ pub(super) fn build_hash_join_state(
             // of the build (and later the probe) through them.
             if grace.is_none() && build_reserved > memory.limit() / 2 && !build.is_empty() {
                 let mut partitions = GraceJoin::create();
-                for (key, bucket) in build.drain() {
-                    let target = grace_partition(&key, 0);
-                    for values in bucket {
-                        partitions.build_files[target].append(&key, &values, memory)?;
-                    }
-                }
+                spill_resident(&mut build, &mut partitions, memory)?;
+                kept = None;
                 memory.release(build_reserved);
                 build_reserved = 0;
                 grace = Some(partitions);
             }
         }
+    }
+    // Under a shared budget a build that fitted can still leave no room for
+    // the probe to pull its next batch; it goes to partitions now, while it
+    // still can, rather than failing the probe.
+    if grace.is_none()
+        && !build.is_empty()
+        && matches!(
+            memory.ensure_transient(probe_floor),
+            Err(ExecError::MemoryLimitExceeded { .. })
+        )
+    {
+        let mut partitions = GraceJoin::create();
+        spill_resident(&mut build, &mut partitions, memory)?;
+        memory.release(build_reserved);
+        grace = Some(partitions);
     }
     // A build that stayed resident (no grace spill) is never mutated again:
     // every remaining reader only probes it. Dense direct-address probe
@@ -1500,6 +1649,8 @@ pub(super) struct GraceJoin {
     current: usize,
     /// The loaded partition's probe entries being replayed.
     replay: Option<GraceRunReader>,
+    /// The loaded partition's build rows, read back from its file.
+    build: PartitionedBuild<Vec<Value>>,
     /// Bytes reserved for the loaded partition's build map.
     partition_reserved: usize,
     skew: Option<SkewReplay>,
@@ -1520,6 +1671,7 @@ impl GraceJoin {
             probing_done: false,
             current: 0,
             replay: None,
+            build: PartitionedBuild::with_partitions(BUILD_PARTITIONS),
             partition_reserved: 0,
             skew: None,
         }
@@ -1729,7 +1881,7 @@ const FIRST_TRIES: usize = 4;
 /// candidates are tried.
 struct Existence<'build> {
     probe_row: u32,
-    bucket: &'build [Vec<Value>],
+    bucket: &'build [BuildRow],
     /// Candidates tried so far, from the front of the bucket.
     tried: usize,
     /// Candidates the row's next round tries.
@@ -1775,7 +1927,6 @@ fn next_hash_join_existence_columns(
             return Ok(None);
         }
         let batch = state.batch.as_ref().expect("probe batch loaded");
-        let probe_row_bytes = batch.estimated_bytes() / batch.row_count().max(1);
         let mut rows = Vec::new();
         while state.row < batch.row_count() && rows.len() < SPILL_SERVE_BATCH_ROWS {
             let row = state.row;
@@ -1799,12 +1950,7 @@ fn next_hash_join_existence_columns(
             .filter(|index| rows[*index].undecided())
             .collect::<VecDeque<_>>();
         while !open.is_empty() {
-            let mut candidates = Picks {
-                probe_rows: Vec::new(),
-                build_rows: Vec::new(),
-                probe_row_bytes,
-                bytes: 0,
-            };
+            let mut candidates = Picks::new(&state.build, batch, 0);
             let mut owners = Vec::new();
             let mut reached = Vec::new();
             // A round holds about a batch of candidates; the rows it does not
@@ -1821,7 +1967,7 @@ fn next_hash_join_existence_columns(
                 let bucket = row.bucket;
                 let end = bucket.len().min(row.tried.saturating_add(row.tries));
                 for build_row in &bucket[row.tried..end] {
-                    candidates.push(row.probe_row, Some(build_row));
+                    candidates.push(row.probe_row, Some(*build_row));
                     owners.push(index);
                 }
                 row.tried = end;
@@ -1842,12 +1988,7 @@ fn next_hash_join_existence_columns(
             }
             open.extend(reached.into_iter().filter(|index| rows[*index].undecided()));
         }
-        let mut picks = Picks {
-            probe_rows: Vec::with_capacity(rows.len()),
-            build_rows: Vec::with_capacity(rows.len()),
-            probe_row_bytes,
-            bytes: 0,
-        };
+        let mut picks = Picks::new(&state.build, batch, rows.len());
         let semi = probe.kind == BoundJoinKind::Semi;
         for row in &rows {
             if row.found == semi {
@@ -1954,12 +2095,7 @@ fn next_hash_join_columns(
             return Ok(None);
         }
         let batch = state.batch.as_ref().expect("probe batch loaded");
-        let mut picks = Picks {
-            probe_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
-            build_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
-            probe_row_bytes: batch.estimated_bytes() / batch.row_count().max(1),
-            bytes: 0,
-        };
+        let mut picks = Picks::new(&state.build, batch, SPILL_SERVE_BATCH_ROWS);
         while state.row < batch.row_count() && picks.probe_rows.len() < SPILL_SERVE_BATCH_ROWS {
             // Turning the picked rows into columns needs about as much again,
             // so under a tight ceiling the batch is cut where that still fits.
@@ -1987,7 +2123,7 @@ fn next_hash_join_columns(
                     // at `match_index` on the next call.
                     let end = rows.len().min(state.match_index + room);
                     for build_row in &rows[state.match_index..end] {
-                        picks.push(probe_row, Some(build_row));
+                        picks.push(probe_row, Some(*build_row));
                     }
                     state.match_index = end;
                     if state.match_index < rows.len() {
@@ -2050,12 +2186,7 @@ fn next_hash_join_residual_columns(
             return Ok(None);
         }
         let batch = state.batch.as_ref().expect("probe batch loaded");
-        let mut candidates = Picks {
-            probe_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
-            build_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
-            probe_row_bytes: batch.estimated_bytes() / batch.row_count().max(1),
-            bytes: 0,
-        };
+        let mut candidates = Picks::new(&state.build, batch, SPILL_SERVE_BATCH_ROWS);
         // Each probe row with the span of `candidates` its bucket filled.
         let mut groups = Vec::new();
         while state.row < batch.row_count() {
@@ -2077,7 +2208,7 @@ fn next_hash_join_residual_columns(
             let probe_row = probe_row_index(row)?;
             let start = candidates.probe_rows.len();
             for build_row in bucket.into_iter().flatten() {
-                candidates.push(probe_row, Some(build_row));
+                candidates.push(probe_row, Some(*build_row));
             }
             groups.push((probe_row, start..candidates.probe_rows.len()));
             state.row += 1;
@@ -2124,9 +2255,11 @@ fn residual_picks<'build>(
     passes: &dyn Fn(usize) -> Result<bool, ExecError>,
 ) -> Result<Picks<'build>, ExecError> {
     let mut picks = Picks {
+        build: candidates.build,
         probe_rows: Vec::with_capacity(groups.len()),
         build_rows: Vec::with_capacity(groups.len()),
         probe_row_bytes: candidates.probe_row_bytes,
+        build_row_bytes: candidates.build_row_bytes,
         bytes: 0,
     };
     for (probe_row, span) in groups {
@@ -2172,28 +2305,48 @@ fn residual_picks<'build>(
 
 /// The rows one output batch of a batch probe pairs.
 struct Picks<'build> {
+    /// The build the build rows are kept in.
+    build: &'build PartitionedBuild,
     /// Each output row's probe row, as a gather pick from the one batch.
     probe_rows: Vec<(u32, u32)>,
     /// Each output row's build row, `None` where the probe row stands alone.
-    build_rows: Vec<Option<&'build Vec<Value>>>,
+    build_rows: Vec<Option<BuildRow>>,
     /// A probe row's share of its batch, for the output's size.
     probe_row_bytes: usize,
+    /// About what one build row holds, for the output's size.
+    build_row_bytes: usize,
     /// What the output will hold, for the memory valve.
     bytes: usize,
 }
 
 impl<'build> Picks<'build> {
-    fn push(&mut self, probe_row: u32, build_row: Option<&'build Vec<Value>>) {
+    fn new(build: &'build PartitionedBuild, batch: &RecordBatch, capacity: usize) -> Self {
+        Self {
+            build,
+            probe_rows: Vec::with_capacity(capacity),
+            build_rows: Vec::with_capacity(capacity),
+            probe_row_bytes: batch.estimated_bytes() / batch.row_count().max(1),
+            build_row_bytes: build.row_bytes(),
+            bytes: 0,
+        }
+    }
+
+    fn push(&mut self, probe_row: u32, build_row: Option<BuildRow>) {
         self.bytes = self
             .bytes
             .saturating_add(self.probe_row_bytes)
-            .saturating_add(build_row.map_or(0, |row| estimated_row_payload_bytes(row)));
+            .saturating_add(if build_row.is_some() {
+                self.build_row_bytes
+            } else {
+                0
+            });
         self.probe_rows.push((0, probe_row));
         self.build_rows.push(build_row);
     }
 
     /// The output batch: the probe columns gathered from `batch`, then the
-    /// build rows' values, NULL where a probe row stands alone.
+    /// build columns gathered from the build's kept batches, NULL where a
+    /// probe row stands alone.
     fn output(
         &self,
         batch: &RecordBatch,
@@ -2211,17 +2364,17 @@ impl<'build> Picks<'build> {
                 *data_type,
             )?);
         }
+        let build_picks = self
+            .build_rows
+            .iter()
+            .map(|row| row.map(|row| (row.batch, row.row)))
+            .collect::<Vec<_>>();
         for (column, data_type) in column_types.iter().skip(probe_width).enumerate() {
-            let values = self
-                .build_rows
-                .iter()
-                .map(|build_row| {
-                    build_row.map_or(Value::Null, |row| {
-                        row.get(column).cloned().unwrap_or(Value::Null)
-                    })
-                })
-                .collect();
-            columns.push(ColumnVector::new(*data_type, values)?);
+            columns.push(super::gather::gather_optional(
+                &self.build.sources(column)?,
+                &build_picks,
+                *data_type,
+            )?);
         }
         Ok(RecordBatch::new(self.probe_rows.len(), columns)?)
     }
@@ -2359,8 +2512,8 @@ pub(super) fn next_grace_join_batch(
             }
             let index = grace.current;
             grace.current += 1;
-            // Load this partition's build rows into the resident map.
-            state.build.clear();
+            // Load this partition's build rows into the partition map.
+            grace.build.clear();
             memory.release(grace.partition_reserved);
             grace.partition_reserved = 0;
             let used_before = memory.used();
@@ -2371,7 +2524,7 @@ pub(super) fn next_grace_join_batch(
                 // grows; comparing the summed length against the summed
                 // capacity let a full partition grow untracked while the others
                 // still had room.
-                if state
+                if grace
                     .build
                     .reserve_for_key(
                         &key,
@@ -2396,13 +2549,13 @@ pub(super) fn next_grace_join_batch(
                     overflowed = true;
                     break;
                 }
-                state.build.entry_or_default(key).push(values);
+                grace.build.entry_or_default(key).push(values);
             }
             if overflowed {
                 // This partition's build side does not fit. Give back what it
                 // took and split it again rather than failing the query.
                 drop(entries);
-                state.build.clear();
+                grace.build.clear();
                 memory.release(memory.used().saturating_sub(used_before));
                 if grace.depths[index] >= MAX_GRACE_DEPTH {
                     let build =
@@ -2424,7 +2577,7 @@ pub(super) fn next_grace_join_batch(
             grace.replay = None;
             continue;
         };
-        let matches = state.build.get(&key);
+        let matches = grace.build.get(&key);
         let filtered = if residual.is_some() {
             apply_join_residual(
                 residual,
@@ -3515,7 +3668,7 @@ mod dense_join_table_tests {
     /// `PartitionedBuild` is enough to test `finalize_dense` and its
     /// accessors directly. A key mentioned more than once produces a bucket
     /// with more than one row, covering duplicates.
-    fn build(rows: &[(JoinHashKey, u64)]) -> PartitionedBuild {
+    fn build(rows: &[(JoinHashKey, u64)]) -> PartitionedBuild<Vec<Value>> {
         let mut build = PartitionedBuild::with_partitions(4);
         for (key, payload) in rows {
             build

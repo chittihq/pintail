@@ -4336,7 +4336,15 @@ fn build_fused_inner_join_aggregate(
         .collect::<Vec<_>>();
     let build_clock = std::time::Instant::now();
     let build_start = memory.used();
-    let join = build_hash_join_state(right, right_key, *key_mode, extra_keys, memory, collation)?;
+    let join = build_hash_join_state(
+        right,
+        right_key,
+        *key_mode,
+        extra_keys,
+        left.scan_transient_floor(),
+        memory,
+        collation,
+    )?;
     let build_reserved = memory.used().saturating_sub(build_start);
     let build_us = build_clock.elapsed().as_micros();
     let probe_clock = std::time::Instant::now();
@@ -4637,7 +4645,7 @@ fn build_local_fused_join_groups(
                             }
                             direct_group_value(batch, row, column)?
                         } else {
-                            right_values.get(column - left_width).ok_or(
+                            build.value(*right_values, column - left_width).ok_or(
                                 ExecError::InvalidPhysicalPlan(
                                     "join aggregate column is outside the joined layout",
                                 ),

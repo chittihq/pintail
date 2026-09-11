@@ -120,6 +120,11 @@ impl ColumnarSorted {
         })
     }
 
+    /// Each kept row as (batch, row), in sorted order.
+    pub(super) fn into_order(self) -> Vec<(u32, u32)> {
+        self.order
+    }
+
     fn width(&self) -> usize {
         let columns = self
             .batches

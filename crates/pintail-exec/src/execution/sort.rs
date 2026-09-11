@@ -3,6 +3,7 @@
 
 use crate::collation::Collation;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use pintail_sql::BoundOrderKey;
 use pintail_types::{DataType, Value};
@@ -22,6 +23,12 @@ pub(super) enum SortedRows {
     /// The input's own batches, ordered by reference.
     Columnar(columnar_sort::ColumnarSorted),
     Spilled(SpilledMerge),
+    /// Batches already in their final order; `next` is the first row of the
+    /// front batch not yet served as a row.
+    Batches {
+        batches: VecDeque<RecordBatch>,
+        next: usize,
+    },
 }
 
 impl SortedRows {
@@ -34,6 +41,20 @@ impl SortedRows {
             }
             Self::Columnar(sorted) => Ok(sorted.next_row()),
             Self::Spilled(merge) => merge.next_row(),
+            Self::Batches { batches, next } => {
+                while let Some(batch) = batches.front() {
+                    while *next < batch.row_count() {
+                        let row = *next;
+                        *next += 1;
+                        if batch.selection().is_selected(row) {
+                            return batch_row(batch, row).map(Some);
+                        }
+                    }
+                    batches.pop_front();
+                    *next = 0;
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -46,6 +67,21 @@ impl SortedRows {
             Self::Memory(rows) => next_materialized_batch(rows, column_types, memory),
             Self::Columnar(sorted) => sorted.next_batch(column_types, memory),
             Self::Spilled(merge) => merge.next_batch(column_types, memory),
+            Self::Batches { batches, next } => {
+                if *next > 0 {
+                    // Rows of the front batch were served one at a time; the
+                    // rest of it goes as a batch without them.
+                    let Some(mut batch) = batches.pop_front() else {
+                        return Ok(None);
+                    };
+                    for row in 0..*next {
+                        batch.selection_mut().set(row, false)?;
+                    }
+                    *next = 0;
+                    return Ok(Some(batch));
+                }
+                Ok(batches.pop_front())
+            }
         }
     }
 }
