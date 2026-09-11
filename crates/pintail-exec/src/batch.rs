@@ -100,6 +100,13 @@ impl LazyText {
         }
     }
 
+    /// Whether the text is derived from the packed units - canonical, at
+    /// the column's own precision - rather than kept as the values were
+    /// written.
+    pub(crate) const fn derived(&self) -> bool {
+        !matches!(self.kind, TextKind::Ready)
+    }
+
     /// The built text, if any consumer has forced it yet.
     fn built(&self) -> Option<&StrColumn> {
         self.cell.get()

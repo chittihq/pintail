@@ -1,4 +1,5 @@
 mod temporal;
+mod vector;
 
 pub(crate) use temporal::shift_temporal_value;
 use temporal::{
@@ -547,6 +548,15 @@ impl DecimalRational {
     }
 
     fn rounded(self, scale: u8) -> Result<Value, ExecError> {
+        Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+            self.rounded_units(scale)?,
+            scale,
+        )))
+    }
+
+    /// The value rounded half away from zero to `scale` digits, as units
+    /// of `10^-scale`.
+    fn rounded_units(self, scale: u8) -> Result<i128, ExecError> {
         let factor = 10_i128
             .checked_pow(u32::from(scale))
             .ok_or(ExecError::NumericOverflow)?;
@@ -556,11 +566,8 @@ impl DecimalRational {
             .checked_mul(factor / cancel)
             .ok_or(ExecError::NumericOverflow)?;
         let denominator = self.denominator / cancel;
-        let units = pintail_types::div_decimal_round_half_up(numerator, denominator)
-            .ok_or(ExecError::NumericOverflow)?;
-        Ok(Value::Utf8(pintail_types::format_decimal_scaled(
-            units, scale,
-        )))
+        pintail_types::div_decimal_round_half_up(numerator, denominator)
+            .ok_or(ExecError::NumericOverflow)
     }
 
     /// Materializes at the smallest scale that loses nothing, but never
