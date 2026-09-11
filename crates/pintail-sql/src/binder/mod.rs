@@ -6314,21 +6314,47 @@ impl SourceClause {
     }
 }
 
+std::thread_local! {
+    /// The statement last tokenized for projection names, with its tokens:
+    /// every unnamed projection of one statement reads the same ones, and
+    /// tokenizing the whole statement again for each was a cost per column.
+    static SOURCE_TOKENS: std::cell::RefCell<
+        Option<(String, std::rc::Rc<Vec<sqlparser::tokenizer::TokenWithSpan>>)>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+/// `sql`'s tokens, tokenized once per statement text.
+fn source_tokens(sql: &str) -> Option<std::rc::Rc<Vec<sqlparser::tokenizer::TokenWithSpan>>> {
+    SOURCE_TOKENS.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((text, tokens)) = cache.as_ref()
+            && text == sql
+        {
+            return Some(std::rc::Rc::clone(tokens));
+        }
+        let tokens = std::rc::Rc::new(
+            sqlparser::tokenizer::Tokenizer::new(&sqlparser::dialect::MySqlDialect {}, sql)
+                .tokenize_with_location()
+                .ok()?,
+        );
+        *cache = Some((sql.to_owned(), std::rc::Rc::clone(&tokens)));
+        Some(tokens)
+    })
+}
+
 /// The exact text of `expr` inside `sql`: the item that contains the
 /// parser's recorded start of the expression, bounded by the list it sits
 /// in. The parser's spans are used only to land inside the item - for some
 /// nodes they start inside an argument or end a character late - and the
 /// tokens around that point say where the item really begins and ends.
 fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
-    use sqlparser::tokenizer::{Token, Tokenizer};
+    use sqlparser::tokenizer::Token;
 
     let start = expr.span().start;
     if start.line == 0 {
         return None;
     }
-    let tokens = Tokenizer::new(&sqlparser::dialect::MySqlDialect {}, sql)
-        .tokenize_with_location()
-        .ok()?;
+    let tokens = source_tokens(sql)?;
     let offsets = line_offsets(sql);
     let offset_of = |location: sqlparser::tokenizer::Location| -> Option<usize> {
         let line = offsets.get(usize::try_from(location.line).ok()?.checked_sub(1)?)?;
