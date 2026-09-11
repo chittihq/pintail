@@ -365,10 +365,9 @@ pub(crate) static STORE_INSTANCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(1);
 
 pub struct TableStore {
-    /// Declared before the lock so it is released first: readers stop
-    /// trusting this writer's generation before another writer can exist.
+    /// This writer's claim on the table: it holds the table's writer lock,
+    /// and hands it back to the process - or lets it go - when dropped.
     publication: Publisher,
-    _writer_lock: File,
     /// Distinguishes this open from any other, including an earlier table
     /// at the same path. Never persisted: a reopen is a new instance, and
     /// caches keyed on it correctly stop recognizing their old entries.
@@ -449,12 +448,19 @@ impl TableStore {
         let directory = std::fs::canonicalize(directory)
             .map_err(|error| StoreError::io("canonicalize table directory", error))?;
 
-        let writer_lock = open_lock(&directory.join(WRITER_LOCK_FILE))?;
-        lock_writer(&writer_lock, "lock table writer")?;
-        let publication = Publisher::register(&directory);
-        // Recovery can rewrite the manifest, truncate the log and sweep
-        // orphans; all of it is published once the open ends.
-        let _opening = publication.publishing();
+        let lock_path = directory.join(WRITER_LOCK_FILE);
+        let publication = Publisher::claim(&directory, &lock_path, || {
+            let writer_lock = open_lock(&lock_path)?;
+            lock_writer(&writer_lock, "lock table writer")?;
+            Ok(writer_lock)
+        })?;
+        // Recovery can truncate the log or rewrite the manifest, and then
+        // publishes once the open ends; an open that changed nothing a
+        // reader reads - the usual case, and every replication cycle's -
+        // leaves the generation alone. Swept orphans are files no manifest
+        // names, so no reader ever read them.
+        let opening = publication.publishing();
+        let mut changed = false;
 
         let mut manifest = manifest::load(&directory, &schema)?;
         let schema_upgrade = manifest.schema_version < schema.version();
@@ -477,6 +483,7 @@ impl TableStore {
                 recovery.batches.truncate(committed_batches);
                 let offset =
                     committed.map_or(HEADER_LENGTH_FOR_TRUNCATION, |commit| commit.end_offset);
+                changed = true;
                 wal.truncate_to(offset)?;
             }
             if let Some(commit) = committed {
@@ -511,28 +518,22 @@ impl TableStore {
             && recovered_batches
             && recovery_last_sequence <= manifest.flushed_sequence
         {
+            changed = true;
             wal.reset()?;
         }
         if schema_upgrade {
-            manifest.generation = manifest
-                .generation
-                .checked_add(1)
-                .ok_or(StoreError::SequenceOverflow)?;
-            manifest.epoch = manifest
-                .epoch
-                .checked_add(1)
-                .ok_or(StoreError::SequenceOverflow)?;
-            manifest.schema_version = schema.version();
-            manifest.schema_fingerprint = segment::schema_fingerprint(&schema);
-            manifest::publish(&directory, &manifest)?;
+            changed = true;
+            publish_schema_upgrade(&directory, &mut manifest, &schema)?;
         }
         let next_append_row_id =
             find_next_append_row_id(&directory, &manifest, &schema, &memtable)?;
         let manifest = Arc::new(manifest);
+        if !changed {
+            opening.unchanged();
+        }
 
         Ok(Self {
             publication,
-            _writer_lock: writer_lock,
             instance: STORE_INSTANCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             directory,
             schema,
@@ -1919,6 +1920,27 @@ pub(crate) fn lock_writer(lock: &File, context: &'static str) -> Result<(), Stor
             Err(error) => return Err(StoreError::io(context, error)),
         }
     }
+}
+
+/// Publishes `manifest` under the newer `schema` its segments were just
+/// verified readable by: a new generation and epoch, the schema's version
+/// and fingerprint.
+fn publish_schema_upgrade(
+    directory: &Path,
+    manifest: &mut Manifest,
+    schema: &TableSchema,
+) -> Result<(), StoreError> {
+    manifest.generation = manifest
+        .generation
+        .checked_add(1)
+        .ok_or(StoreError::SequenceOverflow)?;
+    manifest.epoch = manifest
+        .epoch
+        .checked_add(1)
+        .ok_or(StoreError::SequenceOverflow)?;
+    manifest.schema_version = schema.version();
+    manifest.schema_fingerprint = segment::schema_fingerprint(schema);
+    manifest::publish(directory, manifest)
 }
 
 fn open_lock(path: &Path) -> Result<File, StoreError> {

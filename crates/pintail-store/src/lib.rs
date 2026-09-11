@@ -18,7 +18,7 @@ mod wal;
 
 pub use database::DatabaseStore;
 pub use error::StoreError;
-pub use publication::{publish_changes_under, published_generation};
+pub use publication::{publish_changes_under, published_generation, retain_writer_locks};
 pub use segment::{
     BoundDomain, ColumnBounds, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum,
 };

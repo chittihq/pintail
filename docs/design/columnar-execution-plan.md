@@ -110,11 +110,14 @@ program and gets its own gate and live-CDC coverage.
   keys.
 - CPU-bound execution stays off the async I/O threads; any inline fast path
   needs a bounded design first.
-- Freshness trusts a table writer's published generation only while that
-  writer holds the table's lock in this process; any other table is walked
-  as before. This is a proof, where a periodic walk would only have bounded
-  how long a missed change went unseen, so it replaces the backstop the
-  review proposed.
+- Freshness trusts a table's published generation only while this process
+  holds the table's writer lock; any other table is walked as before. This
+  is a proof, where a periodic walk would only have bounded how long a
+  missed change went unseen, so it replaces the backstop the review
+  proposed. Replication opens its writers one cycle at a time, so the
+  server keeps each table's lock as a lease between writers (the store
+  library does not by default); a lease is adopted by the next writer only
+  while its lock file is the one on disk, and at most 512 are kept.
 - A replicated transaction that touches several tables reaches their files
   one table at a time, so a query that loads between two of those writes
   can see one table's rows and not the other's. The file walk had the same
