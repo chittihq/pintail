@@ -839,10 +839,9 @@ const TRACE_SEGMENTS: Array<[segment: string, from: string | undefined, to: stri
   ['replica', 'admitted', 'replica'],
   ['catalog', 'replica', 'catalog'],
   ['metadata', 'catalog', 'metadata'],
-  ['bind', 'metadata', 'bound'],
-  ['present', 'bound', 'presented'],
-  ['plan', 'presented', 'planned'],
-  ['start', 'planned', 'started'],
+  // Preparation happens here only when classification did not do it.
+  ['prepare', 'metadata', 'prepared'],
+  ['start', 'prepared', 'started'],
   ['execute', 'started', 'collected'],
   ['hop_out', 'collected', 'returned'],
   ['encode', 'returned', 'encoded'],
