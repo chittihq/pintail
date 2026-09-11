@@ -152,6 +152,13 @@ program and gets its own gate and live-CDC coverage.
   and a result over 16,384 rows streams to the client through a bounded
   queue while it is produced; an error after streamed rows follows them.
   A 130,000-row result went from 58.9 ms to 32.0 ms on the wire.
-- [ ] Phase 3
+- [ ] Phase 3 — first slice merged: batch kernels for date parts, interval
+  arithmetic, `DATE`/`LAST_DAY`, `DATEDIFF`/`TIMESTAMPDIFF`, comparisons,
+  `IS NULL`, `AND`/`OR`/`XOR`, signed integer and exact decimal arithmetic,
+  decimal comparison and the widening casts compared operands carry. A
+  kernel's argument may be another kernel's answer. A row that would raise
+  an error declines the batch to row evaluation, and warnings are held as
+  effects until the whole expression answers. Conditionals, text, JSON and
+  `TIME` kernels remain.
 - [ ] Phase 4
 - [ ] Phase 5
