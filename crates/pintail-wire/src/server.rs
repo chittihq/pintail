@@ -797,6 +797,9 @@ struct Backend {
     engine: ReplicaEngine,
     authentication: Mutex<Option<Authenticated>>,
     session: Mutex<Session>,
+    /// The trace of the statement being answered, from its execution until
+    /// its response is encoded (`PINTAIL_QUERY_TRACE`).
+    pending_trace: Mutex<Option<crate::trace::Trace>>,
     prepared: BTreeMap<u32, Prepared>,
     /// Statement text held by `prepared`, so the byte ceiling is a counter
     /// rather than a walk of the map on every PREPARE.
@@ -852,6 +855,7 @@ impl Backend {
                 .with_memory_limit(query_memory_limit),
             authentication: Mutex::new(None),
             session: Mutex::new(Session::default()),
+            pending_trace: Mutex::new(None),
             prepared: BTreeMap::new(),
             prepared_bytes: 0,
             next_statement_id: 1,
@@ -1076,7 +1080,14 @@ impl Backend {
         let sql = sql.to_owned();
         let parse_mode =
             mode.unwrap_or_else(|| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode));
+        let mut trace = crate::trace::Trace::start(started);
+        if let Some(trace) = &mut trace {
+            trace.mark("dispatched");
+        }
         let execution = tokio::task::spawn_blocking(move || {
+            crate::trace::install(trace);
+            crate::trace::mark("worker");
+            let _ = pintail_exec::take_exec_counters();
             pintail_sql::with_parse_mode(parse_mode, || {
                 pintail_exec::with_execution_cancellation(cancellation, || {
                     // The session zone shifts statement-pinned time functions;
@@ -1101,13 +1112,20 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
                     let _ = pintail_exec::set_session_time_zone(None);
-                    (result, warnings)
+                    crate::trace::label_exec_counters();
+                    (result, warnings, crate::trace::take())
                 })
             })
         })
         .await
         .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
         cancel_on_drop.disarm();
+        if let Some(mut trace) = execution.2 {
+            trace.mark("returned");
+            if let Ok(mut pending) = self.pending_trace.lock() {
+                *pending = Some(trace);
+            }
+        }
         if let Ok(mut current) = self.session.lock() {
             // Division by zero is a warning only under ERROR_FOR_DIVISION_BY_ZERO.
             let (group_concat, division) = execution.1;
@@ -1128,6 +1146,19 @@ impl Backend {
             execution.0.as_ref().map(|output| output.rows.len()),
         );
         execution.0
+    }
+
+    /// Writes the pending statement trace, once its response is encoded.
+    fn finish_trace(&self, sql: &str) {
+        let pending = self
+            .pending_trace
+            .lock()
+            .ok()
+            .and_then(|mut pending| pending.take());
+        if let Some(mut trace) = pending {
+            trace.mark("encoded");
+            trace.finish(sql);
+        }
     }
 
     /// The two session fields every result path needs to render a
@@ -1475,14 +1506,16 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
-        query_output_to_response(
+        let response = query_output_to_response(
             Backend::execute(self, sql).await,
             group_concat_max_len,
             &charset,
             negotiated,
             false,
             self.query_memory_limit,
-        )
+        );
+        self.finish_trace(sql);
+        response
     }
 
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
@@ -1640,14 +1673,16 @@ impl Handler for Backend {
                 describe_parameters(&mut output, &statement, &values);
                 output
             });
-        query_output_to_response(
+        let response = query_output_to_response(
             result,
             group_concat_max_len,
             &charset,
             negotiated,
             true,
             self.query_memory_limit,
-        )
+        );
+        self.finish_trace(&statement.sql);
+        response
     }
 
     async fn send_long_data(&mut self, statement: u32, _parameter: u16, _data: &[u8]) {

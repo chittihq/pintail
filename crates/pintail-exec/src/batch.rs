@@ -694,6 +694,11 @@ impl ColumnVector {
                 .get()
                 .and_then(Option::as_ref)
                 .expect("a column vector holds row values or a typed projection");
+            crate::counters::count(|counters| {
+                counters.values_materialized = counters
+                    .values_materialized
+                    .saturating_add(u64::try_from(self.len).unwrap_or(u64::MAX));
+            });
             materialize_values(typed, validity)
         })
     }
