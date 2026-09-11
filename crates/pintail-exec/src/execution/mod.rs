@@ -1529,7 +1529,9 @@ impl ExecutionProfile {
             if child.depth != node.depth + 1 {
                 continue;
             }
-            let ran = child.batches > 0 || !child.inclusive.is_zero();
+            // A node that was only built - one a parent fused, reading its
+            // inputs directly - ran in its inputs' time, not its own.
+            let ran = child.batches > 0 || child.inclusive > child.construction;
             total += if ran {
                 child.inclusive
             } else {
