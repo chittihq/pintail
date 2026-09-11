@@ -336,9 +336,14 @@ pub(super) fn build_sort(
     let compare =
         |left: &Vec<Value>, right: &Vec<Value>| compare_sort_rows(left, right, keys, collation);
     if let Some(top_k) = top_k {
-        // Top-k retains at most k rows and cannot exceed the ceiling by
-        // materializing its input; the in-memory path is unchanged.
-        let mut rows = materialize_top_k(input, top_k, keys, compare, memory, collation)?;
+        // Kept as columns while they fit; past that the batches kept so far
+        // and the rest of the input go to the row top-k, which retains at
+        // most k rows.
+        let unkept = match columnar_sort::top_k(input, top_k, keys, trim_to, memory, collation)? {
+            columnar_sort::TopK::Sorted(sorted) => return Ok(SortedRows::Columnar(sorted)),
+            columnar_sort::TopK::Unkept(batches) => batches,
+        };
+        let mut rows = materialize_top_k(unkept, input, top_k, keys, compare, memory, collation)?;
         rows.sort_by(compare);
         if let Some(width) = trim_to {
             for row in &mut rows {
@@ -375,7 +380,7 @@ pub(super) fn build_sort(
         return sort_rows(materializer.finish(), keys, trim_to, memory, collation);
     }
     Ok(SortedRows::Columnar(columnar_sort::ColumnarSorted::new(
-        retained, keys, trim_to, collation,
+        retained, keys, trim_to, collation, None,
     )?))
 }
 
@@ -654,6 +659,7 @@ impl SpilledMerge {
 }
 
 fn materialize_top_k(
+    held: Vec<RecordBatch>,
     input: &mut PullOperator,
     top_k: usize,
     keys: &[BoundOrderKey],
@@ -664,6 +670,7 @@ fn materialize_top_k(
     if top_k == 0 {
         return Ok(Vec::new());
     }
+    let mut held = held.into_iter();
     let mut rows = Vec::new();
     // Threshold prefilter (experiments/RESULTS.md e03): once k rows are
     // retained, their current worst acts as a cutoff — rows comparing
@@ -672,7 +679,10 @@ fn materialize_top_k(
     // are kept, so the candidate set stays a superset and selection
     // semantics are unchanged.
     let mut threshold: Option<Vec<Value>> = None;
-    while let Some(batch) = input.next_batch(memory)? {
+    while let Some(batch) = match held.next() {
+        Some(batch) => Some(batch),
+        None => input.next_batch(memory)?,
+    } {
         let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
         memory.ensure_transient(

@@ -13,10 +13,10 @@ use pintail_types::{DataType, Value};
 use crate::collation::Collation;
 
 use super::{
-    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MemoryTracker, PullOperator, ScanProvider,
-    batch_row, compare_sort_values, estimated_batch_row_bytes, estimated_record_batch_bytes,
-    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_vec_elements,
-    resolve_dependent_expr_subqueries, rows_to_columns,
+    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, KeyForm, MemoryTracker, PullOperator,
+    ScanProvider, batch_row, compare_sort_values, estimated_batch_row_bytes,
+    estimated_record_batch_bytes, estimated_row_payload_bytes, reserve_hash_map_entries,
+    reserve_vec_elements, resolve_dependent_expr_subqueries, rows_to_columns,
 };
 use crate::{
     ColumnVector, RecordBatch, SPILL_SERVE_BATCH_ROWS,
@@ -1212,9 +1212,11 @@ const JOIN_KEY_NON_NEGATIVE: u8 = 1;
 const JOIN_KEY_MYSQL_NUMBER: u8 = 2;
 const JOIN_KEY_SCALAR: u8 = 3;
 const JOIN_KEY_COMPOSITE: u8 = 4;
+const JOIN_KEY_NULL: u8 = 5;
 
 fn encode_join_key(encoder: &mut spill::Encoder, key: &JoinHashKey) {
     match key {
+        JoinHashKey::Null => encoder.u8(JOIN_KEY_NULL),
         JoinHashKey::NegativeInteger(value) => {
             encoder.u8(JOIN_KEY_NEGATIVE);
             encoder.i64(*value);
@@ -1249,6 +1251,7 @@ fn decode_join_key(decoder: &mut spill::Decoder<'_>) -> Result<JoinHashKey, Stri
             decoder.f64()?,
         ))),
         JOIN_KEY_SCALAR => Ok(JoinHashKey::Scalar(decoder.value()?)),
+        JOIN_KEY_NULL => Ok(JoinHashKey::Null),
         JOIN_KEY_COMPOSITE => {
             let count = decoder.count()?;
             let mut parts = Vec::with_capacity(count.min(64));
@@ -1702,9 +1705,161 @@ pub(super) fn next_hash_join_batch(
     };
     match residual {
         None => next_hash_join_columns(left, &probe, state, memory),
+        Some(residual) if matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti) => {
+            next_hash_join_existence_columns(
+                left,
+                &probe,
+                residual,
+                residual_columns,
+                state,
+                memory,
+            )
+        }
         Some(residual) => {
             next_hash_join_residual_columns(left, &probe, residual, residual_columns, state, memory)
         }
+    }
+}
+
+/// Candidates a semi or anti join tries for each probe row in its first
+/// round; each later round tries twice as many.
+const FIRST_TRIES: usize = 4;
+
+/// One probe row of a semi or anti join with a residual, while its
+/// candidates are tried.
+struct Existence<'build> {
+    probe_row: u32,
+    bucket: &'build [Vec<Value>],
+    /// Candidates tried so far, from the front of the bucket.
+    tried: usize,
+    /// Candidates the row's next round tries.
+    tries: usize,
+    /// Whether a candidate passed the residual.
+    found: bool,
+}
+
+impl Existence<'_> {
+    const fn undecided(&self) -> bool {
+        !self.found && self.tried < self.bucket.len()
+    }
+}
+
+/// A resident semi or anti join with a residual, probed a batch at a time.
+///
+/// A probe row needs only whether one of its candidates passes the
+/// residual, so its candidates are tried a few at a time - `FIRST_TRIES`,
+/// then twice as many each round - and the row is decided at the first
+/// that passes. A key shared by thousands of build rows then costs each
+/// probe row a handful of tests, where testing its whole bucket made the
+/// join quadratic in the bucket's size. Candidates after the first that
+/// passes are never evaluated, as `EXISTS` stops at its first row.
+fn next_hash_join_existence_columns(
+    left: &mut PullOperator,
+    probe: &Probe<'_>,
+    residual: &CompiledExpr,
+    residual_columns: &[BoundColumn],
+    state: &mut HashJoinState,
+    memory: &MemoryTracker,
+) -> Result<Option<RecordBatch>, ExecError> {
+    let left_width = residual_columns.len().saturating_sub(probe.right_width);
+    let residual_types = residual_columns
+        .iter()
+        .map(|column| column.data_type)
+        .collect::<Vec<_>>();
+    loop {
+        let exhausted = state
+            .batch
+            .as_ref()
+            .is_none_or(|batch| state.row >= batch.row_count());
+        if exhausted && !load_probe_batch(left, state, memory)? {
+            return Ok(None);
+        }
+        let batch = state.batch.as_ref().expect("probe batch loaded");
+        let probe_row_bytes = batch.estimated_bytes() / batch.row_count().max(1);
+        let mut rows = Vec::new();
+        while state.row < batch.row_count() && rows.len() < SPILL_SERVE_BATCH_ROWS {
+            let row = state.row;
+            state.row += 1;
+            if !batch.selection().is_selected(row) {
+                continue;
+            }
+            let key = probe.key(batch, row)?;
+            rows.push(Existence {
+                probe_row: probe_row_index(row)?,
+                bucket: key
+                    .as_ref()
+                    .and_then(|key| state.build.get(key))
+                    .map_or(&[][..], Vec::as_slice),
+                tried: 0,
+                tries: FIRST_TRIES,
+                found: false,
+            });
+        }
+        let mut open = (0..rows.len())
+            .filter(|index| rows[*index].undecided())
+            .collect::<VecDeque<_>>();
+        while !open.is_empty() {
+            let mut candidates = Picks {
+                probe_rows: Vec::new(),
+                build_rows: Vec::new(),
+                probe_row_bytes,
+                bytes: 0,
+            };
+            let mut owners = Vec::new();
+            let mut reached = Vec::new();
+            // A round holds about a batch of candidates; the rows it does not
+            // reach wait at the front for the next.
+            while let Some(&index) = open.front() {
+                if !owners.is_empty()
+                    && (owners.len() >= SPILL_SERVE_BATCH_ROWS
+                        || candidates.bytes.saturating_mul(2) > memory.remaining())
+                {
+                    break;
+                }
+                open.pop_front();
+                let row = &mut rows[index];
+                let bucket = row.bucket;
+                let end = bucket.len().min(row.tried.saturating_add(row.tries));
+                for build_row in &bucket[row.tried..end] {
+                    candidates.push(row.probe_row, Some(build_row));
+                    owners.push(index);
+                }
+                row.tried = end;
+                row.tries = row.tries.saturating_mul(2).min(SPILL_SERVE_BATCH_ROWS);
+                reached.push(index);
+            }
+            let candidate_batch = candidates.output(batch, &residual_types, left_width)?;
+            memory.ensure_transient(candidate_batch.estimated_bytes())?;
+            let mask = residual.evaluate_filter_mask(&candidate_batch)?;
+            for (candidate, &owner) in owners.iter().enumerate() {
+                if rows[owner].found {
+                    continue;
+                }
+                rows[owner].found = match &mask {
+                    Some(mask) => mask.is_selected(candidate),
+                    None => predicate_truth(&residual.evaluate(&candidate_batch, candidate)?)?,
+                };
+            }
+            open.extend(reached.into_iter().filter(|index| rows[*index].undecided()));
+        }
+        let mut picks = Picks {
+            probe_rows: Vec::with_capacity(rows.len()),
+            build_rows: Vec::with_capacity(rows.len()),
+            probe_row_bytes,
+            bytes: 0,
+        };
+        let semi = probe.kind == BoundJoinKind::Semi;
+        for row in &rows {
+            if row.found == semi {
+                picks.push(row.probe_row, None);
+            }
+        }
+        if picks.probe_rows.is_empty() {
+            continue;
+        }
+        let output = picks.output(batch, probe.column_types, probe.probe_width())?;
+        memory.ensure_transient(output.estimated_bytes())?;
+        return Ok(Some(output));
     }
 }
 
@@ -2451,6 +2606,8 @@ pub(super) enum JoinHashKey {
     NonNegativeInteger(u64),
     MysqlNumber(pintail_types::Float64),
     Scalar(Value),
+    /// NULL under a null-safe key, which matches only NULL.
+    Null,
     /// Multi-key equality: primary key first, extras in declaration order.
     Composite(Vec<JoinHashKey>),
 }
@@ -2459,7 +2616,10 @@ impl JoinHashKey {
     fn heap_bytes(&self) -> usize {
         match self {
             Self::Scalar(value) => value.heap_bytes(),
-            Self::NegativeInteger(_) | Self::NonNegativeInteger(_) | Self::MysqlNumber(_) => 0,
+            Self::NegativeInteger(_)
+            | Self::NonNegativeInteger(_)
+            | Self::MysqlNumber(_)
+            | Self::Null => 0,
             Self::Composite(parts) => parts
                 .iter()
                 .map(|part| size_of::<Self>().saturating_add(part.heap_bytes()))
@@ -2507,14 +2667,14 @@ pub(super) fn normalized_join_key(
     mode: JoinKeyMode,
 ) -> Result<Option<JoinHashKey>, ExecError> {
     if matches!(value, Value::Null) {
-        return Ok(None);
+        return Ok(mode.null_safe.then_some(JoinHashKey::Null));
     }
-    let key = match mode {
-        JoinKeyMode::CollatedText(collation) => {
+    let key = match mode.form {
+        KeyForm::CollatedText(collation) => {
             JoinHashKey::Scalar(normalized_collation_value(value, collation))
         }
-        JoinKeyMode::Binary | JoinKeyMode::Boolean => JoinHashKey::Scalar(value),
-        JoinKeyMode::Integer => match value {
+        KeyForm::Binary | KeyForm::Boolean => JoinHashKey::Scalar(value),
+        KeyForm::Integer => match value {
             Value::Int64(value) if value < 0 => JoinHashKey::NegativeInteger(value),
             Value::Int64(value) => JoinHashKey::NonNegativeInteger(
                 u64::try_from(value).expect("nonnegative i64 fits u64"),
@@ -2522,7 +2682,7 @@ pub(super) fn normalized_join_key(
             Value::UInt64(value) => JoinHashKey::NonNegativeInteger(value),
             _ => return Err(ExecError::InvalidExpressionType),
         },
-        JoinKeyMode::MysqlNumber => {
+        KeyForm::MysqlNumber => {
             let value = mysql_f64(&value)?;
             let value = if value == 0.0 { 0.0 } else { value };
             if !value.is_finite() {

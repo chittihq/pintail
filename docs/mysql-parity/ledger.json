@@ -2,18 +2,18 @@
   "schemaVersion": 2,
   "differentialRun": {
     "schemaVersion": 1,
-    "commit": "e5ad0f83fa11b2af6cb13b3ba207211d0376d330",
-    "measuredAt": "2026-09-11T15:09:03.274Z",
+    "commit": "1bad82f86256a2f6a8689a89250ae823eb917afe",
+    "measuredAt": "2026-09-11T16:08:26.812Z",
     "source": "`mysql:8.4` (server 8.4.11), `binlog_row_metadata=MINIMAL`, fresh container.",
-    "ledgerSha256": "79e88a71e73b8f24cc3b0c18893e580cd57a855d89d738d8eef46d67c4ecbe6f",
+    "ledgerSha256": "7d030b175fb27d762f0528b18df340c67a13069416d59f808b8cb16d3ed4e4b8",
     "corpusSha256": "2419fb96bac8e99f19af8489c849fbd2d28ec04075bb192b499ea937a80afb0a",
     "oracle": {
       "schemaVersion": 1,
-      "commit": "e5ad0f83fa11b2af6cb13b3ba207211d0376d330",
-      "sourceCommit": "b898adc528b0b81a42f4b990d58ab53f886e5149",
-      "measuredAt": "2026-09-11T15:01:29.660097391+00:00",
+      "commit": "1bad82f86256a2f6a8689a89250ae823eb917afe",
+      "sourceCommit": "59f12354999c8eeee7e2ec3ecdd0839f4bca584f",
+      "measuredAt": "2026-09-11T15:59:54.215325890+00:00",
       "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
-      "ledgerSha256": "750f63627861023b57867f28a0dc1d7e9a1ebcdad88c6907be3537212fc1d975",
+      "ledgerSha256": "cd70a76edff196a4a73918c88bc1b5a4dbceab71540523f549f1898dacf011bb",
       "corpusSha256": "2ca9498dc82019ba8bd224066f900ff3e0799183f459b8b3cebc80e5546fcf0f"
     }
   },
@@ -3310,7 +3310,8 @@
       ],
       "binderGuards": [],
       "testOccurrences": [
-        "crates/pintail-exec/tests/key_lookup_join.rs:19"
+        "crates/pintail-exec/tests/key_lookup_join.rs:19",
+        "crates/pintail-exec/tests/null_safe_join.rs:15"
       ],
       "verification": "not-run",
       "note": "Handled by selected wire compatibility-query text patterns, not general scalar expression binding. Composition, projection aliases, HTTP and prepared execution need separate checks.",
@@ -12190,7 +12191,7 @@
         "crates/pintail-exec/tests/correlated_self_join.rs:101",
         "crates/pintail-exec/tests/dependent_subquery_ratio.rs:170",
         "crates/pintail-exec/tests/grouped_fold.rs:75",
-        "crates/pintail-exec/tests/key_lookup_join.rs:176"
+        "crates/pintail-exec/tests/key_lookup_join.rs:177"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder arities omit MySQL fractional-precision or formatting overloads. Also verify statement-time and session-zone behavior.",
@@ -13574,9 +13575,9 @@
       ],
       "testOccurrences": [
         "crates/pintail-exec/tests/decimal_average_exactness.rs:379",
-        "crates/pintail-exec/tests/key_lookup_join.rs:275",
-        "crates/pintail-exec/tests/range_prune_bench.rs:187",
-        "tests/sqllogic/tests/mysql_oracle.rs:842"
+        "crates/pintail-exec/tests/key_lookup_join.rs:280",
+        "crates/pintail-exec/tests/null_safe_join.rs:160",
+        "crates/pintail-exec/tests/range_prune_bench.rs:187"
       ],
       "verification": "historical-differential-cases",
       "note": "Binder dispatch found; validate overloads, semantics, errors, metadata and execution paths.",

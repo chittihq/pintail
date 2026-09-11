@@ -772,6 +772,27 @@ fn apply_key_predicate(
                 tighten_upper(upper, value);
             }
         }
+        // `key IN (constants)` lies between its least and greatest key; a
+        // NULL in the list matches no row. A constant the key cannot hold
+        // exactly compares by conversion, so it leaves the range alone, as
+        // does a list of NULLs, which the filter above answers.
+        BoundExprKind::Scalar {
+            function: ScalarFunction::InList { negated: false },
+            args,
+        } if args.len() > 1 && is_scan_key(&args[0], scan, key_column_id) => {
+            let mut listed = Vec::with_capacity(args.len() - 1);
+            for argument in &args[1..] {
+                match (&argument.kind, key_literal(argument, lower)) {
+                    (_, Some(value)) => listed.push(value),
+                    (BoundExprKind::Literal(Value::Null), None) => {}
+                    _ => return,
+                }
+            }
+            if let (Some(least), Some(greatest)) = (listed.iter().min(), listed.iter().max()) {
+                tighten_lower(lower, least.clone());
+                tighten_upper(upper, greatest.clone());
+            }
+        }
         _ => {}
     }
 }

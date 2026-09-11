@@ -10,7 +10,9 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use pintail_sql::{BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundOrderKey};
+use pintail_sql::{
+    BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundOrderKey, BoundProjection,
+};
 use pintail_types::{DataType, Value};
 
 use super::order::{base_scan, integer_type, key_columns, names_column, ordered_by};
@@ -40,14 +42,14 @@ const UNKNOWN_TABLE_ROWS: u64 = 1 << 20;
 
 type Matches = HashMap<i128, Vec<Vec<Value>>>;
 
-fn unsigned_type(data_type: Option<DataType>) -> bool {
+pub(super) fn unsigned_type(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
         Some(DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64)
     )
 }
 
-fn integer_key(value: &Value) -> Option<i128> {
+pub(super) fn integer_key(value: &Value) -> Option<i128> {
     match value {
         Value::Int64(value) => Some(i128::from(*value)),
         Value::UInt64(value) => Some(i128::from(*value)),
@@ -67,6 +69,70 @@ fn found_by_key(scan: &Scan, key: &BoundExpr) -> bool {
         )
 }
 
+/// Whether `candidate` is the column `column` names.
+fn same_column(candidate: &BoundColumn, column: &BoundColumn) -> bool {
+    !column.outer
+        && candidate.database_id == column.database_id
+        && candidate.table_id == column.table_id
+        && candidate.column_id == column.column_id
+        && candidate
+            .relation_name
+            .eq_ignore_ascii_case(&column.relation_name)
+}
+
+/// A derived table that relabels plain columns of its input - which is how
+/// a subquery rewritten as a join reads its table - taken apart: the input,
+/// the projection and the layout it relabels them to.
+fn relabelled(plan: &PhysicalPlan) -> Option<(&PhysicalPlan, &[BoundProjection], &[BoundColumn])> {
+    let PhysicalPlan::Derived { input, columns } = plan else {
+        return None;
+    };
+    let PhysicalPlan::Project { input, expressions } = input.as_ref() else {
+        return None;
+    };
+    (expressions.len() == columns.len()
+        && expressions.iter().all(|projection| {
+            matches!(&projection.expr.kind, BoundExprKind::Column(column) if !column.outer)
+        }))
+    .then_some((input.as_ref(), expressions.as_slice(), columns.as_slice()))
+}
+
+/// The table scan a lookup side reads, and the side's column `key` as that
+/// scan's own column: the scan itself, a filter over it, or a derived table
+/// relabelling plain columns of either.
+fn lookup_scan<'plan>(
+    plan: &'plan PhysicalPlan,
+    key: &BoundExpr,
+) -> Option<(&'plan Scan, BoundExpr)> {
+    if let Some(scan) = base_scan(plan) {
+        return Some((scan, key.clone()));
+    }
+    let (input, expressions, columns) = relabelled(plan)?;
+    let BoundExprKind::Column(column) = &key.kind else {
+        return None;
+    };
+    let index = columns
+        .iter()
+        .position(|candidate| same_column(candidate, column))?;
+    Some((base_scan(input)?, expressions.get(index)?.expr.clone()))
+}
+
+/// Whether `lookup`, joined by `key`, is found by its table's whole
+/// integer primary key.
+fn lookup_by_key(lookup: &PhysicalPlan, key: &BoundExpr) -> bool {
+    lookup_scan(lookup, key).is_some_and(|(scan, key)| found_by_key(scan, &key))
+}
+
+/// The kind a key lookup join answers `kind` with. A scalar subquery's
+/// join finds at most one row per key when it looks rows up by a whole
+/// primary key, which is a left join's answer.
+fn lookup_kind(kind: BoundJoinKind) -> BoundJoinKind {
+    match kind {
+        BoundJoinKind::Scalar => BoundJoinKind::Left,
+        other => other,
+    }
+}
+
 /// Which input of the join under `plan` can drive a key lookup that yields
 /// the order of `keys`: `Some(true)` for the left.
 fn driving_side(plan: &PhysicalPlan, keys: &[BoundOrderKey], trim: usize) -> Option<bool> {
@@ -79,13 +145,15 @@ fn driving_side(plan: &PhysicalPlan, keys: &[BoundOrderKey], trim: usize) -> Opt
         kind,
         left_key,
         extra_keys,
+        null_safe,
         right_key,
         ..
     } = input.as_ref()
     else {
         return None;
     };
-    if !extra_keys.is_empty() {
+    // A lookup by key finds no row for NULL, which `<=>` matches.
+    if !extra_keys.is_empty() || null_safe.contains(&true) {
         return None;
     }
     let columns = key_columns(expressions, keys, trim)?;
@@ -98,14 +166,13 @@ fn driving_side(plan: &PhysicalPlan, keys: &[BoundOrderKey], trim: usize) -> Opt
         // A left join keeps every left row, so only the left can drive it.
         let kind_allows = match kind {
             BoundJoinKind::Inner => true,
-            BoundJoinKind::Left => driving_left,
+            BoundJoinKind::Left | BoundJoinKind::Scalar => driving_left,
             _ => false,
         };
-        let (driving, lookup) = (base_scan(driving)?, base_scan(lookup)?);
         (kind_allows
-            && ordered_by(driving, &columns)
+            && ordered_by(base_scan(driving)?, &columns)
             && integer_type(driving_key.data_type)
-            && found_by_key(lookup, lookup_key))
+            && lookup_by_key(lookup, lookup_key))
         .then_some(driving_left)
     })
 }
@@ -146,7 +213,7 @@ pub(super) fn ordered_input(
                 let join = PhysicalPlan::KeyLookupJoin {
                     left,
                     right,
-                    kind,
+                    kind: lookup_kind(kind),
                     driving_left,
                     driving_key,
                     lookup_key,
@@ -172,6 +239,111 @@ pub(super) fn ordered_input(
     }
 }
 
+/// Keys a driving input may be pinned to for its join to read the other
+/// input by key instead of building it whole.
+const MAX_PINNED_KEYS: usize = 64;
+
+/// Whether the scan under `plan` pins its whole integer key to at most
+/// `MAX_PINNED_KEYS` constants: a conjunct `key = constant` or
+/// `key IN (constants)`, in the scan's predicates or the filter over it,
+/// beneath any projection of plain columns.
+fn pinned(plan: &PhysicalPlan) -> bool {
+    let plan = match plan {
+        PhysicalPlan::Project { input, expressions }
+            if expressions.iter().all(|projection| {
+                matches!(&projection.expr.kind, BoundExprKind::Column(column) if !column.outer)
+            }) =>
+        {
+            input.as_ref()
+        }
+        other => other,
+    };
+    let Some(scan) = base_scan(plan) else {
+        return false;
+    };
+    let [key] = scan.table.key_column_ids.as_slice() else {
+        return false;
+    };
+    let names_key = |expr: &BoundExpr| {
+        integer_type(expr.data_type)
+            && matches!(&expr.kind, BoundExprKind::Column(column) if names_column(scan, column, *key))
+    };
+    let constant = |expr: &BoundExpr| matches!(expr.kind, BoundExprKind::Literal(_));
+    let pins = |predicate: &BoundExpr| match &predicate.kind {
+        BoundExprKind::Binary {
+            op: BinaryOp::Equal,
+            left,
+            right,
+        } => (names_key(left) && constant(right)) || (constant(left) && names_key(right)),
+        BoundExprKind::Scalar {
+            function: pintail_sql::ScalarFunction::InList { negated: false },
+            args,
+        } => {
+            args.first().is_some_and(names_key)
+                && args.len() - 1 <= MAX_PINNED_KEYS
+                && args[1..].iter().all(constant)
+        }
+        _ => false,
+    };
+    let mut conjuncts = Vec::new();
+    if let PhysicalPlan::Filter { predicate, .. } = plan {
+        super::and_conjuncts(predicate, &mut conjuncts);
+    }
+    scan.predicates.iter().chain(&conjuncts).any(pins)
+}
+
+/// A hash join whose left input is pinned to a few of its keys and whose
+/// right input is found by its whole integer key, as a key lookup join:
+/// the right rows those keys name are read by key, where the hash join
+/// read the whole right table to build it. Both emit in the left input's
+/// order, each left row with its match. Any other plan comes back as it
+/// was.
+pub(super) fn pinned_lookup(join: PhysicalPlan) -> PhysicalPlan {
+    let converts = match &join {
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            kind,
+            left_key,
+            extra_keys,
+            null_safe,
+            right_key,
+            ..
+        } => {
+            extra_keys.is_empty()
+                && !null_safe.contains(&true)
+                && matches!(
+                    kind,
+                    BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar
+                )
+                && integer_type(left_key.data_type)
+                && pinned(left)
+                && lookup_by_key(right, right_key)
+        }
+        _ => false,
+    };
+    match join {
+        PhysicalPlan::HashJoin {
+            left,
+            right,
+            kind,
+            left_key,
+            right_key,
+            residual,
+            ..
+        } if converts => PhysicalPlan::KeyLookupJoin {
+            left,
+            right,
+            kind: lookup_kind(kind),
+            driving_left: true,
+            driving_key: left_key,
+            lookup_key: right_key,
+            residual,
+        },
+        other => other,
+    }
+}
+
 /// A key lookup join's parts, as the physical plan carries them.
 pub(super) struct Inputs {
     pub(super) left: PhysicalPlan,
@@ -189,7 +361,6 @@ pub(super) fn build(
     memory: &MemoryTracker,
     collation: Collation,
 ) -> Result<(PullOperator, Vec<BoundColumn>), ExecError> {
-    const NOT_A_SCAN: ExecError = ExecError::InvalidPhysicalPlan("a key lookup reads a table scan");
     let Inputs {
         left,
         right,
@@ -204,33 +375,22 @@ pub(super) fn build(
     } else {
         (right, left)
     };
-    let (scan, filter) = match lookup_plan {
-        PhysicalPlan::Scan(scan) => (scan, None),
-        PhysicalPlan::Filter { input, predicate } => match *input {
-            PhysicalPlan::Scan(scan) => (scan, Some(predicate)),
-            _ => return Err(NOT_A_SCAN),
-        },
-        _ => return Err(NOT_A_SCAN),
-    };
-    let lookup_columns = scan
-        .projected_column_ids
-        .iter()
-        .map(|id| {
-            scan.table
-                .columns
-                .iter()
-                .find(|column| column.column_id == *id)
-                .cloned()
-                .ok_or(ExecError::InvalidPhysicalPlan(
-                    "scan projection references an unknown stable column ID",
-                ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let table = LookupPlan::of(lookup_plan)?;
+    let lookup_columns = table.columns()?;
     let lookup_position = CompiledExpr::compile(&lookup_key, &lookup_columns, collation)?
         .column_index()
         .ok_or(ExecError::InvalidPhysicalPlan(
             "a key lookup finds rows by a key column",
         ))?;
+    // Ranged reads bound the scan's own key column.
+    let scan_key = match &table.relabel {
+        Some(relabel) => relabel
+            .expressions
+            .get(lookup_position)
+            .map(|projection| projection.expr.clone())
+            .ok_or(NOT_A_SCAN)?,
+        None => lookup_key,
+    };
     let (driving, driving_columns) = build_operator(driving_plan, provider, memory, collation)?;
     let driving_key = CompiledExpr::compile(&driving_key, &driving_columns, collation)?;
     let lookup_width = lookup_columns.len();
@@ -252,7 +412,7 @@ pub(super) fn build(
         .iter()
         .map(|column| column.data_type)
         .collect();
-    let lookup = lookup_source(scan, filter, lookup_key, provider, memory, collation)?;
+    let lookup = lookup_source(table, scan_key, provider, memory, collation)?;
     Ok((
         PullOperator::KeyLookupJoin(Box::new(KeyLookupJoin {
             driving: Box::new(driving),
@@ -432,10 +592,97 @@ impl Lookup {
     }
 }
 
-struct RangedLookup {
-    provider: Box<dyn ScanProvider + Send + Sync>,
+const NOT_A_SCAN: ExecError = ExecError::InvalidPhysicalPlan("a key lookup reads a table scan");
+
+/// A derived table's relabelling of plain columns, kept to lay out each
+/// read of the table beneath it as the join expects.
+struct Relabel {
+    expressions: Vec<BoundProjection>,
+    columns: Vec<BoundColumn>,
+}
+
+/// How the lookup side reads its table: the scan, the filter over it and
+/// the relabelling over both.
+struct LookupPlan {
     scan: Scan,
     filter: Option<BoundExpr>,
+    relabel: Option<Relabel>,
+}
+
+impl LookupPlan {
+    /// The lookup side taken apart: a scan, a filter over it, or a derived
+    /// table relabelling either.
+    fn of(plan: PhysicalPlan) -> Result<Self, ExecError> {
+        let (relabel, plan) = match plan {
+            PhysicalPlan::Derived { input, columns } => match *input {
+                PhysicalPlan::Project { input, expressions } => (
+                    Some(Relabel {
+                        expressions,
+                        columns,
+                    }),
+                    *input,
+                ),
+                _ => return Err(NOT_A_SCAN),
+            },
+            other => (None, other),
+        };
+        let (scan, filter) = match plan {
+            PhysicalPlan::Scan(scan) => (scan, None),
+            PhysicalPlan::Filter { input, predicate } => match *input {
+                PhysicalPlan::Scan(scan) => (scan, Some(predicate)),
+                _ => return Err(NOT_A_SCAN),
+            },
+            _ => return Err(NOT_A_SCAN),
+        };
+        Ok(Self {
+            scan,
+            filter,
+            relabel,
+        })
+    }
+
+    /// The columns the lookup side lays its rows out in.
+    fn columns(&self) -> Result<Vec<BoundColumn>, ExecError> {
+        if let Some(relabel) = &self.relabel {
+            return Ok(relabel.columns.clone());
+        }
+        self.scan
+            .projected_column_ids
+            .iter()
+            .map(|id| {
+                self.scan
+                    .table
+                    .columns
+                    .iter()
+                    .find(|column| column.column_id == *id)
+                    .cloned()
+                    .ok_or(ExecError::InvalidPhysicalPlan(
+                        "scan projection references an unknown stable column ID",
+                    ))
+            })
+            .collect()
+    }
+
+    /// One read of the table through `scan`, laid out as the lookup side.
+    fn over(&self, scan: Scan) -> PhysicalPlan {
+        let plan = filtered(PhysicalPlan::Scan(scan), self.filter.clone());
+        match &self.relabel {
+            Some(relabel) => PhysicalPlan::Derived {
+                input: Box::new(PhysicalPlan::Project {
+                    input: Box::new(plan),
+                    expressions: relabel.expressions.clone(),
+                }),
+                columns: relabel.columns.clone(),
+            },
+            None => plan,
+        }
+    }
+}
+
+struct RangedLookup {
+    provider: Box<dyn ScanProvider + Send + Sync>,
+    table: LookupPlan,
+    /// The scan's own key column, which ranged reads bound.
     key: BoundExpr,
     unsigned: bool,
     /// Lookup rows read so far, against the table's size.
@@ -445,7 +692,7 @@ struct RangedLookup {
 
 impl RangedLookup {
     fn plan(&self, scan: Scan) -> PhysicalPlan {
-        filtered(PhysicalPlan::Scan(scan), self.filter.clone())
+        self.table.over(scan)
     }
 
     /// The rows whose key is in `keys`, read by ranges of the table's key.
@@ -458,7 +705,7 @@ impl RangedLookup {
     ) -> Result<Matches, ExecError> {
         let mut found = Matches::new();
         for (low, high) in key_ranges(keys, self.unsigned) {
-            let mut scan = self.scan.clone();
+            let mut scan = self.table.scan.clone();
             scan.predicates.extend([
                 bound(&self.key, BinaryOp::GreaterOrEqual, low),
                 bound(&self.key, BinaryOp::LessOrEqual, high),
@@ -490,7 +737,7 @@ impl RangedLookup {
         collation: Collation,
     ) -> Result<PullOperator, ExecError> {
         Ok(build_operator_inner(
-            self.plan(self.scan.clone()),
+            self.plan(self.table.scan.clone()),
             self.provider.as_ref(),
             memory,
             collation,
@@ -521,7 +768,7 @@ fn read_table(
 /// Sorted, distinct keys grouped into the ranges one read each covers: keys
 /// closer than `RANGE_GAP` share a read. A key the column cannot hold
 /// matches nothing and is dropped.
-fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
+pub(super) fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
     let held = if unsigned {
         0..=i128::from(u64::MAX)
     } else {
@@ -538,7 +785,7 @@ fn key_ranges(keys: &[i128], unsigned: bool) -> Vec<(i128, i128)> {
 }
 
 /// `key <op> value`, as a scan predicate storage prunes its key range by.
-fn bound(key: &BoundExpr, op: BinaryOp, value: i128) -> BoundExpr {
+pub(super) fn bound(key: &BoundExpr, op: BinaryOp, value: i128) -> BoundExpr {
     let (value, data_type) = match i64::try_from(value) {
         Ok(value) => (Value::Int64(value), DataType::Int64),
         Err(_) => (
@@ -630,13 +877,13 @@ fn join_slice(
 /// operator keeps, or one read of the whole lookup side when the provider
 /// cannot hand one out.
 fn lookup_source(
-    scan: Scan,
-    filter: Option<BoundExpr>,
+    table: LookupPlan,
     key: BoundExpr,
     provider: &dyn ScanProvider,
     memory: &MemoryTracker,
     collation: Collation,
 ) -> Result<Lookup, ExecError> {
+    let scan = &table.scan;
     Ok(
         match provider.table_provider(scan.table.database_id, scan.table.table_id) {
             Some(tables) => Lookup::Ranged(Box::new(RangedLookup {
@@ -647,20 +894,13 @@ fn lookup_source(
                     .unwrap_or(UNKNOWN_TABLE_ROWS),
                 unsigned: unsigned_type(key.data_type),
                 provider: tables,
-                scan,
-                filter,
+                table,
                 key,
                 read: 0,
             })),
             None => Lookup::Built {
                 input: Some(Box::new(
-                    build_operator(
-                        filtered(PhysicalPlan::Scan(scan), filter),
-                        provider,
-                        memory,
-                        collation,
-                    )?
-                    .0,
+                    build_operator(table.over(table.scan.clone()), provider, memory, collation)?.0,
                 )),
                 rows: Matches::new(),
             },

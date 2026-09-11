@@ -86,6 +86,7 @@ struct Answer {
     rows: Vec<String>,
     plan: String,
     users_blocks: usize,
+    events_blocks: usize,
     elapsed: Duration,
 }
 
@@ -208,6 +209,10 @@ impl Fixture {
                 .scan_stats(database(), users_id())
                 .unwrap_or_default()
                 .blocks_read,
+            events_blocks: provider
+                .scan_stats(database(), events_id())
+                .unwrap_or_default()
+                .blocks_read,
             elapsed,
         }
     }
@@ -293,6 +298,150 @@ fn a_limit_in_the_driving_key_order_answers_as_the_full_sort_does() {
             "{template}: {:?} against {:?}",
             fast.elapsed,
             reference.elapsed
+        );
+    }
+}
+
+/// A join whose driving side is pinned to a few of its keys, written with
+/// the key itself and with `e.id + 0`, which pins nothing, so the second
+/// answer comes from the hash join building all of users.
+const PINNED: [(&str, bool); 8] = [
+    (
+        "SELECT e.id, (SELECT u.name FROM users AS u WHERE u.id = e.user_id) FROM events AS e \
+         WHERE {key} IN (6, 11, 5000, 77)",
+        true,
+    ),
+    (
+        "SELECT e.id, e.name, (SELECT u.name FROM users AS u WHERE u.id = e.id) FROM events AS e \
+         WHERE {key} = 4",
+        true,
+    ),
+    (
+        "SELECT e.id, u.name FROM events AS e JOIN users AS u ON u.id = e.user_id \
+         WHERE {key} = 5000",
+        true,
+    ),
+    (
+        "SELECT e.id, u.name FROM events AS e LEFT JOIN users AS u ON u.id = e.user_id \
+         WHERE {key} IN (6, 11, 5000, 77, 129999)",
+        true,
+    ),
+    (
+        "SELECT e.id, e.name, u.name FROM events AS e JOIN users AS u \
+         ON u.id = e.user_id AND u.name <> e.name WHERE {key} IN (2, 3, 4, 8) AND e.name <> 'x'",
+        true,
+    ),
+    (
+        "SELECT e.id, u.name FROM events AS e LEFT JOIN users AS u \
+         ON u.id = e.user_id AND u.id > 100 WHERE {key} IN (6, 22, 44, 50000)",
+        true,
+    ),
+    (
+        "SELECT e.id, u.name FROM events AS e JOIN users AS u ON u.id = e.user_id \
+         WHERE {key} = 999999",
+        true,
+    ),
+    (
+        "SELECT e.id, u.name FROM events AS e JOIN users AS u ON u.id = e.user_id \
+         WHERE {key} NOT IN (1, 2)",
+        false,
+    ),
+];
+
+#[test]
+fn a_join_driven_by_a_few_pinned_keys_answers_as_the_hash_join_does() {
+    let fixture = Fixture::new();
+    for (template, rewritten) in PINNED {
+        let fast = fixture.run(&template.replace("{key}", "e.id"));
+        let reference = fixture.run(&template.replace("{key}", "e.id + 0"));
+        eprintln!(
+            "{:>9.3?} against {:>9.3?}, users blocks {} against {}: {template}",
+            fast.elapsed, reference.elapsed, fast.users_blocks, reference.users_blocks
+        );
+        assert!(!reference.plan.contains("KeyLookupJoin"), "{template}");
+        assert_eq!(
+            fast.plan.contains("KeyLookupJoin"),
+            rewritten,
+            "{template}: {}",
+            fast.plan
+        );
+        let (mut fast_rows, mut reference_rows) = (fast.rows, reference.rows);
+        fast_rows.sort();
+        reference_rows.sort();
+        assert_eq!(fast_rows, reference_rows, "{template}");
+        // Scattered keys may cost as many reads as the whole of users, but
+        // never more.
+        assert!(
+            fast.users_blocks <= reference.users_blocks,
+            "{template}: the lookup read {} blocks of users against {}",
+            fast.users_blocks,
+            reference.users_blocks
+        );
+    }
+    // One pinned key reads the one block of users its row names.
+    let (template, _) = PINNED[2];
+    let fast = fixture.run(&template.replace("{key}", "e.id"));
+    let reference = fixture.run(&template.replace("{key}", "e.id + 0"));
+    assert!(
+        fast.users_blocks * 4 <= reference.users_blocks,
+        "{} blocks of users against {}",
+        fast.users_blocks,
+        reference.users_blocks
+    );
+}
+
+/// A scalar subquery nested in another runs once per outer row, and each
+/// run's own subquery join is driven by the one key the outer row pinned,
+/// so it reads that user by key rather than building all of users.
+#[test]
+fn a_nested_scalar_subquery_reads_its_rows_by_key() {
+    let fixture = Fixture::new();
+    let nested = fixture.run(
+        "SELECT e.id, (SELECT (SELECT x.name FROM users AS x WHERE x.id = u.id) \
+         FROM users AS u WHERE u.id = e.user_id) FROM events AS e \
+         WHERE e.id IN (6, 11, 5000, 64000)",
+    );
+    let joined = fixture.run(
+        "SELECT e.id, x.name FROM events AS e LEFT JOIN users AS u ON u.id = e.user_id \
+         LEFT JOIN users AS x ON x.id = u.id WHERE e.id IN (6, 11, 5000, 64000)",
+    );
+    let whole = fixture.run("SELECT COUNT(name) FROM users");
+    let (mut answer, mut expected) = (nested.rows, joined.rows);
+    answer.sort();
+    expected.sort();
+    assert_eq!(answer, expected);
+    assert!(
+        nested.users_blocks < whole.users_blocks,
+        "{} blocks of users against {} for one read of the table",
+        nested.users_blocks,
+        whole.users_blocks
+    );
+}
+
+/// `key IN (constants)` reads the runs of keys it lists, not the span
+/// between the least and the greatest, and keeps the scan's key order.
+#[test]
+fn a_scan_pinned_to_scattered_keys_reads_only_their_runs() {
+    let fixture = Fixture::new();
+    for template in [
+        "SELECT id, name FROM events WHERE {key} IN (129000, 3, 64000, 4, 5, NULL, 129999, 7)",
+        "SELECT id, name FROM events WHERE {key} IN (1, 130000) ORDER BY id",
+        "SELECT id FROM events WHERE {key} IN (6, 6, 6)",
+        "SELECT id FROM events WHERE {key} IN (-5, 999999)",
+        "SELECT COUNT(*), MIN(name) FROM events WHERE {key} IN (100, 100000, 50000)",
+    ] {
+        let fast = fixture.run(&template.replace("{key}", "id"));
+        let reference = fixture.run(&template.replace("{key}", "id + 0"));
+        eprintln!(
+            "{:>9.3?} against {:>9.3?}, events blocks {} against {}: {template}",
+            fast.elapsed, reference.elapsed, fast.events_blocks, reference.events_blocks
+        );
+        assert_eq!(fast.rows, reference.rows, "{template}");
+        assert!(
+            fast.events_blocks * 2 <= reference.events_blocks,
+            "{template}: {} blocks against {}",
+            fast.events_blocks,
+            reference.events_blocks
         );
     }
 }

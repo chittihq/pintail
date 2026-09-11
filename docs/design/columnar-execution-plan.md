@@ -184,6 +184,13 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   own batches by packed keys and gathers each output column once, in the
   row sort's exact order. `ORDER BY id` over 130,000 rows went from about
   99 ms to 21 ms; a sort over a 100,000-row join result from 33 ms to 8 ms.
+  The third slice lowers primary-key lists: `key IN (constants)` bounds
+  the scan by its least and greatest key and reads each run of listed keys
+  by itself, and a join driven by a side pinned to a few of its keys reads
+  the other side's matches by key, where it built that table whole
+  (137 ms to 2 ms at scale 10,000). A top-k sort keeps its rows as
+  columns, cutting them to their first k as they arrive, with the k-th
+  row's key as a cutoff for the rows after it.
 - [ ] Phase 5 — merged so far: a resident hash join with no residual
   probes a batch at a time, gathering its probe columns and copying each
   build row once. A three-table join over 100,000 rows went from 355 ms to
@@ -194,4 +201,11 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   a segment decodes that segment's run of rows as columns, where it went
   row by row. A correlated `IN` with a residual went from 1,147 ms to
   118 ms, a `NOT EXISTS` from 449 ms to 51 ms, and `WHERE id > 3` over
-  100,000 rows from 65 ms to 2 ms.
+  100,000 rows from 65 ms to 2 ms. The third slice hash-joins on `<=>`,
+  under which NULL matches NULL, where such joins tested every pair; stops
+  a semi or anti join with a residual at its first passing candidate,
+  where it tested every row sharing the probe row's key (an `EXISTS` over
+  100,000 rows with a handful of distinct keys ran past its time limit and
+  now takes about 80 ms); and reads a pinned scalar subquery's row by key,
+  so a scalar subquery nested in another costs about 0.3 ms per outer row
+  instead of 57 ms.
