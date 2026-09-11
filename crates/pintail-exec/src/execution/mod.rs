@@ -250,6 +250,9 @@ pub enum PhysicalPlan {
         /// Additional equality key pairs beyond the primary; empty for the
         /// common single-key join.
         extra_keys: Vec<(BoundExpr, BoundExpr)>,
+        /// Whether each key, the primary first and then the extras, is a
+        /// null-safe `<=>` equality, under which NULL matches NULL.
+        null_safe: Vec<bool>,
         /// Build-side key.
         right_key: BoundExpr,
         /// Row estimate of the probe input when statistics give one; it
@@ -651,8 +654,12 @@ impl PhysicalPlanner {
                     return plan_theta_join(left, right, kind, original_condition, collation);
                 };
                 let mut pairs = equi_join_key_pairs(&condition, &left, &right, collation)
-                    .ok_or(ExecError::UnsupportedJoinCondition)?;
-                let (left_key, right_key) = pairs.remove(0);
+                    .ok_or(ExecError::UnsupportedJoinCondition)?
+                    .into_iter();
+                let null_safe = pairs.as_slice().iter().map(|key| key.null_safe).collect();
+                let primary = pairs.next().ok_or(ExecError::UnsupportedJoinCondition)?;
+                let (left_key, right_key) = (primary.left, primary.right);
+                let pairs = pairs.map(|key| (key.left, key.right)).collect();
                 let probe_estimate = left.estimated_rows();
                 let build_estimate = right.estimated_rows();
                 let left_input = filtered(Self::plan(*left, collation)?, left_filter);
@@ -665,6 +672,7 @@ impl PhysicalPlanner {
                     kind,
                     left_key,
                     extra_keys: pairs,
+                    null_safe,
                     right_key,
                     probe_estimate,
                     build_estimate,
@@ -714,11 +722,15 @@ fn dependent_join_keys(
     }
     let mut conjuncts = Vec::new();
     and_conjuncts(condition, &mut conjuncts);
+    // A null-safe equality is left to the condition: the buckets match NULL
+    // with nothing.
     conjuncts
         .iter()
         .filter(|conjunct| !expression_has_subquery(conjunct))
         .filter_map(|conjunct| equi_join_key_pairs(conjunct, left, right, collation))
         .flatten()
+        .filter(|key| !key.null_safe)
+        .map(|key| (key.left, key.right))
         .collect()
 }
 
@@ -897,12 +909,22 @@ fn split_join_residual(
     (and_all(equalities), and_all(residuals))
 }
 
+/// One equality a hash join matches its inputs on.
+struct EquiKey {
+    /// The left input's side.
+    left: BoundExpr,
+    /// The right input's side.
+    right: BoundExpr,
+    /// `<=>`: NULL matches NULL.
+    null_safe: bool,
+}
+
 fn equi_join_key_pairs(
     condition: &BoundExpr,
     left: &LogicalPlan,
     right: &LogicalPlan,
     collation: Collation,
-) -> Option<Vec<(BoundExpr, BoundExpr)>> {
+) -> Option<Vec<EquiKey>> {
     let conjuncts_of = and_conjuncts;
     let left_tables = logical_tables(left);
     let right_tables = logical_tables(right);
@@ -910,34 +932,109 @@ fn equi_join_key_pairs(
     conjuncts_of(condition, &mut conjuncts);
     let mut pairs = Vec::with_capacity(conjuncts.len());
     for conjunct in conjuncts {
-        let BoundExprKind::Binary {
+        let (first, second, null_safe) = if let BoundExprKind::Binary {
             op: BinaryOp::Equal,
             left: first,
             right: second,
         } = &conjunct.kind
-        else {
-            return None;
+        {
+            (first.as_ref(), second.as_ref(), false)
+        } else {
+            let (first, second) = null_safe_equality(&conjunct)?;
+            (first, second, true)
         };
         hash_join_key_mode(first.data_type, second.data_type, collation)?;
-        if expression_belongs_to(first, &left_tables)
+        let (left, right) = if expression_belongs_to(first, &left_tables)
             && expression_belongs_to(second, &right_tables)
         {
-            pairs.push(((**first).clone(), (**second).clone()));
+            (first, second)
         } else if expression_belongs_to(first, &right_tables)
             && expression_belongs_to(second, &left_tables)
         {
-            pairs.push(((**second).clone(), (**first).clone()));
+            (second, first)
         } else {
             return None;
-        }
+        };
+        pairs.push(EquiKey {
+            left: left.clone(),
+            right: right.clone(),
+            null_safe,
+        });
     }
     if pairs.is_empty() { None } else { Some(pairs) }
 }
 
+/// The operands of `l <=> r`, which binds as
+/// `COALESCE((l IS NULL AND r IS NULL) OR l = r, FALSE)`, when its equality
+/// compares the very operands its NULL tests read. A conversion between
+/// them could turn a value into NULL where the tests see none, and such a
+/// NULL matches nothing, so that form is left to be tested pair by pair.
+fn null_safe_equality(expr: &BoundExpr) -> Option<(&BoundExpr, &BoundExpr)> {
+    let BoundExprKind::Scalar {
+        function: ScalarFunction::Coalesce,
+        args,
+    } = &expr.kind
+    else {
+        return None;
+    };
+    let [either, fallback] = args.as_slice() else {
+        return None;
+    };
+    if !matches!(fallback.kind, BoundExprKind::Literal(Value::Boolean(false))) {
+        return None;
+    }
+    let BoundExprKind::Binary {
+        op: BinaryOp::Or,
+        left: both_null,
+        right: equal,
+    } = &either.kind
+    else {
+        return None;
+    };
+    let BoundExprKind::Binary {
+        op: BinaryOp::And,
+        left: first_null,
+        right: second_null,
+    } = &both_null.kind
+    else {
+        return None;
+    };
+    let (
+        BoundExprKind::IsNull {
+            expr: first,
+            negated: false,
+        },
+        BoundExprKind::IsNull {
+            expr: second,
+            negated: false,
+        },
+    ) = (&first_null.kind, &second_null.kind)
+    else {
+        return None;
+    };
+    let BoundExprKind::Binary {
+        op: BinaryOp::Equal,
+        left,
+        right,
+    } = &equal.kind
+    else {
+        return None;
+    };
+    (left == first && right == second).then_some((left.as_ref(), right.as_ref()))
+}
+
+/// How one join key's values are normalized to match.
 #[derive(Clone, Copy, Debug)]
-enum JoinKeyMode {
+struct JoinKeyMode {
+    form: KeyForm,
+    /// NULL matches NULL, as `<=>` compares; under `=` it matches nothing.
+    null_safe: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum KeyForm {
     /// Text keys, carrying the collation the plan resolved. Held here rather
-    /// than passed alongside because this enum already travels to every site
+    /// than passed alongside because this mode already travels to every site
     /// that builds or probes a key, and a second parameter could go out of
     /// step with it.
     CollatedText(Collation),
@@ -1002,12 +1099,12 @@ fn hash_join_key_mode(
     right: Option<DataType>,
     collation: Collation,
 ) -> Option<JoinKeyMode> {
-    match (left?.storage_type(), right?.storage_type()) {
-        (DataType::Utf8, DataType::Utf8) => Some(JoinKeyMode::CollatedText(collation)),
-        (DataType::Binary, DataType::Binary) => Some(JoinKeyMode::Binary),
-        (DataType::Boolean, DataType::Boolean) => Some(JoinKeyMode::Boolean),
+    let form = match (left?.storage_type(), right?.storage_type()) {
+        (DataType::Utf8, DataType::Utf8) => KeyForm::CollatedText(collation),
+        (DataType::Binary, DataType::Binary) => KeyForm::Binary,
+        (DataType::Boolean, DataType::Boolean) => KeyForm::Boolean,
         (DataType::Int64 | DataType::UInt64, DataType::Int64 | DataType::UInt64) => {
-            Some(JoinKeyMode::Integer)
+            KeyForm::Integer
         }
         (
             DataType::Boolean
@@ -1022,9 +1119,13 @@ fn hash_join_key_mode(
             | DataType::Float64
             | DataType::Utf8
             | DataType::Binary,
-        ) => Some(JoinKeyMode::MysqlNumber),
-        _ => None,
-    }
+        ) => KeyForm::MysqlNumber,
+        _ => return None,
+    };
+    Some(JoinKeyMode {
+        form,
+        null_safe: false,
+    })
 }
 
 /// One relation instance: the physical identity plus the alias it is visible
@@ -3691,8 +3792,10 @@ impl PullOperator {
                     // Inner and semi joins cannot match probe rows outside
                     // the build side's key range, so the probe scan can prune
                     // storage before decoding anything. Left/anti joins need
-                    // every probe row.
+                    // every probe row, and so does a null-safe key, whose
+                    // NULL lies outside any range yet may match.
                     if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
+                        && !key_mode.null_safe
                         && let Some((minimum, maximum)) = &built.key_bounds
                         && let Some(position) = left_key.column_index()
                     {
@@ -3700,7 +3803,7 @@ impl PullOperator {
                     }
                     built.adopt_prefetch(prefetch);
                     if matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi)
-                        && matches!(key_mode, JoinKeyMode::Integer)
+                        && matches!(key_mode.form, KeyForm::Integer)
                         && !extra_keys.is_empty()
                         && let Some(position) = left_key.column_index()
                         && let Some((scan, position)) = left.nested_probe_scan(position, false)
@@ -4293,6 +4396,7 @@ fn build_operator_inner(
             left_key,
             right_key,
             extra_keys,
+            null_safe,
             probe_estimate,
             build_estimate,
             residual,
@@ -4306,18 +4410,29 @@ fn build_operator_inner(
             // the undecidable case, and the binder has already refused it -
             // so taking the left side's is safe.
             let key_collation = key_collation_of(&left_key, collation);
+            let null_safe_at = |key: usize| null_safe.get(key).copied().unwrap_or(false);
             let key_mode =
-                hash_join_key_mode(left_key.data_type, right_key.data_type, key_collation).ok_or(
-                    ExecError::InvalidPhysicalPlan("hash join keys have incompatible scalar types"),
-                )?;
+                hash_join_key_mode(left_key.data_type, right_key.data_type, key_collation)
+                    .map(|mode| JoinKeyMode {
+                        null_safe: null_safe_at(0),
+                        ..mode
+                    })
+                    .ok_or(ExecError::InvalidPhysicalPlan(
+                        "hash join keys have incompatible scalar types",
+                    ))?;
             let extra_keys = extra_keys
                 .into_iter()
-                .map(|(extra_left, extra_right)| {
+                .enumerate()
+                .map(|(index, (extra_left, extra_right))| {
                     let mode = hash_join_key_mode(
                         extra_left.data_type,
                         extra_right.data_type,
                         key_collation_of(&extra_left, collation),
                     )
+                    .map(|mode| JoinKeyMode {
+                        null_safe: null_safe_at(index + 1),
+                        ..mode
+                    })
                     .ok_or(ExecError::InvalidPhysicalPlan(
                         "hash join keys have incompatible scalar types",
                     ))?;

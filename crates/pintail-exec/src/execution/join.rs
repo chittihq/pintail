@@ -13,10 +13,10 @@ use pintail_types::{DataType, Value};
 use crate::collation::Collation;
 
 use super::{
-    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, MemoryTracker, PullOperator, ScanProvider,
-    batch_row, compare_sort_values, estimated_batch_row_bytes, estimated_record_batch_bytes,
-    estimated_row_payload_bytes, reserve_hash_map_entries, reserve_vec_elements,
-    resolve_dependent_expr_subqueries, rows_to_columns,
+    ExecError, HASH_ENTRY_OVERHEAD, JoinKeyMode, KeyForm, MemoryTracker, PullOperator,
+    ScanProvider, batch_row, compare_sort_values, estimated_batch_row_bytes,
+    estimated_record_batch_bytes, estimated_row_payload_bytes, reserve_hash_map_entries,
+    reserve_vec_elements, resolve_dependent_expr_subqueries, rows_to_columns,
 };
 use crate::{
     ColumnVector, RecordBatch, SPILL_SERVE_BATCH_ROWS,
@@ -1212,9 +1212,11 @@ const JOIN_KEY_NON_NEGATIVE: u8 = 1;
 const JOIN_KEY_MYSQL_NUMBER: u8 = 2;
 const JOIN_KEY_SCALAR: u8 = 3;
 const JOIN_KEY_COMPOSITE: u8 = 4;
+const JOIN_KEY_NULL: u8 = 5;
 
 fn encode_join_key(encoder: &mut spill::Encoder, key: &JoinHashKey) {
     match key {
+        JoinHashKey::Null => encoder.u8(JOIN_KEY_NULL),
         JoinHashKey::NegativeInteger(value) => {
             encoder.u8(JOIN_KEY_NEGATIVE);
             encoder.i64(*value);
@@ -1249,6 +1251,7 @@ fn decode_join_key(decoder: &mut spill::Decoder<'_>) -> Result<JoinHashKey, Stri
             decoder.f64()?,
         ))),
         JOIN_KEY_SCALAR => Ok(JoinHashKey::Scalar(decoder.value()?)),
+        JOIN_KEY_NULL => Ok(JoinHashKey::Null),
         JOIN_KEY_COMPOSITE => {
             let count = decoder.count()?;
             let mut parts = Vec::with_capacity(count.min(64));
@@ -2451,6 +2454,8 @@ pub(super) enum JoinHashKey {
     NonNegativeInteger(u64),
     MysqlNumber(pintail_types::Float64),
     Scalar(Value),
+    /// NULL under a null-safe key, which matches only NULL.
+    Null,
     /// Multi-key equality: primary key first, extras in declaration order.
     Composite(Vec<JoinHashKey>),
 }
@@ -2459,7 +2464,10 @@ impl JoinHashKey {
     fn heap_bytes(&self) -> usize {
         match self {
             Self::Scalar(value) => value.heap_bytes(),
-            Self::NegativeInteger(_) | Self::NonNegativeInteger(_) | Self::MysqlNumber(_) => 0,
+            Self::NegativeInteger(_)
+            | Self::NonNegativeInteger(_)
+            | Self::MysqlNumber(_)
+            | Self::Null => 0,
             Self::Composite(parts) => parts
                 .iter()
                 .map(|part| size_of::<Self>().saturating_add(part.heap_bytes()))
@@ -2507,14 +2515,14 @@ pub(super) fn normalized_join_key(
     mode: JoinKeyMode,
 ) -> Result<Option<JoinHashKey>, ExecError> {
     if matches!(value, Value::Null) {
-        return Ok(None);
+        return Ok(mode.null_safe.then_some(JoinHashKey::Null));
     }
-    let key = match mode {
-        JoinKeyMode::CollatedText(collation) => {
+    let key = match mode.form {
+        KeyForm::CollatedText(collation) => {
             JoinHashKey::Scalar(normalized_collation_value(value, collation))
         }
-        JoinKeyMode::Binary | JoinKeyMode::Boolean => JoinHashKey::Scalar(value),
-        JoinKeyMode::Integer => match value {
+        KeyForm::Binary | KeyForm::Boolean => JoinHashKey::Scalar(value),
+        KeyForm::Integer => match value {
             Value::Int64(value) if value < 0 => JoinHashKey::NegativeInteger(value),
             Value::Int64(value) => JoinHashKey::NonNegativeInteger(
                 u64::try_from(value).expect("nonnegative i64 fits u64"),
@@ -2522,7 +2530,7 @@ pub(super) fn normalized_join_key(
             Value::UInt64(value) => JoinHashKey::NonNegativeInteger(value),
             _ => return Err(ExecError::InvalidExpressionType),
         },
-        JoinKeyMode::MysqlNumber => {
+        KeyForm::MysqlNumber => {
             let value = mysql_f64(&value)?;
             let value = if value == 0.0 { 0.0 } else { value };
             if !value.is_finite() {

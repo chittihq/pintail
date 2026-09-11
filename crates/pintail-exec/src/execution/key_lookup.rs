@@ -79,13 +79,15 @@ fn driving_side(plan: &PhysicalPlan, keys: &[BoundOrderKey], trim: usize) -> Opt
         kind,
         left_key,
         extra_keys,
+        null_safe,
         right_key,
         ..
     } = input.as_ref()
     else {
         return None;
     };
-    if !extra_keys.is_empty() {
+    // A lookup by key finds no row for NULL, which `<=>` matches.
+    if !extra_keys.is_empty() || null_safe.contains(&true) {
         return None;
     }
     let columns = key_columns(expressions, keys, trim)?;
@@ -228,10 +230,12 @@ pub(super) fn pinned_lookup(join: PhysicalPlan) -> PhysicalPlan {
             kind,
             left_key,
             extra_keys,
+            null_safe,
             right_key,
             ..
         } => {
             extra_keys.is_empty()
+                && !null_safe.contains(&true)
                 && matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Left)
                 && integer_type(left_key.data_type)
                 && pinned(left)
