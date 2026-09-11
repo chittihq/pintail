@@ -140,7 +140,10 @@ program and gets its own gate and live-CDC coverage.
 - [x] Phase 1b — a table whose writer is open in this process is proven
   current by the generation that writer publishes after every change, so
   a query on a replicated database touches no table file to prove its
-  replica fresh; other tables are walked as before.
+  replica fresh; other tables are walked as before. The corpus rerun
+  showed replication closing its writers between cycles, which left most
+  queries walking anyway; the server now keeps each table's lock as a
+  lease between writers, so the generation holds between cycles too.
 - [ ] Phase 2
 - [ ] Phase 3
 - [ ] Phase 4
