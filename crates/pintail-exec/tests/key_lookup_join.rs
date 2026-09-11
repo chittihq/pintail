@@ -305,7 +305,17 @@ fn a_limit_in_the_driving_key_order_answers_as_the_full_sort_does() {
 /// A join whose driving side is pinned to a few of its keys, written with
 /// the key itself and with `e.id + 0`, which pins nothing, so the second
 /// answer comes from the hash join building all of users.
-const PINNED: [(&str, bool); 6] = [
+const PINNED: [(&str, bool); 8] = [
+    (
+        "SELECT e.id, (SELECT u.name FROM users AS u WHERE u.id = e.user_id) FROM events AS e \
+         WHERE {key} IN (6, 11, 5000, 77)",
+        true,
+    ),
+    (
+        "SELECT e.id, e.name, (SELECT u.name FROM users AS u WHERE u.id = e.id) FROM events AS e \
+         WHERE {key} = 4",
+        true,
+    ),
     (
         "SELECT e.id, u.name FROM events AS e JOIN users AS u ON u.id = e.user_id \
          WHERE {key} = 5000",
@@ -369,7 +379,7 @@ fn a_join_driven_by_a_few_pinned_keys_answers_as_the_hash_join_does() {
         );
     }
     // One pinned key reads the one block of users its row names.
-    let (template, _) = PINNED[0];
+    let (template, _) = PINNED[2];
     let fast = fixture.run(&template.replace("{key}", "e.id"));
     let reference = fixture.run(&template.replace("{key}", "e.id + 0"));
     assert!(
@@ -377,6 +387,34 @@ fn a_join_driven_by_a_few_pinned_keys_answers_as_the_hash_join_does() {
         "{} blocks of users against {}",
         fast.users_blocks,
         reference.users_blocks
+    );
+}
+
+/// A scalar subquery nested in another runs once per outer row, and each
+/// run's own subquery join is driven by the one key the outer row pinned,
+/// so it reads that user by key rather than building all of users.
+#[test]
+fn a_nested_scalar_subquery_reads_its_rows_by_key() {
+    let fixture = Fixture::new();
+    let nested = fixture.run(
+        "SELECT e.id, (SELECT (SELECT x.name FROM users AS x WHERE x.id = u.id) \
+         FROM users AS u WHERE u.id = e.user_id) FROM events AS e \
+         WHERE e.id IN (6, 11, 5000, 64000)",
+    );
+    let joined = fixture.run(
+        "SELECT e.id, x.name FROM events AS e LEFT JOIN users AS u ON u.id = e.user_id \
+         LEFT JOIN users AS x ON x.id = u.id WHERE e.id IN (6, 11, 5000, 64000)",
+    );
+    let whole = fixture.run("SELECT COUNT(name) FROM users");
+    let (mut answer, mut expected) = (nested.rows, joined.rows);
+    answer.sort();
+    expected.sort();
+    assert_eq!(answer, expected);
+    assert!(
+        nested.users_blocks < whole.users_blocks,
+        "{} blocks of users against {} for one read of the table",
+        nested.users_blocks,
+        whole.users_blocks
     );
 }
 
