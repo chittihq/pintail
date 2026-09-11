@@ -511,9 +511,6 @@ pub(super) struct HashJoinState {
     left_values: Option<Vec<Value>>,
     left_key: Option<JoinHashKey>,
     left_reserved: usize,
-    /// Build-side rows for the current left row that survived the residual ON
-    /// predicate, when there is one.
-    residual_matches: Option<Vec<Vec<Value>>>,
     /// Probe batches read ahead of the build, each with the bytes it holds
     /// against the ceiling; served before the probe input is pulled again.
     prefetched: VecDeque<(RecordBatch, usize)>,
@@ -821,7 +818,6 @@ pub(super) fn build_hash_join_state(
         left_values: None,
         left_key: None,
         left_reserved: 0,
-        residual_matches: None,
         prefetched: VecDeque::new(),
         filter_reserved: 0,
     })
@@ -1696,98 +1692,60 @@ pub(super) fn next_hash_join_batch(
             memory,
         );
     }
-    if residual.is_none() {
-        return next_hash_join_columns(
-            left,
-            kind,
-            left_key,
-            key_mode,
-            extra_keys,
-            right_width,
-            column_types,
-            state,
-            memory,
-        );
+    let probe = Probe {
+        kind,
+        left_key,
+        key_mode,
+        extra_keys,
+        right_width,
+        column_types,
+    };
+    match residual {
+        None => next_hash_join_columns(left, &probe, state, memory),
+        Some(residual) => {
+            next_hash_join_residual_columns(left, &probe, residual, residual_columns, state, memory)
+        }
     }
-    let mut rows = Vec::<Vec<Value>>::with_capacity(SPILL_SERVE_BATCH_ROWS);
-    let mut buffered_bytes = 0_usize;
-    while rows.len() < SPILL_SERVE_BATCH_ROWS {
-        // Turning the buffered rows into a batch needs about as much again
-        // for the columns, so under a tight ceiling the batch is cut where
-        // that copy still fits rather than refused once it is buffered.
-        if !rows.is_empty() && buffered_bytes.saturating_mul(2) > memory.remaining() {
-            break;
-        }
-        if state.left_values.is_none()
-            && !prepare_hash_join_left(
-                left,
-                left_key,
-                key_mode,
-                extra_keys,
-                state,
-                memory,
-                matches!(kind, BoundJoinKind::Inner | BoundJoinKind::Semi),
-            )?
-        {
-            break;
-        }
-        let left_values = state
-            .left_values
-            .as_ref()
-            .expect("prepared join row is present");
-        let matches = state.left_key.as_ref().and_then(|key| state.build.get(key));
-        // Recomputed only when this left row is first seen; match_index walks
-        // the filtered bucket across successive emits for the same row.
-        // Without a residual the bucket is the answer as it stands; copying
-        // it for every probe row cost a semi or anti join over duplicate
-        // keys a full bucket clone per row.
-        if state.match_index == 0 && residual.is_some() {
-            state.residual_matches = apply_join_residual(
-                residual,
-                residual_columns,
-                left_values,
-                matches,
-                matches!(kind, BoundJoinKind::Semi | BoundJoinKind::Anti),
-            )?;
-        }
-        let filtered = if residual.is_some() {
-            state.residual_matches.as_ref()
+}
+
+/// What a batch probe needs of its join.
+struct Probe<'join> {
+    kind: BoundJoinKind,
+    left_key: &'join CompiledExpr,
+    key_mode: JoinKeyMode,
+    extra_keys: &'join [(CompiledExpr, CompiledExpr, JoinKeyMode)],
+    right_width: usize,
+    column_types: &'join [DataType],
+}
+
+impl Probe<'_> {
+    /// Whether the output pairs probe rows with build rows, rather than
+    /// passing probe rows alone as a semi or anti join does.
+    const fn pairs(&self) -> bool {
+        matches!(
+            self.kind,
+            BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar
+        )
+    }
+
+    /// The output's probe columns.
+    fn probe_width(&self) -> usize {
+        if self.pairs() {
+            self.column_types.len().saturating_sub(self.right_width)
         } else {
-            matches
-        };
-        let (output, complete) = join_emit(
-            kind,
-            left_values,
-            filtered,
-            &mut state.match_index,
-            right_width,
-        )?;
-        let emitted = output.is_some();
-        if let Some(output) = output {
-            let output_bytes = estimated_row_payload_bytes(&output);
-            memory.ensure_transient(
-                buffered_bytes
-                    .saturating_add(output_bytes)
-                    .saturating_add(size_of::<Vec<Value>>()),
-            )?;
-            buffered_bytes = buffered_bytes
-                .saturating_add(output_bytes)
-                .saturating_add(size_of::<Vec<Value>>());
-            rows.push(output);
-        }
-        if complete || !emitted {
-            state.clear_left(memory);
+            self.column_types.len()
         }
     }
-    if rows.is_empty() {
-        state.clear_batch(memory);
-        return Ok(None);
+
+    /// Row `row`'s normalized join key, `None` where it can match nothing.
+    fn key(&self, batch: &RecordBatch, row: usize) -> Result<Option<JoinHashKey>, ExecError> {
+        match normalized_join_key(self.left_key.evaluate(batch, row)?, self.key_mode)? {
+            Some(primary) => {
+                composite_join_key(primary, batch, row, self.extra_keys, JoinSide::Probe)
+            }
+            None => Ok(None),
+        }
     }
-    memory.ensure_transient(
-        buffered_bytes.saturating_add(estimated_record_batch_bytes(&rows, column_types.len())),
-    )?;
-    let columns = rows_to_columns(&rows, column_types)?;
-    Ok(Some(RecordBatch::new(rows.len(), columns)?))
 }
 
 /// The next probe batch the join reads: one read ahead of the build first,
@@ -1825,27 +1783,13 @@ fn load_probe_batch(
 /// probe columns are gathered from the probe batch - packed where it packs
 /// them - and each matched build row's values are copied once, where the
 /// row probe copied every cell into a row and then into a column.
-#[allow(clippy::too_many_arguments)]
 fn next_hash_join_columns(
     left: &mut PullOperator,
-    kind: BoundJoinKind,
-    left_key: &CompiledExpr,
-    key_mode: JoinKeyMode,
-    extra_keys: &[(CompiledExpr, CompiledExpr, JoinKeyMode)],
-    right_width: usize,
-    column_types: &[DataType],
+    probe: &Probe<'_>,
     state: &mut HashJoinState,
     memory: &MemoryTracker,
 ) -> Result<Option<RecordBatch>, ExecError> {
-    let pairs_rows = matches!(
-        kind,
-        BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar
-    );
-    let left_width = if pairs_rows {
-        column_types.len().saturating_sub(right_width)
-    } else {
-        column_types.len()
-    };
+    let kind = probe.kind;
     loop {
         let exhausted = state
             .batch
@@ -1872,16 +1816,9 @@ fn next_hash_join_columns(
                 state.row += 1;
                 continue;
             }
-            let key = match normalized_join_key(left_key.evaluate(batch, row)?, key_mode)? {
-                Some(primary) => {
-                    composite_join_key(primary, batch, row, extra_keys, JoinSide::Probe)?
-                }
-                None => None,
-            };
+            let key = probe.key(batch, row)?;
             let matches = key.as_ref().and_then(|key| state.build.get(key));
-            let probe_row = u32::try_from(row).map_err(|_| {
-                ExecError::InvalidBatch("a probe batch holds more rows than a join can address")
-            })?;
+            let probe_row = probe_row_index(row)?;
             let room = SPILL_SERVE_BATCH_ROWS - picks.probe_rows.len();
             match (kind, matches) {
                 (BoundJoinKind::Scalar, Some(rows)) if rows.len() > 1 => {
@@ -1917,10 +1854,165 @@ fn next_hash_join_columns(
         if picks.probe_rows.is_empty() {
             continue;
         }
-        let output = picks.output(batch, column_types, left_width)?;
+        let output = picks.output(batch, probe.column_types, probe.probe_width())?;
         memory.ensure_transient(output.estimated_bytes())?;
         return Ok(Some(output));
     }
+}
+
+fn probe_row_index(row: usize) -> Result<u32, ExecError> {
+    u32::try_from(row).map_err(|_| {
+        ExecError::InvalidBatch("a probe batch holds more rows than a join can address")
+    })
+}
+
+/// A resident join with a residual, probed a batch at a time.
+///
+/// A chunk of probe rows gathers every candidate its keys find - each probe
+/// row with its whole bucket - into one batch the residual reads, where the
+/// row probe built a one-row batch per candidate. Each probe row then emits
+/// by the candidates that pass, as the row probe decided: an inner or left
+/// join keeps the passing pairs, a left join pads a row none passed, a
+/// semi or anti join asks whether any passed. Where the residual has no
+/// batch kernel it is evaluated candidate by candidate in the row probe's
+/// order, a semi or anti row stopping at its first pass, so an error is the
+/// one the row probe would raise.
+fn next_hash_join_residual_columns(
+    left: &mut PullOperator,
+    probe: &Probe<'_>,
+    residual: &CompiledExpr,
+    residual_columns: &[BoundColumn],
+    state: &mut HashJoinState,
+    memory: &MemoryTracker,
+) -> Result<Option<RecordBatch>, ExecError> {
+    let left_width = residual_columns.len().saturating_sub(probe.right_width);
+    loop {
+        let exhausted = state
+            .batch
+            .as_ref()
+            .is_none_or(|batch| state.row >= batch.row_count());
+        if exhausted && !load_probe_batch(left, state, memory)? {
+            return Ok(None);
+        }
+        let batch = state.batch.as_ref().expect("probe batch loaded");
+        let mut candidates = Picks {
+            probe_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
+            build_rows: Vec::with_capacity(SPILL_SERVE_BATCH_ROWS),
+            probe_row_bytes: batch.estimated_bytes() / batch.row_count().max(1),
+            bytes: 0,
+        };
+        // Each probe row with the span of `candidates` its bucket filled.
+        let mut groups = Vec::new();
+        while state.row < batch.row_count() {
+            let row = state.row;
+            if !batch.selection().is_selected(row) {
+                state.row += 1;
+                continue;
+            }
+            let key = probe.key(batch, row)?;
+            let bucket = key.as_ref().and_then(|key| state.build.get(key));
+            let size = bucket.map_or(0, Vec::len);
+            // A probe row keeps its bucket whole; a chunk holds at least one.
+            if !groups.is_empty()
+                && (candidates.probe_rows.len() + size > SPILL_SERVE_BATCH_ROWS
+                    || candidates.bytes.saturating_mul(2) > memory.remaining())
+            {
+                break;
+            }
+            let probe_row = probe_row_index(row)?;
+            let start = candidates.probe_rows.len();
+            for build_row in bucket.into_iter().flatten() {
+                candidates.push(probe_row, Some(build_row));
+            }
+            groups.push((probe_row, start..candidates.probe_rows.len()));
+            state.row += 1;
+        }
+        if groups.is_empty() {
+            continue;
+        }
+        let candidate_batch = candidates.output(
+            batch,
+            &residual_columns
+                .iter()
+                .map(|column| column.data_type)
+                .collect::<Vec<_>>(),
+            left_width,
+        )?;
+        memory.ensure_transient(candidate_batch.estimated_bytes())?;
+        let mask = if candidate_batch.row_count() == 0 {
+            None
+        } else {
+            residual.evaluate_filter_mask(&candidate_batch)?
+        };
+        let passes = |candidate: usize| -> Result<bool, ExecError> {
+            match &mask {
+                Some(mask) => Ok(mask.is_selected(candidate)),
+                None => predicate_truth(&residual.evaluate(&candidate_batch, candidate)?),
+            }
+        };
+        let picks = residual_picks(probe.kind, groups, &candidates, &passes)?;
+        if picks.probe_rows.is_empty() {
+            continue;
+        }
+        let output = picks.output(batch, probe.column_types, probe.probe_width())?;
+        memory.ensure_transient(output.estimated_bytes())?;
+        return Ok(Some(output));
+    }
+}
+
+/// Each probe row's output by its candidates that pass the residual:
+/// `groups` holds each probe row with its span of `candidates`.
+fn residual_picks<'build>(
+    kind: BoundJoinKind,
+    groups: Vec<(u32, std::ops::Range<usize>)>,
+    candidates: &Picks<'build>,
+    passes: &dyn Fn(usize) -> Result<bool, ExecError>,
+) -> Result<Picks<'build>, ExecError> {
+    let mut picks = Picks {
+        probe_rows: Vec::with_capacity(groups.len()),
+        build_rows: Vec::with_capacity(groups.len()),
+        probe_row_bytes: candidates.probe_row_bytes,
+        bytes: 0,
+    };
+    for (probe_row, span) in groups {
+        match kind {
+            BoundJoinKind::Semi | BoundJoinKind::Anti => {
+                let mut found = false;
+                for candidate in span {
+                    if passes(candidate)? {
+                        found = true;
+                        break;
+                    }
+                }
+                if found == (kind == BoundJoinKind::Semi) {
+                    picks.push(probe_row, None);
+                }
+            }
+            BoundJoinKind::Inner | BoundJoinKind::Left | BoundJoinKind::Scalar => {
+                let mut kept = Vec::new();
+                for candidate in span {
+                    if passes(candidate)? {
+                        kept.push(candidate);
+                    }
+                }
+                if kind == BoundJoinKind::Scalar && kept.len() > 1 {
+                    return Err(ExecError::ScalarSubqueryRows { rows: kept.len() });
+                }
+                if kept.is_empty() && kind != BoundJoinKind::Inner {
+                    picks.push(probe_row, None);
+                }
+                for candidate in kept {
+                    picks.push(probe_row, candidates.build_rows[candidate]);
+                }
+            }
+            BoundJoinKind::Cross => {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "cross semantics reached hash join",
+                ));
+            }
+        }
+    }
+    Ok(picks)
 }
 
 /// The rows one output batch of a batch probe pairs.

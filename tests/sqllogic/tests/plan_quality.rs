@@ -57,7 +57,9 @@ fn explain_analyze_proves_segment_and_block_pruning() {
     assert!(explanation.contains("predicates=1"));
     assert!(explanation.contains("actual_segments=1/2"));
     assert!(explanation.contains("actual_blocks=1/2"));
-    assert!(explanation.contains("decoded_blocks=5"));
+    // One key block finds the run of rows in range; one block each of the
+    // two projected columns holds it.
+    assert!(explanation.contains("decoded_blocks=3"), "{explanation}");
 }
 
 #[test]
