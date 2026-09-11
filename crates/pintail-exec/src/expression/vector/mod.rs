@@ -33,6 +33,7 @@ mod conditional;
 mod functions;
 mod numeric;
 mod temporal;
+mod text;
 
 /// Warnings a batch's evaluation raised, for the selected rows only.
 #[derive(Default)]

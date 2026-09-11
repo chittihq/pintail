@@ -240,7 +240,7 @@ fn packed(
                 matches!(call.function, ScalarFunction::Ceil { .. }),
             )
         }
-        _ => None,
+        _ => super::text::packed_text(call.function, operands, declared, call.collation),
     }
 }
 
