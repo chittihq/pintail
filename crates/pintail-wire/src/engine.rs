@@ -16,7 +16,7 @@ use pintail_meta::{DatabaseRecord, MetaStore, TableRecord};
 
 use crate::admission::{QueryAdmission, QueryClass, shared_admission};
 use crate::replica_cache::{
-    self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp,
+    self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp, TableStamp,
 };
 use crate::shared_query::{Join, SharedQueryKey, shared_queries};
 use pintail_probe::{ProbeReport, SourceTable};
@@ -285,6 +285,34 @@ struct ReaderTarget {
     /// Why the table's store could not be opened, when it could not. Its
     /// snapshot is then empty and its scans are refused with the reason.
     unreadable: Option<String>,
+    /// The snapshot's [`TableSnapshot::stored_bytes`], taken the first time
+    /// the short-query screen asks rather than on every query.
+    stored_bytes: OnceLock<u64>,
+}
+
+impl ReaderTarget {
+    fn new(
+        source: SourceTable,
+        version: u32,
+        snapshot: TableSnapshot,
+        ready: bool,
+        unreadable: Option<String>,
+    ) -> Self {
+        Self {
+            source,
+            version,
+            snapshot,
+            ready,
+            unreadable,
+            stored_bytes: OnceLock::new(),
+        }
+    }
+
+    fn stored_bytes(&self) -> u64 {
+        *self
+            .stored_bytes
+            .get_or_init(|| self.snapshot.stored_bytes())
+    }
 }
 
 static SHARED_REPLICA_CACHE: OnceLock<Arc<ReplicaCache<LoadedReplica>>> = OnceLock::new();
@@ -309,8 +337,12 @@ pub fn replica_cache_stats() -> ReplicaCacheStats {
 impl ReplicaEngine {
     #[must_use]
     pub fn new(data_dir: impl Into<PathBuf>, metadata_path: impl Into<PathBuf>) -> Self {
+        // Writers publish under the canonical table directory; reading the
+        // same spelling is what lets the stamp find their generations.
+        let data_dir = data_dir.into();
+        let data_dir = std::fs::canonicalize(&data_dir).unwrap_or(data_dir);
         Self {
-            data_dir: data_dir.into(),
+            data_dir,
             metadata_path: metadata_path.into(),
             memory_limit: DEFAULT_QUERY_MEMORY_LIMIT,
             admission: shared_admission(),
@@ -359,12 +391,17 @@ impl ReplicaEngine {
         signature
     }
 
-    /// Every file whose content can change what a query sees: the metadata
-    /// store plus each table directory's entries (manifests, WALs and the
-    /// immutable segment set). Any CDC apply, flush, compaction or schema
-    /// change alters at least one (path, len, mtime) triple - and the stamp
-    /// keeps them per table, so the reload that follows touches only the
-    /// table that changed.
+    /// Everything that can change what a query sees: the metadata store
+    /// plus, per table, either the generation its writer published or its
+    /// files. The stamp keeps tables apart, so the reload after a change
+    /// touches only the table that changed.
+    ///
+    /// A table whose writer is open in this process - every table under
+    /// replication - is stamped with the writer's generation, which moves
+    /// after every change to the files a reader opens and costs no file
+    /// system call to read. Any other table is walked: its manifests, WALs
+    /// and immutable segment set, where any apply, flush, compaction or
+    /// schema change alters at least one (path, len, mtime) triple.
     fn replica_stamp(&self, database_id: &str) -> ReplicaStamp {
         fn record(files: &mut Vec<FileStamp>, path: &Path) {
             if let Ok(meta) = std::fs::metadata(path) {
@@ -383,19 +420,18 @@ impl ReplicaEngine {
         let Ok(entries) = std::fs::read_dir(self.tables_root(database_id)) else {
             return stamp;
         };
-        let mut tables: Vec<PathBuf> = entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .collect();
-        tables.sort();
-        for table in tables {
-            let name = table
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let files = stamp.tables.entry(name).or_default();
-            if !table.is_dir() {
-                record(files, &table);
+        for entry in entries.filter_map(Result::ok) {
+            let table = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let is_directory = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            if is_directory && let Some(generation) = pintail_store::published_generation(&table) {
+                stamp.tables.insert(name, TableStamp::Published(generation));
+                continue;
+            }
+            let mut files = Vec::new();
+            if !is_directory {
+                record(&mut files, &table);
+                stamp.tables.insert(name, TableStamp::Files(files));
                 continue;
             }
             let mut directories = vec![table];
@@ -412,11 +448,14 @@ impl ReplicaEngine {
                     if path.is_dir() {
                         directories.push(path);
                     } else {
-                        record(files, &path);
+                        record(&mut files, &path);
                     }
                 }
             }
+            stamp.tables.insert(name, TableStamp::Files(files));
         }
+        self.cache
+            .record_walk(stamp.files() - stamp.metadata.files.len());
         stamp
     }
 
@@ -457,17 +496,19 @@ impl ReplicaEngine {
                 .sum::<usize>()
                 <= 128
             && {
-                // Taken from disk, not from what the cache happens to hold:
-                // the same stamp screens the size below and proves the
-                // replica current at the end, so a short query never reads
-                // a snapshot a commit has already superseded.
-                stamp.files() <= 128
-                    && stamp
-                        .tables
-                        .values()
-                        .flatten()
-                        .fold(0_u64, |bytes, file| bytes.saturating_add(file.1))
-                        <= 4 * 1024 * 1024
+                // Measured on the cached replica, which the stamp taken
+                // above proves current before anything runs: a short query
+                // never reads a snapshot a commit has already superseded,
+                // and the sizes screened are that snapshot's.
+                replica
+                    .targets
+                    .iter()
+                    .map(|table| table.snapshot.segment_count())
+                    .sum::<usize>()
+                    <= 128
+                    && replica.targets.iter().fold(0_u64, |bytes, table| {
+                        bytes.saturating_add(table.stored_bytes())
+                    }) <= 4 * 1024 * 1024
             };
         if tiny {
             return revalidated(&self.cache, &key, &stamp, &replica).map(|replica| Classified {
@@ -519,9 +560,10 @@ impl ReplicaEngine {
         let key = self.cache_key(database_id);
         if let Lookup::Hit(replica) = self.cache.lookup(&key, &stamp) {
             pintail_log::log_debug!(
-                "query setup db={database_id} stamp={:.1}ms files={} replica=cached",
+                "query setup db={database_id} stamp={:.1}ms files={} published={} replica=cached",
                 stamped.as_secs_f64() * 1_000.0,
-                stamp.files()
+                stamp.files(),
+                stamp.published()
             );
             return Ok(replica);
         }
@@ -533,9 +575,10 @@ impl ReplicaEngine {
         let previous = match self.cache.lookup(&key, &stamp) {
             Lookup::Hit(replica) => {
                 pintail_log::log_debug!(
-                    "query setup db={database_id} stamp={:.1}ms files={} replica=coalesced",
+                    "query setup db={database_id} stamp={:.1}ms files={} published={} replica=coalesced",
                     stamped.as_secs_f64() * 1_000.0,
-                    stamp.files()
+                    stamp.files(),
+                    stamp.published()
                 );
                 return Ok(replica);
             }
@@ -557,10 +600,11 @@ impl ReplicaEngine {
             .map(|target| target.snapshot.estimated_memtable_bytes())
             .sum::<usize>();
         pintail_log::log_debug!(
-            "query setup db={database_id} stamp={:.1}ms files={} replica=reloaded in {:.1}ms \
+            "query setup db={database_id} stamp={:.1}ms files={} published={} replica=reloaded in {:.1}ms \
              tables={} opened={opened} resident={resident}B",
             stamped.as_secs_f64() * 1_000.0,
             stamp.files(),
+            stamp.published(),
             load_started.elapsed().as_secs_f64() * 1_000.0,
             replica.targets.len()
         );
@@ -1169,13 +1213,7 @@ impl ReplicaEngine {
                     .then(|| target.snapshot.clone())
                 });
                 if let Some(snapshot) = reusable {
-                    return Ok(ReaderTarget {
-                        source,
-                        version,
-                        snapshot,
-                        ready,
-                        unreadable: None,
-                    });
+                    return Ok(ReaderTarget::new(source, version, snapshot, ready, None));
                 }
                 opened += 1;
                 open_target(
@@ -1226,13 +1264,7 @@ fn open_target(
         .map_err(|error| QueryError::Internal(error.to_string()))?;
     let error = match TableSnapshot::open(&directory, schema.clone()) {
         Ok(snapshot) => {
-            return Ok(ReaderTarget {
-                source,
-                version,
-                snapshot,
-                ready,
-                unreadable: None,
-            });
+            return Ok(ReaderTarget::new(source, version, snapshot, ready, None));
         }
         Err(error) => error,
     };
@@ -1248,25 +1280,25 @@ fn open_target(
             "replica.table_definition_held db={database_id} table={}: {error}",
             source.name
         );
-        return Ok(ReaderTarget {
-            source: target.source.clone(),
-            version: target.version,
+        return Ok(ReaderTarget::new(
+            target.source.clone(),
+            target.version,
             snapshot,
             ready,
-            unreadable: None,
-        });
+            None,
+        ));
     }
     pintail_log::log_info!(
         "replica.table_unreadable db={database_id} table={}: {error}",
         source.name
     );
-    Ok(ReaderTarget {
+    Ok(ReaderTarget::new(
         source,
         version,
-        snapshot: TableSnapshot::empty(directory, schema),
+        TableSnapshot::empty(directory, schema),
         ready,
-        unreadable: Some(error.to_string()),
-    })
+        Some(error.to_string()),
+    ))
 }
 
 /// Statements whose only purpose is a multi-statement transaction boundary.

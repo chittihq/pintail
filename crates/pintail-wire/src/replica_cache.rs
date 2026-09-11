@@ -54,20 +54,46 @@ impl PartialEq for MetadataStamp {
 
 impl Eq for MetadataStamp {}
 
+/// One table's part of a stamp.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum TableStamp {
+    /// The generation this process's writer published for the table while
+    /// it held the table's lock: nothing else could have changed the files.
+    Published(u64),
+    /// The table's files, walked because no writer here holds the table.
+    Files(Vec<FileStamp>),
+}
+
 /// Everything on disk that can change what a query sees, attributed so a
 /// change to one table's files is distinguishable from a metadata write.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ReplicaStamp {
     /// The metadata store: its files and their semantic signature.
     pub(crate) metadata: MetadataStamp,
-    /// Each table's files, keyed by the table's directory name.
-    pub(crate) tables: BTreeMap<String, Vec<FileStamp>>,
+    /// Each table's state, keyed by the table's directory name.
+    pub(crate) tables: BTreeMap<String, TableStamp>,
 }
 
 impl ReplicaStamp {
     /// How many files were inspected, for the setup log line.
     pub(crate) fn files(&self) -> usize {
-        self.metadata.files.len() + self.tables.values().map(Vec::len).sum::<usize>()
+        self.metadata.files.len()
+            + self
+                .tables
+                .values()
+                .map(|table| match table {
+                    TableStamp::Published(_) => 0,
+                    TableStamp::Files(files) => files.len(),
+                })
+                .sum::<usize>()
+    }
+
+    /// How many tables were answered by their writer's generation.
+    pub(crate) fn published(&self) -> usize {
+        self.tables
+            .values()
+            .filter(|table| matches!(table, TableStamp::Published(_)))
+            .count()
     }
 }
 
@@ -111,6 +137,10 @@ pub struct ReplicaCacheStats {
     /// Loads the budget could not cover even after evicting everything
     /// else: served once, not cached.
     pub refused: u64,
+    /// Table files freshness checks have had to inspect. A table whose
+    /// writer is open in this process adds nothing: its published
+    /// generation answers instead.
+    pub walked_files: u64,
 }
 
 /// Loaded replicas keyed by database, bounded in count and in bytes.
@@ -126,6 +156,7 @@ pub(crate) struct ReplicaCache<R> {
     loads: AtomicU64,
     tables_opened: AtomicU64,
     refused: AtomicU64,
+    walked_files: AtomicU64,
 }
 
 impl<R> ReplicaCache<R> {
@@ -142,6 +173,14 @@ impl<R> ReplicaCache<R> {
             loads: AtomicU64::new(0),
             tables_opened: AtomicU64::new(0),
             refused: AtomicU64::new(0),
+            walked_files: AtomicU64::new(0),
+        }
+    }
+
+    /// Counts table files a stamp inspected.
+    pub(crate) fn record_walk(&self, files: usize) {
+        if files > 0 {
+            self.walked_files.fetch_add(files as u64, Ordering::Relaxed);
         }
     }
 
@@ -250,6 +289,7 @@ impl<R> ReplicaCache<R> {
             loads: self.loads.load(Ordering::Relaxed),
             tables_opened: self.tables_opened.load(Ordering::Relaxed),
             refused: self.refused.load(Ordering::Relaxed),
+            walked_files: self.walked_files.load(Ordering::Relaxed),
         }
     }
 
@@ -298,9 +338,10 @@ mod tests {
 
     fn stamp(table: &str, len: u64) -> ReplicaStamp {
         let mut stamp = ReplicaStamp::default();
-        stamp
-            .tables
-            .insert(table.to_owned(), vec![(PathBuf::from(table), len, None)]);
+        stamp.tables.insert(
+            table.to_owned(),
+            TableStamp::Files(vec![(PathBuf::from(table), len, None)]),
+        );
         stamp
     }
 
