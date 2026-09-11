@@ -12,8 +12,7 @@ use crate::command::Command;
 use crate::handshake::{CapabilityFlags, Handshake, HandshakeResponse, SCRAMBLE_SIZE};
 use crate::packet::{PacketReader, PacketWriter, put_length_encoded_integer};
 use crate::resultset::{
-    OkPacket, encode_binary_row, encode_column_definition, encode_eof, encode_error, encode_ok,
-    encode_text_row,
+    EncodedRows, OkPacket, encode_column_definition, encode_eof, encode_error, encode_ok,
 };
 use crate::types::{Column, ErrorKind, StatusFlags};
 
@@ -40,8 +39,9 @@ pub fn server_capabilities() -> CapabilityFlags {
 pub struct ResultSet {
     /// Column metadata, carrying the real length, charset and scale.
     pub columns: Vec<Column>,
-    /// Rows as already-encoded column values; `None` is NULL.
-    pub rows: Vec<Vec<Option<Vec<u8>>>>,
+    /// Rows in wire form: text-protocol rows, or binary-protocol rows when
+    /// `binary` is set.
+    pub rows: EncodedRows,
     /// Whether rows are in the binary protocol, as a prepared execute
     /// returns, rather than the text protocol.
     pub binary: bool,
@@ -714,15 +714,8 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             let payload = encode_eof(self.capabilities, StatusFlags::empty(), 0);
             self.writer.write_payload(&payload).await?;
         }
-        for row in &result.rows {
-            let payload = if result.binary {
-                encode_binary_row(row)
-            } else {
-                let borrowed: Vec<Option<&[u8]>> =
-                    row.iter().map(|value| value.as_deref()).collect();
-                encode_text_row(&borrowed)
-            };
-            self.writer.write_payload(&payload).await?;
+        for payload in result.rows.iter() {
+            self.writer.write_payload(payload).await?;
         }
         let payload = encode_eof(self.capabilities, status, 0);
         self.writer.write_payload(&payload).await?;
@@ -787,7 +780,7 @@ mod tests {
     };
     use crate::handshake::{CapabilityFlags, HandshakeResponse, SCRAMBLE_SIZE};
     use crate::packet::PacketReader;
-    use crate::resultset::OkPacket;
+    use crate::resultset::{EncodedRows, OkPacket};
     use crate::types::{Column, ColumnType, ErrorKind};
     use async_trait::async_trait;
 
@@ -806,9 +799,12 @@ mod tests {
             self.last_query = sql.to_vec();
             let mut column = Column::new("n", ColumnType::MysqlTypeLonglong);
             column.column_length = 20;
+            let mut rows = EncodedRows::default();
+            rows.text_row().bytes(b"7");
+            rows.text_row().null();
             Response::Rows(Box::new(ResultSet {
                 columns: vec![column],
-                rows: vec![vec![Some(b"7".to_vec())], vec![None]],
+                rows,
                 binary: false,
             }))
         }

@@ -15,10 +15,10 @@ use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Timelike, Utc};
 use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
     BinaryValue, CapabilityFlags, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch,
-    ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PacketWriter, PreparedStatement,
-    Response, ResultSet, SCRAMBLE_SIZE, WatchOutcome, decode_execute_parameters,
-    encode_binary_datetime, encode_binary_int, encode_binary_time, encode_error,
-    packet::put_length_encoded_bytes,
+    EncodedRows, ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PacketWriter,
+    PreparedStatement, Response, ResultSet, SCRAMBLE_SIZE, TextRow, WatchOutcome,
+    decode_execute_parameters, encode_binary_datetime, encode_binary_int, encode_binary_time,
+    encode_error, packet::put_length_encoded_bytes,
 };
 use pintail_sql::DEFAULT_TEXT_COLLATION;
 use pintail_types::{DataType, Value};
@@ -1800,42 +1800,56 @@ fn query_output_to_response(
         .iter()
         .map(|field| mysql_column(field, group_concat_max_len, charset, negotiated))
         .collect::<Vec<_>>();
-    let mut rows = Vec::with_capacity(output.rows.len());
-    let mut encoded_bytes = 0usize;
+    let mut rows = EncodedRows::with_capacity(output.rows.len());
+    let mut cells = Vec::new();
     for row in &output.rows {
-        let mut encoded = Vec::with_capacity(row.len());
-        for (field, value) in output.fields.iter().zip(row) {
-            let cell = if binary {
+        if binary {
+            cells.clear();
+            for (field, value) in output.fields.iter().zip(row) {
                 match binary_column_value(field, value) {
-                    Ok(cell) => cell,
+                    Ok(cell) => cells.push(cell),
                     Err(error) => {
                         return Response::Error(ErrorKind::ErUnknownError, error.to_string());
                     }
                 }
-            } else {
-                text_column_value(value)
-            };
-            encoded_bytes = encoded_bytes.saturating_add(
-                cell.as_ref().map_or(0, Vec::len) + std::mem::size_of::<Option<Vec<u8>>>(),
-            );
-            if encoded_limit > 0 && encoded_bytes > encoded_limit {
-                return Response::Error(
-                    ErrorKind::ErUnknownError,
-                    format!(
-                        "query memory limit exceeded: the encoded result set alone is over \
-                         {encoded_limit} bytes; narrow the projection or add a LIMIT"
-                    ),
-                );
             }
-            encoded.push(cell);
+            rows.push_binary_row(&cells);
+        } else {
+            let mut text = rows.text_row();
+            for value in row {
+                put_text_value(&mut text, value);
+            }
         }
-        rows.push(encoded);
+        if encoded_limit > 0 && rows.resident_bytes() > encoded_limit {
+            return Response::Error(
+                ErrorKind::ErUnknownError,
+                format!(
+                    "query memory limit exceeded: the encoded result set alone is over \
+                     {encoded_limit} bytes; narrow the projection or add a LIMIT"
+                ),
+            );
+        }
     }
     Response::Rows(Box::new(ResultSet {
         columns,
         rows,
         binary,
     }))
+}
+
+/// Writes one value as a text-protocol cell, straight into the row: the
+/// same bytes [`text_column_value`] renders, without a buffer per cell.
+fn put_text_value(row: &mut TextRow<'_>, value: &Value) {
+    match value {
+        Value::Null => row.null(),
+        Value::Boolean(value) => row.signed(i64::from(*value)),
+        Value::Int64(value) => row.signed(*value),
+        Value::UInt64(value) => row.unsigned(*value),
+        Value::Float64(value) => row.bytes(value.mysql_text().as_bytes()),
+        Value::Utf8(value) | Value::Enum { label: value, .. } => row.bytes(value.as_bytes()),
+        Value::DecimalAverage(average) => row.bytes(average.label.as_bytes()),
+        Value::Binary(value) => row.bytes(value),
+    }
 }
 
 /// Renders one value in the text protocol: every `MySQL` client reads

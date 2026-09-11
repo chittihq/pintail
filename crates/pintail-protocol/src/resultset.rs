@@ -107,17 +107,141 @@ pub fn encode_column_definition(column: &Column) -> Vec<u8> {
     payload
 }
 
-/// Encodes one text-protocol row. `None` is a NULL column.
-#[must_use]
-pub fn encode_text_row(values: &[Option<&[u8]>]) -> Vec<u8> {
-    let mut payload = Vec::new();
-    for value in values {
-        match value {
-            None => payload.push(TEXT_NULL),
-            Some(bytes) => put_length_encoded_bytes(&mut payload, bytes),
+/// Result rows already in wire form: every row's payload back to back in
+/// one buffer, with where each ends.
+///
+/// A result set used to be a vector of rows of per-cell buffers, each row
+/// re-encoded into a payload of its own as it was written: an allocation
+/// per cell and two per row, on the connection's I/O task. Rows are now
+/// written once, straight into this buffer, off that task.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EncodedRows {
+    bytes: Vec<u8>,
+    ends: Vec<usize>,
+}
+
+impl EncodedRows {
+    /// An empty set with room for `rows` rows.
+    #[must_use]
+    pub fn with_capacity(rows: usize) -> Self {
+        Self {
+            bytes: Vec::new(),
+            ends: Vec::with_capacity(rows),
         }
     }
-    payload
+
+    /// How many rows the set holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    /// Whether the set holds no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    /// Bytes the encoded rows occupy, row boundaries included.
+    #[must_use]
+    pub fn resident_bytes(&self) -> usize {
+        self.bytes
+            .len()
+            .saturating_add(self.ends.len().saturating_mul(size_of::<usize>()))
+    }
+
+    /// Each row's payload, in order.
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        let mut start = 0;
+        self.ends.iter().map(move |end| {
+            let row = &self.bytes[start..*end];
+            start = *end;
+            row
+        })
+    }
+
+    /// Starts a text-protocol row; its cells follow in column order, and
+    /// the row ends when the returned writer is dropped.
+    pub fn text_row(&mut self) -> TextRow<'_> {
+        TextRow { rows: self }
+    }
+
+    /// Appends one binary-protocol row from each column's encoded binary
+    /// form; `None` is a NULL, which occupies a bitmap bit and contributes
+    /// no bytes.
+    pub fn push_binary_row(&mut self, values: &[Option<Vec<u8>>]) {
+        // Binary result rows lead with 0x00 and reserve two bitmap bits.
+        const RESERVED_BITS: usize = 2;
+        self.bytes.push(0);
+        let bitmap_start = self.bytes.len();
+        self.bytes.resize(
+            bitmap_start + null_bitmap_len(values.len(), RESERVED_BITS),
+            0,
+        );
+        for (index, value) in values.iter().enumerate() {
+            match value {
+                None => {
+                    let bit = index + RESERVED_BITS;
+                    self.bytes[bitmap_start + bit / 8] |= 1 << (bit % 8);
+                }
+                Some(bytes) => self.bytes.extend_from_slice(bytes),
+            }
+        }
+        self.ends.push(self.bytes.len());
+    }
+}
+
+/// One text-protocol row being written; see [`EncodedRows::text_row`].
+pub struct TextRow<'rows> {
+    rows: &'rows mut EncodedRows,
+}
+
+impl TextRow<'_> {
+    /// A NULL cell.
+    pub fn null(&mut self) {
+        self.rows.bytes.push(TEXT_NULL);
+    }
+
+    /// A cell of `value`'s bytes.
+    pub fn bytes(&mut self, value: &[u8]) {
+        put_length_encoded_bytes(&mut self.rows.bytes, value);
+    }
+
+    /// A signed integer cell in decimal.
+    pub fn signed(&mut self, value: i64) {
+        let negative = value < 0;
+        self.digits(value.unsigned_abs(), negative);
+    }
+
+    /// An unsigned integer cell in decimal.
+    pub fn unsigned(&mut self, value: u64) {
+        self.digits(value, false);
+    }
+
+    fn digits(&mut self, mut value: u64, negative: bool) {
+        // u64::MAX has 20 digits; one more for the sign.
+        let mut buffer = [0_u8; 21];
+        let mut start = buffer.len();
+        loop {
+            start -= 1;
+            buffer[start] = b'0' + u8::try_from(value % 10).expect("a decimal digit");
+            value /= 10;
+            if value == 0 {
+                break;
+            }
+        }
+        if negative {
+            start -= 1;
+            buffer[start] = b'-';
+        }
+        self.bytes(&buffer[start..]);
+    }
+}
+
+impl Drop for TextRow<'_> {
+    fn drop(&mut self) {
+        self.rows.ends.push(self.rows.bytes.len());
+    }
 }
 
 /// Bytes needed for a binary NULL bitmap covering `columns` values.
@@ -128,32 +252,6 @@ pub fn encode_text_row(values: &[Option<&[u8]>]) -> Vec<u8> {
 #[must_use]
 pub const fn null_bitmap_len(columns: usize, reserved_bits: usize) -> usize {
     (columns + reserved_bits).div_ceil(8)
-}
-
-/// Encodes one binary-protocol row.
-///
-/// `values` supplies each column's already-encoded binary form; `None` marks
-/// a NULL, which occupies a bitmap bit and contributes no bytes.
-#[must_use]
-pub fn encode_binary_row(values: &[Option<Vec<u8>>]) -> Vec<u8> {
-    // Binary result rows lead with 0x00 and reserve two bitmap bits.
-    const RESERVED_BITS: usize = 2;
-    let mut payload = vec![0_u8];
-    let bitmap_start = payload.len();
-    payload.resize(
-        bitmap_start + null_bitmap_len(values.len(), RESERVED_BITS),
-        0,
-    );
-    for (index, value) in values.iter().enumerate() {
-        match value {
-            None => {
-                let bit = index + RESERVED_BITS;
-                payload[bitmap_start + bit / 8] |= 1 << (bit % 8);
-            }
-            Some(bytes) => payload.extend_from_slice(bytes),
-        }
-    }
-    payload
 }
 
 /// Reads the NULL flags out of a `COM_STMT_EXECUTE` parameter bitmap.
@@ -173,8 +271,8 @@ pub fn parameter_null_flags(bitmap: &[u8], parameters: usize) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::{
-        OkPacket, encode_binary_row, encode_column_definition, encode_eof, encode_error, encode_ok,
-        encode_text_row, null_bitmap_len, parameter_null_flags,
+        EncodedRows, OkPacket, encode_column_definition, encode_eof, encode_error, encode_ok,
+        null_bitmap_len, parameter_null_flags, put_length_encoded_bytes,
     };
     use crate::handshake::CapabilityFlags;
     use crate::types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};
@@ -240,21 +338,57 @@ mod tests {
 
     #[test]
     fn text_rows_distinguish_null_from_empty() {
-        let encoded = encode_text_row(&[Some(b"7"), None, Some(b"")]);
-        assert_eq!(encoded, vec![1, b'7', 0xfb, 0]);
+        let mut rows = EncodedRows::default();
+        {
+            let mut row = rows.text_row();
+            row.bytes(b"7");
+            row.null();
+            row.bytes(b"");
+        }
+        assert_eq!(rows.iter().collect::<Vec<_>>(), [&[1, b'7', 0xfb, 0][..]]);
+    }
+
+    #[test]
+    fn text_integers_render_in_decimal_at_both_extremes() {
+        let mut rows = EncodedRows::default();
+        {
+            let mut row = rows.text_row();
+            row.signed(i64::MIN);
+            row.signed(0);
+            row.unsigned(u64::MAX);
+        }
+        let mut expected = Vec::new();
+        for text in [&b"-9223372036854775808"[..], b"0", b"18446744073709551615"] {
+            put_length_encoded_bytes(&mut expected, text);
+        }
+        assert_eq!(rows.iter().collect::<Vec<_>>(), [&expected[..]]);
+    }
+
+    #[test]
+    fn rows_keep_their_boundaries_in_one_buffer() {
+        let mut rows = EncodedRows::with_capacity(3);
+        rows.text_row().bytes(b"a");
+        rows.text_row().null();
+        rows.push_binary_row(&[Some(vec![9])]);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(
+            rows.iter().collect::<Vec<_>>(),
+            [&[1, b'a'][..], &[0xfb], &[0, 0, 9]]
+        );
     }
 
     #[test]
     fn binary_rows_offset_their_null_bitmap_by_two_reserved_bits() {
         // Column 0 NULL must set bit 2, not bit 0. Getting this wrong shifts
         // every NULL by two columns and is invisible until a row has one.
-        let encoded = encode_binary_row(&[None, Some(vec![9])]);
-        assert_eq!(encoded[0], 0x00);
-        assert_eq!(encoded[1], 0b0000_0100);
-        assert_eq!(&encoded[2..], &[9]);
-
-        let second_null = encode_binary_row(&[Some(vec![9]), None]);
-        assert_eq!(second_null[1], 0b0000_1000);
+        let mut rows = EncodedRows::default();
+        rows.push_binary_row(&[None, Some(vec![9])]);
+        rows.push_binary_row(&[Some(vec![9]), None]);
+        let encoded = rows.iter().collect::<Vec<_>>();
+        assert_eq!(encoded[0][0], 0x00);
+        assert_eq!(encoded[0][1], 0b0000_0100);
+        assert_eq!(&encoded[0][2..], &[9]);
+        assert_eq!(encoded[1][1], 0b0000_1000);
     }
 
     #[test]
