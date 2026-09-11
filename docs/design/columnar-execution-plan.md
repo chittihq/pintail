@@ -170,4 +170,11 @@ program and gets its own gate and live-CDC coverage.
 - [ ] Phase 5 — merged so far: a resident hash join with no residual
   probes a batch at a time, gathering its probe columns and copying each
   build row once. A three-table join over 100,000 rows went from 355 ms to
-  215 ms, a left join from 203 ms to 80 ms.
+  215 ms, a left join from 203 ms to 80 ms. A join's residual is evaluated
+  over one batch of candidates, where it built a batch per candidate; a
+  derived table - which is how a subquery rewritten as a join reads its
+  table - drops the columns nothing reads; and a key range starting inside
+  a segment decodes that segment's run of rows as columns, where it went
+  row by row. A correlated `IN` with a residual went from 1,147 ms to
+  118 ms, a `NOT EXISTS` from 449 ms to 51 ms, and `WHERE id > 3` over
+  100,000 rows from 65 ms to 2 ms.
