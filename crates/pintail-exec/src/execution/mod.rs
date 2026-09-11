@@ -3847,7 +3847,10 @@ impl PullOperator {
                 let Some(batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
-                let positions: Option<Vec<_>> = expressions
+                // A bare column of the declared type passes through: the
+                // output shares its buffers, and it is never evaluated row by
+                // row. Only computed expressions evaluate.
+                let passthrough: Vec<Option<usize>> = expressions
                     .iter()
                     .map(|(expression, data_type)| {
                         let position = expression.column_index()?;
@@ -3857,31 +3860,29 @@ impl PullOperator {
                             .then_some(position)
                     })
                     .collect();
-                if let Some(positions) = positions {
-                    let clones = positions
-                        .iter()
-                        .enumerate()
-                        .filter(|(index, position)| positions[index + 1..].contains(position))
-                        .map(|(_, position)| batch.columns()[*position].estimated_bytes())
-                        .fold(0_usize, usize::saturating_add);
+                if passthrough.iter().all(Option::is_some) {
+                    let positions = passthrough.into_iter().flatten().collect::<Vec<_>>();
                     memory.ensure_transient(
-                        batch
-                            .estimated_bytes()
-                            .saturating_add(clones)
-                            .saturating_add(
-                                positions
-                                    .len()
-                                    .saturating_mul(size_of::<ColumnVector>() * 2),
-                            ),
+                        batch.estimated_bytes().saturating_add(
+                            positions
+                                .len()
+                                .saturating_mul(size_of::<ColumnVector>() * 2),
+                        ),
                     )?;
                     return batch.project_columns(&positions).map(Some).ok_or(
                         ExecError::InvalidBatch("projection column is outside its input"),
                     );
                 }
-                let batch_bytes = batch.estimated_bytes();
-                let expression_memory = expressions
+                let computed = expressions
                     .iter()
-                    .map(|(expression, _)| {
+                    .zip(&passthrough)
+                    .filter(|(_, position)| position.is_none())
+                    .map(|((expression, _), _)| expression)
+                    .collect::<Vec<_>>();
+                let batch_bytes = batch.estimated_bytes();
+                let expression_memory = computed
+                    .iter()
+                    .map(|expression| {
                         batch
                             .selection()
                             .selected_rows()
@@ -3896,7 +3897,7 @@ impl PullOperator {
                             .saturating_mul(size_of::<ColumnVector>().saturating_mul(2)),
                     )
                     .saturating_add(
-                        expressions
+                        computed
                             .len()
                             .saturating_mul(batch.row_count())
                             .saturating_mul(size_of::<Value>()),
@@ -3910,7 +3911,11 @@ impl PullOperator {
                     .saturating_add(expression_memory);
                 memory.ensure_transient(batch_bytes.saturating_add(projected_memory))?;
                 let mut columns = Vec::with_capacity(expressions.len());
-                for (expression, data_type) in expressions {
+                for ((expression, data_type), position) in expressions.iter().zip(&passthrough) {
+                    if let Some(position) = position {
+                        columns.push(batch.columns()[*position].clone());
+                        continue;
+                    }
                     let mut values = Vec::with_capacity(batch.row_count());
                     for row in 0..batch.row_count() {
                         if batch.selection().is_selected(row) {

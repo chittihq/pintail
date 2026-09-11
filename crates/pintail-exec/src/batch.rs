@@ -567,33 +567,39 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
 /// ([`ColumnVector::from_typed`], the scan path) — and the other builds
 /// lazily on first use, so consumers that stay on one side never pay for
 /// the other.
+///
+/// Built representations are immutable and shared: passing a column to
+/// another batch - a projection, a join side, a repeated output column -
+/// costs a reference count, not a copy. A representation built after the
+/// clone stays with the holder that built it, so each holder's
+/// [`ColumnVector::estimated_bytes`] still describes what that holder made
+/// resident.
 #[derive(Debug)]
 pub struct ColumnVector {
     data_type: DataType,
     len: usize,
     /// Lazily-materialized row values: typed-born scan batches whose
     /// consumers stay on packed kernels never allocate a single `Value`.
-    values: std::sync::OnceLock<Vec<Value>>,
+    values: std::sync::OnceLock<std::sync::Arc<Vec<Value>>>,
     /// Lazily-built packed projection: batches whose kernels never touch it
     /// (projections, join intermediates, fallback-only filters) pay nothing.
-    typed: std::sync::OnceLock<Option<(TypedValues, ValidityMask)>>,
+    typed: std::sync::OnceLock<std::sync::Arc<Option<(TypedValues, ValidityMask)>>>,
 }
 
 impl Clone for ColumnVector {
     fn clone(&self) -> Self {
-        let values = std::sync::OnceLock::new();
-        if let Some(built) = self.values.get() {
-            let _ = values.set(built.clone());
-        }
-        let typed = std::sync::OnceLock::new();
-        if let Some(built) = self.typed.get() {
-            let _ = typed.set(built.clone());
+        fn share<T>(
+            cell: &std::sync::OnceLock<std::sync::Arc<T>>,
+        ) -> std::sync::OnceLock<std::sync::Arc<T>> {
+            cell.get().map_or_else(std::sync::OnceLock::new, |built| {
+                std::sync::OnceLock::from(std::sync::Arc::clone(built))
+            })
         }
         Self {
             data_type: self.data_type,
             len: self.len,
-            values,
-            typed,
+            values: share(&self.values),
+            typed: share(&self.typed),
         }
     }
 }
@@ -628,13 +634,10 @@ impl ColumnVector {
                 });
             }
         }
-        let len = values.len();
-        let cell = std::sync::OnceLock::new();
-        let _ = cell.set(values);
         Ok(Self {
             data_type,
-            len,
-            values: cell,
+            len: values.len(),
+            values: std::sync::OnceLock::from(std::sync::Arc::new(values)),
             typed: std::sync::OnceLock::new(),
         })
     }
@@ -646,14 +649,11 @@ impl ColumnVector {
         typed: TypedValues,
         validity: ValidityMask,
     ) -> Self {
-        let len = typed.len();
-        let cell = std::sync::OnceLock::new();
-        let _ = cell.set(Some((typed, validity)));
         Self {
             data_type,
-            len,
+            len: typed.len(),
             values: std::sync::OnceLock::new(),
-            typed: cell,
+            typed: std::sync::OnceLock::from(std::sync::Arc::new(Some((typed, validity)))),
         }
     }
 
@@ -666,8 +666,9 @@ impl ColumnVector {
                     .values
                     .get()
                     .expect("a column vector holds row values or a typed projection");
-                build_typed(self.data_type, values)
+                std::sync::Arc::new(build_typed(self.data_type, values))
             })
+            .as_ref()
             .as_ref()
             .map(|(packed, validity)| (packed, validity))
     }
@@ -692,14 +693,14 @@ impl ColumnVector {
             let (typed, validity) = self
                 .typed
                 .get()
-                .and_then(Option::as_ref)
+                .and_then(|typed| (**typed).as_ref())
                 .expect("a column vector holds row values or a typed projection");
             crate::counters::count(|counters| {
                 counters.values_materialized = counters
                     .values_materialized
                     .saturating_add(u64::try_from(self.len).unwrap_or(u64::MAX));
             });
-            materialize_values(typed, validity)
+            std::sync::Arc::new(materialize_values(typed, validity))
         })
     }
 
@@ -814,7 +815,7 @@ impl ColumnVector {
     /// Estimates bytes retained by the vector and its owned scalar payloads.
     #[must_use]
     pub fn estimated_bytes(&self) -> usize {
-        let typed_bytes = match self.typed.get().and_then(Option::as_ref) {
+        let typed_bytes = match self.typed.get().and_then(|typed| (**typed).as_ref()) {
             None => 0,
             Some((TypedValues::Int64(packed), _)) => packed.capacity() * size_of::<i64>(),
             Some((TypedValues::UInt64(packed), _)) => packed.capacity() * size_of::<u64>(),
