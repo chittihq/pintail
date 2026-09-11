@@ -51,9 +51,127 @@ impl Optimizer {
         let plan = reorder_cross_joins(plan);
         let plan = push_aggregates_through_identity_joins(plan);
         let mut plan = plan;
+        prune_derived_columns(&mut plan);
         prune_projections(&mut plan);
         push_limits(&mut plan);
         plan
+    }
+}
+
+/// Drops the columns of a derived table that nothing above it reads, with
+/// the projection expressions that produced them, so the scans beneath it
+/// read only what is used. A subquery rewritten as a join reads its table
+/// through such a derived input carrying every column.
+///
+/// Only where the derived table's consumer finds its columns by reference:
+/// a sort key, DISTINCT or a set operation reads its input by position,
+/// and dropping a column would move the ones after it.
+fn prune_derived_columns(plan: &mut LogicalPlan) {
+    loop {
+        let mut required = BTreeSet::new();
+        collect_plan_columns(plan, &mut required, true);
+        if !trim_derived_columns(plan, &required, false) {
+            break;
+        }
+    }
+}
+
+/// Whether a derived table whose rows come from `plan` is one `MySQL` merges
+/// into the query that reads it - rows from scans, filters and joins, with
+/// no grouping, DISTINCT, limit, window or set operation to materialize it -
+/// so a select-list expression nothing reads is never evaluated there, and
+/// dropping it changes no warning or error.
+fn merges(plan: &LogicalPlan) -> bool {
+    match plan {
+        LogicalPlan::Scan(_) | LogicalPlan::OneRow | LogicalPlan::Empty => true,
+        LogicalPlan::Filter { input, .. } => merges(input),
+        LogicalPlan::Join { left, right, .. } => merges(left) && merges(right),
+        LogicalPlan::CrossJoin { inputs } => inputs.iter().all(merges),
+        LogicalPlan::Derived { input, .. } => match input.as_ref() {
+            LogicalPlan::Project { input, .. } => merges(input),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// One pass of [`prune_derived_columns`]; `by_reference` says whether the
+/// consumer of `plan` finds its columns by reference. Whether anything
+/// was dropped.
+fn trim_derived_columns(
+    plan: &mut LogicalPlan,
+    required: &BTreeSet<ColumnKey>,
+    by_reference: bool,
+) -> bool {
+    match plan {
+        LogicalPlan::Derived { input, columns } => {
+            let mut changed = false;
+            if let LogicalPlan::Project {
+                input: source,
+                expressions,
+            } = input.as_mut()
+                && by_reference
+                && expressions.len() == columns.len()
+                && merges(source)
+            {
+                let mut keep = columns
+                    .iter()
+                    .map(|column| required.contains(&column_key(column)))
+                    .collect::<Vec<_>>();
+                // One column stays whatever is read, so the rows remain.
+                if let Some(first) = keep.first_mut()
+                    && !columns
+                        .iter()
+                        .any(|column| required.contains(&column_key(column)))
+                {
+                    *first = true;
+                }
+                if keep.contains(&false) {
+                    let mut flags = keep.iter();
+                    columns.retain(|_| flags.next().copied().unwrap_or(true));
+                    let mut flags = keep.iter();
+                    expressions.retain(|_| flags.next().copied().unwrap_or(true));
+                    changed = true;
+                }
+            }
+            trim_derived_columns(input, required, false) || changed
+        }
+        LogicalPlan::Project { input, .. } | LogicalPlan::Aggregate { input, .. } => {
+            trim_derived_columns(input, required, true)
+        }
+        LogicalPlan::Filter { input, .. } | LogicalPlan::Window { input, .. } => {
+            trim_derived_columns(input, required, by_reference)
+        }
+        LogicalPlan::Join { left, right, .. } => {
+            let left = trim_derived_columns(left, required, by_reference);
+            trim_derived_columns(right, required, by_reference) || left
+        }
+        LogicalPlan::CrossJoin { inputs } => {
+            let mut changed = false;
+            for input in inputs {
+                changed |= trim_derived_columns(input, required, by_reference);
+            }
+            changed
+        }
+        LogicalPlan::UnionAll { inputs } => {
+            let mut changed = false;
+            for input in inputs {
+                changed |= trim_derived_columns(input, required, false);
+            }
+            changed
+        }
+        LogicalPlan::SetOp { left, right, .. } => {
+            let left = trim_derived_columns(left, required, false);
+            trim_derived_columns(right, required, false) || left
+        }
+        LogicalPlan::Recursive { anchor, member, .. } => {
+            let anchor = trim_derived_columns(anchor, required, false);
+            trim_derived_columns(member, required, false) || anchor
+        }
+        LogicalPlan::Sort { input, .. }
+        | LogicalPlan::Distinct { input, .. }
+        | LogicalPlan::Limit { input, .. } => trim_derived_columns(input, required, false),
+        LogicalPlan::Empty | LogicalPlan::OneRow | LogicalPlan::Scan(_) => false,
     }
 }
 
@@ -2470,6 +2588,36 @@ mod tests {
             panic!("scan");
         };
         assert_eq!(scan.projected_column_ids, [2]);
+    }
+
+    #[test]
+    fn prunes_the_columns_of_a_derived_table_nothing_reads() {
+        let LogicalPlan::Derived { input, columns } = project_input(optimized(
+            "SELECT d.id FROM (SELECT id, name FROM users) AS d",
+        )) else {
+            panic!("derived");
+        };
+        assert_eq!(columns.len(), 1);
+        let LogicalPlan::Project { input, expressions } = *input else {
+            panic!("derived projection");
+        };
+        assert_eq!(expressions.len(), 1);
+        let LogicalPlan::Scan(scan) = *input else {
+            panic!("scan");
+        };
+        assert_eq!(scan.projected_column_ids, [1]);
+    }
+
+    /// A derived table that groups is materialized, and every expression of
+    /// its select list evaluated, whatever reads it.
+    #[test]
+    fn keeps_every_column_of_a_derived_table_that_groups() {
+        let LogicalPlan::Derived { columns, .. } = project_input(optimized(
+            "SELECT d.id FROM (SELECT id, COUNT(*) AS n FROM users GROUP BY id) AS d",
+        )) else {
+            panic!("derived");
+        };
+        assert_eq!(columns.len(), 2);
     }
 
     #[test]
