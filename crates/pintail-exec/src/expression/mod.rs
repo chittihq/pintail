@@ -2866,12 +2866,18 @@ fn evaluate_eager_scalar_inner(
                 .to_string(),
         )),
         ScalarFunction::CurrentDate => Ok(Value::Utf8(Local::now().format("%Y-%m-%d").to_string())),
-        ScalarFunction::Date => Ok(Value::Utf8(
-            parse_mysql_datetime(&scalar_string(&values[0])?)?
-                .date()
-                .format("%Y-%m-%d")
-                .to_string(),
-        )),
+        ScalarFunction::Date => {
+            let text = scalar_string(&values[0])?;
+            if let Some((date, _)) = canonical_temporal(&text) {
+                return Ok(Value::Utf8(date.to_owned()));
+            }
+            Ok(Value::Utf8(
+                parse_mysql_datetime(&text)?
+                    .date()
+                    .format("%Y-%m-%d")
+                    .to_string(),
+            ))
+        }
         ScalarFunction::Time => {
             // The time of a datetime, or a bare time kept as it was written;
             // fractional seconds survive when present.
@@ -3519,6 +3525,113 @@ fn byte_text(value: &Value) -> Result<String, ExecError> {
     })
 }
 
+/// A DATE or DATETIME in the canonical text every stored value carries -
+/// `YYYY-MM-DD`, or that and ` HH:MM:SS` with up to six fraction digits -
+/// split into its date and its time, when it names a real day and a clock
+/// time. Any other spelling takes the general parser.
+fn canonical_temporal(text: &str) -> Option<(&str, Option<&str>)> {
+    let bytes = text.as_bytes();
+    let digits = |from: usize, to: usize| {
+        bytes
+            .get(from..to)
+            .is_some_and(|part| part.iter().all(u8::is_ascii_digit))
+    };
+    let number = |from: usize, to: usize| {
+        bytes[from..to]
+            .iter()
+            .fold(0_u32, |total, digit| total * 10 + u32::from(digit - b'0'))
+    };
+    if !(digits(0, 4) && bytes[4] == b'-' && digits(5, 7) && bytes[7] == b'-' && digits(8, 10)) {
+        return None;
+    }
+    let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
+    let month_days = match month {
+        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    };
+    if year == 0 || day == 0 || day > month_days {
+        return None;
+    }
+    if bytes.len() == 10 {
+        return Some((&text[..10], None));
+    }
+    let clock = bytes.len() >= 19
+        && bytes[10] == b' '
+        && digits(11, 13)
+        && bytes[13] == b':'
+        && digits(14, 16)
+        && bytes[16] == b':'
+        && digits(17, 19)
+        && number(11, 13) < 24
+        && number(14, 16) < 60
+        && number(17, 19) < 60;
+    let fraction = match bytes.len() {
+        19 => true,
+        21..=26 => bytes[19] == b'.' && digits(20, bytes.len()),
+        _ => false,
+    };
+    (clock && fraction).then(|| (&text[..10], Some(&text[11..])))
+}
+
+/// A canonical DATE or DATETIME rendered as `DATETIME(fsp)` by padding, when
+/// no fraction digit has to be rounded away.
+fn canonical_datetime_at(text: &str, fsp: u8) -> Option<String> {
+    let (date, time) = canonical_temporal(text)?;
+    let time = time.unwrap_or("00:00:00");
+    let digits = time.len().saturating_sub(9);
+    let fsp = usize::from(fsp);
+    if digits > fsp {
+        return None;
+    }
+    let mut rendered = String::with_capacity(20 + fsp);
+    rendered.push_str(date);
+    rendered.push(' ');
+    rendered.push_str(time);
+    if fsp > 0 {
+        if digits == 0 {
+            rendered.push('.');
+        }
+        rendered.extend(std::iter::repeat_n('0', fsp - digits));
+    }
+    Some(rendered)
+}
+
+/// A whole-second TIME in its canonical text, `[-]HH:MM:SS` with two or
+/// three hour digits and no fraction beyond zeros, as its number `[-]HHMMSS`.
+fn whole_second_time_number(text: &str) -> Option<i64> {
+    let (negative, body) = text
+        .strip_prefix('-')
+        .map_or((false, text), |body| (true, body));
+    let (clock, fraction) = body.split_once('.').unwrap_or((body, ""));
+    if !fraction.bytes().all(|digit| digit == b'0') || fraction.len() > 6 {
+        return None;
+    }
+    let mut parts = clock.split(':');
+    let (hours, minutes, seconds) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some()
+        || !(2..=3).contains(&hours.len())
+        || minutes.len() != 2
+        || seconds.len() != 2
+    {
+        return None;
+    }
+    let parse = |part: &str| {
+        part.bytes()
+            .all(|digit| digit.is_ascii_digit())
+            .then(|| part.parse::<i64>().ok())
+            .flatten()
+    };
+    let (hours, minutes, seconds) = (parse(hours)?, parse(minutes)?, parse(seconds)?);
+    if hours > 838 || minutes > 59 || seconds > 59 {
+        return None;
+    }
+    let number = hours * 10_000 + minutes * 100 + seconds;
+    Some(if negative { -number } else { number })
+}
+
 /// A TIME read as a number is `[-]HHMMSS[.ffffff]` in `MySQL`: `TIME + 0`,
 /// `CAST(t AS DECIMAL)` and a comparison between TIME values all see that
 /// number. It keeps the time order, since minutes and seconds stay below
@@ -3549,6 +3662,14 @@ fn numeric_cast_operand<'a>(
         DataType::Decimal { .. } | DataType::Int64 | DataType::UInt64 | DataType::Float64
     );
     if numeric && matches!(argument_types.first(), Some(Some(DataType::Time64 { .. }))) {
+        // An integer target reads a whole-second TIME straight from its
+        // text; the general path renders the number only to parse it back.
+        if target == DataType::Int64
+            && let Value::Utf8(text) = value
+            && let Some(number) = whole_second_time_number(text)
+        {
+            return std::borrow::Cow::Owned(Value::Int64(number));
+        }
         std::borrow::Cow::Owned(time_as_number(value))
     } else {
         std::borrow::Cow::Borrowed(value)
@@ -3619,16 +3740,22 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     // NULL for a value it cannot interpret rather than raising.
     match data_type {
         Some(DataType::Date32) => {
-            return Ok(parse_mysql_datetime(&scalar_string(value)?)
-                .map_or(Value::Null, |parsed| {
-                    Value::Utf8(parsed.date().format("%Y-%m-%d").to_string())
-                }));
+            let text = scalar_string(value)?;
+            if let Some((date, _)) = canonical_temporal(&text) {
+                return Ok(Value::Utf8(date.to_owned()));
+            }
+            return Ok(parse_mysql_datetime(&text).map_or(Value::Null, |parsed| {
+                Value::Utf8(parsed.date().format("%Y-%m-%d").to_string())
+            }));
         }
         Some(DataType::DateTime64 { fsp }) => {
-            return Ok(parse_mysql_datetime(&scalar_string(value)?)
-                .map_or(Value::Null, |parsed| {
-                    Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
-                }));
+            let text = scalar_string(value)?;
+            if let Some(widened) = canonical_datetime_at(&text, fsp) {
+                return Ok(Value::Utf8(widened));
+            }
+            return Ok(parse_mysql_datetime(&text).map_or(Value::Null, |parsed| {
+                Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
+            }));
         }
         Some(DataType::Time64 { fsp }) => {
             return Ok(
@@ -7342,5 +7469,60 @@ mod tests {
         }
         assert!(super::json_path_steps("$.a[0].b").is_ok());
         assert!(super::json_path_steps("$**.b").is_ok());
+    }
+
+    #[test]
+    fn canonical_temporal_text_takes_the_fast_path_only_when_exact() {
+        assert_eq!(
+            super::canonical_temporal("2024-02-29"),
+            Some(("2024-02-29", None))
+        );
+        assert_eq!(
+            super::canonical_temporal("2024-02-29 23:59:59.5"),
+            Some(("2024-02-29", Some("23:59:59.5")))
+        );
+        for general in [
+            "2023-02-29",
+            "2024-13-01",
+            "0000-01-01",
+            "2024-01-01 24:00:00",
+            "2024-01-01T10:00:00",
+            "2024-01-01 10:00:00.1234567",
+            "2024-1-01",
+        ] {
+            assert_eq!(super::canonical_temporal(general), None, "{general}");
+        }
+        assert_eq!(
+            super::canonical_datetime_at("2024-01-15", 6).as_deref(),
+            Some("2024-01-15 00:00:00.000000")
+        );
+        assert_eq!(
+            super::canonical_datetime_at("2024-01-15 10:00:00.5", 6).as_deref(),
+            Some("2024-01-15 10:00:00.500000")
+        );
+        assert_eq!(
+            super::canonical_datetime_at("2024-01-15 10:00:00", 0).as_deref(),
+            Some("2024-01-15 10:00:00")
+        );
+        // Rounding a fraction away is the general path's.
+        assert_eq!(
+            super::canonical_datetime_at("2024-01-15 10:00:00.123456", 3),
+            None
+        );
+        assert_eq!(
+            super::whole_second_time_number("-100:00:00"),
+            Some(-1_000_000)
+        );
+        assert_eq!(
+            super::whole_second_time_number("838:59:59"),
+            Some(8_385_959)
+        );
+        assert_eq!(
+            super::whole_second_time_number("12:30:05.000000"),
+            Some(123_005)
+        );
+        assert_eq!(super::whole_second_time_number("12:30:05.5"), None);
+        assert_eq!(super::whole_second_time_number("12:30"), None);
+        assert_eq!(super::whole_second_time_number("839:00:00"), None);
     }
 }
