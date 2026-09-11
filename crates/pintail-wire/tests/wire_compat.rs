@@ -2005,3 +2005,99 @@ async fn per_query_cost() {
         .expect("wire server task")
         .expect("wire server");
 }
+
+/// Times a large result end to end: 130,000 rows from segments, read in
+/// full by a real client, so execution, collection, encoding and delivery
+/// all count. Run it in release:
+/// `cargo test --release -p pintail-wire --test wire_compat large_result_cost
+/// -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "timing probe, not a gate"]
+async fn large_result_cost() {
+    const ROWS: u64 = 130_000;
+    const RUNS: u32 = 20;
+    let _serial = wire_serial();
+    let data = tempfile::tempdir().expect("wire data directory");
+    let metadata_path = data.path().join("pintail-meta.db");
+    seed_replica(data.path(), &metadata_path);
+    {
+        let root = data.path().join("databases").join("db-1").join("tables");
+        let mut store = TableStore::open(
+            pintail_wire::table_directory(&root, "events"),
+            source_table().table_schema().unwrap(),
+            StoreOptions::default(),
+        )
+        .unwrap();
+        for chunk in (3..=ROWS).collect::<Vec<_>>().chunks(10_000) {
+            store
+                .ingest(
+                    chunk
+                        .iter()
+                        .map(|id| {
+                            StoredRow::new(
+                                PrimaryKey::new(vec![KeyPart::UInt64(*id)]).unwrap(),
+                                vec![
+                                    Value::UInt64(*id),
+                                    Value::Utf8(format!("event number {id}")),
+                                ],
+                                *id,
+                                false,
+                            )
+                        })
+                        .collect(),
+                )
+                .unwrap();
+        }
+        store.flush().unwrap();
+    }
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("wire listener");
+    let address = listener.local_addr().expect("wire address");
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let data_dir = data.path().to_path_buf();
+    let server = tokio::spawn(async move {
+        pintail_wire::serve_until_with_options(
+            listener,
+            data_dir,
+            metadata_path,
+            pintail_wire::DEFAULT_QUERY_MEMORY_LIMIT,
+            None,
+            Duration::from_secs(30),
+            async {
+                let _ = shutdown_rx.await;
+            },
+        )
+        .await
+    });
+    let pool = Pool::new(
+        Opts::from_url(&format!(
+            "mysql://analytics:pk_wire_secret@{address}/analytics"
+        ))
+        .expect("wire DSN"),
+    );
+    let mut connection = pool.get_conn().await.expect("authenticated wire client");
+    for sql in [
+        "SELECT id, name FROM events",
+        "SELECT id, name, id + 1 FROM events",
+    ] {
+        let rows: Vec<mysql_async::Row> = connection.query(sql).await.expect("warm-up query");
+        assert_eq!(rows.len(), usize::try_from(ROWS).unwrap());
+        let started = std::time::Instant::now();
+        for _ in 0..RUNS {
+            let rows: Vec<mysql_async::Row> = connection.query(sql).await.expect("timed query");
+            assert_eq!(rows.len(), usize::try_from(ROWS).unwrap());
+        }
+        eprintln!(
+            "{sql}: {:.1} ms per query",
+            started.elapsed().as_secs_f64() * 1e3 / f64::from(RUNS)
+        );
+    }
+    drop(connection);
+    pool.disconnect().await.ok();
+    let _ = shutdown_tx.send(());
+    server
+        .await
+        .expect("wire server task")
+        .expect("wire server");
+}
