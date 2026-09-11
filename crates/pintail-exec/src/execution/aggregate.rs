@@ -4637,7 +4637,7 @@ fn build_local_fused_join_groups(
                             }
                             direct_group_value(batch, row, column)?
                         } else {
-                            right_values.get(column - left_width).ok_or(
+                            build.value(*right_values, column - left_width).ok_or(
                                 ExecError::InvalidPhysicalPlan(
                                     "join aggregate column is outside the joined layout",
                                 ),

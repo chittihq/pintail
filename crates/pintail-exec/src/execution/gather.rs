@@ -41,19 +41,37 @@ pub(crate) fn gather(
     picks: &[(u32, u32)],
     data_type: DataType,
 ) -> Result<ColumnVector, ExecError> {
-    if let Some(packed) = gather_packed(sources, picks, data_type) {
+    gather_with(sources, picks.len(), |index| Some(picks[index]), data_type)
+}
+
+/// [`gather`] where a `None` pick is a NULL: the column a join pairs its
+/// unmatched rows with.
+pub(crate) fn gather_optional(
+    sources: &[&ColumnVector],
+    picks: &[Option<(u32, u32)>],
+    data_type: DataType,
+) -> Result<ColumnVector, ExecError> {
+    gather_with(sources, picks.len(), |index| picks[index], data_type)
+}
+
+fn gather_with(
+    sources: &[&ColumnVector],
+    len: usize,
+    pick: impl Fn(usize) -> Option<(u32, u32)>,
+    data_type: DataType,
+) -> Result<ColumnVector, ExecError> {
+    if let Some(packed) = gather_packed(sources, len, &pick, data_type) {
         return Ok(packed);
     }
-    let values = picks
-        .iter()
-        .map(|&(source, row)| {
-            sources[source as usize]
-                .value_owned(row as usize)
-                .ok_or(ExecError::InvalidBatch(
-                    "a picked row is outside its column",
-                ))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let values =
+        (0..len)
+            .map(|index| match pick(index) {
+                None => Ok(pintail_types::Value::Null),
+                Some((source, row)) => sources[source as usize].value_owned(row as usize).ok_or(
+                    ExecError::InvalidBatch("a picked row is outside its column"),
+                ),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
     Ok(ColumnVector::new(data_type, values)?)
 }
 
@@ -80,7 +98,8 @@ fn packing(column: &ColumnVector) -> Option<Packing> {
 
 fn gather_packed(
     sources: &[&ColumnVector],
-    picks: &[(u32, u32)],
+    len: usize,
+    pick: &impl Fn(usize) -> Option<(u32, u32)>,
     data_type: DataType,
 ) -> Option<ColumnVector> {
     let first = packing(sources.first()?)?;
@@ -98,36 +117,36 @@ fn gather_packed(
         return None;
     }
     let typed = |source: u32| sources[source as usize].typed().expect("packed column");
-    let valid = picks
-        .iter()
-        .map(|&(source, row)| typed(source).1.is_valid(row as usize))
+    // Each pick's packed column and row; `None` for a NULL pick.
+    let at = |index: usize| pick(index).map(|(source, row)| (typed(source).0, row as usize));
+    let valid = (0..len)
+        .map(|index| {
+            pick(index).is_some_and(|(source, row)| typed(source).1.is_valid(row as usize))
+        })
         .collect::<Vec<_>>();
-    let packed = match first {
+    let units = match first {
         Packing::Signed => TypedValues::Int64(
-            picks
-                .iter()
-                .map(|&(source, row)| match typed(source).0 {
-                    TypedValues::Int64(values) => values[row as usize],
+            (0..len)
+                .map(|index| match at(index) {
+                    Some((TypedValues::Int64(values), row)) => values[row],
                     _ => 0,
                 })
                 .collect(),
         ),
         Packing::Unsigned => TypedValues::UInt64(
-            picks
-                .iter()
-                .map(|&(source, row)| match typed(source).0 {
-                    TypedValues::UInt64(values) => values[row as usize],
+            (0..len)
+                .map(|index| match at(index) {
+                    Some((TypedValues::UInt64(values), row)) => values[row],
                     _ => 0,
                 })
                 .collect(),
         ),
         Packing::Decimal(scale) => TypedValues::Decimal128 {
             values: DecimalUnits::Wide(
-                picks
-                    .iter()
-                    .map(|&(source, row)| match typed(source).0 {
-                        TypedValues::Decimal128 { values, .. } => {
-                            values.get(row as usize).unwrap_or(0)
+                (0..len)
+                    .map(|index| match at(index) {
+                        Some((TypedValues::Decimal128 { values, .. }, row)) => {
+                            values.get(row).unwrap_or(0)
                         }
                         _ => 0,
                     })
@@ -137,10 +156,9 @@ fn gather_packed(
             text: LazyText::decimal(scale),
         },
         Packing::Temporal => TypedValues::Temporal {
-            units: picks
-                .iter()
-                .map(|&(source, row)| match typed(source).0 {
-                    TypedValues::Temporal { units, .. } => units[row as usize],
+            units: (0..len)
+                .map(|index| match at(index) {
+                    Some((TypedValues::Temporal { units, .. }, row)) => units[row],
                     _ => 0,
                 })
                 .collect(),
@@ -151,10 +169,11 @@ fn gather_packed(
         },
         Packing::Text => {
             let mut text = StrColumn::default();
-            for &(source, row) in picks {
-                match typed(source).0 {
-                    TypedValues::Utf8(column) => column.views()[row as usize]
-                        .with_bytes(column.heap(), |bytes| text.push(bytes)),
+            for index in 0..len {
+                match at(index) {
+                    Some((TypedValues::Utf8(column), row)) => {
+                        column.views()[row].with_bytes(column.heap(), |bytes| text.push(bytes));
+                    }
                     _ => text.push(&[]),
                 }
             }
@@ -163,7 +182,7 @@ fn gather_packed(
     };
     Some(ColumnVector::from_typed(
         data_type,
-        packed,
+        units,
         ValidityMask::from_bools(&valid),
     ))
 }
