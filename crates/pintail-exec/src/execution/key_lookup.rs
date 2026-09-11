@@ -13,6 +13,7 @@ use std::collections::{HashMap, VecDeque};
 use pintail_sql::{BinaryOp, BoundColumn, BoundExpr, BoundExprKind, BoundJoinKind, BoundOrderKey};
 use pintail_types::{DataType, Value};
 
+use super::order::{base_scan, integer_type, key_columns, names_column, ordered_by};
 use super::{
     Collation, CompiledExpr, ExecError, MemoryTracker, PhysicalPlan, PullOperator, RecordBatch,
     Scan, ScanProvider, build_operator, build_operator_inner, estimated_record_batch_bytes,
@@ -39,22 +40,6 @@ const UNKNOWN_TABLE_ROWS: u64 = 1 << 20;
 
 type Matches = HashMap<i128, Vec<Vec<Value>>>;
 
-fn integer_type(data_type: Option<DataType>) -> bool {
-    matches!(
-        data_type,
-        Some(
-            DataType::Int8
-                | DataType::Int16
-                | DataType::Int32
-                | DataType::Int64
-                | DataType::UInt8
-                | DataType::UInt16
-                | DataType::UInt32
-                | DataType::UInt64
-        )
-    )
-}
-
 fn unsigned_type(data_type: Option<DataType>) -> bool {
     matches!(
         data_type,
@@ -68,42 +53,6 @@ fn integer_key(value: &Value) -> Option<i128> {
         Value::UInt64(value) => Some(i128::from(*value)),
         _ => None,
     }
-}
-
-/// The scan under at most one filter: either way its rows arrive in the
-/// table's key order.
-fn base_scan(plan: &PhysicalPlan) -> Option<&Scan> {
-    match plan {
-        PhysicalPlan::Scan(scan) => Some(scan),
-        PhysicalPlan::Filter { input, .. } => match input.as_ref() {
-            PhysicalPlan::Scan(scan) => Some(scan),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn names_column(scan: &Scan, column: &BoundColumn, column_id: u32) -> bool {
-    column.database_id == scan.table.database_id
-        && column.table_id == scan.table.table_id
-        && column.column_id == column_id
-        && column
-            .relation_name
-            .eq_ignore_ascii_case(&scan.table.relation_name)
-}
-
-/// Whether the scan's key order is the order of `columns`: they name its
-/// leading key columns in turn, and each is an integer, whose stored order
-/// is its numeric order. Text keys are stored in byte order, which a
-/// collation need not follow.
-fn ordered_by(scan: &Scan, columns: &[&BoundColumn]) -> bool {
-    columns.len() <= scan.table.key_column_ids.len()
-        && columns
-            .iter()
-            .zip(&scan.table.key_column_ids)
-            .all(|(column, key)| {
-                names_column(scan, column, *key) && integer_type(Some(column.data_type))
-            })
 }
 
 /// Whether `key` is the scan's whole primary key, as one integer column.
@@ -136,16 +85,10 @@ fn driving_side(plan: &PhysicalPlan, keys: &[BoundOrderKey], trim: usize) -> Opt
     else {
         return None;
     };
-    if keys.is_empty() || !extra_keys.is_empty() || trim > expressions.len() {
+    if !extra_keys.is_empty() {
         return None;
     }
-    let columns = keys
-        .iter()
-        .map(|key| match &expressions.get(key.index)?.expr.kind {
-            BoundExprKind::Column(column) if key.ascending => Some(column),
-            _ => None,
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let columns = key_columns(expressions, keys, trim)?;
     [
         (true, left, left_key, right, right_key),
         (false, right, right_key, left, left_key),

@@ -7,6 +7,7 @@ mod key_lookup;
 pub(crate) mod membership;
 mod memo;
 mod morsel;
+mod order;
 mod sort;
 mod two_pass;
 mod watchdog;
@@ -567,12 +568,18 @@ impl PhysicalPlanner {
                 windows,
                 outputs,
             }),
-            LogicalPlan::Sort { input, keys, trim } => Ok(PhysicalPlan::Sort {
-                input: Box::new(Self::plan(*input, collation)?),
-                keys,
-                top_k: None,
-                trim,
-            }),
+            LogicalPlan::Sort { input, keys, trim } => {
+                // A scan already in the sort's order needs no sort.
+                match order::scan_ordered_input(Self::plan(*input, collation)?, &keys, trim) {
+                    (ordered, true) => Ok(ordered),
+                    (input, false) => Ok(PhysicalPlan::Sort {
+                        input: Box::new(input),
+                        keys,
+                        top_k: None,
+                        trim,
+                    }),
+                }
+            }
             LogicalPlan::Join {
                 left,
                 right,
@@ -714,9 +721,16 @@ fn plan_limit(
     let input = match input {
         LogicalPlan::Sort { input, keys, trim } => {
             let input = PhysicalPlanner::plan(*input, collation)?;
-            // A join that already yields the sort's order needs no sort, and
-            // the limit above it then stops both of its inputs early.
-            match key_lookup::ordered_input(input, &keys, trim) {
+            // A scan, or a join driven by one, that already yields the
+            // sort's order needs no sort, and the limit above it then stops
+            // its inputs early.
+            let (input, ordered) = order::scan_ordered_input(input, &keys, trim);
+            let (input, ordered) = if ordered {
+                (input, true)
+            } else {
+                key_lookup::ordered_input(input, &keys, trim)
+            };
+            match (input, ordered) {
                 (ordered, true) => ordered,
                 (input, false) => PhysicalPlan::Sort {
                     input: Box::new(input),
@@ -1235,6 +1249,11 @@ impl BatchStream for OneShotStream {
 pub trait ScanProvider {
     /// Opens one scan whose batches contain exactly the scan's projected
     /// columns in the requested order.
+    ///
+    /// When the scanned table declares key columns, its rows arrive in the
+    /// order of those columns: the planner leaves out a sort the scan
+    /// already satisfies. A source that cannot keep that order declares no
+    /// key columns.
     ///
     /// # Errors
     ///
