@@ -1048,6 +1048,27 @@ impl Backend {
         sql: &str,
         mode: Option<pintail_sql::ParseMode>,
     ) -> Result<QueryOutput, QueryError> {
+        self.execute_then(sql, mode, |result| result).await?
+    }
+
+    /// Runs one statement and hands its result to `finish` on the worker
+    /// thread that executed it, returning what `finish` makes of it.
+    ///
+    /// A result is turned into packets by `finish` there, not on the
+    /// connection's I/O task: encoding a large result is CPU work the size
+    /// of the result, and on the I/O task it would stall every other
+    /// connection that task serves. `Err` is a failure before the statement
+    /// reached a worker, or of the worker itself.
+    async fn execute_then<T, F>(
+        &self,
+        sql: &str,
+        mode: Option<pintail_sql::ParseMode>,
+        finish: F,
+    ) -> Result<T, QueryError>
+    where
+        T: Send + 'static,
+        F: FnOnce(Result<QueryOutput, QueryError>) -> T + Send + 'static,
+    {
         let started = std::time::Instant::now();
         let authenticated = self
             .authenticated()
@@ -1058,7 +1079,7 @@ impl Backend {
             .map_err(|error| QueryError::Internal(error.to_string()))?
             .clone();
         if let Some(output) = compatibility_query(sql, &authenticated.database_name, &session) {
-            return Ok(output);
+            return Ok(finish(Ok(output)));
         }
 
         let deadline = (session.max_execution_time_ms > 0)
@@ -1115,39 +1136,41 @@ impl Backend {
                     pintail_sql::set_session_default_collation(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     crate::trace::label_exec_counters();
-                    (result, warnings, crate::trace::take())
+                    // Division by zero is a warning only under
+                    // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
+                    // connection can change the mode while this one runs.
+                    let (group_concat, division) = warnings;
+                    let division = if sql_mode_has(&session.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO")
+                    {
+                        division
+                    } else {
+                        0
+                    };
+                    let conditions = statement_conditions(&result, group_concat, division);
+                    let rows = result.as_ref().map(|output| output.rows.len());
+                    let rows = rows.map_err(Clone::clone);
+                    (finish(result), conditions, rows, crate::trace::take())
                 })
             })
         })
         .await
         .map_err(|error| QueryError::Internal(format!("query worker failed: {error}")))?;
         cancel_on_drop.disarm();
-        if let Some(mut trace) = execution.2 {
+        let (finished, conditions, rows, trace) = execution;
+        if let Some(mut trace) = trace {
             trace.mark("returned");
             if let Ok(mut pending) = self.pending_trace.lock() {
                 *pending = Some(trace);
             }
         }
         if let Ok(mut current) = self.session.lock() {
-            // Division by zero is a warning only under ERROR_FOR_DIVISION_BY_ZERO.
-            let (group_concat, division) = execution.1;
-            let division = if sql_mode_has(&current.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO") {
-                division
-            } else {
-                0
-            };
-            (current.conditions, current.condition_count) =
-                statement_conditions(&execution.0, group_concat, division);
+            (current.conditions, current.condition_count) = conditions;
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
         // exactly the sessions worth investigating.
-        self.record_query(
-            recorded,
-            started,
-            execution.0.as_ref().map(|output| output.rows.len()),
-        );
-        execution.0
+        self.record_query(recorded, started, rows.as_ref().copied());
+        Ok(finished)
     }
 
     /// Writes the pending statement trace, once its response is encoded.
@@ -1508,14 +1531,20 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
-        let response = query_output_to_response(
-            Backend::execute(self, sql).await,
-            group_concat_max_len,
-            &charset,
-            negotiated,
-            false,
-            self.query_memory_limit,
-        );
+        let encoded_limit = self.query_memory_limit;
+        let response = self
+            .execute_then(sql, None, move |result| {
+                query_output_to_response(
+                    result,
+                    group_concat_max_len,
+                    &charset,
+                    negotiated,
+                    false,
+                    encoded_limit,
+                )
+            })
+            .await
+            .unwrap_or_else(|error| Response::Error(error_kind(&error), error.to_string()));
         self.finish_trace(sql);
         response
     }
@@ -1668,22 +1697,27 @@ impl Handler for Backend {
                 "session state is unavailable".to_owned(),
             );
         };
-        let result = self
-            .execute_mode(&query, Some(statement.parse_mode))
+        let encoded_limit = self.query_memory_limit;
+        let sql = statement.sql.clone();
+        let parse_mode = statement.parse_mode;
+        let response = self
+            .execute_then(&query, Some(parse_mode), move |result| {
+                let result = result.map(|mut output| {
+                    describe_parameters(&mut output, &statement, &values);
+                    output
+                });
+                query_output_to_response(
+                    result,
+                    group_concat_max_len,
+                    &charset,
+                    negotiated,
+                    true,
+                    encoded_limit,
+                )
+            })
             .await
-            .map(|mut output| {
-                describe_parameters(&mut output, &statement, &values);
-                output
-            });
-        let response = query_output_to_response(
-            result,
-            group_concat_max_len,
-            &charset,
-            negotiated,
-            true,
-            self.query_memory_limit,
-        );
-        self.finish_trace(&statement.sql);
+            .unwrap_or_else(|error| Response::Error(error_kind(&error), error.to_string()));
+        self.finish_trace(&sql);
         response
     }
 
