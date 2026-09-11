@@ -127,6 +127,13 @@ program and gets its own gate and live-CDC coverage.
 
 ## Progress
 
+Measured at scale 10,000 after the second slice of phase 5 (9074d2be),
+against the baseline above: the excess over MySQL fell from 73.3 s to
+30.9 s, queries at least twice MySQL's time from 1,293 to 393, timeouts
+from 62 to 29 and errors from 20 to 3, with no answer that differs where
+it agreed before. Plain projections now carry the largest share (12.4 s,
+7.0 s of it scalar expressions), then joins and subqueries under a sort.
+
 - [x] Phase 0 — per-query trace (`PINTAIL_QUERY_TRACE`) and the traced
   baseline at a2c22194 in `benchmark/corpus/results.csv`. At scale 1 the
   server-side time splits into freshness checks and short-query
