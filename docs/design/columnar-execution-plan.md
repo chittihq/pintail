@@ -160,5 +160,14 @@ program and gets its own gate and live-CDC coverage.
   an error declines the batch to row evaluation, and warnings are held as
   effects until the whole expression answers. Conditionals, text, JSON and
   `TIME` kernels remain.
-- [ ] Phase 4
-- [ ] Phase 5
+- [ ] Phase 4 — merged so far: a sort the scan's key order already
+  satisfies is left out, where the order is proven (integer key columns
+  that are never NULL, named in key order, ascending, from the scan's own
+  relation); the in-memory sort orders row references over the input's
+  own batches by packed keys and gathers each output column once, in the
+  row sort's exact order. `ORDER BY id` over 130,000 rows went from about
+  99 ms to 21 ms; a sort over a 100,000-row join result from 33 ms to 8 ms.
+- [ ] Phase 5 — merged so far: a resident hash join with no residual
+  probes a batch at a time, gathering its probe columns and copying each
+  build row once. A three-table join over 100,000 rows went from 355 ms to
+  215 ms, a left join from 203 ms to 80 ms.
