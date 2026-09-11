@@ -84,6 +84,12 @@ fn kernel(
         CompiledExpr::IsNull { expr, negated } => {
             compare::is_null_column(batch, expr, *negated, data_type, effects)
         }
+        CompiledExpr::Unary {
+            op,
+            expr: argument,
+            data_type: own,
+            ..
+        } => functions::unary_column(batch, *op, argument, *own, data_type, effects),
         CompiledExpr::Binary {
             op:
                 op @ (BinaryOp::Equal

@@ -13,7 +13,7 @@
 
 use std::cmp::Ordering;
 
-use pintail_sql::ScalarFunction;
+use pintail_sql::{ScalarFunction, UnaryOp};
 use pintail_types::{DataType, Value};
 
 use super::{Effects, Operand, operand};
@@ -23,7 +23,7 @@ use crate::collation::Collation;
 use crate::execution::gather;
 use crate::expression::{
     CompiledExpr, CompiledRegex, compare_utf8_mysql, declared_render_cap,
-    evaluate_eager_scalar_typed, mysql_decimals,
+    evaluate_eager_scalar_typed, evaluate_unary, mysql_decimals,
 };
 
 /// A scalar call's parts, as the compiled node carries them.
@@ -127,6 +127,86 @@ pub(super) fn scalar_column(
         );
     }
     ColumnVector::new(declared, values).ok()
+}
+
+/// `NOT`, unary `-` and unary `+` of an argument a batch at a time: each row
+/// through row evaluation's own operator, or, negating a packed integer or
+/// decimal, by its units.
+pub(super) fn unary_column(
+    batch: &RecordBatch,
+    op: UnaryOp,
+    argument: &CompiledExpr,
+    own: Option<DataType>,
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let declared = own?;
+    if data_type.is_some_and(|data_type| data_type != declared) {
+        return None;
+    }
+    let input = operand(batch, argument, effects)?;
+    if !input.varies() {
+        return None;
+    }
+    if op == UnaryOp::Minus
+        && let Some(negated) = negated(batch, &input, declared)
+    {
+        return Some(negated);
+    }
+    let mut values = Vec::with_capacity(batch.row_count());
+    for row in 0..batch.row_count() {
+        if !batch.selection().is_selected(row) {
+            values.push(Value::Null);
+            continue;
+        }
+        values.push(evaluate_unary(op, &value_at(&input, row)?, own).ok()?);
+    }
+    ColumnVector::new(declared, values).ok()
+}
+
+/// A packed integer or decimal negated by its units. Row evaluation
+/// negates a decimal's text, which spells a negated zero `-0`; units cannot,
+/// so a decimal holding a zero goes row by row.
+fn negated(batch: &RecordBatch, input: &Operand<'_>, declared: DataType) -> Option<ColumnVector> {
+    let Operand::Column(column) = input else {
+        return None;
+    };
+    if column.data_type() != declared || !gather::packed(column) {
+        return None;
+    }
+    let (typed, validity) = column.typed()?;
+    let typed = match typed {
+        TypedValues::Int64(values) if declared.storage_type() == DataType::Int64 => {
+            let mut negated = Vec::with_capacity(values.len());
+            for (row, value) in values.iter().enumerate() {
+                negated.push(match value.checked_neg() {
+                    Some(value) => value,
+                    None if validity.is_valid(row) && batch.selection().is_selected(row) => {
+                        return None;
+                    }
+                    None => 0,
+                });
+            }
+            TypedValues::Int64(negated)
+        }
+        TypedValues::Decimal128 { values, scale, .. } => {
+            let mut negated = Vec::with_capacity(values.len());
+            for row in 0..values.len() {
+                let value = values.get(row).unwrap_or(0);
+                if value == 0 && validity.is_valid(row) {
+                    return None;
+                }
+                negated.push(value.checked_neg()?);
+            }
+            TypedValues::Decimal128 {
+                values: DecimalUnits::Wide(negated),
+                scale: *scale,
+                text: LazyText::decimal(*scale),
+            }
+        }
+        _ => return None,
+    };
+    Some(ColumnVector::from_typed(declared, typed, validity.clone()))
 }
 
 fn packed(
@@ -861,6 +941,64 @@ mod tests {
             );
             assert!(
                 agrees_with_rows(&expression, &batch, DataType::Int64),
+                "{expression:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unary_operators_match_row_evaluation() {
+        let batch = fixture();
+        let unary = |op, argument, data_type| CompiledExpr::Unary {
+            op,
+            expr: Box::new(argument),
+            data_type: Some(data_type),
+            overflow: None,
+        };
+        let nonzero = decimal(
+            2,
+            &[
+                Some(150),
+                Some(-1),
+                None,
+                Some(7),
+                Some(-99),
+                Some(3),
+                Some(1),
+                Some(-5),
+            ],
+        );
+        let with_nonzero = batch_of(vec![nonzero]);
+        for (expression, batch, declared) in [
+            // The signed minimum sits on the unselected row.
+            (
+                unary(pintail_sql::UnaryOp::Minus, column(2), DataType::Int64),
+                &batch,
+                DataType::Int64,
+            ),
+            // A zero negates to text row evaluation spells `-0`.
+            (
+                unary(pintail_sql::UnaryOp::Minus, column(0), decimal_type(3)),
+                &batch,
+                decimal_type(3),
+            ),
+            (
+                unary(pintail_sql::UnaryOp::Minus, column(0), decimal_type(2)),
+                &with_nonzero,
+                decimal_type(2),
+            ),
+            (
+                unary(
+                    pintail_sql::UnaryOp::Not,
+                    binary(BinaryOp::Less, column(2), column(3), DataType::Boolean),
+                    DataType::Boolean,
+                ),
+                &batch,
+                DataType::Boolean,
+            ),
+        ] {
+            assert!(
+                agrees_with_rows(&expression, batch, declared),
                 "{expression:?}"
             );
         }
