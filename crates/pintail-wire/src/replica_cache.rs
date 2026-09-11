@@ -21,7 +21,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use pintail_exec::MemoryBudget;
@@ -117,6 +117,10 @@ struct Entry<R> {
     /// Bytes taken from the budget for this entry, returned on eviction.
     charged: usize,
     last_used: Instant,
+    /// When this entry stops answering even though nothing on disk moved:
+    /// a replica holding a table that would not open, which the next load
+    /// after this instant tries again.
+    retry_at: Option<Instant>,
 }
 
 /// What the cache has done since the process started.
@@ -200,8 +204,10 @@ impl<R> ReplicaCache<R> {
         let Some(entry) = entries.get_mut(key) else {
             return Lookup::Miss;
         };
-        entry.last_used = Instant::now();
-        if entry.stamp == *current {
+        let now = Instant::now();
+        entry.last_used = now;
+        let due = entry.retry_at.is_some_and(|retry_at| now >= retry_at);
+        if entry.stamp == *current && !due {
             self.hits.fetch_add(1, Ordering::Relaxed);
             return Lookup::Hit(Arc::clone(&entry.replica));
         }
@@ -216,6 +222,11 @@ impl<R> ReplicaCache<R> {
     /// evict the replica is handed back uncached and counted as refused,
     /// because caching it would mean holding memory the budget said the
     /// process does not have.
+    /// `retry_after` bounds how long the entry answers when nothing on disk
+    /// moves: a table that would not open may open on a later attempt, so
+    /// the replica holding one expires on its own and the load after that
+    /// reopens it - and it alone, since every other table's files are
+    /// unchanged.
     pub(crate) fn insert(
         &self,
         key: CacheKey,
@@ -223,6 +234,7 @@ impl<R> ReplicaCache<R> {
         replica: Arc<R>,
         resident_bytes: usize,
         tables_opened: usize,
+        retry_after: Option<Duration>,
     ) -> bool {
         self.loads.fetch_add(1, Ordering::Relaxed);
         self.tables_opened
@@ -247,13 +259,15 @@ impl<R> ReplicaCache<R> {
                 return false;
             }
         }
+        let now = Instant::now();
         entries.insert(
             key,
             Entry {
                 stamp,
                 replica,
                 charged: resident_bytes,
-                last_used: Instant::now(),
+                last_used: now,
+                retry_at: retry_after.map(|after| now + after),
             },
         );
         true
@@ -348,7 +362,7 @@ mod tests {
     #[test]
     fn an_unchanged_stamp_is_a_hit_and_a_changed_one_hands_back_the_old_replica() {
         let cache = ReplicaCache::new(4, budget(0));
-        cache.insert(key("db"), stamp("t", 1), Arc::new("v1"), 0, 1);
+        cache.insert(key("db"), stamp("t", 1), Arc::new("v1"), 0, 1, None);
         assert!(matches!(
             cache.lookup(&key("db"), &stamp("t", 1)),
             Lookup::Hit(replica) if *replica == "v1"
@@ -368,10 +382,39 @@ mod tests {
         assert_eq!((stats.hits, stats.loads, stats.tables_opened), (1, 1, 1));
     }
 
+    /// A replica holding a table that would not open answers until its
+    /// retry falls due, and is reloaded after that with nothing on disk
+    /// having moved - where it used to be dropped, reloading every table on
+    /// every query for as long as the table stayed shut.
+    #[test]
+    fn a_replica_with_a_retry_answers_until_it_falls_due() {
+        let cache = ReplicaCache::new(4, budget(0));
+        cache.insert(
+            key("db"),
+            stamp("t", 1),
+            Arc::new("shut"),
+            0,
+            1,
+            Some(Duration::from_millis(40)),
+        );
+        assert!(matches!(
+            cache.lookup(&key("db"), &stamp("t", 1)),
+            Lookup::Hit(replica) if *replica == "shut"
+        ));
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            matches!(
+                cache.lookup(&key("db"), &stamp("t", 1)),
+                Lookup::Stale(replica, _) if *replica == "shut"
+            ),
+            "past the retry the load runs again, reusing what did not move"
+        );
+    }
+
     #[test]
     fn the_same_database_in_another_data_directory_is_a_different_replica() {
         let cache = ReplicaCache::new(4, budget(0));
-        cache.insert(key("db"), stamp("t", 1), Arc::new("here"), 0, 1);
+        cache.insert(key("db"), stamp("t", 1), Arc::new("here"), 0, 1, None);
         let elsewhere = (PathBuf::from("/elsewhere"), "db".to_owned());
         assert!(matches!(
             cache.lookup(&elsewhere, &stamp("t", 1)),
@@ -382,14 +425,14 @@ mod tests {
     #[test]
     fn the_least_recently_used_database_leaves_when_the_cache_is_full() {
         let cache = ReplicaCache::new(2, budget(0));
-        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 0, 1);
-        cache.insert(key("b"), stamp("t", 1), Arc::new("b"), 0, 1);
+        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 0, 1, None);
+        cache.insert(key("b"), stamp("t", 1), Arc::new("b"), 0, 1, None);
         // Touch `a` so `b` is the oldest.
         assert!(matches!(
             cache.lookup(&key("a"), &stamp("t", 1)),
             Lookup::Hit(_)
         ));
-        cache.insert(key("c"), stamp("t", 1), Arc::new("c"), 0, 1);
+        cache.insert(key("c"), stamp("t", 1), Arc::new("c"), 0, 1, None);
         assert!(matches!(
             cache.lookup(&key("b"), &stamp("t", 1)),
             Lookup::Miss
@@ -405,10 +448,10 @@ mod tests {
     fn resident_bytes_are_charged_released_and_never_double_counted() {
         let budget = budget(1_000);
         let cache = ReplicaCache::new(4, budget);
-        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 400, 1);
+        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 400, 1, None);
         assert_eq!(budget.used(), 400);
         // A reload replaces the charge rather than adding to it.
-        cache.insert(key("a"), stamp("t", 2), Arc::new("a2"), 300, 1);
+        cache.insert(key("a"), stamp("t", 2), Arc::new("a2"), 300, 1, None);
         assert_eq!(budget.used(), 300);
         cache.invalidate(&key("a"));
         assert_eq!(budget.used(), 0);
@@ -419,17 +462,17 @@ mod tests {
     fn a_replica_the_budget_cannot_hold_evicts_others_first_then_goes_uncached() {
         let budget = budget(1_000);
         let cache = ReplicaCache::new(4, budget);
-        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 600, 1);
-        cache.insert(key("b"), stamp("t", 1), Arc::new("b"), 300, 1);
+        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 600, 1, None);
+        cache.insert(key("b"), stamp("t", 1), Arc::new("b"), 300, 1, None);
         // 500 more does not fit beside both; `a` is the oldest and leaves.
-        assert!(cache.insert(key("c"), stamp("t", 1), Arc::new("c"), 500, 1));
+        assert!(cache.insert(key("c"), stamp("t", 1), Arc::new("c"), 500, 1, None));
         assert!(matches!(
             cache.lookup(&key("a"), &stamp("t", 1)),
             Lookup::Miss
         ));
         assert_eq!(budget.used(), 800);
         // Larger than the whole budget: nothing to evict helps.
-        assert!(!cache.insert(key("d"), stamp("t", 1), Arc::new("d"), 1_500, 1));
+        assert!(!cache.insert(key("d"), stamp("t", 1), Arc::new("d"), 1_500, 1, None));
         let stats = cache.stats();
         assert_eq!(stats.refused, 1);
         assert_eq!(stats.databases, 0, "eviction ran before the refusal");
@@ -443,7 +486,7 @@ mod tests {
     #[test]
     fn a_zero_capacity_still_holds_one_database() {
         let cache = ReplicaCache::new(0, budget(0));
-        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 0, 1);
+        cache.insert(key("a"), stamp("t", 1), Arc::new("a"), 0, 1, None);
         assert!(matches!(
             cache.lookup(&key("a"), &stamp("t", 1)),
             Lookup::Hit(_)
