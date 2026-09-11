@@ -2394,8 +2394,33 @@ fn error_kind(error: &QueryError) -> ErrorKind {
     }
 }
 
+/// Whether `sql` could be a statement the compatibility layer answers: every
+/// one names a variable (`@@`), is a `SHOW`, or asks `VERSION()` or
+/// `DATABASE()`. Anything else goes straight to the engine, without the
+/// parse and the text scans the answers need.
+fn may_answer_compatibly(sql: &str) -> bool {
+    let text = sql.trim_start();
+    let starts = |form: &str| {
+        text.get(..form.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(form))
+    };
+    sql.contains("@@")
+        || starts("show ")
+        || starts("select version()")
+        || starts("select database()")
+}
+
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
-    let Some(projection) = pintail_sql::connection_projection(sql) else {
+    if !may_answer_compatibly(sql) {
+        return None;
+    }
+    // The statement is read under the session's own sql_mode, as the
+    // engine reads it.
+    let projection = pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode(&session.sql_mode),
+        || pintail_sql::connection_projection(sql),
+    );
+    let Some(projection) = projection else {
         return compatibility_single(sql, database, session);
     };
     let mut output = None;
@@ -4362,5 +4387,27 @@ mod result_ceiling_tests {
                 (ColumnType::MysqlTypeMediumBlob, 31, 255),
             ]
         );
+    }
+
+    #[test]
+    fn only_statements_the_compatibility_layer_answers_skip_the_engine_check() {
+        for answered in [
+            "SELECT @@version",
+            "select @@session.time_zone, @@sql_mode",
+            "  SHOW WARNINGS",
+            "show grants",
+            "SELECT VERSION()",
+            "select database()",
+        ] {
+            assert!(super::may_answer_compatibly(answered), "{answered}");
+        }
+        for engine in [
+            "SELECT 1",
+            "SELECT id FROM t WHERE note = 'show me'",
+            "SELECT version FROM releases",
+            "WITH v AS (SELECT 1) SELECT * FROM v",
+        ] {
+            assert!(!super::may_answer_compatibly(engine), "{engine}");
+        }
     }
 }
