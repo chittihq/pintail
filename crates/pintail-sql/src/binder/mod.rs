@@ -3891,11 +3891,25 @@ fn bind_exact_decimal_comparison(
 /// because an ON that says nothing needs a literal this rewrite would have to
 /// invent, and a join whose whole condition is a membership test carries no
 /// join key to preserve anyway.
+///
+/// A FROM item holding a RIGHT join moves nothing: [`rewrite_right_joins`]
+/// turns the joins before it into the right input of a LEFT join, so a
+/// predicate hoisted out of one of them would filter rows that join left-
+/// extended to NULL - dropping a right row that has no match at all, and
+/// dropping rather than null-extending one whose match fails the subquery.
 fn hoist_inner_join_subqueries(select: &Select) -> Option<Select> {
     let movable = |expr: &Expr| matches!(expr, Expr::Exists { .. } | Expr::InSubquery { .. });
     let mut moved: Vec<Expr> = Vec::new();
     let mut from = select.from.clone();
     for item in &mut from {
+        if item.joins.iter().any(|join| {
+            matches!(
+                join.join_operator,
+                JoinOperator::Right(_) | JoinOperator::RightOuter(_)
+            )
+        }) {
+            continue;
+        }
         for join in &mut item.joins {
             let Ok((BoundJoinKind::Inner, JoinConstraint::On(condition))) =
                 bind_join_operator(&join.join_operator)
@@ -7049,6 +7063,37 @@ mod tests {
                 .table
                 .relation_name
                 .eq_ignore_ascii_case(&joins[1].table.relation_name)
+        );
+    }
+
+    /// An INNER join's subquery moves to WHERE to reach decorrelation, but
+    /// not when a RIGHT join follows it: that join makes the inner join the
+    /// right input of a left join, and a WHERE over its null-extended rows
+    /// answers a different question.
+    #[test]
+    fn a_subquery_stays_in_an_inner_join_that_a_right_join_follows() {
+        let hoisted = bind(
+            "SELECT e.id FROM Events e \
+             JOIN users u ON u.id = e.id AND EXISTS (SELECT 1 FROM users w WHERE w.id = u.id)",
+        )
+        .expect("the subquery reaches decorrelation");
+        assert!(
+            hoisted.from[0]
+                .joins
+                .iter()
+                .any(|join| join.kind == BoundJoinKind::Semi),
+            "an inner join alone hoists its subquery"
+        );
+        let kept = bind(
+            "SELECT c.id FROM Events e \
+             JOIN users u ON u.id = e.id AND EXISTS (SELECT 1 FROM users w WHERE w.id = u.id) \
+             RIGHT JOIN Events c ON c.id = e.id",
+        )
+        .expect("the subquery stays in the ON it was written in");
+        assert!(
+            kept.filter.is_none(),
+            "nothing moved to WHERE: {:?}",
+            kept.filter
         );
     }
 

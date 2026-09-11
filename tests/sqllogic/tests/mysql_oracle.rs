@@ -40,7 +40,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1895;
+const EXPECTED_CASES: usize = 1897;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -2172,6 +2172,21 @@ fn hand_written_cases() -> Vec<OracleCase> {
             "chained right joins",
             "SELECT COUNT(*) FROM events a RIGHT JOIN users u ON u.id = a.id \
              RIGHT JOIN events c ON c.id = u.id",
+        ),
+        // A subquery in an inner join's ON, with a RIGHT join after it: the
+        // inner join becomes the right input of a left join, so the
+        // subquery has to stay in the ON it was written in.
+        unordered(
+            "chained right joins",
+            "SELECT c.id, a.id FROM events a \
+             JOIN events b ON a.id = b.id AND EXISTS (SELECT 1 FROM users u WHERE u.id = b.id) \
+             RIGHT JOIN events c ON c.id = a.id",
+        ),
+        unordered(
+            "chained right joins",
+            "SELECT c.id, b.id FROM events a \
+             JOIN events b ON a.id = b.id AND b.id IN (SELECT u.id FROM users u WHERE u.id > 2) \
+             RIGHT JOIN users c ON c.id = a.id",
         ),
         unordered("hand-written distinct", "SELECT DISTINCT note FROM events"),
         unordered(

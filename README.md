@@ -56,7 +56,7 @@ MySQL 8.4 and 8.0 servers before it merges.
 
 | Gate | What it compares | Size | Last result |
 |---|---|---:|---|
-| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,895 queries | 1,895 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
+| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,897 queries | 1,897 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
 | Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
 | Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
 | Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,014 checks per MySQL version | [0 failed](tests/e2e/results.md) |
