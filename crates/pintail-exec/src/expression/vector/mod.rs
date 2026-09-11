@@ -29,8 +29,11 @@ use super::CompiledExpr;
 use crate::batch::{ColumnVector, RecordBatch};
 
 mod compare;
+mod conditional;
+mod functions;
 mod numeric;
 mod temporal;
+mod text;
 
 /// Warnings a batch's evaluation raised, for the selected rows only.
 #[derive(Default)]
@@ -82,6 +85,12 @@ fn kernel(
         CompiledExpr::IsNull { expr, negated } => {
             compare::is_null_column(batch, expr, *negated, data_type, effects)
         }
+        CompiledExpr::Unary {
+            op,
+            expr: argument,
+            data_type: own,
+            ..
+        } => functions::unary_column(batch, *op, argument, *own, data_type, effects),
         CompiledExpr::Binary {
             op:
                 op @ (BinaryOp::Equal
@@ -113,36 +122,115 @@ fn kernel(
             data_type: Some(DataType::Int64),
             ..
         } => numeric::integer_column(batch, *op, left, right, data_type, effects),
-        CompiledExpr::Scalar { function, args, .. } => match function {
-            ScalarFunction::DatePart(part) => {
-                temporal::date_part_column(batch, args, *part, data_type, effects)
+        CompiledExpr::Scalar {
+            function:
+                function @ (ScalarFunction::If | ScalarFunction::Coalesce | ScalarFunction::NullIf),
+            args,
+            argument_types,
+            data_type: own,
+            collation,
+            ..
+        } => {
+            // The answer takes the node's own type, as row evaluation's does.
+            if data_type.is_some_and(|declared| Some(declared) != *own) {
+                return None;
             }
-            ScalarFunction::DateInterval { unit, subtract } => {
-                temporal::date_interval_column(batch, args, *unit, *subtract, data_type, effects)
+            match function {
+                ScalarFunction::If => conditional::if_column(batch, args, *own, effects),
+                ScalarFunction::Coalesce => {
+                    conditional::coalesce_column(batch, args, *own, effects)
+                }
+                _ => conditional::null_if_column(
+                    batch,
+                    args,
+                    argument_types,
+                    *own,
+                    *collation,
+                    effects,
+                ),
             }
-            ScalarFunction::Date | ScalarFunction::LastDay => {
-                temporal::date_of_column(batch, args, *function, data_type, effects)
+        }
+        CompiledExpr::Scalar {
+            function,
+            args,
+            argument_types,
+            literal_regex,
+            data_type: own,
+            collation,
+            ..
+        } => attempt(effects, |effects| {
+            specific_scalar(batch, *function, args, data_type, effects)
+        })
+        .or_else(|| {
+            // The answer takes the node's own type, as row evaluation's does.
+            if data_type.is_some_and(|declared| Some(declared) != *own) {
+                return None;
             }
-            ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. } => {
-                temporal::difference_column(batch, args, *function, data_type, effects)
-            }
-            // A written CAST with no character count casts as the binder's
-            // own casts do.
-            ScalarFunction::Cast(target @ DataType::Decimal { .. })
-            | ScalarFunction::DeclaredCast {
-                target: target @ DataType::Decimal { .. },
-                characters: None,
-            } => numeric::decimal_cast_column(batch, args, *target, data_type, effects),
-            ScalarFunction::Cast(target)
-            | ScalarFunction::DeclaredCast {
-                target,
-                characters: None,
-            } => temporal::cast_column(batch, args, *target, data_type, effects),
-            ScalarFunction::DecimalComparison { op } => {
-                numeric::decimal_comparison_column(batch, *op, args, data_type, effects)
-            }
-            _ => None,
-        },
+            let call = functions::Call {
+                function: *function,
+                args,
+                argument_types,
+                literal_regex: literal_regex.as_ref(),
+                data_type: *own,
+                collation: *collation,
+            };
+            functions::scalar_column(batch, &call, effects)
+        }),
+        _ => None,
+    }
+}
+
+/// A kernel that may decline after reading part of its expression: what
+/// the part recorded is taken back, so whatever answers instead records it
+/// once.
+fn attempt(
+    effects: &mut Effects,
+    kernel: impl FnOnce(&mut Effects) -> Option<ColumnVector>,
+) -> Option<ColumnVector> {
+    let before = effects.divisions_by_zero;
+    let column = kernel(effects);
+    if column.is_none() {
+        effects.divisions_by_zero = before;
+    }
+    column
+}
+
+/// The kernels written for one function.
+fn specific_scalar(
+    batch: &RecordBatch,
+    function: ScalarFunction,
+    args: &[CompiledExpr],
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    match function {
+        ScalarFunction::DatePart(part) => {
+            temporal::date_part_column(batch, args, part, data_type, effects)
+        }
+        ScalarFunction::DateInterval { unit, subtract } => {
+            temporal::date_interval_column(batch, args, unit, subtract, data_type, effects)
+        }
+        ScalarFunction::Date | ScalarFunction::LastDay => {
+            temporal::date_of_column(batch, args, function, data_type, effects)
+        }
+        ScalarFunction::DateDiff | ScalarFunction::TimestampDiff { .. } => {
+            temporal::difference_column(batch, args, function, data_type, effects)
+        }
+        // A written CAST with no character count casts as the binder's own
+        // casts do.
+        ScalarFunction::Cast(target @ DataType::Decimal { .. })
+        | ScalarFunction::DeclaredCast {
+            target: target @ DataType::Decimal { .. },
+            characters: None,
+        } => numeric::decimal_cast_column(batch, args, target, data_type, effects),
+        ScalarFunction::Cast(target)
+        | ScalarFunction::DeclaredCast {
+            target,
+            characters: None,
+        } => temporal::cast_column(batch, args, target, data_type, effects),
+        ScalarFunction::DecimalComparison { op } => {
+            numeric::decimal_comparison_column(batch, op, args, data_type, effects)
+        }
         _ => None,
     }
 }

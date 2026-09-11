@@ -710,13 +710,14 @@ mod tests {
                 );
             }
         }
-        // A cast that drops fraction digits rounds; row evaluation's.
+        // A cast that drops fraction digits rounds, which the packed cast
+        // leaves to the row function; the answer is row evaluation's.
         let narrow = DataType::Decimal {
             precision: 12,
             scale: 1,
         };
         let rounding = scalar(ScalarFunction::Cast(narrow), vec![column(0)], narrow);
-        assert!(rounding.evaluate_column(&batch, Some(narrow)).is_none());
+        assert!(agrees_with_rows(&rounding, &batch, narrow));
         // A cast reads a division's internal digits, not its answer's.
         let wider = DataType::Decimal {
             precision: 30,

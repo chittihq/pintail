@@ -801,6 +801,8 @@ mod tests {
         }
     }
 
+    /// Where a date kernel declines, the row function answers in its place,
+    /// so the column is row evaluation's.
     #[test]
     fn a_kernel_declines_what_it_does_not_mirror() {
         // Text kept as written: row evaluation reads the text itself.
@@ -816,10 +818,16 @@ mod tests {
             DataType::Int64,
         );
         assert!(
-            expression
-                .evaluate_column(&batch, Some(DataType::Int64))
-                .is_none()
+            super::date_part_column(
+                &batch,
+                &[CompiledExpr::Column(0)],
+                DatePart::Year,
+                Some(DataType::Int64),
+                &mut super::Effects::default(),
+            )
+            .is_none()
         );
+        assert!(agrees_with_rows(&expression, &batch, DataType::Int64));
         // A declared type that disagrees with row evaluation's answer.
         let batch = super::tests::batch(temporal(None));
         let expression = scalar(
@@ -833,10 +841,10 @@ mod tests {
             ],
             DataType::DateTime64 { fsp: 0 },
         );
-        assert!(
-            expression
-                .evaluate_column(&batch, Some(DataType::DateTime64 { fsp: 0 }))
-                .is_none()
-        );
+        assert!(agrees_with_rows(
+            &expression,
+            &batch,
+            DataType::DateTime64 { fsp: 0 }
+        ));
     }
 }

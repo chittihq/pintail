@@ -1814,6 +1814,75 @@ fn ascii_decimal(bytes: &[u8]) -> Option<u64> {
     })
 }
 
+/// An IF or CASE branch's value as the expression's answer.
+///
+/// `MySQL` renders an IF or CASE branch at its own scale where the result is
+/// a wider DECIMAL: `CASE .. THEN 0 ELSE dec(12,2) END` answers `0`, not
+/// `0.00`. The value keeps its exact units at the result scale beside that
+/// label, so keys and comparisons still meet `0.00`.
+fn if_result(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {
+    if let Some(DataType::Decimal { scale, .. }) = data_type
+        && let Some(label) = narrower_decimal_label(value, scale)
+        && let Some(units) = pintail_types::parse_decimal_rounded(&label, scale)
+    {
+        return Ok(Value::DecimalAverage(Box::new(
+            pintail_types::DecimalQuotient {
+                label,
+                units,
+                count: 1,
+                scale,
+            },
+        )));
+    }
+    cast_scalar(value, data_type)
+}
+
+/// `NULLIF(left, right)` over the two evaluated arguments.
+fn null_if(
+    left: &Value,
+    right: &Value,
+    argument_types: &[Option<DataType>],
+    data_type: Option<DataType>,
+    collation: Collation,
+) -> Result<Value, ExecError> {
+    let equal = if !matches!(left, Value::Null)
+        && !matches!(right, Value::Null)
+        && argument_types.len() == 2
+        && argument_types.iter().all(|data_type| {
+            matches!(
+                data_type,
+                Some(
+                    DataType::Int8
+                        | DataType::Int16
+                        | DataType::Int32
+                        | DataType::Int64
+                        | DataType::UInt8
+                        | DataType::UInt16
+                        | DataType::UInt32
+                        | DataType::UInt64
+                        | DataType::Year
+                        | DataType::Decimal { .. }
+                )
+            )
+        })
+        && argument_types
+            .iter()
+            .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. })))
+    {
+        compare_decimal_values(left, right)? == Ordering::Equal
+    } else {
+        matches!(
+            evaluate_comparison(BinaryOp::Equal, left, right, collation)?,
+            Value::Boolean(true)
+        )
+    };
+    if equal {
+        Ok(Value::Null)
+    } else {
+        cast_scalar(left, data_type)
+    }
+}
+
 // A scalar call carries its function, arguments and their types, any compiled
 // regex, its result type, the row it evaluates against, and how text compares.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -1835,26 +1904,7 @@ fn evaluate_scalar(
             } else {
                 &args[2]
             };
-            let value = branch.evaluate(batch, row)?;
-            // MySQL renders an IF or CASE branch at its own scale where the
-            // result is a wider DECIMAL: `CASE .. THEN 0 ELSE dec(12,2) END`
-            // answers `0`, not `0.00`. The value keeps its exact units at the
-            // result scale beside that label, so keys and comparisons still
-            // meet `0.00`.
-            if let Some(DataType::Decimal { scale, .. }) = data_type
-                && let Some(label) = narrower_decimal_label(&value, scale)
-                && let Some(units) = pintail_types::parse_decimal_rounded(&label, scale)
-            {
-                return Ok(Value::DecimalAverage(Box::new(
-                    pintail_types::DecimalQuotient {
-                        label,
-                        units,
-                        count: 1,
-                        scale,
-                    },
-                )));
-            }
-            cast_scalar(&value, data_type)
+            if_result(&branch.evaluate(batch, row)?, data_type)
         }
         ScalarFunction::Coalesce => {
             for argument in args {
@@ -1868,42 +1918,7 @@ fn evaluate_scalar(
         ScalarFunction::NullIf => {
             let left = args[0].evaluate(batch, row)?;
             let right = args[1].evaluate(batch, row)?;
-            let equal = if !matches!(left, Value::Null)
-                && !matches!(right, Value::Null)
-                && argument_types.len() == 2
-                && argument_types.iter().all(|data_type| {
-                    matches!(
-                        data_type,
-                        Some(
-                            DataType::Int8
-                                | DataType::Int16
-                                | DataType::Int32
-                                | DataType::Int64
-                                | DataType::UInt8
-                                | DataType::UInt16
-                                | DataType::UInt32
-                                | DataType::UInt64
-                                | DataType::Year
-                                | DataType::Decimal { .. }
-                        )
-                    )
-                })
-                && argument_types
-                    .iter()
-                    .any(|data_type| matches!(data_type, Some(DataType::Decimal { .. })))
-            {
-                compare_decimal_values(&left, &right)? == Ordering::Equal
-            } else {
-                matches!(
-                    evaluate_comparison(BinaryOp::Equal, &left, &right, collation)?,
-                    Value::Boolean(true)
-                )
-            };
-            if equal {
-                Ok(Value::Null)
-            } else {
-                cast_scalar(&left, data_type)
-            }
+            null_if(&left, &right, argument_types, data_type, collation)
         }
         ScalarFunction::Round { decimal: true }
         | ScalarFunction::Truncate { decimal: true }
