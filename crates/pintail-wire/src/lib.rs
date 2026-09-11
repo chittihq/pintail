@@ -6,6 +6,7 @@ mod limits;
 mod observe;
 mod presentation;
 mod replica_cache;
+mod result_rows;
 mod server;
 mod shared_query;
 mod trace;
@@ -32,6 +33,7 @@ pub use server::{
 
 pub use engine::replica_cache_stats;
 pub use replica_cache::ReplicaCacheStats;
+pub use result_rows::ResultRows;
 pub use shared_query::{SharedQueryStats, shared_query_stats};
 
 mod metadata_provider;

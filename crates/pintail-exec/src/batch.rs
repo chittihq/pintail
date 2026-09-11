@@ -560,6 +560,27 @@ fn build_typed(data_type: DataType, values: &[Value]) -> Option<(TypedValues, Va
     typed.map(|packed| (packed, ValidityMask::from_bools(&validity)))
 }
 
+/// One cell of a column as [`ColumnVector::with_cell`] hands it out.
+///
+/// Numbers and text carry exactly what the column's value would render as:
+/// a `Text` cell is the bytes of the value's text, and a `Float` the value
+/// `Value::Float64` would hold.
+#[derive(Clone, Copy, Debug)]
+pub enum Cell<'a> {
+    /// SQL NULL.
+    Null,
+    /// A signed integer.
+    Signed(i64),
+    /// An unsigned integer.
+    Unsigned(u64),
+    /// A double.
+    Float(f64),
+    /// Text: strings, ENUM and SET labels, decimals and temporals.
+    Text(&'a [u8]),
+    /// A value the column holds as a value.
+    Value(&'a Value),
+}
+
 /// One typed, nullable, columnar value vector.
 ///
 /// Exactly one of the two representations is populated at construction —
@@ -710,8 +731,11 @@ impl ColumnVector {
         self.values().get(row)
     }
 
-    /// Copies one scalar without requiring callers to borrow the full column.
-    pub(crate) fn value_owned(&self, row: usize) -> Option<Value> {
+    /// Copies one scalar without requiring callers to borrow the full column:
+    /// the value [`Self::value`] holds at `row`, without materializing every
+    /// other row's.
+    #[must_use]
+    pub fn value_owned(&self, row: usize) -> Option<Value> {
         if row >= self.len {
             return None;
         }
@@ -745,6 +769,45 @@ impl ColumnVector {
                 }
             }
         })
+    }
+
+    /// Runs `f` over one row's cell as a result encoder reads it: a packed
+    /// number or the text bytes where they lie, without materializing the
+    /// column as values. A column that already holds values hands out the
+    /// value; a decimal or temporal whose text was never built formats that
+    /// one cell.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `row` is outside the column.
+    pub fn with_cell<R>(&self, row: usize, f: impl FnOnce(Cell<'_>) -> R) -> R {
+        if let Some(values) = self.values.get() {
+            return f(Cell::Value(&values[row]));
+        }
+        let Some((typed, validity)) = self.typed() else {
+            return f(Cell::Value(&self.values()[row]));
+        };
+        if !validity.is_valid(row) {
+            return f(Cell::Null);
+        }
+        match typed {
+            TypedValues::Int64(values) => f(Cell::Signed(values[row])),
+            TypedValues::UInt64(values) => f(Cell::Unsigned(values[row])),
+            TypedValues::Float64(values) => f(Cell::Float(values[row])),
+            TypedValues::Utf8(column) => {
+                column.views()[row].with_bytes(column.heap(), |bytes| f(Cell::Text(bytes)))
+            }
+            TypedValues::Decimal128 { text, .. } | TypedValues::Temporal { text, .. } => {
+                if let Some(column) = text.built() {
+                    return column.views()[row]
+                        .with_bytes(column.heap(), |bytes| f(Cell::Text(bytes)));
+                }
+                match typed.format_unit(row) {
+                    Some(formatted) => f(Cell::Text(formatted.as_bytes())),
+                    None => f(Cell::Value(&self.values()[row])),
+                }
+            }
+        }
     }
 
     /// One row's value, when the column already holds its values.

@@ -6566,6 +6566,11 @@ fn corpus_scale_probe() {
                 }
                 rows += batch.visible_row_count();
             }
+            // PINTAIL_PROFILE: every operator's time, rows and peak
+            // reservation, as the wire engine logs them.
+            if let Some(profile) = execution.profile() {
+                eprintln!("{}", profile.render().trim_end());
+            }
             Ok(rows)
         })();
         let elapsed = started.elapsed();

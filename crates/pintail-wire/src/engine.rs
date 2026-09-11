@@ -18,6 +18,7 @@ use crate::admission::{QueryAdmission, QueryClass, shared_admission};
 use crate::replica_cache::{
     self, CacheKey, FileStamp, Lookup, ReplicaCache, ReplicaCacheStats, ReplicaStamp, TableStamp,
 };
+use crate::result_rows::ResultRows;
 use crate::shared_query::{Join, SharedQueryKey, shared_queries};
 use pintail_probe::{ProbeReport, SourceTable};
 use pintail_sql::{
@@ -105,7 +106,7 @@ pub struct QueryStats {
 #[derive(Clone, Debug, PartialEq)]
 pub struct QueryOutput {
     pub fields: Vec<QueryField>,
-    pub rows: Vec<Vec<Value>>,
+    pub rows: ResultRows,
     pub stats: QueryStats,
     pub truncated: bool,
     /// Rows a WRITE changed, when the statement changed rows instead of
@@ -892,7 +893,7 @@ impl ReplicaEngine {
         };
         Ok(QueryOutput {
             fields: Vec::new(),
-            rows: Vec::new(),
+            rows: ResultRows::default(),
             stats,
             truncated: false,
             affected: Some(affected),
@@ -1127,7 +1128,7 @@ impl ReplicaEngine {
                 timestamp: false,
                 wire_hint: None,
             }],
-            rows: vec![vec![Value::Utf8(plan)]],
+            rows: vec![vec![Value::Utf8(plan)]].into(),
             stats,
             truncated: false,
             affected: None,
@@ -1317,29 +1318,32 @@ fn is_transaction_control(statement: &Statement) -> bool {
     )
 }
 
+/// Collects the result as the batches execution produces, up to `max_rows`
+/// rows; the batch that crosses the limit keeps only the rows under it, and
+/// the result reports that it was truncated.
 fn collect_rows(
     execution: &mut Execution,
     max_rows: usize,
-) -> Result<(Vec<Vec<Value>>, usize, bool), QueryError> {
-    let mut rows = Vec::new();
+) -> Result<(ResultRows, usize, bool), QueryError> {
+    let mut rows = ResultRows::default();
     let mut batches = 0;
-    while let Some(batch) = execution.next_batch().map_err(query_execution_error)? {
+    while let Some(mut batch) = execution.next_batch().map_err(query_execution_error)? {
         batches += 1;
-        for row in batch.selection().selected_rows() {
-            if rows.len() == max_rows {
-                return Ok((rows, batches, true));
+        let room = max_rows - rows.len();
+        if batch.visible_row_count() > room {
+            let mut selection = batch.selection().clone();
+            for row in batch.selection().selected_rows().skip(room) {
+                selection
+                    .set(row, false)
+                    .map_err(|error| QueryError::Internal(error.to_string()))?;
             }
-            let values = batch
-                .columns()
-                .iter()
-                .map(|column| {
-                    column.value(row).cloned().ok_or_else(|| {
-                        QueryError::Internal("query batch has a missing value".to_owned())
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            rows.push(values);
+            batch
+                .set_selection(selection)
+                .map_err(|error| QueryError::Internal(error.to_string()))?;
+            rows.push_batch(batch);
+            return Ok((rows, batches, true));
         }
+        rows.push_batch(batch);
     }
     Ok((rows, batches, false))
 }
@@ -1442,7 +1446,7 @@ fn metadata_output(result: pintail_sql::MetadataResult, started: Instant) -> Que
             rows: result.rows.len(),
             ..QueryStats::default()
         },
-        rows: result.rows,
+        rows: result.rows.into(),
         truncated: false,
         affected: None,
     }

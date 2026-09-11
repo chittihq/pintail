@@ -32,10 +32,12 @@ use crate::limits::{
     ActiveConnection, WireLimits, record_connection_limit, record_connection_refused,
     record_prepared_refused,
 };
+use crate::result_rows::RowSource;
 use crate::{
     DEFAULT_QUERY_MEMORY_LIMIT, QueryError, QueryField, QueryOutput, QueryStats, ReplicaEngine,
     SqlRejection,
 };
+use pintail_exec::Cell;
 
 static NEXT_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -1802,32 +1804,75 @@ fn query_output_to_response(
         .collect::<Vec<_>>();
     let mut rows = EncodedRows::with_capacity(output.rows.len());
     let mut cells = Vec::new();
-    for row in &output.rows {
-        if binary {
-            cells.clear();
-            for (field, value) in output.fields.iter().zip(row) {
-                match binary_column_value(field, value) {
-                    Ok(cell) => cells.push(cell),
-                    Err(error) => {
-                        return Response::Error(ErrorKind::ErUnknownError, error.to_string());
-                    }
-                }
-            }
-            rows.push_binary_row(&cells);
-        } else {
-            let mut text = rows.text_row();
-            for value in row {
-                put_text_value(&mut text, value);
-            }
-        }
-        if encoded_limit > 0 && rows.resident_bytes() > encoded_limit {
-            return Response::Error(
+    // Every row goes through here, so the checks stay out of the cell loops.
+    let row_done = |rows: &EncodedRows| {
+        (encoded_limit > 0 && rows.resident_bytes() > encoded_limit).then(|| {
+            Response::Error(
                 ErrorKind::ErUnknownError,
                 format!(
                     "query memory limit exceeded: the encoded result set alone is over \
                      {encoded_limit} bytes; narrow the projection or add a LIMIT"
                 ),
-            );
+            )
+        })
+    };
+    for source in output.rows.sources() {
+        match source {
+            RowSource::Values(values) => {
+                for row in values {
+                    if binary {
+                        cells.clear();
+                        for (field, value) in output.fields.iter().zip(row) {
+                            match binary_column_value(field, value) {
+                                Ok(cell) => cells.push(cell),
+                                Err(error) => {
+                                    return Response::Error(
+                                        ErrorKind::ErUnknownError,
+                                        error.to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        rows.push_binary_row(&cells);
+                    } else {
+                        let mut text = rows.text_row();
+                        for value in row {
+                            put_text_value(&mut text, value);
+                        }
+                    }
+                    if let Some(refusal) = row_done(&rows) {
+                        return refusal;
+                    }
+                }
+            }
+            RowSource::Batch(batch) => {
+                for row in batch.selection().selected_rows() {
+                    if binary {
+                        cells.clear();
+                        for (field, column) in output.fields.iter().zip(batch.columns()) {
+                            let value = column.value_owned(row).unwrap_or(Value::Null);
+                            match binary_column_value(field, &value) {
+                                Ok(cell) => cells.push(cell),
+                                Err(error) => {
+                                    return Response::Error(
+                                        ErrorKind::ErUnknownError,
+                                        error.to_string(),
+                                    );
+                                }
+                            }
+                        }
+                        rows.push_binary_row(&cells);
+                    } else {
+                        let mut text = rows.text_row();
+                        for column in batch.columns() {
+                            column.with_cell(row, |cell| put_text_cell(&mut text, cell));
+                        }
+                    }
+                    if let Some(refusal) = row_done(&rows) {
+                        return refusal;
+                    }
+                }
+            }
         }
     }
     Response::Rows(Box::new(ResultSet {
@@ -1849,6 +1894,19 @@ fn put_text_value(row: &mut TextRow<'_>, value: &Value) {
         Value::Utf8(value) | Value::Enum { label: value, .. } => row.bytes(value.as_bytes()),
         Value::DecimalAverage(average) => row.bytes(average.label.as_bytes()),
         Value::Binary(value) => row.bytes(value),
+    }
+}
+
+/// Writes one batch cell as a text-protocol cell: the bytes its value would
+/// render as, read from the column without materializing it.
+fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>) {
+    match cell {
+        Cell::Null => row.null(),
+        Cell::Signed(value) => row.signed(value),
+        Cell::Unsigned(value) => row.unsigned(value),
+        Cell::Float(value) => row.bytes(pintail_types::Float64::new(value).mysql_text().as_bytes()),
+        Cell::Text(bytes) => row.bytes(bytes),
+        Cell::Value(value) => put_text_value(row, value),
     }
 }
 
@@ -2576,7 +2634,7 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             timestamp: false,
             wire_hint: None,
         }],
-        rows: vec![vec![value]],
+        rows: vec![vec![value]].into(),
         stats: QueryStats {
             rows: 1,
             ..QueryStats::default()
@@ -4376,7 +4434,7 @@ mod result_ceiling_tests {
         hex.data_type = Some(DataType::Utf8);
         let mut output = super::QueryOutput {
             fields: vec![declared("value", ColumnType::MysqlTypeNull, 63), hex],
-            rows: Vec::new(),
+            rows: crate::ResultRows::default(),
             stats: super::QueryStats::default(),
             truncated: false,
             affected: None,

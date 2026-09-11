@@ -408,7 +408,7 @@ mod tests {
     fn output(tag: i64) -> QueryOutput {
         QueryOutput {
             fields: Vec::new(),
-            rows: vec![vec![pintail_types::Value::Int64(tag)]],
+            rows: vec![vec![pintail_types::Value::Int64(tag)]].into(),
             stats: QueryStats::default(),
             truncated: false,
             affected: None,
