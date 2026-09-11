@@ -1,4 +1,5 @@
 mod temporal;
+mod vector;
 
 pub(crate) use temporal::shift_temporal_value;
 use temporal::{

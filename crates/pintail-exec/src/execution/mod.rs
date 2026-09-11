@@ -3916,6 +3916,12 @@ impl PullOperator {
                         columns.push(batch.columns()[*position].clone());
                         continue;
                     }
+                    // A whole batch at a time over packed units where the
+                    // expression has kernels; row by row where it has not.
+                    if let Some(column) = expression.evaluate_column(&batch, *data_type)? {
+                        columns.push(column);
+                        continue;
+                    }
                     let mut values = Vec::with_capacity(batch.row_count());
                     for row in 0..batch.row_count() {
                         if batch.selection().is_selected(row) {
@@ -3926,12 +3932,12 @@ impl PullOperator {
                     }
                     let data_type = data_type.unwrap_or(DataType::Utf8);
                     columns.push(ColumnVector::new(data_type, values)?);
+                    crate::counters::count(|counters| {
+                        counters.rows_projected_scalar = counters
+                            .rows_projected_scalar
+                            .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
+                    });
                 }
-                crate::counters::count(|counters| {
-                    counters.rows_projected_scalar = counters
-                        .rows_projected_scalar
-                        .saturating_add(u64::try_from(batch.row_count()).unwrap_or(u64::MAX));
-                });
                 let mut output = RecordBatch::new(batch.row_count(), columns)?;
                 output.set_selection(batch.selection().clone())?;
                 memory.ensure_transient(batch_bytes.saturating_add(output.estimated_bytes()))?;
