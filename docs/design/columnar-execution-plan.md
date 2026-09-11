@@ -165,8 +165,18 @@ it agreed before. Plain projections now carry the largest share (12.4 s,
   decimal comparison and the widening casts compared operands carry. A
   kernel's argument may be another kernel's answer. A row that would raise
   an error declines the batch to row evaluation, and warnings are held as
-  effects until the whole expression answers. Conditionals, text, JSON and
-  `TIME` kernels remain.
+  effects until the whole expression answers. The second slice adds
+  `CASE`/`IF`, `COALESCE`/`IFNULL` and `NULLIF`, each branch evaluated
+  over only the rows it answers; `GREATEST`/`LEAST`, `ABS`, `SIGN`,
+  `ROUND`/`TRUNCATE`, `CEIL`/`FLOOR` and unary minus over packed numbers;
+  `UPPER`, `LOWER`, `LENGTH`, `CHAR_LENGTH` and `LIKE` read in place, ENUM
+  and SET labels included; and a bounded adapter that evaluates any other
+  function over the selected rows of a batch, so one such call no longer
+  sends the whole expression row by row. A `CASE` projection over 130,000
+  rows went from about 60 ms to 8 ms, `GREATEST`/`LEAST` from 269 ms to
+  108 ms. JSON and `TIME` functions run through the adapter only: their
+  cost is parsing each document or time value per row, which a parsed
+  JSON form or packed `TIME` units would remove.
 - [ ] Phase 4 — merged so far: a sort the scan's key order already
   satisfies is left out, where the order is proven (integer key columns
   that are never NULL, named in key order, ascending, from the scan's own
