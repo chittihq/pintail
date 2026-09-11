@@ -14,7 +14,7 @@ use crate::batch::{ColumnVector, DecimalUnits, LazyText, TypedValues};
 
 /// Plain text: no ENUM or SET labels, which order and compare by their
 /// declarations.
-pub(super) fn plain_text(column: &ColumnVector) -> Option<(&StrColumn, &ValidityMask)> {
+pub(crate) fn plain_text(column: &ColumnVector) -> Option<(&StrColumn, &ValidityMask)> {
     if column.data_type() != DataType::Utf8 {
         return None;
     }
