@@ -134,7 +134,10 @@ program and gets its own gate and live-CDC coverage.
   whose store would not open took its whole database down; that table now
   keeps reading under the definition its rows were written with, or refuses
   only its own reads.
-- [ ] Phase 1b
+- [x] Phase 1b — a table whose writer is open in this process is proven
+  current by the generation that writer publishes after every change, so
+  a query on a replicated database touches no table file to prove its
+  replica fresh; other tables are walked as before.
 - [ ] Phase 2
 - [ ] Phase 3
 - [ ] Phase 4
