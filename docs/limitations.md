@@ -307,6 +307,11 @@ stays readable as a list of things to fix.
 
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a
   newly committed event may wait for the next cycle.
+- A negative `TIME(1)` or `TIME(2)` value below -625 hours with a nonzero
+  fraction is captured wrong through the binlog: the pinned decoder wraps the
+  fraction byte, and above -625 hours the damage is recognisable and undone,
+  but below it the wrapped value is another valid negative time. A snapshot or
+  resync copies it correctly.
 - MariaDB GTID text is captured for diagnostics, but `mysql_common` 0.37 does
   not encode MariaDB's GTID dump request, so MariaDB 11 resumes from the
   file/position captured alongside its GTID.
