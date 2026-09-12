@@ -1743,9 +1743,9 @@ static GROUPED_SEGMENT_FOLDS: std::sync::LazyLock<
 /// Segment folds kept at once.
 const GROUPED_FOLD_MAX_ENTRIES: usize = 512;
 
-/// Where the next eviction starts looking, so evictions spread over the
-/// map instead of falling on the same entry.
-static GROUPED_FOLD_ROTATION: std::sync::atomic::AtomicUsize =
+/// Advanced once per eviction, so consecutive evictions do not all land on
+/// whichever entry the map happens to iterate first.
+static GROUPED_FOLD_EVICTIONS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
 /// Makes room for one entry in a cache bounded to `max`.
@@ -1757,13 +1757,21 @@ static GROUPED_FOLD_ROTATION: std::sync::atomic::AtomicUsize =
 /// tables and query signatures sharing this map means no single table has
 /// to reach the bound alone.
 ///
-/// Evicting one entry costs at most that entry, and the rotation keeps a
-/// cyclic pattern from evicting whatever it is about to ask for next.
+/// Evicting one entry costs at most that entry, which is the whole of the
+/// improvement. The victim is an arbitrary one: `HashMap::keys` yields in
+/// an order unrelated to when entries were inserted or last read, so
+/// indexing into it cannot single out the entry a cyclic pattern is about
+/// to ask for next, and does not claim to. What the counter buys is only
+/// that a run of evictions spreads across the map rather than repeatedly
+/// taking whatever sits at the front of the iteration order. Evicting the
+/// least recently used entry would be worse than arbitrary here, because
+/// under a cycle longer than the bound that is precisely the entry needed
+/// soonest.
 fn make_room_for_one<K: Clone + Eq + std::hash::Hash, V>(cache: &mut HashMap<K, V>, max: usize) {
     if cache.len() < max {
         return;
     }
-    let position = GROUPED_FOLD_ROTATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let position = GROUPED_FOLD_EVICTIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let victim = cache
         .keys()
         .nth(position % cache.len())
