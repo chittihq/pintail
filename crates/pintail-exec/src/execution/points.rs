@@ -92,6 +92,7 @@ pub(super) fn open(
         provider: tables,
         runs,
         current: first,
+        restrictions: Vec::new(),
     })))
 }
 
@@ -100,9 +101,32 @@ struct RunStream {
     /// Runs not yet opened, in key order.
     runs: VecDeque<Scan>,
     current: Option<Box<dyn BatchStream>>,
+    /// Range restrictions taken before a run opens, replayed onto each run
+    /// as it does. A stream that has started ignores one, so a restriction
+    /// arriving mid-stream would otherwise reach only the open run.
+    restrictions: Vec<(usize, Value, Value)>,
 }
 
+/// The fold and memo inputs a run stream does not answer.
+///
+/// Each of them describes the scan its stream was opened for -
+/// `settled_identity` puts that scan's own predicates in the signature the
+/// aggregate memo keys on - and a run stream is many scans, read in
+/// sequence. Handing back the first run's would name a whole query with
+/// the identity of a fraction of it, and the memo would answer the next
+/// query from those rows, so a run stream declines all four rather than
+/// forwarding one. `key IN (...)` over a settled snapshot therefore folds
+/// no SMAs and fills no memo entry; composing the runs' identities into
+/// one that names the original scan would lift that, and is not attempted
+/// here because an identity that is merely plausible is worse than none.
 impl BatchStream for RunStream {
+    fn restrict_key_position_range(&mut self, position: usize, min: &Value, max: &Value) {
+        if let Some(stream) = &mut self.current {
+            stream.restrict_key_position_range(position, min, max);
+        }
+        self.restrictions.push((position, min.clone(), max.clone()));
+    }
+
     fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
         loop {
             if let Some(stream) = &mut self.current {
@@ -115,7 +139,11 @@ impl BatchStream for RunStream {
             let Some(run) = self.runs.pop_front() else {
                 return Ok(None);
             };
-            self.current = Some(self.provider.open_scan(&run, available_memory)?);
+            let mut stream = self.provider.open_scan(&run, available_memory)?;
+            for (position, min, max) in &self.restrictions {
+                stream.restrict_key_position_range(*position, min, max);
+            }
+            self.current = Some(stream);
         }
     }
 

@@ -642,6 +642,25 @@ impl HashJoinState {
         self.left_reserved = 0;
     }
 
+    /// Hands back everything this state still holds against the query's
+    /// ceiling.
+    ///
+    /// Every release site is on a path the probe reaches by running out of
+    /// rows, and a parent that stops early - a `LIMIT` that has its rows,
+    /// a query that failed beside this one - never takes it. What stayed
+    /// charged was charged for the rest of the query, so an operator above
+    /// saw a ceiling this join was no longer using. The state holds no
+    /// tracker of its own to do this from `Drop`, so the plan calls it on
+    /// the way down.
+    pub(super) fn release_all(&mut self, memory: &MemoryTracker) {
+        self.clear_batch(memory);
+        memory.release(self.filter_reserved);
+        self.filter_reserved = 0;
+        for (_, bytes) in self.prefetched.drain(..) {
+            memory.release(bytes);
+        }
+    }
+
     fn clear_batch(&mut self, memory: &MemoryTracker) {
         self.clear_left(memory);
         self.batch = None;
@@ -754,18 +773,22 @@ pub(super) fn build_hash_join_state(
                      build_reserved: &mut usize,
                      bytes: usize|
      -> Result<(), ExecError> {
-        if grace.is_none()
-            && !build.is_empty()
-            && matches!(
-                memory.ensure_transient(bytes),
-                Err(ExecError::MemoryLimitExceeded { .. })
-            )
-        {
-            let mut partitions = GraceJoin::create();
-            spill_resident(build, &mut partitions, memory)?;
-            memory.release(*build_reserved);
-            *build_reserved = 0;
-            *grace = Some(partitions);
+        if grace.is_none() && !build.is_empty() {
+            // Only a full budget sends the build to partitions. Anything
+            // else `ensure_transient` answers - a cancellation, a deadline
+            // - is the query ending, and is carried out rather than
+            // swallowed for the next pull to rediscover.
+            match memory.ensure_transient(bytes) {
+                Ok(()) => {}
+                Err(ExecError::MemoryLimitExceeded { .. }) => {
+                    let mut partitions = GraceJoin::create();
+                    spill_resident(build, &mut partitions, memory)?;
+                    memory.release(*build_reserved);
+                    *build_reserved = 0;
+                    *grace = Some(partitions);
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     };
@@ -937,17 +960,17 @@ pub(super) fn build_hash_join_state(
     // Under a shared budget a build that fitted can still leave no room for
     // the probe to pull its next batch; it goes to partitions now, while it
     // still can, rather than failing the probe.
-    if grace.is_none()
-        && !build.is_empty()
-        && matches!(
-            memory.ensure_transient(probe_floor),
-            Err(ExecError::MemoryLimitExceeded { .. })
-        )
-    {
-        let mut partitions = GraceJoin::create();
-        spill_resident(&mut build, &mut partitions, memory)?;
-        memory.release(build_reserved);
-        grace = Some(partitions);
+    if grace.is_none() && !build.is_empty() {
+        match memory.ensure_transient(probe_floor) {
+            Ok(()) => {}
+            Err(ExecError::MemoryLimitExceeded { .. }) => {
+                let mut partitions = GraceJoin::create();
+                spill_resident(&mut build, &mut partitions, memory)?;
+                memory.release(build_reserved);
+                grace = Some(partitions);
+            }
+            Err(error) => return Err(error),
+        }
     }
     // A build that stayed resident (no grace spill) is never mutated again:
     // every remaining reader only probes it. Dense direct-address probe
@@ -3315,6 +3338,58 @@ impl LoopKeys {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
+    use super::{HashJoinState, MemoryTracker, PartitionedBuild, RecordBatch};
+
+    /// Everything a probe holds comes back when the plan stops early.
+    ///
+    /// The release sites all sit on the path the probe reaches by running
+    /// out of rows. A `LIMIT` that has its rows stops pulling before any
+    /// of them, and what stayed charged narrowed the ceiling for every
+    /// operator above for the rest of the query.
+    #[test]
+    fn a_probe_that_is_never_drained_hands_its_reservations_back() {
+        let memory = MemoryTracker::new(usize::MAX);
+        let baseline = memory.used();
+        let mut state = HashJoinState {
+            build: PartitionedBuild::with_partitions(1),
+            grace: None,
+            key_bounds: None,
+            batch: None,
+            batch_reserved: 0,
+            row: 0,
+            match_index: 0,
+            left_values: None,
+            left_key: None,
+            left_reserved: 0,
+            prefetched: VecDeque::new(),
+            filter_reserved: 0,
+        };
+        // What a probe stopped under a LIMIT is holding: the build-side key
+        // filter, the batch it was reading, the row it had unpacked, and
+        // the batches read ahead of the build.
+        for (bytes, field) in [(4096_usize, 0_u8), (2048, 1), (1024, 2)] {
+            memory.reserve(bytes).expect("reserve");
+            match field {
+                0 => state.filter_reserved = bytes,
+                1 => state.batch_reserved = bytes,
+                _ => state.left_reserved = bytes,
+            }
+        }
+        memory.reserve(512).expect("reserve");
+        state
+            .prefetched
+            .push_back((RecordBatch::new(0, Vec::new()).expect("batch"), 512));
+        assert!(memory.used() > baseline, "the state is holding something");
+        state.release_all(&memory);
+        assert_eq!(
+            memory.used(),
+            baseline,
+            "a probe that is never drained still squares its account"
+        );
+    }
+
     use crate::collation::Collation;
 
     #[test]

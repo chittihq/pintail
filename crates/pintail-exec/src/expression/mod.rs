@@ -273,6 +273,37 @@ fn typed_comparison_mask(
 
 /// `column IN (text literals)` over a text column, answered per distinct
 /// value; `None` for any other shape.
+/// `column BETWEEN lower AND upper` as a mask: the two packed comparisons
+/// intersected. `None` where either declines.
+fn between_mask(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    collation: Collation,
+) -> Result<Option<SelectionMask>, ExecError> {
+    let (CompiledExpr::Column(column), CompiledExpr::Literal(lower), CompiledExpr::Literal(upper)) =
+        (&args[0], &args[1], &args[2])
+    else {
+        return Ok(None);
+    };
+    let Some(vector) = batch.column(*column) else {
+        return Ok(None);
+    };
+    let Some((typed, validity)) = vector.typed() else {
+        return Ok(None);
+    };
+    let bound = |op, literal| {
+        typed_comparison_mask(typed, validity, vector.data_type(), op, literal, collation)
+    };
+    let (Some(mut mask), Some(other)) = (
+        bound(BinaryOp::GreaterOrEqual, lower),
+        bound(BinaryOp::LessOrEqual, upper),
+    ) else {
+        return Ok(None);
+    };
+    mask.intersect(&other)?;
+    Ok(Some(mask))
+}
+
 fn literal_list_mask(
     batch: &RecordBatch,
     args: &[CompiledExpr],
@@ -282,21 +313,57 @@ fn literal_list_mask(
     let CompiledExpr::Column(column) = &args[0] else {
         return None;
     };
-    let needles = args[1..]
+    let vector = batch.column(*column)?;
+    if vector.data_type() == DataType::Utf8 {
+        let needles = args[1..]
+            .iter()
+            .map(|argument| match argument {
+                CompiledExpr::Literal(Value::Utf8(needle)) => Some(needle.as_str()),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        let (TypedValues::Utf8(text), validity) = vector.typed()? else {
+            return None;
+        };
+        return text_membership_mask(text, validity, &needles, negated, collation);
+    }
+    integer_membership_mask(vector, &args[1..], negated)
+}
+
+/// `column IN (1, 2, 3)` over a packed integer column, compared as `i128`
+/// so a signed column and an unsigned literal meet without either
+/// wrapping. `None` for any other column or a list holding anything but
+/// integer literals - a NULL among them included, which would make the
+/// answer NULL for rows the list does not hold.
+fn integer_membership_mask(
+    vector: &crate::ColumnVector,
+    list: &[CompiledExpr],
+    negated: bool,
+) -> Option<SelectionMask> {
+    let needles = list
         .iter()
         .map(|argument| match argument {
-            CompiledExpr::Literal(Value::Utf8(needle)) => Some(needle.as_str()),
+            CompiledExpr::Literal(Value::Int64(value)) => Some(i128::from(*value)),
+            CompiledExpr::Literal(Value::UInt64(value)) => Some(i128::from(*value)),
             _ => None,
         })
         .collect::<Option<Vec<_>>>()?;
-    let vector = batch.column(*column)?;
-    if vector.data_type() != DataType::Utf8 {
-        return None;
-    }
-    let (TypedValues::Utf8(text), validity) = vector.typed()? else {
-        return None;
+    let (typed, validity) = vector.typed()?;
+    let held: Box<dyn Fn(usize) -> i128> = match typed {
+        TypedValues::Int64(values) => Box::new(|row| i128::from(values[row])),
+        TypedValues::UInt64(values) => Box::new(|row| i128::from(values[row])),
+        _ => return None,
     };
-    text_membership_mask(text, validity, &needles, negated, collation)
+    let rows = vector.len();
+    let mut mask = SelectionMask::none(rows);
+    for row in 0..rows {
+        // A NULL row answers NULL to `IN` and to `NOT IN` alike, and a
+        // NULL answer drops the row either way.
+        if validity.is_valid(row) && needles.contains(&held(row)) != negated {
+            mask.set(row, true).ok()?;
+        }
+    }
+    Some(mask)
 }
 
 /// `IN` over a dictionary-encoded text column: each distinct value is
@@ -761,6 +828,29 @@ impl CompiledExpr {
                 mask.intersect(&other)?;
                 Ok(Some(mask))
             }
+            // A union matches three-valued `WHERE` semantics exactly: a row
+            // survives where either side is TRUE, and NULL beside FALSE or
+            // NULL drops, which is what the row path decides. `NOT` and a
+            // negated `BETWEEN` are not maskable the same way - the
+            // complement of a mask keeps the rows whose answer was NULL,
+            // and `WHERE NOT NULL` drops them - so they stay absent, and
+            // the rewrite folds a negated `BETWEEN` into a disjunction this
+            // arm then covers.
+            Self::Binary {
+                op: BinaryOp::Or,
+                left,
+                right,
+                ..
+            } => {
+                let (Some(mut mask), Some(other)) = (
+                    left.evaluate_filter_mask(batch)?,
+                    right.evaluate_filter_mask(batch)?,
+                ) else {
+                    return Ok(None);
+                };
+                mask.union(&other)?;
+                Ok(Some(mask))
+            }
             Self::Binary {
                 op:
                     op @ (BinaryOp::Equal
@@ -801,41 +891,7 @@ impl CompiledExpr {
                 args,
                 collation,
                 ..
-            } if args.len() == 3 => {
-                let (Self::Column(column), Self::Literal(lower), Self::Literal(upper)) =
-                    (&args[0], &args[1], &args[2])
-                else {
-                    return Ok(None);
-                };
-                let Some(vector) = batch.column(*column) else {
-                    return Ok(None);
-                };
-                let Some((typed, validity)) = vector.typed() else {
-                    return Ok(None);
-                };
-                let (Some(mut mask), Some(other)) = (
-                    typed_comparison_mask(
-                        typed,
-                        validity,
-                        vector.data_type(),
-                        BinaryOp::GreaterOrEqual,
-                        lower,
-                        *collation,
-                    ),
-                    typed_comparison_mask(
-                        typed,
-                        validity,
-                        vector.data_type(),
-                        BinaryOp::LessOrEqual,
-                        upper,
-                        *collation,
-                    ),
-                ) else {
-                    return Ok(None);
-                };
-                mask.intersect(&other)?;
-                Ok(Some(mask))
-            }
+            } if args.len() == 3 => between_mask(batch, args, *collation),
             Self::Scalar {
                 function: ScalarFunction::InList { negated },
                 args,
@@ -6602,6 +6658,71 @@ fn divided_by_zero() -> Value {
 
 #[cfg(test)]
 mod tests {
+    /// A disjunction and an integer `IN` list answer as packed masks.
+    ///
+    /// Both used to decline, and a filter mask that declines costs more
+    /// than the row path it falls back to: the scan's block skipping
+    /// counts the round as unproductive, and one fully unproductive
+    /// prefetch turns skipping off for the rest of the scan. Every
+    /// disjunction the temporal rewrite emits - `<>`, `NOT IN`, `NOT
+    /// BETWEEN`, and `IN`, which becomes an OR of day ranges - landed
+    /// there.
+    #[test]
+    fn a_disjunction_and_an_integer_list_answer_as_masks() {
+        use crate::array::ValidityMask;
+        use crate::batch::{RecordBatch, TypedValues};
+        use pintail_sql::{BinaryOp, ScalarFunction};
+        use pintail_types::{DataType, Value};
+
+        let column = crate::ColumnVector::from_typed(
+            DataType::Int64,
+            TypedValues::Int64(vec![1, 2, 3, 4, 5, 0]),
+            ValidityMask::from_bools(&[true, true, true, true, true, false]),
+        );
+        let batch = RecordBatch::new(6, vec![column]).expect("batch");
+        let literal = |value: i64| super::CompiledExpr::Literal(Value::Int64(value));
+        let compare = |op, value: i64| super::CompiledExpr::Binary {
+            op,
+            left: Box::new(super::CompiledExpr::Column(0)),
+            right: Box::new(literal(value)),
+            data_type: Some(DataType::Boolean),
+            collation: Collation::default(),
+            overflow: None,
+        };
+        let selected = |expression: &super::CompiledExpr| -> Vec<usize> {
+            expression
+                .evaluate_filter_mask(&batch)
+                .expect("no error")
+                .expect("the packed mask must answer")
+                .selected_rows()
+                .collect()
+        };
+        // `x < 2 OR x > 4`: the union of the two, and the NULL row drops
+        // from both, as `WHERE` drops a NULL answer.
+        let disjunction = super::CompiledExpr::Binary {
+            op: BinaryOp::Or,
+            left: Box::new(compare(BinaryOp::Less, 2)),
+            right: Box::new(compare(BinaryOp::Greater, 4)),
+            data_type: Some(DataType::Boolean),
+            collation: Collation::default(),
+            overflow: None,
+        };
+        assert_eq!(selected(&disjunction), [0, 4]);
+        let list = |negated| super::CompiledExpr::Scalar {
+            function: ScalarFunction::InList { negated },
+            argument_types: vec![None; 3],
+            args: vec![super::CompiledExpr::Column(0), literal(2), literal(5)],
+            literal_regex: None,
+            data_type: Some(DataType::Boolean),
+            collation: Collation::default(),
+            overflow: None,
+        };
+        assert_eq!(selected(&list(false)), [1, 4]);
+        // NOT IN keeps the rest, and still drops the NULL row: `NULL NOT
+        // IN (2, 5)` is NULL, not TRUE.
+        assert_eq!(selected(&list(true)), [0, 2, 3]);
+    }
+
     #[test]
     #[allow(clippy::too_many_lines)]
     fn packed_comparisons_cross_the_sign_boundary_without_leaving_the_kernel() {
