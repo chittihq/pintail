@@ -188,9 +188,9 @@ struct Declaration {
 /// to one family; everything else is a conversion.
 ///
 /// `DATETIME` and `TIMESTAMP` are deliberately separate despite mapping to the
-/// same Pintail type: the source stores a `TIMESTAMP` as an epoch instant, so
-/// the conversion zeroes every value outside the epoch window and shifts the
-/// rest by the session's time zone.
+/// same Pintail type: the source stores a `TIMESTAMP` as an epoch instant, and
+/// the conversion was measured to zero every value outside that window -
+/// `1960-01-01` and `2099-01-01` both became the zero date.
 #[derive(Eq, PartialEq)]
 enum Family {
     SignedInteger,
