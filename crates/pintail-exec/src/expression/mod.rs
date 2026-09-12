@@ -327,7 +327,55 @@ fn literal_list_mask(
         };
         return text_membership_mask(text, validity, &needles, negated, collation);
     }
+    if let Some(mask) = temporal_membership_mask(vector, &args[1..], negated) {
+        return Some(mask);
+    }
     integer_membership_mask(vector, &args[1..], negated)
+}
+
+/// `column IN ('2024-01-15 10:00:00', ...)` over a packed temporal column.
+///
+/// The binder already rewrites every member into the column type's
+/// canonical spelling, the same step a binary comparison gets, so the units
+/// a member parses to are the instant it names. A member no strict parse
+/// accepts, or one whose text is not the column's canonical width, declines
+/// the batch - exactly the rule the single comparison uses.
+fn temporal_membership_mask(
+    vector: &crate::ColumnVector,
+    list: &[CompiledExpr],
+    negated: bool,
+) -> Option<SelectionMask> {
+    let logical = vector.data_type();
+    let (TypedValues::Temporal { units, .. }, validity) = vector.typed()? else {
+        return None;
+    };
+    let needles = list
+        .iter()
+        .map(|argument| {
+            let CompiledExpr::Literal(Value::Utf8(text)) = argument else {
+                return None;
+            };
+            match logical {
+                DataType::Date32 => crate::batch::parse_date_days(text),
+                DataType::DateTime64 { fsp } => {
+                    let expected = if fsp == 0 { 19 } else { 20 + usize::from(fsp) };
+                    (text.len() == expected)
+                        .then(|| crate::batch::parse_datetime_micros(text))
+                        .flatten()
+                }
+                _ => None,
+            }
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let mut mask = SelectionMask::none(units.len());
+    for (row, unit) in units.iter().enumerate() {
+        // A NULL row answers NULL to `IN` and to `NOT IN` alike, and a NULL
+        // answer drops the row either way.
+        if validity.is_valid(row) && needles.contains(unit) != negated {
+            mask.set(row, true).ok()?;
+        }
+    }
+    Some(mask)
 }
 
 /// `column IN (1, 2, 3)` over a packed integer column, compared as `i128`
@@ -6731,6 +6779,79 @@ mod tests {
         // NOT IN keeps the rest, and still drops the NULL row: `NULL NOT
         // IN (2, 5)` is NULL, not TRUE.
         assert_eq!(selected(&list(true)), [0, 2, 3]);
+    }
+
+    /// A temporal `IN` list answers as a mask.
+    ///
+    /// The binder rewrites each member into the column's canonical
+    /// spelling before this sees it, so a member parses to the instant it
+    /// names. A member that is not canonical for the column, or a NULL in
+    /// the list, declines to the row path rather than guessing.
+    #[test]
+    fn a_temporal_list_answers_as_a_mask() {
+        use crate::array::ValidityMask;
+        use crate::batch::{RecordBatch, TypedValues};
+        use pintail_sql::ScalarFunction;
+        use pintail_types::{DataType, Value};
+
+        let day = |text: &str| crate::batch::parse_datetime_micros(text).expect("datetime");
+        let units = vec![
+            day("2024-01-15 10:00:00"),
+            day("2025-01-01 00:00:00"),
+            day("2024-06-30 00:00:00"),
+            0,
+        ];
+        let column = crate::ColumnVector::from_typed(
+            DataType::DateTime64 { fsp: 0 },
+            TypedValues::Temporal {
+                units,
+                text: crate::batch::LazyText::datetime(0),
+            },
+            ValidityMask::from_bools(&[true, true, true, false]),
+        );
+        let batch = RecordBatch::new(4, vec![column]).expect("batch");
+        let member = |text: &str| super::CompiledExpr::Literal(Value::Utf8(text.to_owned()));
+        let list = |negated, members: Vec<super::CompiledExpr>| {
+            let mut args = vec![super::CompiledExpr::Column(0)];
+            args.extend(members);
+            super::CompiledExpr::Scalar {
+                function: ScalarFunction::InList { negated },
+                argument_types: vec![None; args.len()],
+                args,
+                literal_regex: None,
+                data_type: Some(DataType::Boolean),
+                collation: Collation::default(),
+                overflow: None,
+            }
+        };
+        let selected = |expression: &super::CompiledExpr| -> Vec<usize> {
+            expression
+                .evaluate_filter_mask(&batch)
+                .expect("no error")
+                .expect("the mask must answer")
+                .selected_rows()
+                .collect()
+        };
+        let members = vec![member("2024-01-15 10:00:00"), member("2025-01-01 00:00:00")];
+        assert_eq!(selected(&list(false, members.clone())), [0, 1]);
+        // NOT IN keeps the rest and still drops the NULL row: `NULL NOT IN
+        // (...)` is NULL, not TRUE.
+        assert_eq!(selected(&list(true, members)), [2]);
+        // A spelling that is not the column's canonical width declines, as
+        // the single comparison does.
+        assert!(
+            list(false, vec![member("2025-01-01")])
+                .evaluate_filter_mask(&batch)
+                .expect("no error")
+                .is_none()
+        );
+        // A NULL member declines too.
+        assert!(
+            list(false, vec![super::CompiledExpr::Literal(Value::Null)])
+                .evaluate_filter_mask(&batch)
+                .expect("no error")
+                .is_none()
+        );
     }
 
     #[test]
