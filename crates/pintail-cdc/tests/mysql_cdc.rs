@@ -823,6 +823,113 @@ async fn cdc_cascade_negative_control_and_scheduled_repair() {
     pool.disconnect().await.expect("disconnect cascade pool");
 }
 
+/// A table that exists only between two catch-up cycles - created and
+/// dropped, or created and renamed - is gone from the source by the time its
+/// CREATE is replayed. Neither may stop the stream, and a table renamed into
+/// the schema from an untracked name must still be mirrored.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn transient_tables_between_cycles_do_not_stop_the_stream() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE anchor (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO anchor VALUES (1,'before');",
+        )
+        .expect("transient source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("transient DSN"));
+    let report = probe(&pool, "app").await.expect("probe transient source");
+    let workspace = tempfile::tempdir().expect("transient workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("transient metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register transient source");
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                workspace.path().join(&source.name),
+                source.table_schema().expect("transient table schema"),
+                StoreOptions::default(),
+            )
+            .expect("transient table store");
+            SnapshotTarget::new(source.clone(), store).expect("transient snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("transient initial snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("transient CDC target")
+        })
+        .collect();
+
+    mysql
+        .query_batch(
+            "CREATE TABLE scratch (id BIGINT UNSIGNED PRIMARY KEY);\
+             INSERT INTO scratch VALUES (1);\
+             DROP TABLE scratch;\
+             CREATE TABLE staged (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO staged VALUES (1,'staged');\
+             RENAME TABLE staged TO swapped;\
+             INSERT INTO swapped VALUES (2,'swapped');\
+             INSERT INTO anchor VALUES (2,'after');",
+        )
+        .expect("transient DDL");
+    let targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        cdc_target(&targets, "anchor")
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        targets
+            .iter()
+            .all(|target| target.source().name != "scratch")
+    );
+    let swapped = cdc_target(&targets, "swapped")
+        .store()
+        .snapshot()
+        .scan()
+        .unwrap()
+        .iter()
+        .map(|row| row.values().to_vec())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        swapped,
+        [
+            vec![Value::UInt64(1), Value::Utf8("staged".to_owned())],
+            vec![Value::UInt64(2), Value::Utf8("swapped".to_owned())],
+        ]
+    );
+    pool.disconnect().await.expect("disconnect transient pool");
+}
+
 async fn ddl_catch_up(
     pool: &Pool,
     metadata_path: &Path,

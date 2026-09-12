@@ -12,7 +12,7 @@ pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
 mod gtid;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, hash_map::DefaultHasher},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque, hash_map::DefaultHasher},
     fs::File,
     hash::{Hash as _, Hasher as _},
     io::{Seek as _, Write as _},
@@ -1096,7 +1096,11 @@ async fn apply_ddl_actions(
     actions: Vec<DdlAction>,
 ) -> Result<(), CdcError> {
     let refreshed = probe_source(pool, &report.database).await?;
-    for action in actions {
+    // A queue rather than a plain loop: renaming an untracked table into the
+    // schema is handled as the creation of its new name, which runs after the
+    // rename in the same statement's order.
+    let mut queue = VecDeque::from(actions);
+    while let Some(action) = queue.pop_front() {
         match action {
             DdlAction::Alter {
                 table,
@@ -1176,6 +1180,10 @@ async fn apply_ddl_actions(
                 kind: AlterKind::RenameTable { new_name },
             } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    // The old name was never mirrored - typically a table
+                    // created and filled under a staging name and swapped in
+                    // - so the new name is a table this schema has not seen.
+                    queue.push_front(DdlAction::Create { table: new_name });
                     continue;
                 };
                 if target_indexes.contains_key(&new_name.to_ascii_lowercase()) {
@@ -1468,10 +1476,16 @@ async fn apply_ddl_actions(
                 {
                     continue;
                 }
+                // The probe reads the source as it is now, not as it was at
+                // this event. A table created and then dropped or renamed
+                // before this cycle replayed its CREATE is absent, and there
+                // is nothing to mirror under this name: its row events are
+                // for an untracked table, and a later rename reaches this arm
+                // again under the name that does exist. Failing here instead
+                // left the checkpoint before the CREATE, so every cycle
+                // replayed it and failed the same way.
                 let Some(source) = find_source_table(&refreshed, &table).cloned() else {
-                    return Err(CdcError::Ddl(format!(
-                        "created table {table} was absent from the refreshed source probe"
-                    )));
+                    continue;
                 };
                 let root = options
                     .new_table_root
