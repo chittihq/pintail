@@ -177,6 +177,39 @@ const fn integer_digits(precision: u8, scale: u8) -> u8 {
     precision.saturating_sub(scale)
 }
 
+/// A TIME column as `[-]HHMMSS[.ffffff]` units at `scale`, with its
+/// validity. `None` when any row's text is not a TIME the strict parser
+/// accepts, which is row evaluation's to answer.
+fn time_numbers(
+    column: &ColumnVector,
+    scale: u8,
+) -> Option<(Vec<i128>, crate::array::ValidityMask)> {
+    let (TypedValues::Utf8(text), validity) = column.typed()? else {
+        return None;
+    };
+    // The number is built at microsecond scale and rounded down to the
+    // target's, half away from zero, which is what a cast to a narrower
+    // decimal does: `99:59:59.999999` at scale zero is 995960, not 995959.
+    let step = 10_i128.checked_pow(u32::from(6_u8.checked_sub(scale)?))?;
+    let mut units = Vec::with_capacity(text.len());
+    for row in 0..text.len() {
+        if !validity.is_valid(row) {
+            units.push(0);
+            continue;
+        }
+        let micros = text.views()[row].with_bytes(text.heap(), |bytes| {
+            pintail_types::parse_time_micros(std::str::from_utf8(bytes).ok()?)
+        })?;
+        let magnitude = i128::from(micros.unsigned_abs());
+        let seconds = magnitude / 1_000_000;
+        let hhmmss = seconds / 3_600 * 10_000 + seconds / 60 % 60 * 100 + seconds % 60;
+        let full = hhmmss.checked_mul(1_000_000)? + magnitude % 1_000_000;
+        let number = full.checked_add(step / 2)? / step;
+        units.push(if micros < 0 { -number } else { number });
+    }
+    Some((units, validity.clone()))
+}
+
 /// `CAST(x AS DECIMAL(p, s))` of a decimal or integer that the target holds
 /// exactly: at least as many fraction digits, room for every integer
 /// digit. Comparisons bind both sides as such casts to one type. A cast
@@ -216,6 +249,25 @@ pub(super) fn decimal_cast_column(
             || integer_digits(from_precision, from_scale) > integer_digits(precision, scale))
     {
         return None;
+    }
+    // A TIME compares as the number `[-]HHMMSS[.ffffff]`, which is what the
+    // binder casts both sides of a TIME comparison to. The column carries
+    // text, so the row path parses it, builds the number and boxes a value
+    // per row, three times over for a BETWEEN; this parses once into a
+    // packed decimal and hands the comparison above it packed units.
+    if let Operand::Column(column) = &input
+        && let DataType::Time64 { .. } = column.data_type()
+        && let Some(units) = time_numbers(column, scale)
+    {
+        return Some(ColumnVector::from_typed(
+            target,
+            TypedValues::Decimal128 {
+                values: DecimalUnits::Wide(units.0),
+                scale,
+                text: LazyText::decimal(scale),
+            },
+            units.1,
+        ));
     }
     let input = scaled(&input)?;
     let limit = 10_i128.checked_pow(u32::from(precision))?;
@@ -604,6 +656,57 @@ mod tests {
     use crate::array::ValidityMask;
     use crate::batch::{ColumnVector, DecimalUnits, LazyText, RecordBatch, TypedValues};
     use crate::expression::CompiledExpr;
+
+    /// A TIME cast to its number answers what row evaluation answers.
+    ///
+    /// This is the cast every TIME comparison binds to, so the boundary
+    /// values are the ones that matter: the ends of the range, both signs
+    /// of zero-adjacent, and the three-digit hours where text order stops
+    /// agreeing with time order.
+    #[test]
+    fn time_numbers_match_row_evaluation() {
+        let clocks = [
+            Some("-838:59:59.000000"),
+            Some("-100:00:00.000001"),
+            Some("-00:00:00.000001"),
+            Some("00:00:00.000000"),
+            Some("00:00:00.000001"),
+            Some("99:59:59.999999"),
+            Some("100:00:00.000000"),
+            Some("838:59:59.000000"),
+            None,
+        ];
+        for fsp in [0_u8, 3, 6] {
+            let column = ColumnVector::new(
+                DataType::Time64 { fsp: 6 },
+                clocks
+                    .iter()
+                    .map(|clock| clock.map_or(Value::Null, |text| Value::Utf8(text.to_owned())))
+                    .collect(),
+            )
+            .expect("time column");
+            let batch = batch_of(vec![column]);
+            let target = DataType::Decimal {
+                precision: 7 + fsp,
+                scale: fsp,
+            };
+            // The cast has to carry the argument's declared type, or row
+            // evaluation reads the text as a plain string and overflows.
+            let expression = CompiledExpr::Scalar {
+                function: ScalarFunction::Cast(target),
+                argument_types: vec![Some(DataType::Time64 { fsp: 6 })],
+                args: vec![CompiledExpr::Column(0)],
+                literal_regex: None,
+                data_type: Some(target),
+                collation: crate::collation::Collation::default(),
+                overflow: None,
+            };
+            assert!(
+                agrees_with_rows(&expression, &batch, target),
+                "a TIME cast at scale {fsp} has a kernel and agrees"
+            );
+        }
+    }
 
     fn decimal(precision: u8, scale: u8, units: &[Option<i64>]) -> ColumnVector {
         ColumnVector::from_typed(
