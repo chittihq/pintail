@@ -154,6 +154,10 @@ the binary before this change and the binary after it:
 | Before | 107 | 36 |
 | After | 143 | 0 |
 
+Three families were added afterwards, when `VARCHAR` becoming `CHAR` turned
+out to rewrite rows the width never moved across; the gate now runs 158
+checks, all passing.
+
 The thirty-six were twelve families failing all three questions — the
 untouched rows were stale, the table did not match the source, and a restart
 did not heal it because the stale values were on disk:

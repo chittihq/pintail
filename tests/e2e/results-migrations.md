@@ -1,8 +1,8 @@
 # Pintail schema-migration differential gate
 
-Measured 2026-09-12T14:45:41.202Z against `mysql:8.4`.
+Measured 2026-09-12T18:35:35.707Z against `mysql:8.4`.
 
-**143 passed, 0 failed.**
+**158 passed, 0 failed.**
 
 | Family | Check | Status | Detail |
 |---|---|---|---|
@@ -13,6 +13,9 @@ Measured 2026-09-12T14:45:41.202Z against `mysql:8.4`.
 | decimal digits grow | mirrors the source before the migration | PASS |  |
 | decimal becomes double | mirrors the source before the migration | PASS |  |
 | varchar capacity shrinks | mirrors the source before the migration | PASS |  |
+| varchar becomes fixed-width char | mirrors the source before the migration | PASS |  |
+| varbinary becomes fixed-width binary | mirrors the source before the migration | PASS |  |
+| char becomes varchar | mirrors the source before the migration | PASS |  |
 | varchar becomes longtext | mirrors the source before the migration | PASS |  |
 | text family shrinks | mirrors the source before the migration | PASS |  |
 | varchar becomes int | mirrors the source before the migration | PASS |  |
@@ -40,6 +43,9 @@ Measured 2026-09-12T14:45:41.202Z against `mysql:8.4`.
 | decimal digits grow | the source left the row it already held alone | PASS |  |
 | decimal becomes double | the source rewrote the row it already held | PASS |  |
 | varchar capacity shrinks | the source rewrote the row it already held | PASS |  |
+| varchar becomes fixed-width char | the source rewrote the row it already held | PASS |  |
+| varbinary becomes fixed-width binary | the source rewrote the row it already held | PASS |  |
+| char becomes varchar | the source left the row it already held alone | PASS |  |
 | varchar becomes longtext | the source left the row it already held alone | PASS |  |
 | text family shrinks | the source rewrote the row it already held | PASS |  |
 | varchar becomes int | the source rewrote the row it already held | PASS |  |
@@ -76,6 +82,12 @@ Measured 2026-09-12T14:45:41.202Z against `mysql:8.4`.
 | decimal becomes double | rows the migration never wrote to are not stale | PASS |  |
 | varchar capacity shrinks | the whole table matches the source after the migration | PASS |  |
 | varchar capacity shrinks | rows the migration never wrote to are not stale | PASS |  |
+| varchar becomes fixed-width char | the whole table matches the source after the migration | PASS |  |
+| varchar becomes fixed-width char | rows the migration never wrote to are not stale | PASS |  |
+| varbinary becomes fixed-width binary | the whole table matches the source after the migration | PASS |  |
+| varbinary becomes fixed-width binary | rows the migration never wrote to are not stale | PASS |  |
+| char becomes varchar | the whole table matches the source after the migration | PASS |  |
+| char becomes varchar | rows the migration never wrote to are not stale | PASS |  |
 | varchar becomes longtext | the whole table matches the source after the migration | PASS |  |
 | varchar becomes longtext | rows the migration never wrote to are not stale | PASS |  |
 | text family shrinks | the whole table matches the source after the migration | PASS |  |
@@ -127,6 +139,9 @@ Measured 2026-09-12T14:45:41.202Z against `mysql:8.4`.
 | decimal digits grow | the table still matches the source after a restart | PASS |  |
 | decimal becomes double | the table still matches the source after a restart | PASS |  |
 | varchar capacity shrinks | the table still matches the source after a restart | PASS |  |
+| varchar becomes fixed-width char | the table still matches the source after a restart | PASS |  |
+| varbinary becomes fixed-width binary | the table still matches the source after a restart | PASS |  |
+| char becomes varchar | the table still matches the source after a restart | PASS |  |
 | varchar becomes longtext | the table still matches the source after a restart | PASS |  |
 | text family shrinks | the table still matches the source after a restart | PASS |  |
 | varchar becomes int | the table still matches the source after a restart | PASS |  |
