@@ -13,7 +13,8 @@
 //!
 //! Row images are handed over decoded, so the binlog decoder is outside the
 //! simulation; everything from a decoded row to a durable checkpoint is
-//! inside it. `PINTAIL_CDC_SIM_SEEDS` and `PINTAIL_CDC_SIM_STEPS` widen a run;
+//! inside it. `PINTAIL_CDC_SIM_SEEDS`, `PINTAIL_CDC_SIM_SEED_BASE` and `PINTAIL_CDC_SIM_STEPS`
+//! widen a run;
 //! `PINTAIL_CDC_SIM_SEED` replays one seed.
 
 use std::{
@@ -854,7 +855,10 @@ fn change_capture_matches_the_source_through_crashes_restarts_and_schema_changes
         .ok()
         .and_then(|raw| raw.parse().ok())
         .map_or_else(
-            || (1..=env_number("PINTAIL_CDC_SIM_SEEDS", 16)).collect(),
+            || {
+                let base = env_number("PINTAIL_CDC_SIM_SEED_BASE", 1);
+                (base..base + env_number("PINTAIL_CDC_SIM_SEEDS", 16)).collect()
+            },
             |seed| vec![seed],
         );
     for seed in seeds {

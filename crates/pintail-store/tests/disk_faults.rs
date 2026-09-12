@@ -10,7 +10,7 @@
 //! corruption presented as rows, which is the one outcome a mirror must never
 //! produce.
 //!
-//! `PINTAIL_DISK_FAULT_SEEDS` widens a run; `PINTAIL_DISK_FAULT_SEED` replays
+//! `PINTAIL_DISK_FAULT_SEEDS` and `PINTAIL_DISK_FAULT_SEED_BASE` widen a run; `PINTAIL_DISK_FAULT_SEED` replays
 //! one seed.
 
 use std::{
@@ -245,7 +245,8 @@ fn a_damaged_table_refuses_or_answers_an_acknowledged_state() {
         run_seed(seed);
         return;
     }
-    for seed in 0..env_number("PINTAIL_DISK_FAULT_SEEDS").unwrap_or(200) {
+    let base = env_number("PINTAIL_DISK_FAULT_SEED_BASE").unwrap_or(0);
+    for seed in base..base + env_number("PINTAIL_DISK_FAULT_SEEDS").unwrap_or(200) {
         run_seed(seed);
     }
 }
