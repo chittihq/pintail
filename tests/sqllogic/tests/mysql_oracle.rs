@@ -40,7 +40,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1897;
+const EXPECTED_CASES: usize = 1907;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -3161,6 +3161,90 @@ fn hand_written_cases() -> Vec<OracleCase> {
              ON u.id = e.id AND EXISTS \
                 (SELECT 1 FROM users probe WHERE probe.id > u.id) \
              ORDER BY e.id",
+        ),
+        // Four tables and the shapes between them. The corpus keyed almost
+        // every case to one or two tables, and the one place a third joined
+        // in was a single case - which is where a RIGHT JOIN following an
+        // inner join, with a subquery in its ON, was found answering too few
+        // rows. These pin the join topologies rather than more scalar
+        // semantics over the same pair.
+        ordered(
+            "multi-table join",
+            "SELECT o.id, u.name, e.name FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             JOIN events e ON e.id = u.id ORDER BY o.id",
+        ),
+        ordered(
+            "multi-table join",
+            "SELECT o.id, u.name, e.name, b.id FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             JOIN events e ON e.id = u.id \
+             JOIN bounds b ON b.id = e.id ORDER BY o.id, b.id",
+        ),
+        // The shape the RIGHT JOIN defect wore: an inner join first, then a
+        // right join whose ON carries a subquery.
+        ordered(
+            "multi-table join",
+            "SELECT o.id, u.name, e.id FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             RIGHT JOIN events e ON e.id = u.id AND EXISTS \
+                (SELECT 1 FROM users probe WHERE probe.id = e.id) \
+             ORDER BY e.id, o.id",
+        ),
+        ordered(
+            "multi-table join",
+            "SELECT e.id, u.name, o.total FROM events e \
+             LEFT JOIN users u ON u.id = e.id \
+             LEFT JOIN orders o ON o.user_id = u.id AND o.total > 50 \
+             ORDER BY e.id, o.total",
+        ),
+        // Bushy: two joined pairs joined to each other, which is a different
+        // plan shape from a left-deep chain of the same four tables.
+        ordered(
+            "multi-table join",
+            "SELECT l.id, l.name, r.id FROM \
+               (SELECT u.id, u.name FROM users u JOIN events e ON e.id = u.id) l \
+             JOIN \
+               (SELECT o.user_id AS id, o.total FROM orders o JOIN bounds b ON b.id = o.user_id) r \
+             ON r.id = l.id ORDER BY l.id, r.id",
+        ),
+        ordered(
+            "multi-table join",
+            "SELECT u.id, COUNT(o.id), MAX(e.score) FROM users u \
+             LEFT JOIN orders o ON o.user_id = u.id \
+             LEFT JOIN events e ON e.id = u.id \
+             GROUP BY u.id ORDER BY u.id",
+        ),
+        // A chain where the middle table contributes no column, so a planner
+        // is free to reorder it and must not drop the rows it filters.
+        ordered(
+            "multi-table join",
+            "SELECT o.id, e.name FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             JOIN events e ON e.id = u.id \
+             WHERE u.name LIKE 'user-0%' ORDER BY o.id",
+        ),
+        ordered(
+            "multi-table join",
+            "SELECT o.id, u.name FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             WHERE o.user_id IN (SELECT e.id FROM events e JOIN bounds b ON b.id = e.id) \
+             ORDER BY o.id",
+        ),
+        // Outer join above an inner one, with the outer side's NULLs
+        // reaching a predicate that has to treat them as unknown.
+        ordered(
+            "multi-table join",
+            "SELECT e.id, o.id, u.name FROM events e \
+             LEFT JOIN (orders o JOIN users u ON u.id = o.user_id) ON o.user_id = e.id \
+             WHERE u.name IS NULL OR u.name <> 'user-01' ORDER BY e.id, o.id",
+        ),
+        unordered(
+            "multi-table join",
+            "SELECT COUNT(*) FROM orders o \
+             JOIN users u ON u.id = o.user_id \
+             JOIN events e ON e.id = u.id \
+             JOIN bounds b ON b.id = e.id",
         ),
         unordered(
             "set operations",
