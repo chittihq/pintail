@@ -401,6 +401,37 @@ struct BackgroundMerge {
     input_files: Vec<String>,
 }
 
+/// A table's log is cut back only after a manifest naming the flushed rows is
+/// published, so a log that no longer starts at the first write proves a
+/// manifest existed. Without it the open used to start an empty table, sweep
+/// the flushed segments as orphans and serve the log's tail as the whole
+/// table - losing every flushed row without an error. The caller refuses
+/// instead, before anything is swept.
+fn refuse_a_lost_manifest(
+    directory: &Path,
+    truncate_wal_on_flush: bool,
+    recovery: &crate::wal::Recovery,
+    table_id: u64,
+) -> Result<(), StoreError> {
+    if !truncate_wal_on_flush || directory.join(manifest::FILE_NAME).exists() {
+        return Ok(());
+    }
+    let first = recovery
+        .batches
+        .iter()
+        .filter(|batch| batch.table_id == table_id)
+        .map(|batch| batch.sequence)
+        .min();
+    if first.is_some_and(|first| first > 1) {
+        return Err(StoreError::corrupt_manifest(
+            0,
+            "the manifest is missing but the write-ahead log starts after rows that were already \
+             flushed",
+        ));
+    }
+    Ok(())
+}
+
 impl Drop for TableStore {
     fn drop(&mut self) {
         // Hold the writer lock (and input files) until output publication has
@@ -471,8 +502,9 @@ impl TableStore {
                 segment::verify(&directory, meta, &schema)?;
             }
         }
-        remove_orphan_segments(&directory, &manifest)?;
         let (mut wal, mut recovery) = Wal::open(wal_path, options.wal_sync)?;
+        refuse_a_lost_manifest(&directory, truncate_wal_on_flush, &recovery, table_id)?;
+        remove_orphan_segments(&directory, &manifest)?;
         let mut commit_version = manifest.committed_version;
         if options.transactional {
             // Rows after the last commit record were never acknowledged;
