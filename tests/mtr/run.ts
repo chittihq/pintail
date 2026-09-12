@@ -41,7 +41,7 @@
 ///           MTR_GATE=1 PINTAIL_MTR_BINARY=../../target/release/pintail bun run run.ts
 
 import { createServer } from 'node:net'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
@@ -245,7 +245,14 @@ type TreeEntry = { path: string; type: string; sha: string }
 
 /// Walks the tree one directory at a time: a recursive listing of a whole
 /// server repository is truncated by the API.
+/// A directory of `.test` files to replay instead of an upstream suite: the
+/// reproduction loop for a finding, with invented schemas.
+const LOCAL_DIR = process.env.MTR_LOCAL_DIR ? resolve(process.env.MTR_LOCAL_DIR) : undefined
+
 async function listTestFiles(): Promise<string[]> {
+  if (LOCAL_DIR) {
+    return readdirSync(LOCAL_DIR).filter((name) => name.endsWith('.test')).map((name) => name.slice(0, -'.test'.length)).sort()
+  }
   const cached = join(cacheDir, REF, '_index.json')
   if (existsSync(cached)) return JSON.parse(readFileSync(cached, 'utf8')) as string[]
   let sha = REF
@@ -268,6 +275,7 @@ async function listTestFiles(): Promise<string[]> {
 }
 
 async function fetchCached(relative: string): Promise<string> {
+  if (LOCAL_DIR) return readFileSync(join(LOCAL_DIR, relative.split('/').pop()!), 'utf8')
   const path = join(cacheDir, REF, relative.replace(/\//g, '__'))
   if (existsSync(path)) return readFileSync(path, 'utf8')
   const text = await fetchText(`https://raw.githubusercontent.com/${SUITE.repo}/${REF}/${relative}`)
@@ -953,7 +961,12 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
       // progress is worth waiting for.
       unsettled = new Set(tables.filter((t) => t.state !== 'streaming' && t.state !== 'excluded').map((t) => t.name.toLowerCase()))
       const transitional = tables.some((t) => t.state === 'pending' || t.state === 'snapshotting')
-      if (!transitional || Date.now() > deadline) break
+      if (!transitional || Date.now() > deadline) {
+        if (DEBUG && unsettled.size) {
+          log(`${name}: unsettled ${tables.filter((t) => unsettled.has(t.name.toLowerCase())).map((t) => `${t.name}=${t.state} (${t.last_error ?? ''})`).join('; ')}`)
+        }
+        break
+      }
       await Bun.sleep(100)
     }
     dirty = lagging
