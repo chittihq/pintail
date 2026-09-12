@@ -647,6 +647,11 @@ but may be wrong.
   atomicity across statements has no way to get it here. Replicated
   databases still accept all of them: they write nothing, so the no-op
   claims nothing false.
+- A local table's text must be declared in `utf8mb4`, `utf8mb3`, `ascii`,
+  `latin1` or `binary`. A column, table default or collation naming any other
+  character set is refused at `CREATE TABLE`, because values are stored as
+  decoded characters and would answer byte lengths, hex and ordering in the
+  wrong encoding.
 - A keyless local table is append-only: rows live under a generated id,
   the same model the replica uses for a keyless source table, so a
   duplicate row is simply a second row and nothing can address one later.

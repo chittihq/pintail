@@ -702,7 +702,62 @@ fn reject_unsupported_table_features(create: &CreateTable) -> Result<(), WriteEr
             "A table must have at least one column".to_owned(),
         ));
     }
+    if let Some(charset) = unsupported_character_set(&create.to_string()) {
+        return Err(WriteError::Unsupported(format!(
+            "character set {charset} is not supported on a local table"
+        )));
+    }
     Ok(())
+}
+
+/// Character sets whose text is stored here exactly as the source spells it.
+const STORED_CHARACTER_SETS: [&str; 6] =
+    ["utf8mb4", "utf8mb3", "utf8", "ascii", "latin1", "binary"];
+
+/// The first character set a definition names, directly or through a
+/// collation, that text is not stored in.
+///
+/// Values are kept as decoded characters, so a column declared in UTF-16, a
+/// Cyrillic code page or any other set would read back with the byte length,
+/// the hex and the ordering of its UTF-8 form: a plausible, wrong answer to
+/// every query that looks at the encoding. A replicated source already
+/// quarantines such a column; a local table refuses it.
+fn unsupported_character_set(definition: &str) -> Option<String> {
+    // Quoted text - a comment, a default - names nothing.
+    let mut unquoted = String::with_capacity(definition.len());
+    let mut quote = None;
+    for character in definition.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None if matches!(character, '\'' | '"') => quote = Some(character),
+            None => unquoted.push(character),
+        }
+    }
+    let upper = unquoted.to_ascii_uppercase();
+    let words = upper
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut named = Vec::new();
+    for (index, word) in words.iter().enumerate() {
+        match *word {
+            "CHARSET" => named.extend(words.get(index + 1)),
+            "CHARACTER" if words.get(index + 1) == Some(&"SET") => {
+                named.extend(words.get(index + 2))
+            }
+            "COLLATE" => named.extend(
+                words
+                    .get(index + 1)
+                    .and_then(|collation| collation.split('_').next()),
+            ),
+            _ => {}
+        }
+    }
+    named
+        .into_iter()
+        .map(|name| name.to_ascii_lowercase())
+        .find(|name| !STORED_CHARACTER_SETS.contains(&name.as_str()))
 }
 
 fn reject_unsupported_insert_features(insert: &Insert) -> Result<(), WriteError> {

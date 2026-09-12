@@ -267,3 +267,30 @@ fn an_expression_value_is_refused_rather_than_silently_wrong() {
     let error = insert("INSERT INTO notes (id, body) VALUES (1 + 1, 'a')").unwrap_err();
     assert_eq!(error.mysql_code(), 1064);
 }
+
+#[test]
+fn a_character_set_text_is_not_stored_in_is_refused() {
+    for sql in [
+        "CREATE TABLE t (id INT, name VARCHAR(8) CHARACTER SET ucs2)",
+        "CREATE TABLE t (id INT, name VARCHAR(8)) DEFAULT CHARSET=utf16",
+        "CREATE TABLE t (id INT, name VARCHAR(8) COLLATE cp1251_bin)",
+    ] {
+        let error = create(sql).expect_err(sql);
+        assert!(
+            matches!(error, WriteError::Unsupported(_)),
+            "{sql}: {error:?}"
+        );
+        assert!(
+            error.to_string().contains("character set"),
+            "{sql}: {error}"
+        );
+    }
+    for sql in [
+        "CREATE TABLE t (id INT, name VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)",
+        "CREATE TABLE t (id INT, name VARCHAR(8)) DEFAULT CHARSET=latin1",
+        "CREATE TABLE t (id INT, name VARBINARY(8), label CHAR(2) CHARACTER SET ascii)",
+        "CREATE TABLE t (id INT, name VARCHAR(8) COMMENT 'charset ucs2 is described here')",
+    ] {
+        create(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+    }
+}
