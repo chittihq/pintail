@@ -107,6 +107,19 @@ pub(crate) fn unsafe_column_change(
                 )
             })
         }
+        // An unrecognised type is kept apart by its own spelling, so a change
+        // to a different one is already a family change above. What reaches
+        // here is a change the column type spells differently under the same
+        // data type - a GEOMETRY gaining an SRID constraint, a type this
+        // version has no reading of. Nothing here can say whether the source
+        // rewrote its rows, so it refuses and pays a recopy rather than
+        // adopt a rewrite it cannot see.
+        Family::Other(_) if previous.mysql_column_type != refreshed.mysql_column_type => {
+            reason(format!(
+                "changed from {} to {}, a type whose stored values this cannot reason about",
+                previous.mysql_column_type, refreshed.mysql_column_type
+            ))
+        }
         _ => None,
     }
 }

@@ -1972,6 +1972,14 @@ mod stabilization_tests {
                 value("double", "double", DataType::Float64, None),
                 value("float", "float", DataType::Float32, None),
             ),
+            // A type this version has no reading of: the spelling changed, and
+            // nothing here can say whether the source rewrote the rows behind
+            // it, so it refuses rather than adopt a rewrite it cannot see.
+            (
+                "unreadable type respelled",
+                value("geometry", "geometry", DataType::Binary, None),
+                value("geometry", "geometry srid 4326", DataType::Binary, None),
+            ),
         ];
         for (family, previous, refreshed) in refusals {
             let refusal = adopted(previous, refreshed)
