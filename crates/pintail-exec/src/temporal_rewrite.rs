@@ -168,13 +168,49 @@ pub(crate) fn rewrite_predicate(expr: BoundExpr) -> BoundExpr {
         BoundExprKind::Unary {
             op: UnaryOp::Not,
             expr: inner,
-        } => BoundExpr {
-            kind: BoundExprKind::Unary {
-                op: UnaryOp::Not,
-                expr: Box::new(rewrite_predicate(*inner)),
-            },
-            ..expr
-        },
+        } => {
+            // `NOT (x BETWEEN a AND b)` and `x NOT BETWEEN a AND b` are the
+            // same predicate - MySQL defines the negated spelling as the
+            // negation of the plain one - but only the second arrives with
+            // the flag set, and only the flag set reaches the rewrite that
+            // folds it into a disjunction. Left as a `NOT` over the
+            // conjunction the plain form rewrites to, it has no mask at
+            // all: the complement of a mask keeps the rows whose answer was
+            // NULL, which `WHERE` drops. So the negation moves onto the
+            // predicate, where the existing fold already handles it, rather
+            // than sitting above a shape nothing can inspect. The same
+            // holds for `IN`.
+            let inner = *inner;
+            match inner.kind {
+                BoundExprKind::Scalar {
+                    function: ScalarFunction::Between { negated },
+                    args,
+                } => rewrite_predicate(BoundExpr {
+                    kind: BoundExprKind::Scalar {
+                        function: ScalarFunction::Between { negated: !negated },
+                        args,
+                    },
+                    ..inner
+                }),
+                BoundExprKind::Scalar {
+                    function: ScalarFunction::InList { negated },
+                    args,
+                } => rewrite_predicate(BoundExpr {
+                    kind: BoundExprKind::Scalar {
+                        function: ScalarFunction::InList { negated: !negated },
+                        args,
+                    },
+                    ..inner
+                }),
+                kind => BoundExpr {
+                    kind: BoundExprKind::Unary {
+                        op: UnaryOp::Not,
+                        expr: Box::new(rewrite_predicate(BoundExpr { kind, ..inner })),
+                    },
+                    ..expr
+                },
+            }
+        }
         kind => {
             let expr = BoundExpr { kind, ..expr };
             let expr = rewrite_session_reading(&expr).unwrap_or(expr);
@@ -849,6 +885,21 @@ mod tests {
             render(&rewrite_predicate(not_between)),
             "((created_at Less '2026-08-01 00:00:00') Or (created_at GreaterOrEqual '2026-08-08 00:00:00'))"
         );
+        // `NOT (x BETWEEN a AND b)` is the same predicate spelled the other
+        // way, and has to reach the same disjunction: left as a `NOT` over
+        // the conjunction, the filter has no mask for it at all.
+        let spelled_with_not = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: true,
+            kind: BoundExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(between.clone()),
+            },
+        };
+        assert_eq!(
+            render(&rewrite_predicate(spelled_with_not)),
+            "((created_at Less '2026-08-01 00:00:00') Or (created_at GreaterOrEqual '2026-08-08 00:00:00'))"
+        );
         let in_list = scalar(
             ScalarFunction::InList { negated: false },
             vec![
@@ -871,6 +922,25 @@ mod tests {
         );
         assert_eq!(
             render(&rewrite_predicate(not_in)),
+            "(((created_at Less '2026-08-01 00:00:00') Or (created_at GreaterOrEqual '2026-08-02 00:00:00')) And ((created_at Less '2026-08-03 00:00:00') Or (created_at GreaterOrEqual '2026-08-04 00:00:00')))"
+        );
+        let in_list_under_not = BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: true,
+            kind: BoundExprKind::Unary {
+                op: UnaryOp::Not,
+                expr: Box::new(scalar(
+                    ScalarFunction::InList { negated: false },
+                    vec![
+                        date_of(datetime()),
+                        literal(Value::Utf8("2026-08-01".into())),
+                        literal(Value::Utf8("2026-08-03".into())),
+                    ],
+                )),
+            },
+        };
+        assert_eq!(
+            render(&rewrite_predicate(in_list_under_not)),
             "(((created_at Less '2026-08-01 00:00:00') Or (created_at GreaterOrEqual '2026-08-02 00:00:00')) And ((created_at Less '2026-08-03 00:00:00') Or (created_at GreaterOrEqual '2026-08-04 00:00:00')))"
         );
         let nested = BoundExpr {
