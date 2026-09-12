@@ -25,14 +25,52 @@ use crate::{
 
 const MAGIC: &[u8; 5] = b"PTSEG";
 const FOOTER_MAGIC: &[u8; 5] = b"PTFTR";
-const FORMAT_VERSION: u8 = 3;
+const FORMAT_VERSION: u8 = 4;
 
 /// Segment versions this reader understands: v1 stores text carriers for
 /// every Utf8-storage column; v2 additionally stores fixed-width native
 /// units (wire type Int64) for eligible Decimal/Date32/DateTime64 columns;
 /// v3 permits raw block payloads when LZ4 cannot save at least 5%.
+/// Header bytes after the magic: format version, schema version, schema
+/// fingerprint, row count, column count and target block rows.
+const HEADER_LENGTH: usize = MAGIC.len() + 1 + 4 + 8 + 8 + 4 + 4;
+/// A column chunk's leading `u32 column_id`, `u8 logical_type` and
+/// `u32 block_count`.
+const COLUMN_DESCRIPTOR_LENGTH: usize = 4 + 1 + 4;
+/// The first format whose footer carries a digest of the header and column
+/// descriptors.
+const DESCRIPTOR_DIGEST_VERSION: u8 = 4;
+
+/// The digest a version 4 footer records over the fields no block checksum
+/// covers. Those fields decide how many rows a read allocates and which
+/// schema column each chunk fills; unchecked, a single flipped bit in a
+/// column id made that column read as NULL with no error.
+fn descriptor_digest(header_after_magic: &[u8], descriptors: &[u8]) -> u64 {
+    let mut bytes = Vec::with_capacity(header_after_magic.len() + descriptors.len());
+    bytes.extend_from_slice(header_after_magic);
+    bytes.extend_from_slice(descriptors);
+    xxh3_64(&bytes)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Lets a test write an earlier format, to forge segments older versions
+    /// published.
+    static WRITTEN_FORMAT_VERSION: std::cell::Cell<u8> = const { std::cell::Cell::new(FORMAT_VERSION) };
+}
+
+#[cfg(not(test))]
+const fn written_format_version() -> u8 {
+    FORMAT_VERSION
+}
+
+#[cfg(test)]
+fn written_format_version() -> u8 {
+    WRITTEN_FORMAT_VERSION.with(std::cell::Cell::get)
+}
+
 const fn format_version_supported(version: u8) -> bool {
-    matches!(version, 1..=3)
+    matches!(version, 1..=4)
 }
 
 fn read_format_version(path: &Path, decoder: &mut FileDecoder) -> Result<u8, StoreError> {
@@ -844,7 +882,8 @@ pub(crate) fn write(
         .map_err(|error| StoreError::io(format!("create {}", temporary.display()), error))?;
     let mut header = Encoder::new();
     header.raw(MAGIC);
-    header.u8(FORMAT_VERSION);
+    let format_version = written_format_version();
+    header.u8(format_version);
     header.u32(schema.version());
     header.u64(fingerprint);
     header.u64(rows.len() as u64);
@@ -855,11 +894,13 @@ pub(crate) fn write(
         .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
     let mut position = header.len();
     let mut column_offsets = Vec::with_capacity(specs.len());
+    let mut descriptors = Vec::with_capacity(specs.len() * COLUMN_DESCRIPTOR_LENGTH);
     for spec in &specs {
         column_offsets.push(position as u64);
         let mut column = Encoder::new();
         write_column(&mut column, spec, rows, block_rows, compression)?;
         let column = column.finish();
+        descriptors.extend_from_slice(&column[..COLUMN_DESCRIPTOR_LENGTH]);
         file.write_all(&column)
             .map_err(|error| StoreError::io(format!("write {}", temporary.display()), error))?;
         position = position.saturating_add(column.len());
@@ -887,6 +928,9 @@ pub(crate) fn write(
         encode_key(&mut footer, rows[row_index].key())?;
     }
     footer.bytes(&bloom, "primary-key bloom filter")?;
+    if format_version >= DESCRIPTOR_DIGEST_VERSION {
+        footer.u64(descriptor_digest(&header[MAGIC.len()..], &descriptors));
+    }
     let footer_checksum = xxh3_64(footer.as_slice());
     footer.u64(footer_checksum);
     footer.u64(footer_offset);
@@ -960,6 +1004,7 @@ pub(crate) fn read(
             .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
     )
     .map_err(|_| corrupt_here(&path, &decoder, "row count does not fit usize"))?;
+    check_header_row_count(&path, &decoder, row_count, meta)?;
     let column_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
@@ -1680,8 +1725,8 @@ pub(crate) fn read_footer_layout(
     path: &Path,
     meta: &SegmentMeta,
 ) -> Result<FooterLayout, StoreError> {
-    let (footer, footer_offset, _) = read_verified_footer(path)?;
-    parse_footer_body(path, &footer, footer_offset, meta)
+    let (footer, footer_offset, header) = read_verified_footer(path)?;
+    parse_footer_body(path, &footer, footer_offset, meta, header[MAGIC.len()])
 }
 
 /// The contiguous run of blocks whose keys can fall in `start..=end`, from
@@ -1797,9 +1842,15 @@ pub(crate) fn verify(
         return Ok(());
     }
     let (footer, footer_offset, header) = read_verified_footer(&path)?;
-    parse_footer_body(&path, &footer, footer_offset, meta)?;
     if &header[..MAGIC.len()] != MAGIC {
         return Err(corrupt(&path, 0, "invalid segment header"));
+    }
+    if !format_version_supported(header[MAGIC.len()]) {
+        return Err(corrupt(&path, MAGIC.len(), "unsupported format version"));
+    }
+    let layout = parse_footer_body(&path, &footer, footer_offset, meta, header[MAGIC.len()])?;
+    if let Some(expected) = layout.descriptor_digest {
+        verify_descriptors(&path, &layout.column_offsets, expected)?;
     }
     let segment_schema_version = u32::from_le_bytes(
         header[6..10]
@@ -1833,6 +1884,43 @@ pub(crate) fn verify(
             verified.clear();
         }
         verified.insert(key);
+    }
+    Ok(())
+}
+
+/// Recomputes a version 4 segment's header and column-descriptor digest from
+/// the file and holds it to the footer's.
+fn verify_descriptors(
+    path: &Path,
+    column_offsets: &[u64],
+    expected: u64,
+) -> Result<(), StoreError> {
+    let mut file = File::open(path)
+        .map_err(|error| StoreError::io(format!("open segment {}", path.display()), error))?;
+    let mut header = [0_u8; HEADER_LENGTH];
+    file.read_exact(&mut header)
+        .map_err(|_| corrupt(path, 0, "segment is shorter than its header"))?;
+    let mut descriptors = vec![0_u8; column_offsets.len() * COLUMN_DESCRIPTOR_LENGTH];
+    for (index, offset) in column_offsets.iter().enumerate() {
+        let start = index * COLUMN_DESCRIPTOR_LENGTH;
+        file.seek(SeekFrom::Start(*offset))
+            .and_then(|_| {
+                file.read_exact(&mut descriptors[start..start + COLUMN_DESCRIPTOR_LENGTH])
+            })
+            .map_err(|_| {
+                corrupt(
+                    path,
+                    usize::try_from(*offset).unwrap_or(usize::MAX),
+                    "column descriptor is outside the segment",
+                )
+            })?;
+    }
+    if descriptor_digest(&header[MAGIC.len()..], &descriptors) != expected {
+        return Err(corrupt(
+            path,
+            0,
+            "segment header or column descriptors do not match the footer digest",
+        ));
     }
     Ok(())
 }
@@ -1925,6 +2013,7 @@ pub(crate) fn read_row_headers_range(
             .map_err(|reason| corrupt_here(&path, &decoder, reason))?,
     )
     .map_err(|_| corrupt_here(&path, &decoder, "segment row count exceeds usize"))?;
+    check_header_row_count(&path, &decoder, row_count, meta)?;
     let column_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(&path, &decoder, reason))? as usize;
@@ -2300,6 +2389,7 @@ pub(crate) fn block_rows(
     meta: &SegmentMeta,
     schema: &TableSchema,
 ) -> Result<usize, StoreError> {
+    verify(directory, meta, schema)?;
     let path = directory.join(&meta.file_name);
     let mut decoder = FileDecoder::open(&path)?;
     Ok(read_segment_columns_header(&path, &mut decoder, meta, schema)?.block_rows)
@@ -2343,6 +2433,7 @@ fn read_segment_columns_header(
             .map_err(|reason| corrupt_here(path, decoder, reason))?,
     )
     .map_err(|_| corrupt_here(path, decoder, "segment row count exceeds usize"))?;
+    check_header_row_count(path, decoder, row_count, meta)?;
     let column_count = decoder
         .u32()
         .map_err(|reason| corrupt_here(path, decoder, reason))?;
@@ -3421,6 +3512,29 @@ fn write_block(
     Ok(())
 }
 
+/// Holds a segment header's row count to the manifest's. The header sits
+/// outside every checksum and sizes the buffers a read allocates, so one
+/// flipped bit there asked for a hundred gigabytes and aborted the process
+/// instead of reporting a damaged file.
+fn check_header_row_count(
+    path: &Path,
+    decoder: &impl DecodePosition,
+    row_count: usize,
+    meta: &SegmentMeta,
+) -> Result<(), StoreError> {
+    if u64::try_from(row_count).ok() == Some(meta.row_count) {
+        return Ok(());
+    }
+    Err(corrupt_here(
+        path,
+        decoder,
+        format!(
+            "segment header declares {row_count} rows, the manifest {}",
+            meta.row_count
+        ),
+    ))
+}
+
 fn read_file_column(
     path: &Path,
     decoder: &mut FileDecoder,
@@ -4463,6 +4577,8 @@ fn decode_cell(decoder: &mut Decoder<'_>, logical_type: LogicalType) -> Result<C
 pub(crate) struct FooterLayout {
     pub(crate) column_offsets: Vec<u64>,
     pub(crate) sparse: Vec<(u64, PrimaryKey)>,
+    /// The header and column-descriptor digest, from format version 4.
+    pub(crate) descriptor_digest: Option<u64>,
 }
 
 fn parse_footer_body(
@@ -4470,6 +4586,7 @@ fn parse_footer_body(
     bytes: &[u8],
     footer_offset: usize,
     meta: &SegmentMeta,
+    format_version: u8,
 ) -> Result<FooterLayout, StoreError> {
     let mut decoder = Decoder::new(bytes);
     expect_raw(&mut decoder, FOOTER_MAGIC)
@@ -4548,12 +4665,22 @@ fn parse_footer_body(
             "footer key index does not match the manifest",
         ));
     }
+    let descriptor_digest = if format_version >= DESCRIPTOR_DIGEST_VERSION {
+        Some(
+            decoder
+                .u64()
+                .map_err(|reason| corrupt(path, footer_offset + decoder.position(), reason))?,
+        )
+    } else {
+        None
+    };
     decoder
         .finish()
         .map_err(|reason| corrupt(path, footer_offset, reason))?;
     Ok(FooterLayout {
         column_offsets,
         sparse,
+        descriptor_digest,
     })
 }
 
@@ -4742,6 +4869,8 @@ mod compression_tests {
 
     #[test]
     fn genuine_v1_lz4_segment_remains_readable() {
+        // Forged from a version 3 write: version 1 and 3 share the footer.
+        super::WRITTEN_FORMAT_VERSION.with(|version| version.set(3));
         let directory = tempfile::tempdir().expect("temporary directory");
         let schema = TableSchema::new(
             1,
@@ -4788,6 +4917,7 @@ mod compression_tests {
 
     #[test]
     fn compaction_rewrites_genuine_v1_lz4_segments_as_v3() {
+        super::WRITTEN_FORMAT_VERSION.with(|version| version.set(3));
         let directory = tempfile::tempdir().expect("temporary directory");
         let schema = TableSchema::new(
             1,
@@ -4859,6 +4989,7 @@ mod compression_tests {
             bytes[5] = 1;
             std::fs::write(path, bytes).expect("rewrite version byte");
         }
+        super::WRITTEN_FORMAT_VERSION.with(|version| version.set(super::FORMAT_VERSION));
 
         let mut table =
             TableStore::open(directory.path(), schema, options).expect("reopen v1 segments");
@@ -4866,7 +4997,11 @@ mod compression_tests {
         assert_eq!(outcome.input_segments(), 2);
         let output = outcome.output_path().expect("compacted output");
         let output_bytes = std::fs::read(output).expect("compacted segment bytes");
-        assert_eq!(output_bytes[5], 3, "compaction must publish PTSEG v3");
+        assert_eq!(
+            output_bytes[5],
+            super::FORMAT_VERSION,
+            "compaction must publish the current PTSEG version"
+        );
 
         let mut expected = first_rows[..32].to_vec();
         expected.extend(second_rows);
