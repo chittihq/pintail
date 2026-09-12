@@ -46,6 +46,32 @@ const fn eager(function: ScalarFunction) -> bool {
     )
 }
 
+/// Functions that parse a document for every row they answer.
+///
+/// The adapter below is a trade: it reads the rows row evaluation would
+/// have read, and in exchange everything above it in the expression runs
+/// packed. That pays when the function itself is cheap next to the rest of
+/// the expression, and loses when it is not - a JSON reader parses its
+/// document per row, so adapting one pays that cost again on top of the
+/// row path it replaces. Measured over 130,000 rows,
+/// `JSON_EXTRACT(meta, '$.score') > 2` in a `WHERE` clause cost 123 ms
+/// adapted against 75 ms read row by row.
+const fn parses_a_document(function: ScalarFunction) -> bool {
+    matches!(
+        function,
+        ScalarFunction::JsonExtract { .. }
+            | ScalarFunction::JsonContains
+            | ScalarFunction::JsonContainsPath
+            | ScalarFunction::JsonDepth
+            | ScalarFunction::JsonKeys
+            | ScalarFunction::JsonLength
+            | ScalarFunction::JsonMemberOf
+            | ScalarFunction::JsonOverlaps
+            | ScalarFunction::JsonSearch
+            | ScalarFunction::JsonValue
+    )
+}
+
 /// Functions row evaluation feeds a computed decimal's internal digits,
 /// which no kernel's answer holds.
 const fn reads_internal_digits(function: ScalarFunction) -> bool {
@@ -105,7 +131,7 @@ pub(super) fn scalar_column(
     // rows one at a time. A caller with a row path of its own declines here
     // instead: adapting would build a column for every row on top of the
     // per-row evaluation it was meant to replace.
-    if !effects.adapts() {
+    if !effects.adapts() || parses_a_document(call.function) {
         return None;
     }
     let rows = batch.row_count();
@@ -1009,6 +1035,52 @@ mod tests {
                 "{expression:?}"
             );
         }
+    }
+
+    /// A JSON reader is not adapted: it parses its document for every row
+    /// either way, so building a column of those answers only adds to the
+    /// row evaluation a caller would do anyway. Its neighbour in the same
+    /// position is adapted, which is what makes this a carve-out rather
+    /// than the adapter being off.
+    #[test]
+    fn a_json_reader_declines_rather_than_being_read_row_by_row() {
+        let batch = fixture();
+        let extract = binary(
+            BinaryOp::Greater,
+            call(
+                ScalarFunction::JsonExtract { unquote: false },
+                vec![column(5), literal(Value::Utf8("$.score".to_owned()))],
+                DataType::Json,
+            ),
+            literal(Value::Int64(2)),
+            DataType::Boolean,
+        );
+        assert!(
+            extract
+                .evaluate_column(&batch, Some(DataType::Boolean))
+                .is_none(),
+            "a JSON reader in a predicate declines to the row path"
+        );
+        let quoted = binary(
+            BinaryOp::Greater,
+            call(
+                ScalarFunction::SubstringIndex,
+                vec![
+                    column(5),
+                    literal(Value::Utf8("-".to_owned())),
+                    literal(Value::Int64(1)),
+                ],
+                DataType::Utf8,
+            ),
+            literal(Value::Utf8("a".to_owned())),
+            DataType::Boolean,
+        );
+        assert!(
+            quoted
+                .evaluate_column(&batch, Some(DataType::Boolean))
+                .is_some(),
+            "a function of the same shape that does not parse a document is adapted"
+        );
     }
 
     /// Any other function answers row by row through the row function,
