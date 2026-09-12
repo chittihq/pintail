@@ -7,10 +7,20 @@
 //!
 //! The fused join-aggregate already reads integer keys straight from the
 //! packed column. The general probe does not: every call site normalizes
-//! `key.evaluate(batch, row)`, which is one `Value` per row per side. e15
-//! measured that interchange at roughly ten times a typed array on an
-//! identical kernel, so what matters is how many `Value`s each shape makes,
-//! not the wall clock of one run on a shared host.
+//! `key.evaluate(batch, row)`, which is one `Value` per row per side.
+//!
+//! The `values` column is reported but reads zero for every shape here, and
+//! that is not a mistake in the measurement: `values_materialized` counts a
+//! whole column being turned into `Value`s, which is a different thing from
+//! a key expression building one `Value` per row. Nothing counts the
+//! second, so the milliseconds are the instrument. The column stays because
+//! a shape that starts materializing whole columns is worth seeing.
+//!
+//! Baseline on the build host, 200,000 probe rows against 20,000 build
+//! rows: integer key 16ms joined and 8.7ms grouped, text key 130ms joined
+//! and 100ms grouped, against a 0.8ms scan floor. Integer keys are already
+//! typed; the eight- to elevenfold gap is text, at roughly 570ns a row,
+//! which is a `String` allocation and a collation pass per row.
 
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
