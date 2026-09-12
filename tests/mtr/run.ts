@@ -83,7 +83,8 @@ if (MODE !== 'local' && MODE !== 'replica') throw new Error('MTR_MODE must be lo
 /// reported as replica-lag rather than compared.
 const SYNC_TIMEOUT_MS = Number(process.env.MTR_SYNC_TIMEOUT_MS ?? '60000')
 const DEBUG = process.env.MTR_DEBUG === '1'
-const suffix = `${SUITE_NAME === 'mysql' ? '' : `-${SUITE_NAME}`}${MODE === 'replica' ? '-replica' : ''}`
+const oracleSuffix = ORACLE_IMAGE === 'mysql:8.4' ? '' : `-${ORACLE_IMAGE.replace(/[^a-z0-9]+/gi, '')}`
+const suffix = `${SUITE_NAME === 'mysql' ? '' : `-${SUITE_NAME}`}${MODE === 'replica' ? '-replica' : ''}${oracleSuffix}`
 const baselinePath = join(import.meta.dir, `baseline${suffix}.json`)
 /// Which main-suite files to run: a comma list of names, or a regex when it
 /// starts with `^`. The default is every file EXCLUDED_PATTERN leaves.
@@ -1282,6 +1283,20 @@ async function main() {
   const exact = results.reduce((s, r) => s + r.counts.exact, 0)
   const compared = results.reduce((s, r) => s + r.counts.exact + r.counts.mismatch + r.counts['name-mismatch'], 0)
   log(`${exact} of ${compared} compared SELECTs exact; report at ${join(import.meta.dir, `results${suffix}.md`)}`)
+  // Every run leaves its exact set beside the gate evidence, so two runs -
+  // two oracle versions, two binaries - can be compared statement by statement.
+  mkdirSync(join(repository, 'validate-out', 'mtr'), { recursive: true })
+  writeFileSync(
+    join(repository, 'validate-out', 'mtr', `exact${suffix}.json`),
+    JSON.stringify({ suite: SUITE_NAME, ref: REF, oracle: mysqlVersion, files: Object.fromEntries(results.map((r) => [r.file, r.exact])) }) + '\n',
+  )
+  // Every run leaves its exact set beside the gate evidence, so two runs -
+  // two oracle versions, two binaries - compare statement by statement.
+  mkdirSync(join(repository, 'validate-out', 'mtr'), { recursive: true })
+  writeFileSync(
+    join(repository, 'validate-out', 'mtr', `exact${suffix}.json`),
+    JSON.stringify({ suite: SUITE_NAME, ref: REF, oracle: mysqlVersion, files: Object.fromEntries(results.map((r) => [r.file, r.exact])) }) + '\n',
+  )
   if (BANK) bank(results, mysqlVersion)
   if (baseline) {
     const ran = new Set(results.map((r) => r.file))
