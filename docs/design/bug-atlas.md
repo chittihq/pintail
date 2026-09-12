@@ -26,12 +26,12 @@ only hand-written gates is covered for the bugs someone thought of; those rows a
 | Class | Relevance | MySQL | MariaDB | ClickHouse | With test | Pintail gates | Generated |
 |---|---|---:|---:|---:|---:|---|---|
 | Planner and rewrite wrong results | core | 3,738 | 1,698 | 514 | 4,068 | `oracle`, `mtr`, `plan-quality` | oracle fuzz (join, subquery and set families), metamorphic pack |
-| Replication apply and position tracking | core | 2,459 | 1,047 | 0 | 2,811 | `cdc-integration`, `e2e`, `recovery` | **none** |
-| Type inference and comparison coercion | core | 2,354 | 932 | 62 | 2,221 | `oracle`, `mtr` | oracle fuzz (all families) |
+| Replication apply and position tracking | core | 2,459 | 1,047 | 0 | 2,811 | `cdc-sim`, `cdc-matrix`, `mtr-replica`, `cdc-integration`, `e2e`, `recovery` | cdc-sim (crashes and replay), cdc-matrix, mtr replica mode |
+| Type inference and comparison coercion | core | 2,354 | 932 | 62 | 2,221 | `oracle`, `mtr` | oracle fuzz (all families), kernel differential |
 | Client protocol | core | 1,860 | 493 | 7 | 1,142 | `wire-compat`, `bi-clients`, `fuzz-wire` | fuzz-wire (packet parsing only) |
-| Binary log events and decoding | core | 1,601 | 639 | 0 | 1,664 | `cdc-integration`, `e2e`, `fuzz-binlog` | fuzz-binlog (decoder input only) |
-| Schema changes under a live mirror | core | 1,283 | 733 | 84 | 1,577 | `migrations`, `e2e`, `recovery` | **none** |
-| Crash recovery and durability | core | 854 | 831 | 184 | 770 | `crash-fuzz`, `recovery-sequences`, `recovery` | crash-fuzz, recovery-sequences |
+| Binary log events and decoding | core | 1,601 | 639 | 0 | 1,664 | `cdc-matrix`, `cdc-integration`, `e2e`, `fuzz-binlog` | cdc-matrix (source versions and binlog settings), fuzz-binlog |
+| Schema changes under a live mirror | core | 1,283 | 733 | 84 | 1,577 | `cdc-sim`, `cdc-matrix`, `mtr-replica`, `migrations`, `e2e`, `recovery` | cdc-sim (added columns, truncates), cdc-matrix, mtr replica mode |
+| Crash recovery and durability | core | 854 | 831 | 184 | 770 | `disk-faults`, `crash-fuzz`, `recovery-sequences`, `recovery` | disk-faults, crash-fuzz, recovery-sequences, cdc-sim |
 | Concurrency between readers, writers and background work | core | 967 | 522 | 83 | 1,044 | `live-replication-queries`, `load`, `memsoak` | **none** |
 | Aggregation and grouping | core | 1,029 | 315 | 112 | 1,043 | `oracle`, `mtr`, `live-replication-queries` | oracle fuzz (grouping family), live-replication-queries |
 | Dates, times and time zones | core | 692 | 435 | 41 | 766 | `oracle`, `mtr`, `e2e` | oracle fuzz (temporal family) |
@@ -39,14 +39,14 @@ only hand-written gates is covered for the bugs someone thought of; those rows a
 | Character sets and collations | core | 603 | 389 | 4 | 651 | `oracle`, `mtr` | oracle fuzz (string family, collation matrix) |
 | Skip indexes and pruning | core | 601 | 227 | 144 | 609 | `oracle`, `date-prune` | **none** |
 | Join execution | core | 699 | 34 | 44 | 477 | `oracle`, `mtr`, `join-spill` | oracle fuzz (join families) |
-| Initial copy and snapshot handoff | core | 561 | 186 | 1 | 493 | `snapshot-integration`, `e2e` | **none** |
+| Initial copy and snapshot handoff | core | 561 | 186 | 1 | 493 | `snapshot-integration`, `e2e` | cdc-matrix (restarts mid-round) |
 | JSON values | core | 297 | 278 | 44 | 387 | `oracle`, `mtr` | oracle fuzz (JSON family) |
 | Sorting, top-k and spilling | core | 338 | 102 | 32 | 252 | `oracle`, `sort-spill`, `sort-determinism` | oracle fuzz (ordered answers) |
 | Exact numeric arithmetic | core | 335 | 110 | 11 | 336 | `oracle`, `mtr` | oracle fuzz (DECIMAL family) |
 | Window functions | core | 206 | 155 | 11 | 240 | `oracle`, `mtr` | oracle fuzz (window family) |
 | Memory and resource limits | core | 347 | 0 | 15 | 188 | `agg-spill`, `budget-spill`, `memsoak` | **none** |
 | Immutable parts, merges and versioned deduplication | core | - | - | 324 | 279 | `recovery-sequences`, `live-replication-queries` | recovery-sequences, live-replication-queries |
-| On-disk format, encodings and compression | core | - | - | 146 | 125 | `fuzz-storage`, `crash-fuzz` | fuzz-storage |
+| On-disk format, encodings and compression | core | - | - | 146 | 125 | `disk-faults`, `fuzz-storage`, `crash-fuzz` | disk-faults, fuzz-storage |
 | Floating-point formatting and parsing | core | 82 | 37 | 1 | 70 | `oracle`, `mtr` | oracle fuzz (numeric family) |
 | Catalog and metadata views | adjacent | 1,017 | 491 | 50 | 1,113 | `wire-compat`, `bi-clients` | **none** |
 | Outside Pintail | out-of-scope | 10,391 | 5,838 | 380 | 7,410 | n/a | n/a |
