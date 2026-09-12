@@ -790,6 +790,12 @@ pub(crate) fn open_tracked_store(
                     // The store's own refusal to re-read a segment under a
                     // changed column type.
                     || message.contains("changed physical type")
+                    // A source table that gained or lost its key, or was
+                    // replaced by one with other columns, under the same
+                    // name: the store's layout cannot read the new shape at
+                    // all, and a recopy was the only way forward.
+                    || message.contains("key mode cannot change")
+                    || message.contains("is absent from schema version")
                     // Every in-place refusal the probe makes, under one
                     // marker: adoptable here because the branch below deletes
                     // the store before rebuilding it.

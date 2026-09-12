@@ -1159,13 +1159,14 @@ async fn apply_ddl_actions(
                     .directory()
                     .parent()
                     .map(Path::to_path_buf)
-                    && let Some(orphan) = supersede_orphan(
+                    && let Some(orphan) = supersede_generation(
                         metadata,
                         database_id,
                         &root,
                         targets,
                         target_indexes,
                         &new_name,
+                        true,
                     )?
                 {
                     metadata.remove_local_table(database_id, &orphan)?;
@@ -1472,17 +1473,44 @@ async fn apply_ddl_actions(
                             "auto-including a table requires a target storage root".to_owned(),
                         )
                     })?;
-                supersede_orphan(
+                supersede_generation(
                     metadata,
                     database_id,
                     &root,
                     targets,
                     target_indexes,
                     &table,
+                    true,
                 )?;
                 let directory = new_table_directory(&root, &table);
-                let store =
-                    TableStore::open(directory, source.table_schema()?, StoreOptions::default())?;
+                let store = match TableStore::open(
+                    &directory,
+                    source.table_schema()?,
+                    StoreOptions::default(),
+                ) {
+                    Ok(store) => store,
+                    // Files under the name that cannot take the new table's
+                    // shape belong to a generation nothing marked as dropped
+                    // - a table dropped while it was being recopied, whose
+                    // DROP no stream saw. The CREATE is proof they are stale.
+                    Err(error) if superseded_layout(&error) => {
+                        supersede_generation(
+                            metadata,
+                            database_id,
+                            &root,
+                            targets,
+                            target_indexes,
+                            &table,
+                            false,
+                        )?;
+                        TableStore::open(
+                            directory,
+                            source.table_schema()?,
+                            StoreOptions::default(),
+                        )?
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 let snapshot_target = SnapshotTarget::new(source.clone(), store)?;
                 let snapshot = run_snapshot(
                     pool,
@@ -1783,19 +1811,23 @@ fn next_schema_version(version: u32) -> Result<u32, CdcError> {
 /// and refused, which stopped the whole database. The orphan's metadata and
 /// files are removed first; a store still open from a drop earlier in this
 /// run is moved aside before its files go, so no handle outlives its
-/// directory under the reused name. Returns the orphan's stored name.
-fn supersede_orphan(
+/// directory under the reused name. With `orphaned_only` unset the files go
+/// whether or not a row marks them dropped. Returns the table row's stored
+/// name when one was reset.
+fn supersede_generation(
     metadata: &MetaStore,
     database_id: &str,
     root: &Path,
     targets: &mut [CdcTarget],
     target_indexes: &BTreeMap<String, usize>,
     table: &str,
+    orphaned_only: bool,
 ) -> Result<Option<String>, CdcError> {
-    let Some(orphan) = metadata.supersede_orphaned_table(database_id, table)? else {
+    let reset = metadata.supersede_table_generation(database_id, table, orphaned_only)?;
+    if orphaned_only && reset.is_none() {
         return Ok(None);
-    };
-    let directory = new_table_directory(root, &orphan);
+    }
+    let directory = new_table_directory(root, reset.as_deref().unwrap_or(table));
     let tracked = target_indexes.values().copied().collect::<BTreeSet<_>>();
     let canonical = std::fs::canonicalize(&directory).ok();
     for (index, target) in targets.iter_mut().enumerate() {
@@ -1821,7 +1853,18 @@ fn supersede_orphan(
         })?;
     }
     pintail_store::publish_changes_under(&directory);
-    Ok(Some(orphan))
+    Ok(reset)
+}
+
+/// Whether a store refused to open because its files were written for a
+/// different table shape, rather than because they are damaged.
+fn superseded_layout(error: &StoreError) -> bool {
+    matches!(
+        error,
+        StoreError::SchemaMismatch { .. }
+            | StoreError::SchemaFingerprintMismatch { .. }
+            | StoreError::IncompatibleSchema(_)
+    )
 }
 
 fn new_table_directory(root: &Path, table: &str) -> PathBuf {

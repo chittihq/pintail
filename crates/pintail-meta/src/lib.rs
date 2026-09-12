@@ -1617,31 +1617,33 @@ impl MetaStore {
         Ok(())
     }
 
-    /// Retires a dropped table's retained data because the source created a
-    /// new table under the same name. Every row naming the old generation -
+    /// Retires a table's previous generation because the source created a new
+    /// table under the same name. Every row naming the old generation -
     /// schema history, copy chunks, polling state, dead letters and the
     /// snapshot fence - is removed, and the table row starts over at schema
     /// version 1 with no copy recorded, so the new table's snapshot and
-    /// history are the only ones any reader finds. Returns
-    /// the orphaned row's stored name when one existed.
+    /// history are the only ones any reader finds. With `orphaned_only`, only
+    /// a dropped table's retained row qualifies. Returns the row's stored
+    /// name when one was reset.
     ///
     /// # Errors
     ///
     /// Returns an error when the control-plane transaction cannot commit.
-    pub fn supersede_orphaned_table(
+    pub fn supersede_table_generation(
         &self,
         database_id: &str,
         table_name: &str,
+        orphaned_only: bool,
     ) -> Result<Option<String>> {
         let transaction = self
             .connection
             .unchecked_transaction()
-            .context("failed to begin superseding an orphaned table")?;
+            .context("failed to begin superseding a table generation")?;
         let name: Option<String> = transaction
             .query_row(
                 "SELECT name FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE \
-                   AND orphaned_at IS NOT NULL",
-                (database_id, table_name),
+                   AND (?3 = 0 OR orphaned_at IS NOT NULL)",
+                (database_id, table_name, orphaned_only),
                 |row| row.get(0),
             )
             .optional()
