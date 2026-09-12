@@ -1999,7 +1999,14 @@ fn next_hash_join_existence_columns(
             }
             let candidate_batch = candidates.output(batch, &residual_types, left_width)?;
             memory.ensure_transient(candidate_batch.estimated_bytes())?;
-            let mask = residual.evaluate_filter_mask(&candidate_batch)?;
+            // A probe row decided by an earlier candidate is never tested
+            // again, so the vector pass declines any batch that raises
+            // something rather than report what the row path would not
+            // have reached.
+            let mask = match residual.evaluate_filter_mask(&candidate_batch)? {
+                Some(mask) => Some(mask),
+                None => residual.evaluate_quiet_mask(&candidate_batch),
+            };
             for (candidate, &owner) in owners.iter().enumerate() {
                 if rows[owner].found {
                     continue;
@@ -2251,7 +2258,10 @@ fn next_hash_join_residual_columns(
         let mask = if candidate_batch.row_count() == 0 {
             None
         } else {
-            residual.evaluate_filter_mask(&candidate_batch)?
+            match residual.evaluate_filter_mask(&candidate_batch)? {
+                Some(mask) => Some(mask),
+                None => residual.evaluate_quiet_mask(&candidate_batch),
+            }
         };
         let passes = |candidate: usize| -> Result<bool, ExecError> {
             match &mask {

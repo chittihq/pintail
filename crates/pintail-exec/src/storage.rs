@@ -1811,7 +1811,7 @@ fn prewhere_ranges(
                 .map_err(|error| error.to_string())?
             {
                 Some(mask) => mask,
-                None => match predicate.evaluate_skip_mask(&batch) {
+                None => match predicate.evaluate_quiet_mask(&batch) {
                     Some(mask) => mask,
                     None => return Ok(None),
                 },

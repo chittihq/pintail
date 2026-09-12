@@ -794,10 +794,20 @@ impl CompiledExpr {
         )
     }
 
-    /// [`Self::evaluate_mask`] for a pass that decides only which rows to
-    /// read: the warnings it raises are dropped, since the operator that
-    /// keeps the rows evaluates the same expression again.
-    pub(crate) fn evaluate_skip_mask(&self, batch: &RecordBatch) -> Option<crate::SelectionMask> {
+    /// [`Self::evaluate_mask`] for a caller that must not let the answer
+    /// change what gets reported.
+    ///
+    /// Two shapes need this. A pass that only decides which rows to read
+    /// has its rows evaluated again by the operator that keeps them, so a
+    /// warning counted here would be counted twice. A caller that decides
+    /// rows one at a time may never reach them all - a semi join stops at
+    /// a probe row's first match - so a warning counted here would be
+    /// reported where the row path would have raised nothing.
+    ///
+    /// Both are answered the same way: a batch whose evaluation raises
+    /// anything declines and goes to the row path, and a batch that raises
+    /// nothing is the same either way.
+    pub(crate) fn evaluate_quiet_mask(&self, batch: &RecordBatch) -> Option<crate::SelectionMask> {
         mask_of(
             &self.evaluate_vector_column_quietly(batch, Some(DataType::Boolean))?,
             batch,
