@@ -787,10 +787,13 @@ pub(crate) fn open_tracked_store(
             if wipe_on_schema_mismatch
                 && (message.contains("schema fingerprint mismatch")
                     || message.contains("schema version mismatch")
-                    // stabilize's in-place refusals: adoptable here because
-                    // the branch below deletes the store before rebuilding.
+                    // The store's own refusal to re-read a segment under a
+                    // changed column type.
                     || message.contains("changed physical type")
-                    || message.contains("physical key changed")) =>
+                    // Every in-place refusal the probe makes, under one
+                    // marker: adoptable here because the branch below deletes
+                    // the store before rebuilding it.
+                    || message.contains(pintail_probe::IN_PLACE_REFUSAL)) =>
         {
             // The store on disk was built from a shape this control plane has
             // no usable record of - schema history is only written by DDL

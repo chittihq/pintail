@@ -6,6 +6,35 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Decide whether a schema change can be adopted onto a running mirror from the
+  source's own column declaration rather than from Pintail's mapped type. An
+  `ALTER TABLE` reaches the replica as one statement and no row events, so a
+  migration that rewrites the rows the source already holds leaves the replica
+  holding the pre-`ALTER` values with nothing later to correct them - and a
+  whole class of those migrations keeps the mapped type identical while doing
+  it. A narrowing integer, a shrinking `VARCHAR`/`CHAR`/`TEXT`/`VARBINARY`, a
+  narrowing `BIT`, a `FLOAT` and a `DOUBLE` exchanged either way, `DATETIME` becoming
+  `TIMESTAMP` (which zeroes every value outside the epoch window), a dropped
+  or renamed `ENUM` member, a reordered `SET`, a tightened nullability and a
+  rewritten generated expression now mark the table `needs_resync` instead of
+  evolving in place; the resync recopies the rewritten values. Reordering an
+  `ENUM`, appending to an `ENUM` or `SET`, widening a string or its character
+  set, changing a collation, and the existing integer and decimal widenings
+  still evolve in place.
+
+### Tests
+
+- A schema-migration differential gate (`tests/e2e/migrations.ts`, banked to
+  `tests/e2e/results-migrations.md`) runs twenty-nine migration families against a
+  live mirror and asks three questions of each: do the rows nobody wrote to
+  after the migration still match the source, do the writes that follow it
+  land, and does the table still match after a restart. Checking only the rows
+  written after a migration passes every one of these cases while the table is
+  wrong. `docs/schema-migrations.md` records what MySQL 8.4 was measured to do
+  to stored values in each family.
+
 ## [0.1.5-rc2] - 2026-09-10
 
 A TPC-H-derived Q05 join plan fifty times faster, storage scans that reuse

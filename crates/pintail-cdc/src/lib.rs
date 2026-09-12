@@ -2735,14 +2735,17 @@ mod tests {
     fn key_promotion_and_demotion_require_a_resnapshot_boundary() {
         let keyless = source_table(KeyMode::AppendRowId);
         let primary = source_table(KeyMode::Primary);
-        assert_eq!(
-            pintail_probe::stabilize_source_table(&keyless, primary.clone()),
-            Err("physical key changed".to_owned())
-        );
-        assert_eq!(
-            pintail_probe::stabilize_source_table(&primary, keyless),
-            Err("physical key changed".to_owned())
-        );
+        for (previous, refreshed) in [(&keyless, primary.clone()), (&primary, keyless.clone())] {
+            let refusal = pintail_probe::stabilize_source_table(previous, refreshed)
+                .expect_err("a key change is a resnapshot boundary");
+            // The marker is what the store-rebuilding path matches on, so the
+            // reason has to carry it and not just read well.
+            assert!(
+                refusal.starts_with(pintail_probe::IN_PLACE_REFUSAL)
+                    && refusal.contains("physical key"),
+                "{refusal}",
+            );
+        }
     }
 
     #[test]

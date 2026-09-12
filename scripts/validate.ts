@@ -219,6 +219,24 @@ const STAGES: Stage[] = [
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
+    // Schema migrations under a live mirror: one table per migration family,
+    // each ALTERed while streaming, then checked for stale untouched rows,
+    // for the writes that follow, and again after a restart. Separate from
+    // the e2e gate because it answers a different question - that gate asks
+    // whether replication is correct, this one asks whether a schema change
+    // left the rows it never mentioned correct. Banks
+    // tests/e2e/results-migrations.md.
+    name: 'migrations',
+    remote: true,
+    env: process.env.PINTAIL_E2E_DOCKER_HOST
+      ? { DOCKER_HOST: process.env.PINTAIL_E2E_DOCKER_HOST }
+      : undefined,
+    timeoutMinutes: 40,
+    stallMinutes: 15,
+    command: ['bun', 'run', 'migrations.ts'],
+    cwd: join(repository, 'tests', 'e2e'),
+  },
+  {
     // The second-major MySQL leg: the same full gate against mysql:8.0 on
     // a fresh container (never the keep-container, whose state belongs to
     // the primary leg). Banks its own ledger (results-mysql80.md). Part of
@@ -402,6 +420,7 @@ const PROFILES: Record<string, Profile> = {
 /// gate forgot them.
 const UNPROFILED: Record<string, string> = {
   freshness: 'runs after banking, in the release chain\'s closing pass',
+  migrations: 'awaiting an owner decision on which profile it belongs to',
   soak: 'opt-in: hours, by design',
   memsoak: 'opt-in: hours, by design',
 }
