@@ -1301,7 +1301,8 @@ pub fn stabilize_source_table(
     previous: &SourceTable,
     mut refreshed: SourceTable,
 ) -> Result<SourceTable, String> {
-    stabilize(previous, &mut refreshed).map_err(|reason| format!("{IN_PLACE_REFUSAL}: {reason}"))?;
+    stabilize(previous, &mut refreshed)
+        .map_err(|reason| format!("{IN_PLACE_REFUSAL}: {reason}"))?;
     Ok(refreshed)
 }
 
@@ -1923,8 +1924,18 @@ mod stabilization_tests {
             ),
             (
                 "datetime to timestamp",
-                value("datetime", "datetime", DataType::DateTime64 { fsp: 0 }, None),
-                value("timestamp", "timestamp", DataType::DateTime64 { fsp: 0 }, None),
+                value(
+                    "datetime",
+                    "datetime",
+                    DataType::DateTime64 { fsp: 0 },
+                    None,
+                ),
+                value(
+                    "timestamp",
+                    "timestamp",
+                    DataType::DateTime64 { fsp: 0 },
+                    None,
+                ),
             ),
             (
                 "enum member dropped",
@@ -1934,7 +1945,12 @@ mod stabilization_tests {
                     DataType::Utf8,
                     Some("utf8mb4"),
                 ),
-                value("enum", "enum('alpha','gamma')", DataType::Utf8, Some("utf8mb4")),
+                value(
+                    "enum",
+                    "enum('alpha','gamma')",
+                    DataType::Utf8,
+                    Some("utf8mb4"),
+                ),
             ),
             (
                 "set members reordered",
@@ -1964,7 +1980,10 @@ mod stabilization_tests {
             // The store-rebuilding path in the control plane matches on this
             // marker, so a refusal without it refuses forever on the path that
             // exists to repair it.
-            assert!(refusal.starts_with(super::IN_PLACE_REFUSAL), "{family}: {refusal}");
+            assert!(
+                refusal.starts_with(super::IN_PLACE_REFUSAL),
+                "{family}: {refusal}"
+            );
         }
     }
 

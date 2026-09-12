@@ -22,7 +22,9 @@
 //! The rule here is therefore the conservative one: adopt in place only what
 //! the source demonstrably leaves alone. A refusal is not a failure - it routes
 //! the table through the resync that copies the rewritten values correctly -
-//! so an unrecognised declaration refuses rather than guesses.
+//! so an unrecognised declaration refuses rather than guesses - including an
+//! ENUM or SET whose member list cannot be read, where returning "safe" would
+//! have adopted a dropped member.
 
 use crate::SourceColumn;
 
@@ -79,7 +81,9 @@ pub(crate) fn unsafe_column_change(
             // moves, and that is read from the refreshed declaration. A member
             // that disappears (dropped, or renamed, which is a drop and an add)
             // turns every row holding it into the empty label.
-            let (before_labels, after_labels) = labels(previous, refreshed, "enum")?;
+            let Some((before_labels, after_labels)) = labels(previous, refreshed, "enum") else {
+                return reason("declares an ENUM whose members cannot be read".to_owned());
+            };
             let lost = before_labels
                 .iter()
                 .find(|label| !after_labels.contains(label))?;
@@ -92,7 +96,9 @@ pub(crate) fn unsafe_column_change(
             // A SET renders its members in declaration order, so a reorder
             // rewrites the text of every row holding more than one member even
             // though the membership is untouched. Only an append is inert.
-            let (before_labels, after_labels) = labels(previous, refreshed, "set")?;
+            let Some((before_labels, after_labels)) = labels(previous, refreshed, "set") else {
+                return reason("declares a SET whose members cannot be read".to_owned());
+            };
             (!after_labels.starts_with(&before_labels)).then(|| {
                 format!(
                     "column {} reordered or dropped SET members, which re-renders the values \
@@ -327,10 +333,12 @@ fn string_bytes(column: &SourceColumn, data_type: &str, column_type: &str) -> Op
 /// does know.
 fn character_bytes(character_set: Option<&str>) -> u64 {
     match character_set.map(str::to_ascii_lowercase).as_deref() {
-        Some("ascii" | "latin1" | "latin2" | "latin5" | "latin7" | "binary" | "cp1250"
-        | "cp1251" | "cp1256" | "cp1257" | "cp850" | "cp852" | "cp866" | "dec8" | "greek"
-        | "hebrew" | "hp8" | "keybcs2" | "koi8r" | "koi8u" | "macce" | "macroman" | "swe7"
-        | "tis620" | "geostd8" | "armscii8") => 1,
+        Some(
+            "ascii" | "latin1" | "latin2" | "latin5" | "latin7" | "binary" | "cp1250" | "cp1251"
+            | "cp1256" | "cp1257" | "cp850" | "cp852" | "cp866" | "dec8" | "greek" | "hebrew"
+            | "hp8" | "keybcs2" | "koi8r" | "koi8u" | "macce" | "macroman" | "swe7" | "tis620"
+            | "geostd8" | "armscii8",
+        ) => 1,
         Some("ucs2" | "big5" | "cp932" | "euckr" | "gb2312" | "gbk" | "sjis" | "utf16le") => 2,
         Some("utf8" | "utf8mb3" | "ujis" | "eucjpms") => 3,
         _ => 4,
@@ -399,8 +407,14 @@ mod tests {
         // INT -> BIGINT left 2147483647 alone; BIGINT -> SMALLINT clipped
         // 100000 to 32767 and -100000 to -32768.
         assert!(adopts(&column("int", "int"), &column("bigint", "bigint")));
-        assert!(!adopts(&column("bigint", "bigint"), &column("smallint", "smallint")));
-        assert!(adopts(&column("tinyint", "tinyint(1)"), &column("int", "int")));
+        assert!(!adopts(
+            &column("bigint", "bigint"),
+            &column("smallint", "smallint")
+        ));
+        assert!(adopts(
+            &column("tinyint", "tinyint(1)"),
+            &column("int", "int")
+        ));
         // A display width is not a capacity.
         assert!(adopts(&column("int", "int(11)"), &column("int", "int(4)")));
     }
@@ -446,10 +460,22 @@ mod tests {
             &column("decimal", "decimal(20,4)"),
             &column("double", "double"),
         ));
-        assert!(!adopts(&column("float", "float"), &column("double", "double")));
-        assert!(!adopts(&column("double", "double"), &column("float", "float")));
-        assert!(!adopts(&column("varchar", "varchar(16)"), &column("int", "int")));
-        assert!(!adopts(&column("int", "int"), &column("varchar", "varchar(16)")));
+        assert!(!adopts(
+            &column("float", "float"),
+            &column("double", "double")
+        ));
+        assert!(!adopts(
+            &column("double", "double"),
+            &column("float", "float")
+        ));
+        assert!(!adopts(
+            &column("varchar", "varchar(16)"),
+            &column("int", "int")
+        ));
+        assert!(!adopts(
+            &column("int", "int"),
+            &column("varchar", "varchar(16)")
+        ));
     }
 
     #[test]
@@ -562,7 +588,10 @@ mod tests {
             &column("timestamp", "timestamp"),
             &column("datetime", "datetime"),
         ));
-        assert!(!adopts(&column("datetime", "datetime"), &column("date", "date")));
+        assert!(!adopts(
+            &column("datetime", "datetime"),
+            &column("date", "date")
+        ));
         // DATETIME(6) -> DATETIME(0) rounded .654321 up to the next second.
         assert!(!adopts(
             &column("datetime", "datetime(6)"),
@@ -581,10 +610,7 @@ mod tests {
         // moved its ordinal. Dropping 'beta' turned those rows into ''; so did
         // renaming 'draft' to 'pending'.
         let three = column("enum", "enum('alpha','beta','gamma')");
-        assert!(adopts(
-            &column("enum", "enum('alpha','beta')"),
-            &three,
-        ));
+        assert!(adopts(&column("enum", "enum('alpha','beta')"), &three,));
         assert!(adopts(
             &three,
             &column("enum", "enum('gamma','beta','alpha')"),
@@ -625,8 +651,14 @@ mod tests {
             extra: "STORED GENERATED".to_owned(),
             ..column("int", "int")
         };
-        assert!(adopts(&generated("(`base` * 2)"), &generated("(`base` * 2)")));
-        assert!(!adopts(&generated("(`base` * 2)"), &generated("(`base` * 100)")));
+        assert!(adopts(
+            &generated("(`base` * 2)"),
+            &generated("(`base` * 2)")
+        ));
+        assert!(!adopts(
+            &generated("(`base` * 2)"),
+            &generated("(`base` * 100)")
+        ));
         assert!(!adopts(&column("int", "int"), &generated("(`base` * 2)")));
         assert!(!adopts(&generated("(`base` * 2)"), &column("int", "int")));
         // A probe stored before expressions were captured reads as empty, and
