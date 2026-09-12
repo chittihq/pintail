@@ -1617,6 +1617,74 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Retires a dropped table's retained data because the source created a
+    /// new table under the same name. Every row naming the old generation -
+    /// schema history, copy chunks, polling state, dead letters and the
+    /// snapshot fence - is removed, and the table row starts over at schema
+    /// version 1 with no copy recorded, so the new table's snapshot and
+    /// history are the only ones any reader finds. Returns
+    /// the orphaned row's stored name when one existed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control-plane transaction cannot commit.
+    pub fn supersede_orphaned_table(
+        &self,
+        database_id: &str,
+        table_name: &str,
+    ) -> Result<Option<String>> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin superseding an orphaned table")?;
+        let name: Option<String> = transaction
+            .query_row(
+                "SELECT name FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE \
+                   AND orphaned_at IS NOT NULL",
+                (database_id, table_name),
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to look up an orphaned table")?;
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        for table in [
+            "schema_history",
+            "snapshot_chunks",
+            "poll_states",
+            "poll_chunk_states",
+            "dlq",
+        ] {
+            transaction
+                .execute(
+                    &format!(
+                        "DELETE FROM {table} WHERE db_id = ?1 AND table_name = ?2 COLLATE NOCASE"
+                    ),
+                    (database_id, &name),
+                )
+                .with_context(|| format!("failed to clear {table} rows of {database_id}.{name}"))?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key = ?1 COLLATE NOCASE",
+                [format!("cdc_snapshot_fence:{database_id}:{name}")],
+            )
+            .context("failed to clear the snapshot fence of an orphaned table")?;
+        transaction
+            .execute(
+                "UPDATE tables SET orphaned_at = NULL, last_error = NULL, copy_complete = 0, \
+                   rows_synced = 0, schema_version = 1 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, &name),
+            )
+            .context("failed to reset an orphaned table row")?;
+        transaction
+            .commit()
+            .context("failed to commit superseding an orphaned table")?;
+        Ok(Some(name))
+    }
+
     /// Clears prior snapshot progress and prepares a fresh source handoff.
     ///
     /// The caller resets table storage before invoking the snapshot engine.

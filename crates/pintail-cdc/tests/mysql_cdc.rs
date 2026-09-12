@@ -930,6 +930,149 @@ async fn transient_tables_between_cycles_do_not_stop_the_stream() {
     pool.disconnect().await.expect("disconnect transient pool");
 }
 
+/// A table created under the name of a table dropped earlier - in the same
+/// catch-up or a later one - is a new table. Its rows must replace the dropped
+/// table's retained ones, whatever its shape and key.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+#[allow(clippy::too_many_lines)]
+async fn a_table_recreated_under_a_dropped_name_replaces_the_retained_rows() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(
+            "CREATE USER 'pintail'@'%' IDENTIFIED BY 'pintail';\
+             GRANT SELECT, RELOAD, LOCK TABLES, REPLICATION SLAVE, REPLICATION CLIENT \
+               ON *.* TO 'pintail'@'%';\
+             CREATE TABLE same_cycle (id BIGINT UNSIGNED PRIMARY KEY, value VARCHAR(64));\
+             INSERT INTO same_cycle VALUES (1,'old'),(2,'old');\
+             CREATE TABLE later_cycle (a INT, b INT);\
+             INSERT INTO later_cycle VALUES (1,1),(1,1);",
+        )
+        .expect("recreate source schema");
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("recreate DSN"));
+    let report = probe(&pool, "app").await.expect("probe recreate source");
+    let workspace = tempfile::tempdir().expect("recreate workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    let tables = workspace.path().join("auto-created");
+    let metadata = MetaStore::open(&metadata_path).expect("recreate metadata");
+    metadata
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-07-30T00:00:00Z",
+        )
+        .expect("register recreate source");
+    drop(metadata);
+    let snapshot_targets = report
+        .tables
+        .iter()
+        .map(|source| {
+            let store = TableStore::open(
+                pintail_store::table_directory(&tables, &source.name),
+                source.table_schema().expect("recreate table schema"),
+                StoreOptions::default(),
+            )
+            .expect("recreate table store");
+            SnapshotTarget::new(source.clone(), store).expect("recreate snapshot target")
+        })
+        .collect();
+    let snapshot = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        snapshot_targets,
+        SnapshotOptions::default(),
+    )
+    .await
+    .expect("recreate initial snapshot");
+    let targets = snapshot
+        .targets
+        .into_iter()
+        .map(|target| {
+            let source = target.source().clone();
+            CdcTarget::new(source, target.into_store()).expect("recreate CDC target")
+        })
+        .collect();
+
+    mysql
+        .query_batch(
+            "DROP TABLE same_cycle;\
+             CREATE TABLE same_cycle (code VARCHAR(8) PRIMARY KEY, amount INT);\
+             INSERT INTO same_cycle VALUES ('new', 7);\
+             DROP TABLE later_cycle;",
+        )
+        .expect("drop and recreate");
+    let targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    let rows = |targets: &[CdcTarget], name: &str| {
+        let target = targets
+            .iter()
+            .rev()
+            .find(|target| target.source().name == name)
+            .unwrap_or_else(|| panic!("missing CDC target {name}"));
+        target
+            .store()
+            .snapshot()
+            .scan()
+            .unwrap()
+            .iter()
+            .map(|row| row.values().to_vec())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rows(&targets, "same_cycle"),
+        [vec![Value::Utf8("new".to_owned()), Value::Int64(7)]]
+    );
+
+    // A later catch-up opens only tables that are still streaming, as the
+    // supervisor does, so the dropped one is no longer a target.
+    let metadata = MetaStore::open(&metadata_path).expect("inspect orphans");
+    let orphaned = metadata
+        .tables(DATABASE_ID)
+        .expect("table rows")
+        .into_iter()
+        .filter(|table| table.orphaned_at.is_some())
+        .map(|table| table.name)
+        .collect::<Vec<_>>();
+    drop(metadata);
+    assert_eq!(orphaned, ["later_cycle"]);
+    // The superseded generation of same_cycle is still in the returned list
+    // ahead of the new one; a fresh cycle would open only the new one.
+    let mut latest = BTreeMap::new();
+    for target in targets {
+        if !orphaned.contains(&target.source().name) {
+            latest.insert(target.source().name.clone(), target);
+        }
+    }
+    let targets = latest.into_values().collect::<Vec<_>>();
+    let report = probe(&pool, "app").await.expect("reprobe after the drop");
+    mysql
+        .query_batch(
+            "CREATE TABLE later_cycle (id BIGINT AUTO_INCREMENT PRIMARY KEY, b INT);\
+             INSERT INTO later_cycle VALUES (NULL, 5);",
+        )
+        .expect("recreate later");
+    let targets = ddl_catch_up(&pool, &metadata_path, &report, targets, workspace.path()).await;
+    assert_eq!(
+        rows(&targets, "later_cycle"),
+        [vec![Value::Int64(1), Value::Int64(5)]]
+    );
+    let metadata = MetaStore::open(&metadata_path).expect("inspect recreated rows");
+    for name in ["same_cycle", "later_cycle"] {
+        let history = metadata.schema_history(DATABASE_ID, name).expect("history");
+        assert_eq!(
+            history
+                .iter()
+                .map(|record| record.version)
+                .collect::<Vec<_>>(),
+            [1],
+            "{name} keeps only the new generation's history"
+        );
+    }
+    pool.disconnect().await.expect("disconnect recreate pool");
+}
+
 async fn ddl_catch_up(
     pool: &Pool,
     metadata_path: &Path,

@@ -660,8 +660,12 @@ fn open_targets(
     report: &ProbeReport,
     records: &[TableRecord],
 ) -> Result<Vec<CdcTarget>, String> {
+    // A dropped table is retained for reading, not streamed: opening it would
+    // apply a re-created table's rows to the old generation's store, and
+    // hold the directory the new table has to be copied into.
     let tracked = records
         .iter()
+        .filter(|table| table.orphaned_at.is_none())
         .map(|table| table.name.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     report

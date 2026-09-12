@@ -1152,6 +1152,24 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 }
+                // A dropped table still holding the new name gives it up, as
+                // it does to a CREATE; the renamed table then takes its row.
+                if let Some(root) = targets[index]
+                    .store
+                    .directory()
+                    .parent()
+                    .map(Path::to_path_buf)
+                    && let Some(orphan) = supersede_orphan(
+                        metadata,
+                        database_id,
+                        &root,
+                        targets,
+                        target_indexes,
+                        &new_name,
+                    )?
+                {
+                    metadata.remove_local_table(database_id, &orphan)?;
+                }
                 // Metadata first, then the directory: a crash between the
                 // two leaves a row whose directory is missing, which the
                 // restart sweep flags for resync; the reverse would leave a
@@ -1416,6 +1434,11 @@ async fn apply_ddl_actions(
                     &Utc::now().to_rfc3339(),
                 )?;
                 blocked_targets.insert(index);
+                // The retained rows stay readable, but the name no longer
+                // belongs to them: a CREATE or RENAME that reuses it later in
+                // this run is a different table.
+                target_indexes.remove(&table.to_ascii_lowercase());
+                snapshot_fences.remove(&index);
             }
             DdlAction::Create { table } => {
                 if !options.auto_include_new_tables
@@ -1449,6 +1472,14 @@ async fn apply_ddl_actions(
                             "auto-including a table requires a target storage root".to_owned(),
                         )
                     })?;
+                supersede_orphan(
+                    metadata,
+                    database_id,
+                    &root,
+                    targets,
+                    target_indexes,
+                    &table,
+                )?;
                 let directory = new_table_directory(&root, &table);
                 let store =
                     TableStore::open(directory, source.table_schema()?, StoreOptions::default())?;
@@ -1740,6 +1771,57 @@ fn next_schema_version(version: u32) -> Result<u32, CdcError> {
     version
         .checked_add(1)
         .ok_or_else(|| CdcError::Ddl("table schema version exceeds UInt32".to_owned()))
+}
+
+/// Makes room for a source table under a dropped table's name.
+///
+/// Dropped tables keep serving their last rows until the name is reused.
+/// Every identity in the mirror - the table row, its schema history, its
+/// fence and its directory - is keyed by the name, so a new table under it
+/// was either skipped in favour of the old rows, which then answered queries
+/// as if they were the new table, or opened over the old generation's files
+/// and refused, which stopped the whole database. The orphan's metadata and
+/// files are removed first; a store still open from a drop earlier in this
+/// run is moved aside before its files go, so no handle outlives its
+/// directory under the reused name. Returns the orphan's stored name.
+fn supersede_orphan(
+    metadata: &MetaStore,
+    database_id: &str,
+    root: &Path,
+    targets: &mut [CdcTarget],
+    target_indexes: &BTreeMap<String, usize>,
+    table: &str,
+) -> Result<Option<String>, CdcError> {
+    let Some(orphan) = metadata.supersede_orphaned_table(database_id, table)? else {
+        return Ok(None);
+    };
+    let directory = new_table_directory(root, &orphan);
+    let tracked = target_indexes.values().copied().collect::<BTreeSet<_>>();
+    let canonical = std::fs::canonicalize(&directory).ok();
+    for (index, target) in targets.iter_mut().enumerate() {
+        if tracked.contains(&index) || Some(target.store.directory()) != canonical.as_deref() {
+            continue;
+        }
+        let retired = root.join(format!(
+            ".superseded-{}-{}",
+            index,
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        target.store.rename_directory(&retired)?;
+        std::fs::remove_dir_all(&retired).map_err(|source| StoreError::Io {
+            action: "remove a superseded table directory".to_owned(),
+            source,
+        })?;
+        pintail_store::publish_changes_under(&retired);
+    }
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory).map_err(|source| StoreError::Io {
+            action: "remove a superseded table directory".to_owned(),
+            source,
+        })?;
+    }
+    pintail_store::publish_changes_under(&directory);
+    Ok(Some(orphan))
 }
 
 fn new_table_directory(root: &Path, table: &str) -> PathBuf {
