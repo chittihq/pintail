@@ -2246,6 +2246,16 @@ fn next_hash_join_residual_columns(
         if groups.is_empty() {
             continue;
         }
+        // Before gathering, not after: a resident build with one popular
+        // key can fill `candidates` past the batch bound, because the
+        // guard above admits the first probe row's bucket whole however
+        // large it is - a bucket cannot be split while `residual_picks`
+        // decides semi, anti, outer and scalar semantics from seeing all
+        // of it at once. Checking here turns an allocation that fails into
+        // a budget that refuses, and the query ends without building the
+        // batch first. Splitting a bucket across pulls needs match state
+        // carried per probe row and is not attempted here.
+        memory.ensure_transient(candidates.bytes)?;
         let candidate_batch = candidates.output(
             batch,
             &residual_columns
