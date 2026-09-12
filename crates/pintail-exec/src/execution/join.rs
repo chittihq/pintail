@@ -2910,6 +2910,21 @@ pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> 
 /// operator shares one case- and accent-insensitive equivalence relation.
 pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    let key = collation_sort_key(text, collation);
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+/// The collation's weight bytes for `text`.
+///
+/// These are a sort key: comparing two of them bytewise is comparing the
+/// strings under the collation, which is what lets a sort prepare one per
+/// row instead of collating inside every comparison.
+pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
     // general_ci has its own flat weight table, and crucially its own PAD
     // SPACE rule; running it through the ICU collator would silently answer
     // with the other collation's semantics.
@@ -2928,12 +2943,7 @@ pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> Str
                 .expect("Vec-backed collation keys cannot fail");
         }),
     }
-    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
-    for byte in key {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
+    key
 }
 
 /// Compares text under the collation the plan resolved at bind time.
