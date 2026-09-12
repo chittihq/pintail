@@ -1740,10 +1740,39 @@ static GROUPED_SEGMENT_FOLDS: std::sync::LazyLock<
     std::sync::Mutex<HashMap<GroupedFoldKey, Vec<Vec<Value>>>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
-/// Segment folds kept at once. Cleared wholesale past this, as the settled
-/// memo does: a fold is an optimization, and a bounded map that sometimes
-/// forgets everything is cheaper to reason about than an eviction policy.
+/// Segment folds kept at once.
 const GROUPED_FOLD_MAX_ENTRIES: usize = 512;
+
+/// Where the next eviction starts looking, so evictions spread over the
+/// map instead of falling on the same entry.
+static GROUPED_FOLD_ROTATION: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Makes room for one entry in a cache bounded to `max`.
+///
+/// The spans of a fold are visited in order, so the accesses are a cycle.
+/// Clearing the whole map on overflow turned that into a cliff: a cycle
+/// one entry longer than the bound emptied the cache on its last span of
+/// every pass, and every pass after the first re-folded every span. The
+/// tables and query signatures sharing this map means no single table has
+/// to reach the bound alone.
+///
+/// Evicting one entry costs at most that entry, and the rotation keeps a
+/// cyclic pattern from evicting whatever it is about to ask for next.
+fn make_room_for_one<K: Clone + Eq + std::hash::Hash, V>(cache: &mut HashMap<K, V>, max: usize) {
+    if cache.len() < max {
+        return;
+    }
+    let position = GROUPED_FOLD_ROTATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let victim = cache
+        .keys()
+        .nth(position % cache.len())
+        .or_else(|| cache.keys().next())
+        .cloned();
+    if let Some(victim) = victim {
+        cache.remove(&victim);
+    }
+}
 
 /// Whether an aggregate's finished value can be merged with another
 /// computed over a disjoint set of rows.
@@ -2132,8 +2161,14 @@ fn try_grouped_segment_fold(
             .flatten();
         let rows = if let Some(rows) = cached {
             reused += 1;
+            crate::counters::count(|counters| {
+                counters.grouped_spans_reused = counters.grouped_spans_reused.saturating_add(1);
+            });
             rows
         } else {
+            crate::counters::count(|counters| {
+                counters.grouped_spans_folded = counters.grouped_spans_folded.saturating_add(1);
+            });
             let Some(folded) = fold_span(
                 &fold,
                 span,
@@ -2153,9 +2188,7 @@ fn try_grouped_segment_fold(
             // wrong after the next write, so it is used and not kept.
             if !span.dirty {
                 let mut cache = GROUPED_SEGMENT_FOLDS.lock().expect("grouped fold cache");
-                if cache.len() >= GROUPED_FOLD_MAX_ENTRIES {
-                    cache.clear();
-                }
+                make_room_for_one(&mut cache, GROUPED_FOLD_MAX_ENTRIES);
                 cache.insert(key, folded.clone());
             }
             folded
@@ -2480,6 +2513,9 @@ pub(super) fn build_hash_aggregate(
                 .map(|row| estimated_row_payload_bytes(row))
                 .sum();
             memory.reserve(payload)?;
+            crate::counters::count(|counters| {
+                counters.settled_delta_merges = counters.settled_delta_merges.saturating_add(1);
+            });
             return Ok(MaterializedRows {
                 rows: merged,
                 position: 0,
@@ -5891,6 +5927,45 @@ pub(super) fn aggregate_string(value: &Value) -> Result<String, ExecError> {
         Value::Binary(value) => {
             String::from_utf8(value.clone()).map_err(|_| ExecError::InvalidUtf8Number)
         }
+    }
+}
+
+#[cfg(test)]
+mod fold_cache_tests {
+    use std::collections::HashMap;
+
+    use super::make_room_for_one;
+
+    /// A cycle one entry longer than the bound still hits.
+    ///
+    /// The spans of a fold are visited in order, so a table whose clean
+    /// spans just outgrow the cache asks for them in a repeating cycle.
+    /// Clearing the map on overflow answered that with nothing: every pass
+    /// after the first re-folded every span. Evicting one entry costs at
+    /// most one span per pass.
+    #[test]
+    fn a_cycle_just_past_the_bound_still_reuses_most_of_the_cache() {
+        const MAX: usize = 64;
+        let keys: Vec<usize> = (0..=MAX).collect();
+        let mut cache: HashMap<usize, usize> = HashMap::new();
+        let mut hits = [0_usize; 3];
+        for (pass, hit) in hits.iter_mut().enumerate() {
+            for key in &keys {
+                if cache.contains_key(key) {
+                    *hit += 1;
+                } else {
+                    make_room_for_one(&mut cache, MAX);
+                    cache.insert(*key, pass);
+                }
+            }
+            assert!(cache.len() <= MAX, "the bound holds: {}", cache.len());
+        }
+        assert_eq!(hits[0], 0, "nothing is cached on the first pass");
+        // Wholesale clearing gave zero here, on every pass, for ever.
+        assert!(
+            hits[1] > MAX / 2 && hits[2] > MAX / 2,
+            "later passes reuse most of the cycle: {hits:?}"
+        );
     }
 }
 

@@ -20,6 +20,7 @@ use pintail_sql::BoundOrderKey;
 use pintail_types::{DataType, Value};
 
 use super::gather::plain_text;
+use super::join::collation_sort_key;
 use super::sort::compare_sort_values;
 use super::{ExecError, MemoryTracker};
 use crate::batch::{ColumnVector, TypedValues};
@@ -32,6 +33,11 @@ const REFERENCE_BYTES: usize = size_of::<(u32, u32)>() + size_of::<u32>();
 
 /// Bytes one row costs a packed sort key.
 const KEY_BYTES: usize = size_of::<i128>() + size_of::<bool>();
+
+/// What a prepared text key may average per row before the sort keeps the
+/// comparator instead. Weight keys run a few bytes per character, and a
+/// column of long text would otherwise hold a second copy of itself.
+const PREPARED_KEY_BYTES_PER_ROW: usize = 64;
 
 /// What keeping `batch` for a sort by `keys` holds: the batch, and per
 /// visible row its reference and packed keys.
@@ -49,6 +55,10 @@ enum SortKey {
     Units(Vec<Option<i128>>),
     /// Plain text of every kept batch, compared under `collation`.
     Text { column: usize, collation: Collation },
+    /// One collation weight key per kept row, `None` for NULL. Comparing
+    /// these bytewise is comparing the text under the collation, so the
+    /// collation runs once per row instead of inside every comparison.
+    Prepared(Vec<Option<Vec<u8>>>),
     /// The values themselves.
     Values { column: usize, collation: Collation },
 }
@@ -455,7 +465,32 @@ fn sort_key(
             })
         });
         if readable && !key.decimal {
-            return Ok(SortKey::Text { column, collation });
+            // Weight keys are built once per row, which turns the
+            // collation work from O(n log n) comparisons into O(n). They
+            // are also variable width and held for the whole sort, so a
+            // set that would outgrow the rows themselves stays on the
+            // comparator.
+            let budget = rows.len().saturating_mul(PREPARED_KEY_BYTES_PER_ROW);
+            let mut held = 0_usize;
+            let mut prepared = Vec::with_capacity(rows.len());
+            for &(batch, row) in rows {
+                let (text, validity) =
+                    plain_text(columns[batch as usize]).expect("readable text key");
+                let row = row as usize;
+                if !validity.is_valid(row) {
+                    prepared.push(None);
+                    continue;
+                }
+                let weights = text.views()[row].with_bytes(text.heap(), |bytes| {
+                    collation_sort_key(std::str::from_utf8(bytes).unwrap_or_default(), collation)
+                });
+                held = held.saturating_add(weights.len());
+                if held > budget {
+                    return Ok(SortKey::Text { column, collation });
+                }
+                prepared.push(Some(weights));
+            }
+            return Ok(SortKey::Prepared(prepared));
         }
     }
     Ok(SortKey::Values { column, collation })
@@ -503,6 +538,11 @@ fn compare_key(
             let (left, right) = (units[left], units[right]);
             null_order(key, left.is_none(), right.is_none())
                 .unwrap_or_else(|| directed(left.cmp(&right), key))
+        }
+        SortKey::Prepared(keys) => {
+            let (left, right) = (&keys[left], &keys[right]);
+            null_order(key, left.is_none(), right.is_none())
+                .unwrap_or_else(|| directed(left.cmp(right), key))
         }
         SortKey::Text { column, collation } => {
             let ((left, left_row), (right, right_row)) =

@@ -1999,7 +1999,14 @@ fn next_hash_join_existence_columns(
             }
             let candidate_batch = candidates.output(batch, &residual_types, left_width)?;
             memory.ensure_transient(candidate_batch.estimated_bytes())?;
-            let mask = residual.evaluate_filter_mask(&candidate_batch)?;
+            // A probe row decided by an earlier candidate is never tested
+            // again, so the vector pass declines any batch that raises
+            // something rather than report what the row path would not
+            // have reached.
+            let mask = match residual.evaluate_filter_mask(&candidate_batch)? {
+                Some(mask) => Some(mask),
+                None => residual.evaluate_quiet_mask(&candidate_batch),
+            };
             for (candidate, &owner) in owners.iter().enumerate() {
                 if rows[owner].found {
                     continue;
@@ -2239,6 +2246,16 @@ fn next_hash_join_residual_columns(
         if groups.is_empty() {
             continue;
         }
+        // Before gathering, not after: a resident build with one popular
+        // key can fill `candidates` past the batch bound, because the
+        // guard above admits the first probe row's bucket whole however
+        // large it is - a bucket cannot be split while `residual_picks`
+        // decides semi, anti, outer and scalar semantics from seeing all
+        // of it at once. Checking here turns an allocation that fails into
+        // a budget that refuses, and the query ends without building the
+        // batch first. Splitting a bucket across pulls needs match state
+        // carried per probe row and is not attempted here.
+        memory.ensure_transient(candidates.bytes)?;
         let candidate_batch = candidates.output(
             batch,
             &residual_columns
@@ -2251,7 +2268,10 @@ fn next_hash_join_residual_columns(
         let mask = if candidate_batch.row_count() == 0 {
             None
         } else {
-            residual.evaluate_filter_mask(&candidate_batch)?
+            match residual.evaluate_filter_mask(&candidate_batch)? {
+                Some(mask) => Some(mask),
+                None => residual.evaluate_quiet_mask(&candidate_batch),
+            }
         };
         let passes = |candidate: usize| -> Result<bool, ExecError> {
             match &mask {
@@ -2890,6 +2910,21 @@ pub(super) fn normalized_collation_value(value: Value, collation: Collation) -> 
 /// operator shares one case- and accent-insensitive equivalence relation.
 pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
+    let key = collation_sort_key(text, collation);
+    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
+    for byte in key {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+/// The collation's weight bytes for `text`.
+///
+/// These are a sort key: comparing two of them bytewise is comparing the
+/// strings under the collation, which is what lets a sort prepare one per
+/// row instead of collating inside every comparison.
+pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
     // general_ci has its own flat weight table, and crucially its own PAD
     // SPACE rule; running it through the ICU collator would silently answer
     // with the other collation's semantics.
@@ -2908,12 +2943,7 @@ pub(crate) fn normalized_collation_text(text: &str, collation: Collation) -> Str
                 .expect("Vec-backed collation keys cannot fail");
         }),
     }
-    let mut encoded = String::with_capacity(key.len().saturating_mul(2));
-    for byte in key {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    encoded
+    key
 }
 
 /// Compares text under the collation the plan resolved at bind time.

@@ -265,11 +265,19 @@ impl TableSnapshot {
             .collect::<Vec<_>>();
         let mut outside = Vec::new();
         for row in self.memtable.values() {
-            match spans
-                .iter_mut()
-                .find(|span| row.key() >= &span.min_key && row.key() <= &span.max_key)
+            // The spans are sorted by `min_key` and were just proved
+            // disjoint, so the only one that can hold this key is the last
+            // whose `min_key` is not past it. Scanning for it instead cost
+            // a walk of every span for every memtable row, and rows
+            // appended above the segment key space - the common shape
+            // during ingest - took the whole walk every time before
+            // falling out here.
+            let above = spans.partition_point(|span| &span.min_key <= row.key());
+            match above
+                .checked_sub(1)
+                .filter(|index| row.key() <= &spans[*index].max_key)
             {
-                Some(span) => span.dirty = true,
+                Some(index) => spans[index].dirty = true,
                 // A key no segment covers contributes on its own; a
                 // tombstone out here supersedes nothing and is dropped.
                 None => {

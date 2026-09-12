@@ -442,6 +442,11 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         let grouped = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
             .then(|| snapshot.grouped_fold_spans())
             .flatten()
+            // Bounded like the SMA residual and the delta beside it: the
+            // rows outside every span are cloned into the projection here,
+            // and without a bound a large memtable pays that clone on every
+            // scan open, including the scans that never aggregate.
+            .filter(|(_, outside)| outside.len() <= SMA_RESIDUAL_ROW_CAP)
             .map(|(spans, outside)| crate::execution::GroupedFoldInput {
                 snapshot: (*snapshot).clone(),
                 directory: snapshot.directory().to_path_buf(),
@@ -461,6 +466,34 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                     })
                     .collect(),
             });
+        // Bounded so merging never costs more than it saves. Built here,
+        // beside the SMA and grouped inputs, because BOTH scan paths below
+        // return it: the materialized path used to hardcode `None`, so the
+        // delta-maintained memo was dead for every scan that took it.
+        #[allow(clippy::items_after_statements)]
+        const DELTA_ROW_CAP: usize = 4096;
+        let delta = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
+            .then(|| snapshot.insert_only_delta())
+            .flatten()
+            .filter(|(_, _, rows)| rows.len() <= DELTA_ROW_CAP)
+            .map(
+                |(directory, generation, rows)| crate::execution::InsertOnlyDelta {
+                    directory: directory.to_path_buf(),
+                    generation,
+                    scan: scan_signature(snapshot.instance(), scan),
+                    types: types.clone(),
+                    rows: rows
+                        .iter()
+                        .map(|row| {
+                            output_positions
+                                .iter()
+                                .map(|position| row.values()[*position].clone())
+                                .collect()
+                        })
+                        .collect(),
+                },
+            );
+
         let mut physical_column_ids = scan.projected_column_ids.clone();
         if let Some(unique_keys) = unique_keys {
             for column_id in unique_keys.iter().flatten() {
@@ -496,33 +529,6 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             // memtable overlaps be decoded directly with the superseded rows
             // masked by those columns, instead of merged row by row.
             stream.enable_memtable_overlay(&scan.table.key_column_ids);
-            // Bounded so merging never costs more than it saves.
-            #[allow(clippy::items_after_statements)]
-            const DELTA_ROW_CAP: usize = 4096;
-            let delta = (scan.predicates.is_empty() && scan.limit.is_none())
-                .then(|| snapshot.insert_only_delta())
-                .flatten()
-                .filter(|(_, _, rows)| rows.len() <= DELTA_ROW_CAP)
-                .map(
-                    |(directory, generation, rows)| crate::execution::InsertOnlyDelta {
-                        directory: directory.to_path_buf(),
-                        generation,
-                        scan: format!(
-                            "{:?}|{:?}|{:?}",
-                            scan.projected_column_ids, scan.predicates, scan.limit
-                        ),
-                        types: types.clone(),
-                        rows: rows
-                            .iter()
-                            .map(|row| {
-                                output_positions
-                                    .iter()
-                                    .map(|position| row.values()[*position].clone())
-                                    .collect()
-                            })
-                            .collect(),
-                    },
-                );
             return Ok(Box::new(SnapshotStream {
                 stats: Arc::clone(&self.stats),
                 stats_key: key,
@@ -555,15 +561,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                         (
                             directory.to_path_buf(),
                             generation,
-                            // The store instance leads the signature. A
-                            // directory can be reclaimed and its successor
-                            // walks the same generations, so the path and
-                            // generation alone would let one table be
-                            // answered from another's rows.
-                            format!(
-                                "i{instance}|{:?}|{:?}|{:?}",
-                                scan.projected_column_ids, scan.predicates, scan.limit
-                            ),
+                            scan_signature(instance, scan),
                         )
                     }),
                 delta,
@@ -642,7 +640,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             retained_bytes,
             remaining: None,
             settled: None,
-            delta: None,
+            delta,
             sma,
             grouped,
         }))
@@ -1035,6 +1033,22 @@ fn planned_scan_rows(types: &[pintail_types::DataType], budget: usize) -> usize 
         .max(1);
     let share = (budget / SCAN_BATCH_SHARE).saturating_sub(fixed);
     DEFAULT_BATCH_ROWS.min((share / per_row).max(1))
+}
+
+/// What a scan is, for the keys the settled aggregate memo and its
+/// delta-maintained extension are held under.
+///
+/// One constructor because the two are compared against each other: the
+/// delta looks the settled entry up to extend it, so a signature spelled
+/// differently on either side is not a slower path but a dead one. The
+/// store instance leads it. A directory can be reclaimed and its successor
+/// walks the same generations, so the path and generation alone would let
+/// one table be answered from another's rows.
+fn scan_signature(instance: u64, scan: &Scan) -> String {
+    format!(
+        "i{instance}|{:?}|{:?}|{:?}",
+        scan.projected_column_ids, scan.predicates, scan.limit
+    )
 }
 
 impl BatchStream for SnapshotStream {
@@ -1802,7 +1816,7 @@ fn prewhere_ranges(
                 .map_err(|error| error.to_string())?
             {
                 Some(mask) => mask,
-                None => match predicate.evaluate_skip_mask(&batch) {
+                None => match predicate.evaluate_quiet_mask(&batch) {
                     Some(mask) => mask,
                     None => return Ok(None),
                 },
