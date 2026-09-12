@@ -1060,6 +1060,23 @@ impl SelectionMask {
         Ok(())
     }
 
+    /// Keeps every row either mask keeps.
+    ///
+    /// # Errors
+    /// When the masks cover different row counts.
+    pub fn union(&mut self, other: &Self) -> Result<(), BatchError> {
+        if self.len != other.len {
+            return Err(BatchError::SelectionLength {
+                expected: self.len,
+                actual: other.len,
+            });
+        }
+        for (word, other_word) in self.words.iter_mut().zip(&other.words) {
+            *word |= other_word;
+        }
+        Ok(())
+    }
+
     /// Returns the number of selected rows.
     #[must_use]
     pub fn count(&self) -> usize {
