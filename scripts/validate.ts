@@ -386,12 +386,13 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80', 'browser', 'compose', 'bi-clients'],
-    claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover',
+    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80', 'migrations', 'browser', 'compose', 'bi-clients'],
+    claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover, schema migrations included',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
       'stable release\'s numbers, so the freshness gate is not part of this',
-      'profile. Bank tests/e2e/results.md and results-mysql80.md on PASS.',
+      'profile. Bank tests/e2e/results.md, results-mysql80.md and',
+      'results-migrations.md on PASS.',
       'The additional recovery fault matrix runs in the stable profile only.',
     ],
   },
@@ -420,7 +421,6 @@ const PROFILES: Record<string, Profile> = {
 /// gate forgot them.
 const UNPROFILED: Record<string, string> = {
   freshness: 'runs after banking, in the release chain\'s closing pass',
-  migrations: 'awaiting an owner decision on which profile it belongs to',
   soak: 'opt-in: hours, by design',
   memsoak: 'opt-in: hours, by design',
 }
