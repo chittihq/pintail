@@ -75,7 +75,7 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("directory");
         let mut build = TableStore::open(
-            &directory.path().join("build"),
+            directory.path().join("build"),
             build_schema(),
             StoreOptions::default(),
         )
@@ -95,7 +95,7 @@ impl Fixture {
             )
             .expect("build rows");
         let mut probe = TableStore::open(
-            &directory.path().join("probe"),
+            directory.path().join("probe"),
             probe_schema(),
             StoreOptions::default(),
         )

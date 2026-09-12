@@ -1398,6 +1398,7 @@ const JOIN_KEY_MYSQL_NUMBER: u8 = 2;
 const JOIN_KEY_SCALAR: u8 = 3;
 const JOIN_KEY_COMPOSITE: u8 = 4;
 const JOIN_KEY_NULL: u8 = 5;
+const JOIN_KEY_COLLATED_TEXT: u8 = 6;
 
 fn encode_join_key(encoder: &mut spill::Encoder, key: &JoinHashKey) {
     match key {
@@ -1418,6 +1419,10 @@ fn encode_join_key(encoder: &mut spill::Encoder, key: &JoinHashKey) {
             encoder.u8(JOIN_KEY_SCALAR);
             encoder.value(value);
         }
+        JoinHashKey::CollatedText(bytes) => {
+            encoder.u8(JOIN_KEY_COLLATED_TEXT);
+            encoder.bytes(bytes);
+        }
         JoinHashKey::Composite(parts) => {
             encoder.u8(JOIN_KEY_COMPOSITE);
             encoder.count(parts.len());
@@ -1436,6 +1441,7 @@ fn decode_join_key(decoder: &mut spill::Decoder<'_>) -> Result<JoinHashKey, Stri
             decoder.f64()?,
         ))),
         JOIN_KEY_SCALAR => Ok(JoinHashKey::Scalar(decoder.value()?)),
+        JOIN_KEY_COLLATED_TEXT => Ok(JoinHashKey::CollatedText(decoder.bytes()?.to_vec())),
         JOIN_KEY_NULL => Ok(JoinHashKey::Null),
         JOIN_KEY_COMPOSITE => {
             let count = decoder.count()?;
@@ -2815,6 +2821,15 @@ pub(super) enum JoinHashKey {
     NonNegativeInteger(u64),
     MysqlNumber(pintail_types::Float64),
     Scalar(Value),
+    /// A text key as its collation weight bytes.
+    ///
+    /// Comparing these bytewise is comparing the strings under the
+    /// collation, which is what the key needs. They used to be hex-encoded
+    /// into a `Value::Utf8` and held as a `Scalar`, because a `Value`'s text
+    /// has to be valid UTF-8 and weight bytes are not - so every keyed row
+    /// paid a second allocation of twice the length, and two character
+    /// pushes per weight byte, to satisfy the type rather than the join.
+    CollatedText(Vec<u8>),
     /// NULL under a null-safe key, which matches only NULL.
     Null,
     /// Multi-key equality: primary key first, extras in declaration order.
@@ -2825,6 +2840,7 @@ impl JoinHashKey {
     fn heap_bytes(&self) -> usize {
         match self {
             Self::Scalar(value) => value.heap_bytes(),
+            Self::CollatedText(bytes) => bytes.len(),
             Self::NegativeInteger(_)
             | Self::NonNegativeInteger(_)
             | Self::MysqlNumber(_)
@@ -2879,9 +2895,19 @@ pub(super) fn normalized_join_key(
         return Ok(mode.null_safe.then_some(JoinHashKey::Null));
     }
     let key = match mode.form {
-        KeyForm::CollatedText(collation) => {
-            JoinHashKey::Scalar(normalized_collation_value(value, collation))
-        }
+        // Text keys hold their weight bytes. An ENUM keys as its label,
+        // because MySQL compares an ENUM to a string column by string, and
+        // a DECIMAL average by its canonical text; anything else under this
+        // form is not text and keys as itself.
+        KeyForm::CollatedText(collation) => match value {
+            Value::Utf8(text) | Value::Enum { label: text, .. } => {
+                JoinHashKey::CollatedText(collation_sort_key(&text, collation))
+            }
+            Value::DecimalAverage(average) => {
+                JoinHashKey::CollatedText(collation_sort_key(&average.canonical(), collation))
+            }
+            value => JoinHashKey::Scalar(value),
+        },
         KeyForm::Binary | KeyForm::Boolean => JoinHashKey::Scalar(value),
         KeyForm::Integer => match value {
             Value::Int64(value) if value < 0 => JoinHashKey::NegativeInteger(value),

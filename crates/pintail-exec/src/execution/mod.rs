@@ -6914,8 +6914,12 @@ mod tests {
         // No ORDER BY, so row order is unspecified and the grace-partitioned
         // build hands them back in partition order once it spills. The rows
         // are the claim; their sequence is not.
+        // The tight budget has to be small enough that the build really
+        // spills: it was 4MiB when a text key was held as hex-encoded
+        // text, and shrinking the key to its weight bytes let the build
+        // fit again, so the spill this asserts stopped happening.
         let (mut wide, _) = execute(64 * 1024 * 1024);
-        let (mut tight, spill) = execute(4 * 1024 * 1024);
+        let (mut tight, spill) = execute(2 * 1024 * 1024);
         wide.sort();
         tight.sort();
         assert_eq!(tight, wide);
