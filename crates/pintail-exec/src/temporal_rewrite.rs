@@ -207,6 +207,14 @@ fn session_reading(expr: &BoundExpr) -> Option<(&BoundColumn, i64)> {
     Some((column, fixed_offset_micros(zone)?))
 }
 
+/// The column's fraction digits, for a temporal column that has them.
+const fn column_fsp(column: &BoundColumn) -> Option<u8> {
+    match column.data_type {
+        DataType::DateTime64 { fsp } => Some(fsp),
+        _ => None,
+    }
+}
+
 /// `+HH:MM` or `-HH:MM` in microseconds; `None` for any other zone.
 fn fixed_offset_micros(zone: &str) -> Option<i64> {
     let sign = match zone.as_bytes().first()? {
@@ -224,14 +232,14 @@ fn fixed_offset_micros(zone: &str) -> Option<i64> {
 }
 
 /// The literal shifted out of the session's zone, as the stored column
-/// holds it.
-fn shifted_literal(value: &Value, offset: i64) -> Option<BoundExpr> {
+/// holds it - including its fraction digits, which is what the packed
+/// comparison matches the literal's width against.
+fn shifted_literal(value: &Value, column: &BoundColumn, offset: i64) -> Option<BoundExpr> {
     let Value::Utf8(text) = value else {
         return None;
     };
     let micros = parse_datetime_micros(text)?;
-    let fsp = if text.contains('.') { 6 } else { 0 };
-    let shifted = format_datetime_micros(micros.checked_sub(offset)?, fsp)?;
+    let shifted = format_datetime_micros(micros.checked_sub(offset)?, column_fsp(column)?)?;
     Some(BoundExpr {
         data_type: Some(DataType::Utf8),
         nullable: false,
@@ -274,7 +282,7 @@ fn rewrite_session_reading(expr: &BoundExpr) -> Option<BoundExpr> {
                 kind: BoundExprKind::Binary {
                     op,
                     left: Box::new(column_expr(column)),
-                    right: Box::new(shifted_literal(value, offset)?),
+                    right: Box::new(shifted_literal(value, column, offset)?),
                 },
             })
         }
@@ -298,8 +306,8 @@ fn rewrite_session_reading(expr: &BoundExpr) -> Option<BoundExpr> {
                     function: *function,
                     args: vec![
                         column_expr(column),
-                        shifted_literal(low, offset)?,
-                        shifted_literal(high, offset)?,
+                        shifted_literal(low, column, offset)?,
+                        shifted_literal(high, column, offset)?,
                     ],
                 },
             })
@@ -391,7 +399,15 @@ fn year_days(year: i64) -> Option<(i64, i64)> {
 fn boundary(column: &BoundColumn, days: i64) -> Option<BoundExpr> {
     let date = format_date_days(days)?;
     let text = match column.data_type {
-        DataType::DateTime64 { .. } => format!("{date} 00:00:00"),
+        // The midnight this names has to be spelled to the column's own
+        // precision: the packed comparison takes a DATETIME(n) literal only
+        // when its text is exactly as wide as that column's canonical form,
+        // so a literal written to seconds against DATETIME(3) would send
+        // the rewrite it was built for back to the row path.
+        DataType::DateTime64 { fsp } => match fsp {
+            0 => format!("{date} 00:00:00"),
+            fsp => format!("{date} 00:00:00.{}", "0".repeat(usize::from(fsp))),
+        },
         DataType::Date32 => date,
         _ => return None,
     };
@@ -686,6 +702,60 @@ mod tests {
             ))),
             "Between { negated: false }(created_at, '2026-08-01 00:00:00', '2026-08-02 00:00:00')"
         );
+    }
+
+    /// A `SessionTimestamp` reading of a column with fractional seconds.
+    fn reading_of(data_type: DataType, zone: &str) -> BoundExpr {
+        BoundExpr {
+            data_type: Some(data_type),
+            nullable: true,
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::SessionTimestamp,
+                args: vec![
+                    column_expr(data_type),
+                    literal(Value::Utf8(zone.to_owned())),
+                ],
+            },
+        }
+    }
+
+    /// Every literal the rewrite emits carries the column's own fraction
+    /// digits.
+    ///
+    /// The comparison it lands on reads a `DATETIME(n)` column as packed
+    /// units and the literal as text, and it takes the literal only when
+    /// the text is exactly as wide as that column's canonical form. A
+    /// literal written to second precision against a `DATETIME(3)` column
+    /// is not, so the rewrite that exists to reach the packed comparison
+    /// used to miss it - and under a session offset, where `=` survives the
+    /// rewrite, the two spellings of the same instant did not compare
+    /// equal at all.
+    #[test]
+    fn a_rewritten_literal_carries_the_column_s_fraction_digits() {
+        for (fsp, fraction) in [(0_u8, ""), (3, ".000"), (6, ".000000")] {
+            let data_type = DataType::DateTime64 { fsp };
+            assert_eq!(
+                render(&rewrite_predicate(binary(
+                    BinaryOp::Equal,
+                    date_of(data_type),
+                    literal(Value::Utf8("2026-08-01".into()))
+                ))),
+                format!(
+                    "((created_at GreaterOrEqual '2026-08-01 00:00:00{fraction}') And \
+                     (created_at Less '2026-08-02 00:00:00{fraction}'))"
+                ),
+                "DATE() over DATETIME({fsp})"
+            );
+            assert_eq!(
+                render(&rewrite_predicate(binary(
+                    BinaryOp::Equal,
+                    reading_of(data_type, "+05:30"),
+                    literal(Value::Utf8("2026-08-01 05:30:00".into()))
+                ))),
+                format!("(created_at Equal '2026-08-01 00:00:00{fraction}')"),
+                "a session reading of DATETIME({fsp})"
+            );
+        }
     }
 
     /// A named zone holds two offsets across a daylight-saving change, so

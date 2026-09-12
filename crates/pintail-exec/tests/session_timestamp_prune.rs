@@ -34,11 +34,17 @@ impl Fixture {
     /// One row every fifteen minutes from 2026-07-01 00:00:00 UTC, in the
     /// `seen` column, which the source declares `TIMESTAMP`.
     fn new() -> Self {
+        Self::with_precision(0)
+    }
+
+    /// The same table with `seen` declared to `fsp` fraction digits, which
+    /// is what an ORM's default `TIMESTAMP(3)` gives.
+    fn with_precision(fsp: u8) -> Self {
         let schema = TableSchema::new(
             1,
             vec![
                 Column::new(1, "id", DataType::UInt64, false),
-                Column::new(2, "seen", DataType::DateTime64 { fsp: 0 }, true).with_timestamp(true),
+                Column::new(2, "seen", DataType::DateTime64 { fsp }, true).with_timestamp(true),
             ],
         )
         .expect("schema");
@@ -167,4 +173,35 @@ fn a_filter_in_a_named_zone_session_is_left_as_written() {
         Some("+05:30"),
     );
     assert_eq!(named_rows, offset_rows);
+}
+
+/// A column with fraction digits answers a session-zone filter as a
+/// second-precision one does.
+///
+/// The rewrite shifts the literal onto the column and keeps `=` as it
+/// found it, so the literal it writes has to be spelled the way the column
+/// stores its values. Written to seconds against a `DATETIME(3)` column it
+/// names the same instant, and the answer has to agree.
+#[test]
+fn a_fractional_column_answers_a_session_filter_as_a_whole_second_one_does() {
+    for fsp in [0_u8, 3, 6] {
+        let fixture = Fixture::with_precision(fsp);
+        let (offset_rows, _) = fixture.run(
+            "SELECT id FROM events WHERE seen = '2026-07-03 05:30:00'",
+            Some("+05:30"),
+        );
+        let (utc_rows, _) = fixture.run(
+            "SELECT id FROM events WHERE seen = '2026-07-03 00:00:00'",
+            None,
+        );
+        assert_eq!(
+            offset_rows, utc_rows,
+            "DATETIME({fsp}): the same instant selects the same rows"
+        );
+        assert_eq!(
+            offset_rows.len(),
+            1,
+            "DATETIME({fsp}): one row is that instant"
+        );
+    }
 }
