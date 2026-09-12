@@ -486,6 +486,7 @@ fn columnar_order(
         None,
         collation,
         None,
+        memory,
     )?
     .into_order()
     .into_iter()

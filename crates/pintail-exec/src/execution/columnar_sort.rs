@@ -63,6 +63,20 @@ enum SortKey {
     Values { column: usize, collation: Collation },
 }
 
+/// What the prepared keys of one sort hold, released when the ordering
+/// that needed them is finished - or when building a later key fails and
+/// the earlier ones are already charged.
+struct PreparedKeys<'sort> {
+    memory: &'sort MemoryTracker,
+    bytes: usize,
+}
+
+impl Drop for PreparedKeys<'_> {
+    fn drop(&mut self) {
+        self.memory.release(self.bytes);
+    }
+}
+
 /// Rows sorted by reference, gathered into output batches on demand.
 pub(super) struct ColumnarSorted {
     batches: Vec<RecordBatch>,
@@ -81,6 +95,7 @@ impl ColumnarSorted {
         width: Option<usize>,
         collation: Collation,
         limit: Option<usize>,
+        memory: &MemoryTracker,
     ) -> Result<Self, ExecError> {
         let rows = batches
             .iter()
@@ -93,10 +108,17 @@ impl ColumnarSorted {
                     .map(move |row| (index, u32::try_from(row).unwrap_or(u32::MAX)))
             })
             .collect::<Vec<_>>();
-        let sort_keys = keys
-            .iter()
-            .map(|key| sort_key(&batches, &rows, *key, collation))
-            .collect::<Result<Vec<_>, _>>()?;
+        // Prepared keys live only as long as the ordering below - the rows
+        // keep their places, not their keys - so what they hold is released
+        // on the way out, including when a later key fails to build and the
+        // earlier ones have already been charged.
+        let mut held = PreparedKeys { memory, bytes: 0 };
+        let mut sort_keys = Vec::with_capacity(keys.len());
+        for key in keys {
+            let (built, bytes) = sort_key(&batches, &rows, *key, collation, memory)?;
+            held.bytes = held.bytes.saturating_add(bytes);
+            sort_keys.push(built);
+        }
         // Rows with equal keys order by arrival, as a stable sort keeps them,
         // so the order is total and the first `limit` of it well defined.
         let compare = |left: &usize, right: &usize| {
@@ -216,7 +238,8 @@ pub(super) fn top_k(
     collation: Collation,
 ) -> Result<TopK, ExecError> {
     if k == 0 {
-        return ColumnarSorted::new(Vec::new(), keys, width, collation, Some(0)).map(TopK::Sorted);
+        return ColumnarSorted::new(Vec::new(), keys, width, collation, Some(0), memory)
+            .map(TopK::Sorted);
     }
     let cut_at = k.saturating_mul(2).max(DEFAULT_BATCH_ROWS);
     let mut kept = Vec::new();
@@ -252,7 +275,7 @@ pub(super) fn top_k(
             memory.release(reserved);
             return Ok(TopK::Unkept(kept));
         };
-        let mut first = ColumnarSorted::new(kept, keys, None, collation, Some(k))?;
+        let mut first = ColumnarSorted::new(kept, keys, None, collation, Some(k), memory)?;
         kept = Vec::new();
         while let Some(batch) = first.next_batch(&types, memory)? {
             kept.push(batch);
@@ -274,7 +297,7 @@ pub(super) fn top_k(
             .then(|| keys.first().and_then(|key| Cutoff::of(&kept, *key)))
             .flatten();
     }
-    ColumnarSorted::new(kept, keys, width, collation, Some(k)).map(TopK::Sorted)
+    ColumnarSorted::new(kept, keys, width, collation, Some(k), memory).map(TopK::Sorted)
 }
 
 /// Each column's type, when every batch gives it the same one.
@@ -420,12 +443,16 @@ fn units_at(
     Ok(Some(units))
 }
 
+/// One key in the form its rows compare in, and the bytes it holds while
+/// they do. Only a prepared key holds anything: the caller charges that to
+/// the tracker for the length of the sort and releases it after.
 fn sort_key(
     batches: &[RecordBatch],
     rows: &[(u32, u32)],
     key: BoundOrderKey,
     collation: Collation,
-) -> Result<SortKey, ExecError> {
+    memory: &MemoryTracker,
+) -> Result<(SortKey, usize), ExecError> {
     let collation = key
         .collation
         .and_then(Collation::from_mysql_name)
@@ -452,7 +479,7 @@ fn sort_key(
             })
             .collect::<Result<Vec<_>, Unordered>>();
         if let Ok(units) = units {
-            return Ok(SortKey::Units(units));
+            return Ok((SortKey::Units(units), 0));
         }
         // Text the row sort would read lossily compares as its values.
         let readable = columns.iter().all(|column| {
@@ -470,7 +497,22 @@ fn sort_key(
             // are also variable width and held for the whole sort, so a
             // set that would outgrow the rows themselves stays on the
             // comparator.
+            //
+            // The budget is charged before the keys are built, not after.
+            // `retained_bytes` books KEY_BYTES a row for a key, which is
+            // what a packed one costs; a prepared one runs to
+            // PREPARED_KEY_BYTES_PER_ROW, and the difference was held
+            // without the tracker ever seeing it. A ceiling a sort can
+            // exceed by building keys is not a ceiling.
             let budget = rows.len().saturating_mul(PREPARED_KEY_BYTES_PER_ROW);
+            if memory.reserve(budget).is_err() {
+                // No room to prepare: the comparator collates in place and
+                // holds nothing, which is slower and always available.
+                crate::counters::count(|counters| {
+                    counters.sort_keys_unprepared = counters.sort_keys_unprepared.saturating_add(1);
+                });
+                return Ok((SortKey::Text { column, collation }, 0));
+            }
             let mut held = 0_usize;
             let mut prepared = Vec::with_capacity(rows.len());
             for &(batch, row) in rows {
@@ -486,14 +528,21 @@ fn sort_key(
                 });
                 held = held.saturating_add(weights.len());
                 if held > budget {
-                    return Ok(SortKey::Text { column, collation });
+                    memory.release(budget);
+                    return Ok((SortKey::Text { column, collation }, 0));
                 }
                 prepared.push(Some(weights));
             }
-            return Ok(SortKey::Prepared(prepared));
+            // Give back what the reservation over-booked: the keys are
+            // built now, so their size is known exactly.
+            memory.release(budget.saturating_sub(held));
+            crate::counters::count(|counters| {
+                counters.sort_keys_prepared = counters.sort_keys_prepared.saturating_add(1);
+            });
+            return Ok((SortKey::Prepared(prepared), held));
         }
     }
-    Ok(SortKey::Values { column, collation })
+    Ok((SortKey::Values { column, collation }, 0))
 }
 
 /// NULL's place, which the row sort fixes whatever the direction.
@@ -601,7 +650,7 @@ mod tests {
     use pintail_sql::BoundOrderKey;
     use pintail_types::{DataType, Value};
 
-    use super::ColumnarSorted;
+    use super::{ColumnarSorted, PREPARED_KEY_BYTES_PER_ROW};
     use crate::RecordBatch;
     use crate::array::ValidityMask;
     use crate::batch::{ColumnVector, DecimalUnits, LazyText, SelectionMask, TypedValues};
@@ -775,7 +824,7 @@ mod tests {
                 expected.sort_by(|left, right| compare_sort_rows(left, right, keys, collation));
                 for limit in [None, Some(0), Some(1), Some(17), Some(200)] {
                     let mut sorted =
-                        ColumnarSorted::new(batches.clone(), keys, None, collation, limit)
+                        ColumnarSorted::new(batches.clone(), keys, None, collation, limit, &memory)
                             .expect("sorted");
                     let mut actual = Vec::new();
                     while let Some(batch) = sorted.next_batch(&types, &memory).expect("batch") {
@@ -788,18 +837,64 @@ mod tests {
         }
     }
 
+    /// The text key column is index 3. Under a ceiling too small to hold
+    /// prepared weight keys the sort answers the same rows in the same
+    /// order - on the comparator instead - and gives back every byte it
+    /// took, rather than holding keys the tracker never charged.
+    #[test]
+    fn a_ceiling_too_small_for_weight_keys_still_sorts_by_text() {
+        let batches = (0..3).map(batch).collect::<Vec<_>>();
+        let keys = [key(3, true, true)];
+        let collation = Collation::default();
+        let rows = batches
+            .iter()
+            .map(RecordBatch::visible_row_count)
+            .sum::<usize>();
+
+        let _ = crate::counters::take_exec_counters();
+        let ample = MemoryTracker::new(usize::MAX);
+        let generous = ColumnarSorted::new(batches.clone(), &keys, None, collation, None, &ample)
+            .expect("sorted")
+            .into_order();
+        let counted = crate::counters::take_exec_counters();
+        assert_eq!(
+            (counted.sort_keys_prepared, counted.sort_keys_unprepared),
+            (1, 0),
+            "room to spare prepares the weight keys"
+        );
+        assert_eq!(ample.used(), 0, "the keys are released with the ordering");
+
+        // Room for the batches but not for a weight key per row.
+        let tight = MemoryTracker::new(rows * PREPARED_KEY_BYTES_PER_ROW / 2);
+        let cramped = ColumnarSorted::new(batches, &keys, None, collation, None, &tight)
+            .expect("sorted")
+            .into_order();
+        let counted = crate::counters::take_exec_counters();
+        assert_eq!(
+            (counted.sort_keys_prepared, counted.sort_keys_unprepared),
+            (0, 1),
+            "a ceiling with no room for them keeps the comparator instead"
+        );
+        assert_eq!(tight.used(), 0, "the fallback holds nothing either");
+        assert_eq!(
+            cramped, generous,
+            "the comparator and the prepared keys order the rows alike"
+        );
+    }
+
     #[test]
     fn serves_rows_and_drops_the_sort_only_columns() {
         let batches = (0..2).map(batch).collect::<Vec<_>>();
         let keys = [key(0, true, true), key(6, false, true)];
         let collation = Collation::default();
+        let memory = MemoryTracker::new(usize::MAX);
         let mut expected = batches.iter().flat_map(rows_of).collect::<Vec<_>>();
         expected.sort_by(|left, right| compare_sort_rows(left, right, &keys, collation));
         for row in &mut expected {
             row.truncate(3);
         }
         let mut sorted =
-            ColumnarSorted::new(batches, &keys, Some(3), collation, None).expect("sorted");
+            ColumnarSorted::new(batches, &keys, Some(3), collation, None, &memory).expect("sorted");
         let mut actual = Vec::new();
         while let Some(row) = sorted.next_row() {
             actual.push(row);
