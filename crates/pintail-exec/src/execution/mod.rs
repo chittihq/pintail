@@ -2130,6 +2130,12 @@ fn plan_regex_memory_upper_bound(plan: &PhysicalPlan) -> usize {
     }
 }
 
+impl Drop for Execution {
+    fn drop(&mut self) {
+        self.root.release_reservations(&self.memory);
+    }
+}
+
 impl Execution {
     /// Opens every scan and prepares a physical plan for pulling.
     ///
@@ -3595,6 +3601,55 @@ enum PullOperator {
 }
 
 impl PullOperator {
+    /// Hands back what the plan still holds against the query's ceiling.
+    ///
+    /// An operator that runs to exhaustion releases as it goes; one whose
+    /// parent stopped early - under a `LIMIT`, or beside a failure - never
+    /// reaches those sites, and a hash join can be holding its probe
+    /// batch, its read-ahead batches and its build-side key filter when
+    /// that happens. Called once, from the execution's own `Drop`, so the
+    /// accounting is square before the tracker settles up.
+    fn release_reservations(&mut self, memory: &MemoryTracker) {
+        match self {
+            // A leaf holds no reservation of its own past its stream, and
+            // a key-lookup join reserves nothing it does not hand back in
+            // the same call.
+            Self::Empty
+            | Self::OneRow { .. }
+            | Self::Scan { .. }
+            | Self::Rows { .. }
+            | Self::KeyLookupJoin(_) => {}
+            Self::CrossJoin { inputs, .. } | Self::UnionAll { inputs, .. } => {
+                for input in inputs {
+                    input.release_reservations(memory);
+                }
+            }
+            Self::HashJoin {
+                left, right, state, ..
+            } => {
+                if let Some(state) = state {
+                    state.release_all(memory);
+                }
+                left.release_reservations(memory);
+                right.release_reservations(memory);
+            }
+            Self::SetOp { left, right, .. } => {
+                for input in [left, right].into_iter().flatten() {
+                    input.release_reservations(memory);
+                }
+            }
+            Self::Filter { input, .. }
+            | Self::Profiled { input, .. }
+            | Self::KeyFilter { input, .. }
+            | Self::HashAggregate { input, .. }
+            | Self::Project { input, .. }
+            | Self::Distinct { input, .. }
+            | Self::Sort { input, .. }
+            | Self::Window { input, .. }
+            | Self::Limit { input, .. } => input.release_reservations(memory),
+        }
+    }
+
     /// Find an unstarted scan below an inner-join input, translating the
     /// output position at each join. Outer joins and layout-changing nodes
     /// are boundaries: pushing through them could remove required rows.
