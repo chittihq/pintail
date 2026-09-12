@@ -30,6 +30,8 @@ use crate::batch::{ColumnVector, RecordBatch};
 
 mod compare;
 mod conditional;
+#[cfg(test)]
+mod differential;
 mod functions;
 mod numeric;
 mod temporal;
