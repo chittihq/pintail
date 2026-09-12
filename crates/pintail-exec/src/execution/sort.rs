@@ -379,8 +379,9 @@ pub(super) fn build_sort(
             columnar_sort::TopK::Sorted(sorted) => return Ok(SortedRows::Columnar(sorted)),
             columnar_sort::TopK::Unkept(batches) => batches,
         };
-        let mut rows = materialize_top_k(unkept, input, top_k, keys, compare, memory, collation)?;
-        rows.sort_by(compare);
+        let mut ranked = materialize_top_k(unkept, input, top_k, keys, compare, memory, collation)?;
+        ranked.sort_by(|left, right| compare(&left.1, &right.1).then_with(|| left.0.cmp(&right.0)));
+        let mut rows = ranked.into_iter().map(|(_, row)| row).collect::<Vec<_>>();
         if let Some(width) = trim_to {
             for row in &mut rows {
                 row.truncate(width);
@@ -694,6 +695,15 @@ impl SpilledMerge {
     }
 }
 
+/// The `top_k` rows of `held` followed by the rest of `input`, each paired
+/// with the position it arrived at.
+///
+/// Rows with equal keys order by arrival, exactly as the columnar top-k and
+/// the full sort order them, so the k retained here are the k the full sort
+/// answers. The arrival position is what makes that well defined: the
+/// selection below is unstable, so without a tiebreak it keeps an arbitrary
+/// subset of a tie group straddling the k-th row, and which subset depends on
+/// where the input's batch boundaries happen to fall.
 fn materialize_top_k(
     held: Vec<RecordBatch>,
     input: &mut PullOperator,
@@ -702,12 +712,17 @@ fn materialize_top_k(
     compare: impl Copy + FnMut(&Vec<Value>, &Vec<Value>) -> Ordering,
     memory: &MemoryTracker,
     collation: Collation,
-) -> Result<Vec<Vec<Value>>, ExecError> {
+) -> Result<Vec<(usize, Vec<Value>)>, ExecError> {
     if top_k == 0 {
         return Ok(Vec::new());
     }
+    let ordered = move |left: &(usize, Vec<Value>), right: &(usize, Vec<Value>)| {
+        let mut compare = compare;
+        compare(&left.1, &right.1).then_with(|| left.0.cmp(&right.0))
+    };
     let mut held = held.into_iter();
     let mut rows = Vec::new();
+    let mut arrived = 0_usize;
     // Threshold prefilter (experiments/RESULTS.md e03): once k rows are
     // retained, their current worst acts as a cutoff — rows comparing
     // STRICTLY worse on the sort keys can never enter the top k and are
@@ -721,11 +736,14 @@ fn materialize_top_k(
     } {
         let batch_bytes = batch.estimated_bytes();
         let additional_rows = batch.visible_row_count();
-        memory.ensure_transient(
-            batch_bytes.saturating_add(additional_rows.saturating_mul(size_of::<Vec<Value>>())),
-        )?;
+        memory
+            .ensure_transient(batch_bytes.saturating_add(
+                additional_rows.saturating_mul(size_of::<(usize, Vec<Value>)>()),
+            ))?;
         reserve_vec_elements(&mut rows, additional_rows, 0, memory)?;
         for row in batch.selection().selected_rows() {
+            let position = arrived;
+            arrived = arrived.saturating_add(1);
             if let Some(threshold_row) = &threshold {
                 let mut ordering = Ordering::Equal;
                 for key in keys {
@@ -745,7 +763,8 @@ fn materialize_top_k(
                 }
             }
             let row_bytes =
-                estimated_batch_row_bytes(&batch, row)?.saturating_sub(size_of::<Vec<Value>>());
+                estimated_batch_row_bytes(&batch, row)?
+                    .saturating_sub(size_of::<(usize, Vec<Value>)>());
             memory.ensure_transient(batch_bytes.saturating_add(row_bytes))?;
             memory.reserve(row_bytes)?;
             let values = batch
@@ -757,13 +776,13 @@ fn materialize_top_k(
                     ))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            rows.push(values);
+            rows.push((position, values));
         }
         if rows.len() > top_k {
-            rows.select_nth_unstable_by(top_k, compare);
+            rows.select_nth_unstable_by(top_k, ordered);
             let released = rows[top_k..]
                 .iter()
-                .map(|row| estimated_row_payload_bytes(row))
+                .map(|(_, row)| estimated_row_payload_bytes(row))
                 .sum::<usize>();
             rows.truncate(top_k);
             let old_capacity = rows.capacity();
@@ -772,14 +791,16 @@ fn materialize_top_k(
                 released.saturating_add(
                     old_capacity
                         .saturating_sub(rows.capacity())
-                        .saturating_mul(size_of::<Vec<Value>>()),
+                        .saturating_mul(size_of::<(usize, Vec<Value>)>()),
                 ),
             );
+            // The cutoff compares keys only, so it stays the weakest key the
+            // retained set holds and the prefilter above keeps every tie.
             let mut compare = compare;
             threshold = rows
                 .iter()
-                .max_by(|left, right| compare(left, right))
-                .cloned();
+                .max_by(|(_, left), (_, right)| compare(left, right))
+                .map(|(_, row)| row.clone());
         }
     }
     Ok(rows)
