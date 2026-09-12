@@ -132,6 +132,38 @@ before a migration — the source renders `1234.5678` as `1234.57` and the
 replica as `1234.5677` (`docs/limitations.md`) — so a table built on one could
 only ever report that older divergence, never what the migration did to it.
 
+## What the gate found
+
+The same twenty-nine families, same source container, same harness, against
+the binary before this change and the binary after it:
+
+| | Checks passed | Checks failed |
+|---|---|---|
+| Before | 107 | 36 |
+| After | 143 | 0 |
+
+The thirty-six were twelve families failing all three questions — the
+untouched rows were stale, the table did not match the source, and a restart
+did not heal it because the stale values were on disk:
+
+| Family | What the replica held | What the source held |
+|---|---|---|
+| integer width narrows | `100000` | `32767` |
+| varchar capacity shrinks | 26 characters | 8 |
+| text family shrinks | 400 characters | 255 |
+| varbinary capacity shrinks | `0011223344556677` | `00112233` |
+| bit width narrows | `65535` | `15` |
+| datetime becomes timestamp | `1960-01-01 00:00:00` | `0000-00-00 00:00:00` |
+| enum member is dropped | `beta` | `''` |
+| enum member is renamed | `draft` | `''` |
+| set members reorder | `b,c` | `c,b` |
+| nullable becomes not null | `NULL` | `0` |
+| stored generated expression changes | `20` | `1000` |
+| virtual generated expression changes | `11` | `1010` |
+
+Each of those now quarantines the table and the resync recopies it, which is
+why the same run reports nothing.
+
 Run it with `bun run tests/e2e/migrations.ts`; `PINTAIL_E2E_BINARY` points it
 at an already-built binary, which is how one source serves a before-and-after
 comparison of the same cases. The banked result is
