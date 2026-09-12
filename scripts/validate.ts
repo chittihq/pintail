@@ -61,6 +61,7 @@ const OWNED_CONTAINER_PREFIXES = [
   'pintail-m4-',
   'pintail-prod-',
   'pintail-mysql-oracle-',
+  'pintail-mtr-',
 ]
 
 /// Remote-host free space required before the storage-heavy stages run.
@@ -198,6 +199,24 @@ const STAGES: Stage[] = [
       'cargo', 'test', '-p', 'pintail-sqllogic', '--test', 'mysql_oracle', '--', '--ignored', '--nocapture', '--test-threads=1', '--skip', 'validates_generated_candidates',
     ],
     env: { PINTAIL_DASHBOARD_PREBUILT: '1', PINTAIL_ORACLE_EVIDENCE: join(repository, 'tests/sqllogic/results-oracle.json') },
+  },
+  {
+    // The upstream regression suites replayed against a live MySQL 8.4, as a
+    // ratchet: every statement banked in tests/mtr/baseline*.json as exact
+    // must still be exact. Both suites share one stage so a gate never
+    // reports one of them green while the other did not run.
+    name: 'mtr',
+    remote: true,
+    timeoutMinutes: 30,
+    stallMinutes: 10,
+    command: [
+      'bash', '-c',
+      'bun install --frozen-lockfile && "$CARGO" build --release -p pintail' +
+        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 bun run run.ts' +
+        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 MTR_SUITE=mariadb bun run run.ts',
+    ],
+    cwd: join(repository, 'tests', 'mtr'),
+    env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
   },
   {
     name: 'e2e',
@@ -386,7 +405,7 @@ const PROFILES: Record<string, Profile> = {
   /// previous stable's bank, so the freshness gate is absent by design
   /// rather than by omission.
   rc: {
-    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80', 'migrations', 'browser', 'compose', 'bi-clients'],
+    stages: ['fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'mtr', 'e2e', 'e2e-mysql80', 'migrations', 'browser', 'compose', 'bi-clients'],
     claim: 'rc correctness gates passed, on both MySQL majors the release claims to cover, schema migrations included',
     caveats: [
       'Benchmark evidence is NOT regenerated: an rc ships the previous',
@@ -402,7 +421,7 @@ const PROFILES: Record<string, Profile> = {
   /// gate can pass.
   stable: {
     stages: [
-      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'e2e', 'e2e-mysql80',
+      'fmt', 'typecheck', 'unit', 'parser-corpus', 'oracle', 'mtr', 'e2e', 'e2e-mysql80',
       'recovery', 'browser', 'compose', 'bi-clients', 'bench', 'accept',
     ],
     claim: 'every correctness gate passed and the measured evidence was regenerated',
