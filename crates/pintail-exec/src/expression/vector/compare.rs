@@ -67,9 +67,12 @@ pub(super) fn comparison_column(
     }
     let left = operand(batch, left, effects)?;
     let right = operand(batch, right, effects)?;
-    if !left.varies() && !right.varies() {
-        return None;
-    }
+    // A comparison of two constants is answered rather than declined, even
+    // though vectorizing one value is pointless on its own: a scalar
+    // subquery folds to a literal, so the conditions of the CASE a
+    // quantified comparison expands to are constant against constant, and
+    // declining them took the whole predicate - the column comparison
+    // inside it included - to the row path.
     let rows = batch.row_count();
     let equality = matches!(op, BinaryOp::Equal | BinaryOp::NotEqual);
     let orderings = integer_orderings(&left, &right, rows)
@@ -499,6 +502,44 @@ mod tests {
                 overflow,
             },
             other => other,
+        }
+    }
+
+    /// Two constants compared answer a column rather than declining.
+    ///
+    /// On its own that is pointless work - one value spread over a batch -
+    /// but a scalar subquery folds to a literal, so the conditions inside
+    /// the CASE a quantified comparison expands to are constant against
+    /// constant. Declining them declined the whole predicate, taking the
+    /// column comparison nested inside it to the row path with them.
+    #[test]
+    fn constant_comparisons_answer_rather_than_decline() {
+        let batch = fixture();
+        for (left, right) in [
+            (Value::Int64(3), Value::Int64(0)),
+            (Value::Int64(3), Value::Int64(3)),
+            (Value::UInt64(3), Value::UInt64(3)),
+            (Value::Int64(-1), Value::UInt64(1)),
+        ] {
+            for op in [
+                BinaryOp::Equal,
+                BinaryOp::NotEqual,
+                BinaryOp::Less,
+                BinaryOp::Greater,
+                BinaryOp::LessOrEqual,
+                BinaryOp::GreaterOrEqual,
+            ] {
+                let expression = binary(
+                    op,
+                    CompiledExpr::Literal(left.clone()),
+                    CompiledExpr::Literal(right.clone()),
+                    DataType::Boolean,
+                );
+                assert!(
+                    agrees_with_rows(&expression, &batch, DataType::Boolean),
+                    "{left:?} {op:?} {right:?} answers as row evaluation does"
+                );
+            }
         }
     }
 
