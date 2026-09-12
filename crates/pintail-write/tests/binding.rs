@@ -294,3 +294,44 @@ fn a_character_set_text_is_not_stored_in_is_refused() {
         create(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
     }
 }
+
+#[test]
+fn a_text_column_takes_the_collation_mysql_would_give_it() {
+    let collation = |sql: &str, column: usize| {
+        create(sql).expect(sql).table.columns[column]
+            .collation
+            .clone()
+    };
+    assert_eq!(
+        collation("CREATE TABLE t (a VARCHAR(4)) charset latin1", 0).as_deref(),
+        Some("latin1_swedish_ci")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4) CHARACTER SET utf8mb3) DEFAULT CHARSET=latin1",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb3_general_ci")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb4_bin")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4) COLLATE utf8mb4_general_ci) COLLATE=utf8mb4_bin",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb4_general_ci")
+    );
+    assert_eq!(
+        collation("CREATE TABLE t (a VARCHAR(4))", 0).as_deref(),
+        Some("utf8mb4_0900_ai_ci")
+    );
+}

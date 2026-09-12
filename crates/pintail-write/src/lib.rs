@@ -182,11 +182,29 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
             }
         }
         let mut declared = declare(ordinal, &column_name, &column.data_type, nullable)?;
-        if character_set.is_some() {
-            declared.character_set = character_set;
-        }
-        if collation.is_some() {
-            declared.collation = collation;
+        // A text column's comparison rules come from what MySQL would give
+        // it, not from the engine default: `CREATE TABLE ... CHARSET latin1`
+        // makes every column latin1_swedish_ci, which pads trailing spaces,
+        // where the engine default does not.
+        if declared.collation.is_some() {
+            let (table_charset, table_collation) = table_text_defaults(create);
+            let resolved = collation
+                .clone()
+                .or_else(|| character_set.as_deref().map(default_collation))
+                .or(table_collation)
+                .or_else(|| table_charset.as_deref().map(default_collation));
+            if let Some(resolved) = resolved {
+                declared.character_set =
+                    Some(resolved.split('_').next().unwrap_or("utf8mb4").to_owned());
+                declared.collation = Some(resolved);
+            }
+        } else {
+            if character_set.is_some() {
+                declared.character_set = character_set;
+            }
+            if collation.is_some() {
+                declared.collation = collation;
+            }
         }
         if auto_increment {
             declared.extra = "auto_increment".to_owned();
@@ -708,6 +726,41 @@ fn reject_unsupported_table_features(create: &CreateTable) -> Result<(), WriteEr
         )));
     }
     Ok(())
+}
+
+/// The collation MySQL gives a character set when a definition names only
+/// the set.
+fn default_collation(charset: &str) -> String {
+    match charset.to_ascii_lowercase().as_str() {
+        "utf8" | "utf8mb3" => "utf8mb3_general_ci",
+        "latin1" => "latin1_swedish_ci",
+        "ascii" => "ascii_general_ci",
+        "binary" => "binary",
+        _ => "utf8mb4_0900_ai_ci",
+    }
+    .to_owned()
+}
+
+/// The table's default character set and collation, from its options.
+fn table_text_defaults(create: &CreateTable) -> (Option<String>, Option<String>) {
+    let options = create.table_options.to_string().to_ascii_lowercase();
+    let words = options
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut charset = None;
+    let mut collation = None;
+    for (index, word) in words.iter().enumerate() {
+        match *word {
+            "charset" => charset = words.get(index + 1).map(|name| (*name).to_owned()),
+            "character" if words.get(index + 1) == Some(&"set") => {
+                charset = words.get(index + 2).map(|name| (*name).to_owned());
+            }
+            "collate" => collation = words.get(index + 1).map(|name| (*name).to_owned()),
+            _ => {}
+        }
+    }
+    (charset, collation)
 }
 
 /// Character sets whose text is stored here exactly as the source spells it.
