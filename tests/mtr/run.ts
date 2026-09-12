@@ -1085,10 +1085,11 @@ async function startPintail(binary: string) {
     [binary, '--data-dir', pintailDataDir, '--http-bind', `127.0.0.1:${pintailHttpPort}`, '--wire-bind', `127.0.0.1:${pintailWirePort}`],
     {
       cwd: repository,
-      stdout: 'ignore',
-      stderr: 'ignore',
+      // MTR_PINTAIL_LOG=<path> keeps the server's output for a reproduction.
+      stdout: process.env.MTR_PINTAIL_LOG ? Bun.file(process.env.MTR_PINTAIL_LOG) : 'ignore',
+      stderr: process.env.MTR_PINTAIL_LOG ? Bun.file(process.env.MTR_PINTAIL_LOG) : 'ignore',
       // A fast supervisor cadence: replica mode waits on it at every sync.
-      env: { ...process.env, PINTAIL_LOG: 'error', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
+      env: { ...process.env, PINTAIL_LOG: process.env.MTR_PINTAIL_LOG_LEVEL ?? 'error', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
     },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {

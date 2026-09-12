@@ -9,6 +9,9 @@ mod ddl;
 mod decoder;
 mod event;
 pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
+
+const ROTATE_EVENT: u8 = 0x04;
+const FORMAT_DESCRIPTION_EVENT: u8 = 0x0f;
 mod gtid;
 #[cfg(test)]
 mod simulation;
@@ -480,6 +483,13 @@ async fn run_cdc_inner(
             Err(error) => return Err(error),
         };
         let mut stream_error = None;
+        // MariaDB writes end_log_pos 0 on every event inside a transaction -
+        // table maps and row events included - so those events take the last
+        // real position read, which is the transaction's own GTID event. The
+        // raw zero made every transaction's row versions identical: rows of a
+        // keyless table, keyed by version, overwrote one another, and a row
+        // event compared against a snapshot fence always fell below it.
+        let mut logged_position = position.pos;
         while let Some(event) = stream.next().await {
             let event = match event {
                 Ok(event) => {
@@ -492,8 +502,14 @@ async fn run_cdc_inner(
                     break;
                 }
             };
-            let event_position = u64::from(event.header().log_pos());
             let event_type = event.header().event_type_raw();
+            let logged = u64::from(event.header().log_pos());
+            // The connection preamble's rotate and format description describe
+            // the file, not the stream's progress.
+            if logged > 0 && !matches!(event_type, ROTATE_EVENT | FORMAT_DESCRIPTION_EVENT) {
+                logged_position = logged;
+            }
+            let event_position = if logged > 0 { logged } else { logged_position };
             let Some(data) = self::event::decode_event(&event)? else {
                 continue;
             };
@@ -706,7 +722,13 @@ async fn run_cdc_inner(
                 EventData::QueryEvent(query) => {
                     let statement = query.query().into_owned();
                     let normalized = statement.trim().to_ascii_uppercase();
-                    if normalized == "BEGIN" {
+                    // MariaDB replaces each event a replica cannot read - the
+                    // statement annotation before every row event, among
+                    // others - with a query event holding only a comment,
+                    // inside the transaction. It is not a statement, and
+                    // treating it as one committed the open transaction
+                    // statement by statement.
+                    if normalized == "BEGIN" || normalized.starts_with('#') {
                         continue;
                     }
                     if normalized == "ROLLBACK" {

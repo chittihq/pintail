@@ -2261,7 +2261,7 @@ fn assert_replica(targets: &[CdcTarget]) {
     );
     assert_eq!(
         row.values()[columns["json_value"]],
-        Value::Utf8("{\"a\":1,\"b\":[true,null]}".to_owned())
+        Value::Utf8("{\"a\": 1, \"b\": [true, null]}".to_owned())
     );
     assert_eq!(
         row.values()[columns["binary_value"]],
