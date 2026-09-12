@@ -23,6 +23,11 @@ pub struct ExecCounters {
     /// Aggregates answered by merging an insert-only memtable delta onto a
     /// memoized settled result, rather than reading the table.
     pub settled_delta_merges: u64,
+    /// Segment spans a grouped aggregate folded because no cached fold
+    /// could be reused.
+    pub grouped_spans_folded: u64,
+    /// Segment spans a grouped aggregate took from the fold cache.
+    pub grouped_spans_reused: u64,
 }
 
 thread_local! {
@@ -33,6 +38,8 @@ thread_local! {
             rows_sorted: 0,
             cells_regathered: 0,
             settled_delta_merges: 0,
+            grouped_spans_folded: 0,
+            grouped_spans_reused: 0,
         })
     };
 }

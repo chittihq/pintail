@@ -2132,8 +2132,14 @@ fn try_grouped_segment_fold(
             .flatten();
         let rows = if let Some(rows) = cached {
             reused += 1;
+            crate::counters::count(|counters| {
+                counters.grouped_spans_reused = counters.grouped_spans_reused.saturating_add(1);
+            });
             rows
         } else {
+            crate::counters::count(|counters| {
+                counters.grouped_spans_folded = counters.grouped_spans_folded.saturating_add(1);
+            });
             let Some(folded) = fold_span(
                 &fold,
                 span,

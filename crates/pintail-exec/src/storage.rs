@@ -442,6 +442,11 @@ impl ScanProvider for SnapshotScanProvider<'_> {
         let grouped = (scan.predicates.is_empty() && scan.limit.is_none() && unique_keys.is_none())
             .then(|| snapshot.grouped_fold_spans())
             .flatten()
+            // Bounded like the SMA residual and the delta beside it: the
+            // rows outside every span are cloned into the projection here,
+            // and without a bound a large memtable pays that clone on every
+            // scan open, including the scans that never aggregate.
+            .filter(|(_, outside)| outside.len() <= SMA_RESIDUAL_ROW_CAP)
             .map(|(spans, outside)| crate::execution::GroupedFoldInput {
                 snapshot: (*snapshot).clone(),
                 directory: snapshot.directory().to_path_buf(),
