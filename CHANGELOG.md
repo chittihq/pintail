@@ -15,7 +15,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   holding the pre-`ALTER` values with nothing later to correct them - and a
   whole class of those migrations keeps the mapped type identical while doing
   it. A narrowing integer, a shrinking `VARCHAR`/`CHAR`/`TEXT`/`VARBINARY`, a
-  narrowing `BIT`, a `FLOAT` and a `DOUBLE` exchanged either way, `DATETIME` becoming
+  narrowing `BIT`, a `VARCHAR` or `VARBINARY` becoming the fixed-width `CHAR`
+  or `BINARY`, a `FLOAT` and a `DOUBLE` exchanged either way, `DATETIME` becoming
   `TIMESTAMP` (which zeroes every value outside the epoch window), a dropped
   or renamed `ENUM` member, a reordered `SET`, a tightened nullability and a
   rewritten generated expression now mark the table `needs_resync` instead of

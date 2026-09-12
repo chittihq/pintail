@@ -74,6 +74,21 @@ pub(crate) fn unsafe_column_change(
             previous.mysql_column_type, refreshed.mysql_column_type
         ));
     }
+    // A fixed-width declaration pads what it stores, and the padding is not
+    // the value that was there. VARCHAR(10) holding `abc   ` reads back as
+    // `abc` once it is a CHAR(10) - the source strips the trailing spaces on
+    // the way in and CHAR strips them again on the way out - and VARBINARY(4)
+    // holding 0x0011 reads back as 0x00110000 once it is a BINARY(4). The
+    // width never moved, so the narrowing check above sees nothing; the
+    // capacity is the same and the family is the same. Only the direction
+    // matters: CHAR to VARCHAR keeps every value, because CHAR had already
+    // stripped its padding before the mirror ever saw it.
+    if !before.fixed_width && after.fixed_width {
+        return reason(format!(
+            "became the fixed-width {}, which pads or strips every value {} stored",
+            refreshed.mysql_column_type, previous.mysql_column_type
+        ));
+    }
     match before.family {
         Family::Enumeration => {
             // MySQL converts an ENUM by label, so reordering and appending
@@ -201,6 +216,10 @@ struct Declaration {
     numbers: Vec<u64>,
     /// Whether the declaration is UNSIGNED.
     unsigned: bool,
+    /// Whether the declaration pads to a fixed width - `CHAR` and `BINARY`,
+    /// against the variable `VARCHAR`, `VARBINARY` and the `TEXT` and `BLOB`
+    /// sizes.
+    fixed_width: bool,
 }
 
 /// Declarations that convert into one another without rewriting values belong
@@ -282,6 +301,7 @@ impl Declaration {
                     | Family::Float
                     | Family::Double
             );
+        let fixed_width = matches!(data_type.as_str(), "char" | "binary");
         let numbers = declared_numbers(&column_type);
         let capacity = match family {
             Family::SignedInteger | Family::UnsignedInteger => integer_bits(&data_type),
@@ -299,6 +319,7 @@ impl Declaration {
             capacity,
             numbers,
             unsigned,
+            fixed_width,
         }
     }
 }
@@ -538,6 +559,41 @@ mod tests {
         assert!(!adopts(
             &text("char", "char(10)", "utf8mb4"),
             &text("char", "char(4)", "utf8mb4"),
+        ));
+    }
+
+    /// Same family, same capacity, and the source still rewrites: the width
+    /// these declarations differ by is padding, not room.
+    #[test]
+    fn becoming_fixed_width_pads_or_strips_what_is_stored() {
+        // VARCHAR(10) holding `abc   ` read back as `abc`; VARBINARY(4)
+        // holding 0x0011 read back as 0x00110000.
+        assert!(!adopts(
+            &text("varchar", "varchar(10)", "utf8mb4"),
+            &text("char", "char(10)", "utf8mb4"),
+        ));
+        assert!(!adopts(
+            &column("varbinary", "varbinary(4)"),
+            &column("binary", "binary(4)"),
+        ));
+        assert!(!adopts(
+            &text("tinytext", "tinytext", "utf8mb4"),
+            &text("char", "char(255)", "utf8mb4"),
+        ));
+        // The other direction keeps every value: a CHAR has already stripped
+        // its padding by the time anything reads it.
+        assert!(adopts(
+            &text("char", "char(10)", "utf8mb4"),
+            &text("varchar", "varchar(10)", "utf8mb4"),
+        ));
+        assert!(adopts(
+            &column("binary", "binary(4)"),
+            &column("varbinary", "varbinary(4)"),
+        ));
+        // Neither is a change at all.
+        assert!(adopts(
+            &text("char", "char(10)", "utf8mb4"),
+            &text("char", "char(20)", "utf8mb4"),
         ));
     }
 

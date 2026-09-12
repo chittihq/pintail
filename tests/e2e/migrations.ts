@@ -154,6 +154,41 @@ const cases: Case[] = [
     rewrites: true,
   },
   {
+    name: 'varchar becomes fixed-width char',
+    before: 'v VARCHAR(10) NULL',
+    // The trailing spaces are the point: CHAR strips them and VARCHAR does
+    // not, so the width never changes while the value does.
+    rows: ["(1, 'abc   ')", "(2, 'plain')"],
+    alter: 'MODIFY v CHAR(10) NULL',
+    writes: [
+      "INSERT INTO {t} (id, v) VALUES (90, 'fresh')",
+      "UPDATE {t} SET v = 'second' WHERE id = 2",
+    ],
+    rewrites: true,
+  },
+  {
+    name: 'varbinary becomes fixed-width binary',
+    before: 'v VARBINARY(4) NULL',
+    rows: ["(1, X'0011')", "(2, X'AABBCCDD')"],
+    alter: 'MODIFY v BINARY(4) NULL',
+    writes: [
+      "INSERT INTO {t} (id, v) VALUES (90, X'01')",
+      "UPDATE {t} SET v = X'02' WHERE id = 2",
+    ],
+    rewrites: true,
+  },
+  {
+    name: 'char becomes varchar',
+    before: 'v CHAR(10) NULL',
+    rows: ["(1, 'abc')", "(2, 'plain')"],
+    alter: 'MODIFY v VARCHAR(10) NULL',
+    writes: [
+      "INSERT INTO {t} (id, v) VALUES (90, 'trailing  ')",
+      "UPDATE {t} SET v = 'second' WHERE id = 2",
+    ],
+    rewrites: false,
+  },
+  {
     name: 'varchar becomes longtext',
     before: 'v VARCHAR(64) NULL',
     rows: ["(1, 'abcdefghijklmnopqrstuvwxyz')", "(2, 'emoji 🦆 café')"],

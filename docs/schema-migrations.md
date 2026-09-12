@@ -46,6 +46,9 @@ source read back afterwards.
 | `TEXT` → `TINYTEXT` | 400 characters | 255 characters | **yes** |
 | `CHAR(10)` → `CHAR(4)` | `abcdefghij` | `abcd` | **yes** |
 | `VARBINARY(16)` → `VARBINARY(4)` | `0011223344556677` | `00112233` | **yes** |
+| `VARCHAR(10)` → `CHAR(10)` | `abc␣␣␣` | `abc` | **yes** |
+| `CHAR(10)` → `VARCHAR(10)` | `abc` | `abc` | no |
+| `VARBINARY(4)` → `BINARY(4)` | `0011` | `00110000` | **yes** |
 | `VARCHAR` → `INT` | `'42'`, `'abc'`, `'7.9'` | `42`, `0`, `8` | **yes** |
 | `TEXT` → `BLOB` | `636166C383C2A9` | `636166C383C2A9` | no |
 | `latin1` → `utf8mb4` | `0xE9` | `0xC3A9` (the same character) | no |
@@ -67,7 +70,7 @@ source read back afterwards.
 | Generated virtual `base+1` → `base+1000` | `11` | `1010` | **yes** |
 | Display width `INT(11)` → `INT(4)` | `5` | `5` | no |
 
-Two results are worth keeping in mind because they cut against the obvious
+Three results are worth keeping in mind because they cut against the obvious
 guess:
 
 - **An `ENUM` converts by label, not by ordinal.** Reordering the members
@@ -75,6 +78,12 @@ guess:
   stores labels and reads its ordering from the refreshed declaration stays
   correct. It is *removing* a member — and renaming one, which is a removal and
   an addition — that turns every row holding it into the empty label.
+- **Width is not the only thing a width can change.** `VARCHAR(10)` to
+  `CHAR(10)` keeps every declared character and still rewrites: the source
+  strips the trailing spaces on the way in, and `CHAR` strips them again on
+  the way out. `VARBINARY(4)` to `BINARY(4)` pads instead, `0011` becoming
+  `00110000`. Going the other way keeps every value, because a `CHAR` has
+  already stripped its padding before the mirror ever sees it.
 - **A `SET` is the opposite.** Its membership survives a reorder, but it
   renders in declaration order, so the stored text `b,c` reads back as `c,b`.
   Only appending is inert.
@@ -95,6 +104,9 @@ alone:
 - signedness may not change: an integer wears it in its family, and a
   `DECIMAL` or a float wears it on the column type alone, but MySQL converts
   every negative value to zero either way;
+- a variable-width declaration may not become a fixed-width one: `CHAR` and
+  `BINARY` pad what they store, and the padding is not the value that was
+  there. The width never moves, so this is not a narrowing;
 - capacity may grow and never shrink — bits for integers and `BIT`, bytes for
   strings and binaries (character sets included, so `latin1` to `utf8mb4`
   widens), fractional-second digits for temporals, and both halves
@@ -134,7 +146,7 @@ only ever report that older divergence, never what the migration did to it.
 
 ## What the gate found
 
-The same twenty-nine families, same source container, same harness, against
+The same families, same source container, same harness, against
 the binary before this change and the binary after it:
 
 | | Checks passed | Checks failed |
