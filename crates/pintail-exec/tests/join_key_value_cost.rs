@@ -16,11 +16,36 @@
 //! second, so the milliseconds are the instrument. The column stays because
 //! a shape that starts materializing whole columns is worth seeing.
 //!
-//! Baseline on the build host, 200,000 probe rows against 20,000 build
-//! rows: integer key 16ms joined and 8.7ms grouped, text key 130ms joined
-//! and 100ms grouped, against a 0.8ms scan floor. Integer keys are already
-//! typed; the eight- to elevenfold gap is text, at roughly 570ns a row,
-//! which is a `String` allocation and a collation pass per row.
+//! Measured on the build host, 200,000 probe rows against 20,000 build
+//! rows, five runs (the spread is under 2ms; one 21ms outlier on the
+//! integer join was not reproduced):
+//!
+//! | shape                          |    ms |
+//! |--------------------------------|------:|
+//! | scan only, the floor           |   0.8 |
+//! | text key ordered, 5 distinct   |   1.1 |
+//! | text group by, 5 distinct      |   2.6 |
+//! | integer group by               |   8.5 |
+//! | integer key joined             |  16.0 |
+//! | text group by, 20,000 distinct |  97.2 |
+//! | text key joined                | 116.5 |
+//!
+//! Two conclusions, and the second retired a plan.
+//!
+//! Integer keys are already read straight from the packed column, and the
+//! gap is text. Holding a text key as its collation weight bytes instead of
+//! hex-encoding them into a `Value::Utf8` took the join from 130ms to
+//! 116ms.
+//!
+//! What is left is not an allocation to remove but a collation to compute,
+//! and only where the text is high-cardinality. Five distinct values over
+//! 200,000 rows group in 2.6ms - 13ns a row, far too fast to be collating
+//! each one - so that shape already collates per distinct value rather than
+//! per row. A cache of collated text would therefore win nothing: the case
+//! it could serve is served, and the case that is slow has a different
+//! value in almost every row, which is the pattern no bounded cache helps.
+//! Going further means making the collation itself cheaper, which changes
+//! semantics `MySQL` pins, not bookkeeping around it.
 
 use pintail_catalog::{
     CatalogSnapshot, DatabaseEntry, DatabaseId, TableEntry, TableId, TableStatistics,
@@ -55,6 +80,7 @@ fn probe_schema() -> TableSchema {
             Column::new(2, "ref_id", DataType::UInt64, false),
             Column::new(3, "ref_label", DataType::Utf8, false),
             Column::new(4, "amount", DataType::Int64, false),
+            Column::new(5, "status", DataType::Utf8, false),
         ],
     )
     .expect("schema")
@@ -62,6 +88,16 @@ fn probe_schema() -> TableSchema {
 
 fn label(id: u64) -> String {
     format!("label-{:06}", id % BUILD_ROWS)
+}
+
+/// A low-cardinality text column, the shape a status or category has. Text
+/// keys divide sharply on distinct count: a cache of already-collated text
+/// can serve this and can do nothing for `label`, whose distinct values
+/// cycle further than any bound worth keeping.
+fn status(id: u64) -> String {
+    ["pending", "processing", "shipped", "delivered", "cancelled"]
+        [usize::try_from(id % 5).expect("slot")]
+    .to_owned()
 }
 
 struct Fixture {
@@ -111,6 +147,7 @@ impl Fixture {
                                 Value::UInt64(id % BUILD_ROWS),
                                 Value::Utf8(label(id)),
                                 Value::Int64(i64::try_from(id % 97).expect("small")),
+                                Value::Utf8(status(id)),
                             ],
                             id + 1,
                             false,
@@ -211,8 +248,16 @@ fn what_each_join_shape_pays_in_values() {
             "SELECT ref_id, COUNT(*) FROM fact GROUP BY ref_id",
         ),
         (
-            "text group by",
+            "text group by (20k distinct)",
             "SELECT ref_label, COUNT(*) FROM fact GROUP BY ref_label",
+        ),
+        (
+            "text group by (5 distinct)",
+            "SELECT status, COUNT(*) FROM fact GROUP BY status",
+        ),
+        (
+            "text key ordered (5 distinct)",
+            "SELECT COUNT(*) FROM fact WHERE status < 'x'",
         ),
         (
             "scan only, for the floor",
