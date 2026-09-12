@@ -4,6 +4,8 @@
 //! choose CDC versus polling, plan a consistent snapshot, select the physical
 //! key fallback, and build Pintail schemas without guessing from result values.
 
+mod migration;
+
 use std::collections::BTreeMap;
 
 use mysql_async::{Pool, prelude::Queryable};
@@ -1291,13 +1293,28 @@ fn map_mysql_type(column: &RawColumn) -> Result<TypeMapping, ProbeError> {
 ///
 /// # Errors
 ///
-/// Returns a human-readable reason when the refreshed definition cannot
-/// adopt the previous stable IDs: the physical key changed, a column's
-/// physical type changed incompatibly, or the ID space is exhausted.
+/// Returns a human-readable reason, prefixed with [`IN_PLACE_REFUSAL`], when
+/// the refreshed definition cannot adopt the previous stable IDs: the physical
+/// key changed, a column's declaration changed in a way that rewrote the rows
+/// the source already held, or the ID space is exhausted.
 pub fn stabilize_source_table(
     previous: &SourceTable,
     mut refreshed: SourceTable,
 ) -> Result<SourceTable, String> {
+    stabilize(previous, &mut refreshed).map_err(|reason| format!("{IN_PLACE_REFUSAL}: {reason}"))?;
+    Ok(refreshed)
+}
+
+/// Marker every in-place refusal carries.
+///
+/// A caller that is about to rebuild a store from scratch needs to tell a
+/// refusal - which its rebuild resolves - apart from an I/O or metadata
+/// failure, which it does not. Matching on the wording of each reason made
+/// that a list to keep in sync across crates, and a reason added here without
+/// a matching line there refused forever on the path that exists to repair it.
+pub const IN_PLACE_REFUSAL: &str = "cannot adopt the source schema in place";
+
+fn stabilize(previous: &SourceTable, refreshed: &mut SourceTable) -> Result<(), String> {
     if previous.key.mode != refreshed.key.mode
         || previous.key.columns.len() != refreshed.key.columns.len()
         || previous
@@ -1307,7 +1324,7 @@ pub fn stabilize_source_table(
             .zip(&refreshed.key.columns)
             .any(|(left, right)| !left.eq_ignore_ascii_case(right))
     {
-        return Err("physical key changed".to_owned());
+        return Err("the physical key changed".to_owned());
     }
     let mut next_id = previous
         .columns
@@ -1331,6 +1348,17 @@ pub fn stabilize_source_table(
                 // physical layout from the binlog table map.
                 return Err(format!("column {} changed physical type", column.name));
             }
+            // The mapped type is not the whole story, and taking it for one is
+            // how a migration silently corrupts a mirror: a narrowing integer,
+            // a shrinking string, DATETIME becoming TIMESTAMP, a dropped ENUM
+            // member, a reordered SET, a rewritten generated expression all
+            // leave the mapped type alone while the source rewrites the rows
+            // underneath it - and an ALTER carries no row events, so the
+            // replica would keep the pre-ALTER values forever. Read the source
+            // declaration too, and send anything it rewrote to a resync.
+            if let Some(reason) = migration::unsafe_column_change(existing, column) {
+                return Err(reason);
+            }
             column.id = existing.id;
         } else {
             next_id = next_id
@@ -1339,7 +1367,7 @@ pub fn stabilize_source_table(
             column.id = next_id;
         }
     }
-    Ok(refreshed)
+    Ok(())
 }
 
 /// Whether a column's declared type can change without touching stored
@@ -1783,5 +1811,244 @@ mod declared_column_tests {
         // Native units are scaled at write time, so their scale is fixed.
         assert!(!super::widening_compatible(decimal(10, 2), decimal(12, 4)));
         assert!(super::widening_compatible(decimal(10, 2), decimal(12, 2)));
+    }
+}
+
+#[cfg(test)]
+mod stabilization_tests {
+    use super::{SourceColumn, SourceKey, SourceTable, stabilize_source_table};
+    use pintail_types::{DataType, KeyMode};
+
+    fn table(columns: Vec<SourceColumn>) -> SourceTable {
+        SourceTable {
+            name: "t".to_owned(),
+            engine: Some("InnoDB".to_owned()),
+            estimated_rows: Some(3),
+            rows_are_exact: true,
+            columns,
+            key: SourceKey {
+                mode: KeyMode::Primary,
+                index_name: Some("PRIMARY".to_owned()),
+                columns: vec!["id".to_owned()],
+            },
+            unique_keys: Vec::new(),
+            requires_reconciliation: false,
+            foreign_keys: Vec::new(),
+            secondary_indexes: Vec::new(),
+            warnings: Vec::new(),
+            source_column_count: 2,
+        }
+    }
+
+    fn identifier() -> SourceColumn {
+        SourceColumn {
+            id: 1,
+            name: "id".to_owned(),
+            mysql_data_type: "int".to_owned(),
+            mysql_column_type: "int".to_owned(),
+            pintail_type: DataType::Int32,
+            nullable: false,
+            character_set: None,
+            collation: None,
+            generated_stored: false,
+            generation_expression: String::new(),
+            extra: String::new(),
+            auto_increment: false,
+            default_value: None,
+            default_generated: false,
+            ordinal: 1,
+        }
+    }
+
+    fn value(
+        data_type: &str,
+        column_type: &str,
+        pintail_type: DataType,
+        character_set: Option<&str>,
+    ) -> SourceColumn {
+        SourceColumn {
+            id: 2,
+            name: "v".to_owned(),
+            mysql_data_type: data_type.to_owned(),
+            mysql_column_type: column_type.to_owned(),
+            pintail_type,
+            nullable: true,
+            character_set: character_set.map(ToOwned::to_owned),
+            ordinal: 2,
+            ..identifier()
+        }
+    }
+
+    /// Each pair is `(previous, refreshed)` for one migration family, with the
+    /// behaviour `MySQL` 8.4 was observed to have on rows already stored.
+    fn adopted(previous: SourceColumn, refreshed: SourceColumn) -> Result<SourceTable, String> {
+        stabilize_source_table(
+            &table(vec![identifier(), previous]),
+            table(vec![identifier(), refreshed]),
+        )
+    }
+
+    #[test]
+    fn a_widening_migration_keeps_the_stable_column_id() {
+        let adopted = adopted(
+            value("int", "int", DataType::Int32, None),
+            value("bigint", "bigint", DataType::Int64, None),
+        )
+        .expect("a widening leaves every stored value identical");
+        assert_eq!(adopted.columns[1].id, 2);
+        assert_eq!(adopted.columns[1].pintail_type, DataType::Int64);
+    }
+
+    /// The families that rewrite stored values while the mapped Pintail type
+    /// stays exactly the same. Each one used to be adopted in place, which left
+    /// the replica holding the pre-ALTER values with nothing to correct them:
+    /// the source emits no row event for the rewrite.
+    #[test]
+    fn a_rewriting_migration_is_refused_even_at_one_mapped_type() {
+        let refusals = [
+            (
+                "integer narrowing",
+                value("bigint", "bigint", DataType::Int64, None),
+                value("smallint", "smallint", DataType::Int16, None),
+            ),
+            (
+                "string capacity",
+                value("varchar", "varchar(64)", DataType::Utf8, Some("utf8mb4")),
+                value("varchar", "varchar(8)", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "text family shrink",
+                value("text", "text", DataType::Utf8, Some("utf8mb4")),
+                value("tinytext", "tinytext", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "datetime to timestamp",
+                value("datetime", "datetime", DataType::DateTime64 { fsp: 0 }, None),
+                value("timestamp", "timestamp", DataType::DateTime64 { fsp: 0 }, None),
+            ),
+            (
+                "enum member dropped",
+                value(
+                    "enum",
+                    "enum('alpha','beta','gamma')",
+                    DataType::Utf8,
+                    Some("utf8mb4"),
+                ),
+                value("enum", "enum('alpha','gamma')", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "set members reordered",
+                value("set", "set('a','b','c')", DataType::Utf8, Some("utf8mb4")),
+                value("set", "set('c','b','a')", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "bit narrowing",
+                value("bit", "bit(16)", DataType::UInt64, None),
+                value("bit", "bit(4)", DataType::UInt64, None),
+            ),
+            (
+                "float narrowing rounds",
+                value("double", "double", DataType::Float64, None),
+                value("float", "float", DataType::Float32, None),
+            ),
+        ];
+        for (family, previous, refreshed) in refusals {
+            let refusal = adopted(previous, refreshed)
+                .err()
+                .unwrap_or_else(|| panic!("{family} was adopted in place"));
+            // The store-rebuilding path in the control plane matches on this
+            // marker, so a refusal without it refuses forever on the path that
+            // exists to repair it.
+            assert!(refusal.starts_with(super::IN_PLACE_REFUSAL), "{family}: {refusal}");
+        }
+    }
+
+    #[test]
+    fn a_tightened_nullability_is_refused_and_a_loosened_one_adopted() {
+        let nullable = value("int", "int", DataType::Int32, None);
+        let required = SourceColumn {
+            nullable: false,
+            ..nullable.clone()
+        };
+        assert!(adopted(nullable.clone(), required.clone()).is_err());
+        assert!(adopted(required, nullable).is_ok());
+    }
+
+    #[test]
+    fn a_changed_generated_expression_is_refused() {
+        let generated = |expression: &str| SourceColumn {
+            generated_stored: true,
+            generation_expression: expression.to_owned(),
+            extra: "STORED GENERATED".to_owned(),
+            ..value("int", "int", DataType::Int32, None)
+        };
+        assert!(adopted(generated("(`base` * 2)"), generated("(`base` * 2)")).is_ok());
+        assert!(adopted(generated("(`base` * 2)"), generated("(`base` * 100)")).is_err());
+    }
+
+    /// The safe half of the same families: reordering an ENUM, appending a SET
+    /// member, widening a string or its character set, and changing a collation
+    /// all leave every stored value as it was.
+    #[test]
+    fn an_inert_migration_is_still_adopted_in_place() {
+        let adoptions = [
+            (
+                "enum reordered",
+                value(
+                    "enum",
+                    "enum('alpha','beta','gamma')",
+                    DataType::Utf8,
+                    Some("utf8mb4"),
+                ),
+                value(
+                    "enum",
+                    "enum('gamma','beta','alpha')",
+                    DataType::Utf8,
+                    Some("utf8mb4"),
+                ),
+            ),
+            (
+                "set appended",
+                value("set", "set('a','b')", DataType::Utf8, Some("utf8mb4")),
+                value("set", "set('a','b','c')", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "varchar to text",
+                value("varchar", "varchar(64)", DataType::Utf8, Some("utf8mb4")),
+                value("text", "text", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "latin1 to utf8mb4",
+                value("varchar", "varchar(32)", DataType::Utf8, Some("latin1")),
+                value("varchar", "varchar(32)", DataType::Utf8, Some("utf8mb4")),
+            ),
+            (
+                "decimal digits grow",
+                value(
+                    "decimal",
+                    "decimal(12,2)",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    None,
+                ),
+                value(
+                    "decimal",
+                    "decimal(14,2)",
+                    DataType::Decimal {
+                        precision: 14,
+                        scale: 2,
+                    },
+                    None,
+                ),
+            ),
+        ];
+        for (family, previous, refreshed) in adoptions {
+            assert!(
+                adopted(previous, refreshed).is_ok(),
+                "{family} was refused although it rewrites nothing",
+            );
+        }
     }
 }
