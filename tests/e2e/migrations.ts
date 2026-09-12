@@ -499,14 +499,22 @@ async function pintailQuery(statement: string): Promise<unknown[][]> {
   }
 }
 
-/// The source's value with only the driver's representation normalised: text
-/// and the same bytes as a BLOB have to compare equal, and a float has to keep
-/// every digit the shared canonical form rounds away - rounding is exactly
-/// what hides the rewrites this measures.
+/// The source's value with only the driver's representation normalised.
+///
+/// Two representations move under a migration without the value moving with
+/// them, and both would otherwise read as a rewrite: a BLOB arrives as a
+/// Buffer where the TEXT it was arrives as a string, and a BIGINT arrives as a
+/// string where the INT it was arrives as a number. What must NOT be
+/// normalised is precision - the shared canonical form rounds to four
+/// decimals, which hides exactly the rewrites this measures.
 function sourceValue(value: unknown): string {
   if (value === null || value === undefined) return 'NULL'
-  if (Buffer.isBuffer(value)) return value.toString('hex')
-  if (typeof value === 'string') return Buffer.from(value, 'utf8').toString('hex')
+  if (Buffer.isBuffer(value)) {
+    const text = value.toString('utf8')
+    return Buffer.compare(Buffer.from(text, 'utf8'), value) === 0
+      ? text
+      : `0x${value.toString('hex')}`
+  }
   return String(value)
 }
 
