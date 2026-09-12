@@ -1947,6 +1947,11 @@ mod stabilization_tests {
                 value("bit", "bit(4)", DataType::UInt64, None),
             ),
             (
+                "float widening re-renders",
+                value("float", "float", DataType::Float32, None),
+                value("double", "double", DataType::Float64, None),
+            ),
+            (
                 "float narrowing rounds",
                 value("double", "double", DataType::Float64, None),
                 value("float", "float", DataType::Float32, None),

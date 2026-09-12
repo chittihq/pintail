@@ -15,19 +15,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   holding the pre-`ALTER` values with nothing later to correct them - and a
   whole class of those migrations keeps the mapped type identical while doing
   it. A narrowing integer, a shrinking `VARCHAR`/`CHAR`/`TEXT`/`VARBINARY`, a
-  narrowing `BIT`, a `DOUBLE` narrowed to a `FLOAT`, `DATETIME` becoming
+  narrowing `BIT`, a `FLOAT` and a `DOUBLE` exchanged either way, `DATETIME` becoming
   `TIMESTAMP` (which zeroes every value outside the epoch window), a dropped
   or renamed `ENUM` member, a reordered `SET`, a tightened nullability and a
   rewritten generated expression now mark the table `needs_resync` instead of
   evolving in place; the resync recopies the rewritten values. Reordering an
   `ENUM`, appending to an `ENUM` or `SET`, widening a string or its character
-  set, changing a collation, widening a `FLOAT` to a `DOUBLE`, and the existing
-  integer and decimal widenings still evolve in place.
+  set, changing a collation, and the existing integer and decimal widenings
+  still evolve in place.
 
 ### Tests
 
 - A schema-migration differential gate (`tests/e2e/migrations.ts`, banked to
-  `tests/e2e/results-migrations.md`) runs thirty migration families against a
+  `tests/e2e/results-migrations.md`) runs twenty-nine migration families against a
   live mirror and asks three questions of each: do the rows nobody wrote to
   after the migration still match the source, do the writes that follow it
   land, and does the table still match after a restart. Checking only the rows

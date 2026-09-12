@@ -196,13 +196,11 @@ enum Family {
     SignedInteger,
     UnsignedInteger,
     Decimal,
-    /// `FLOAT` and `DOUBLE` share a family even though widening one re-renders
-    /// it at the source - `0.1` reads back as `0.10000000149011612`. The
-    /// replica holds the same approximation in the same 64-bit carrier and
-    /// renders it by the declared type, so it produces the widened text from
-    /// the value it already had; the differential gate confirms the two agree
-    /// after the migration with no recopy. Narrowing back is a real rounding.
+    /// `FLOAT` and `DOUBLE` are separate families: the source re-renders a
+    /// widened `FLOAT` from its stored approximation, so `0.1` reads back as
+    /// `0.10000000149011612`, and narrowing the other way rounds.
     Float,
+    Double,
     Bit,
     Date,
     DateTime,
@@ -237,7 +235,8 @@ impl Declaration {
                 }
             }
             "decimal" | "dec" | "numeric" | "fixed" => Family::Decimal,
-            "float" | "double" | "double precision" | "real" => Family::Float,
+            "float" => Family::Float,
+            "double" | "double precision" | "real" => Family::Double,
             "bit" => Family::Bit,
             "date" => Family::Date,
             "datetime" => Family::DateTime,
@@ -258,13 +257,16 @@ impl Declaration {
         let unsigned = unsigned
             && matches!(
                 family,
-                Family::SignedInteger | Family::UnsignedInteger | Family::Decimal | Family::Float
+                Family::SignedInteger
+                    | Family::UnsignedInteger
+                    | Family::Decimal
+                    | Family::Float
+                    | Family::Double
             );
         let numbers = declared_numbers(&column_type);
         let capacity = match family {
             Family::SignedInteger | Family::UnsignedInteger => integer_bits(&data_type),
             Family::Bit => Some(numbers.first().copied().unwrap_or(1)),
-            Family::Float => Some(if data_type == "float" { 32 } else { 64 }),
             Family::Text | Family::Binary => string_bytes(column, &data_type, &column_type),
             // Fractional-second precision is part of the type, and dropping it
             // rounds every stored value.
@@ -444,10 +446,7 @@ mod tests {
             &column("decimal", "decimal(20,4)"),
             &column("double", "double"),
         ));
-        // FLOAT to DOUBLE is the exception the gate measured: the source
-        // re-renders 0.1 as 0.10000000149011612 and the replica, holding the
-        // same approximation, renders it the same way without a recopy.
-        assert!(adopts(&column("float", "float"), &column("double", "double")));
+        assert!(!adopts(&column("float", "float"), &column("double", "double")));
         assert!(!adopts(&column("double", "double"), &column("float", "float")));
         assert!(!adopts(&column("varchar", "varchar(16)"), &column("int", "int")));
         assert!(!adopts(&column("int", "int"), &column("varchar", "varchar(16)")));

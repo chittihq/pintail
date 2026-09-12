@@ -480,6 +480,12 @@ stays readable as a list of things to fix.
 
 ## MySQL wire protocol
 
+- A `FLOAT` column is rendered from the full `f64` expansion of the stored
+  `f32`, where `MySQL` renders it at float precision: a column holding
+  `1234.5678` reads back as `1234.5677` against `MySQL`'s `1234.57`. `DOUBLE`
+  is unaffected, and so is a `FLOAT` whose value renders identically either
+  way (`0.1`). The schema-migration gate has no `FLOAT` case for this reason -
+  such a table diverges before any migration touches it.
 - A `BIT` column is returned as an integer. `MySQL` returns it as the raw
   bytes of the value (`BIT(16)` holding all ones reaches a client as
   `0xffff`, not `65535`), so a client that reads the column as a byte string

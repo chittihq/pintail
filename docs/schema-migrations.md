@@ -40,7 +40,7 @@ source read back afterwards.
 | `DECIMAL(10,2)` → `DECIMAL(10,2) UNSIGNED` | `-5.25` | `0.00` | **yes** |
 | `DOUBLE` → `DOUBLE UNSIGNED` | `-2.5` | `0` | **yes** |
 | `DECIMAL(20,4)` → `DOUBLE` | `1234567890123456.1234` | `1.234567890123456e15` | **yes** |
-| `FLOAT` → `DOUBLE` | `0.1` | `0.10000000149011612` | **yes**, but see below |
+| `FLOAT` → `DOUBLE` | `0.1` | `0.10000000149011612` | **yes** |
 | `VARCHAR(64)` → `TEXT` → `LONGTEXT` | 26 characters | 26 characters | no |
 | `VARCHAR(64)` → `VARCHAR(8)` | 26 characters | 8 characters | **yes** |
 | `TEXT` → `TINYTEXT` | 400 characters | 255 characters | **yes** |
@@ -67,7 +67,7 @@ source read back afterwards.
 | Generated virtual `base+1` → `base+1000` | `11` | `1010` | **yes** |
 | Display width `INT(11)` → `INT(4)` | `5` | `5` | no |
 
-Three results are worth keeping in mind because they cut against the obvious
+Two results are worth keeping in mind because they cut against the obvious
 guess:
 
 - **An `ENUM` converts by label, not by ordinal.** Reordering the members
@@ -78,12 +78,6 @@ guess:
 - **A `SET` is the opposite.** Its membership survives a reorder, but it
   renders in declaration order, so the stored text `b,c` reads back as `c,b`.
   Only appending is inert.
-- **`FLOAT` → `DOUBLE` rewrites the source's rendering and still needs no
-  recopy.** The replica holds the same approximation in the same 64-bit
-  carrier and renders it by the declared type, so it produces
-  `0.10000000149011612` from the value it already had. The differential gate
-  confirms the two agree after the migration with no resync; narrowing a
-  `DOUBLE` back to a `FLOAT` is a real rounding and is refused.
 
 ## The policy
 
@@ -95,10 +89,9 @@ alone:
 
 - declarations must stay in the same family, where a family is what converts
   into itself without rewriting: signed integers, unsigned integers, decimals,
-  approximate floats (`FLOAT` and `DOUBLE` in one family, for the reason
-  above), `BIT`, `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR`, character
-  data (`CHAR`/`VARCHAR`/the `TEXT` sizes), binary data, `ENUM`, `SET`,
-  `JSON`, and anything unrecognised against its own spelling;
+  `FLOAT`, `DOUBLE`, `BIT`, `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR`,
+  character data (`CHAR`/`VARCHAR`/the `TEXT` sizes), binary data, `ENUM`,
+  `SET`, `JSON`, and anything unrecognised against its own spelling;
 - signedness may not change: an integer wears it in its family, and a
   `DECIMAL` or a float wears it on the column type alone, but MySQL converts
   every negative value to zero either way;
@@ -133,6 +126,11 @@ migration adopted in place:
 
 Checking only the rows written after the migration passes every case in this
 document while the table is wrong.
+
+`FLOAT` is the one family with no case. A `FLOAT` column does not mirror even
+before a migration — the source renders `1234.5678` as `1234.57` and the
+replica as `1234.5677` (`docs/limitations.md`) — so a table built on one could
+only ever report that older divergence, never what the migration did to it.
 
 Run it with `bun run tests/e2e/migrations.ts`; `PINTAIL_E2E_BINARY` points it
 at an already-built binary, which is how one source serves a before-and-after

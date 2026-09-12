@@ -34,7 +34,6 @@ import {
   publishedPort,
   freePort,
   waitForMysql,
-  canonicalRow,
   diffRows,
 } from './lib'
 
@@ -139,17 +138,10 @@ const cases: Case[] = [
     ],
     rewrites: true,
   },
-  {
-    name: 'float becomes double',
-    before: 'v FLOAT NULL',
-    rows: ["(1, 0.1)", "(2, 1234.5678)"],
-    alter: 'MODIFY v DOUBLE NULL',
-    writes: [
-      "INSERT INTO {t} (id, v) VALUES (90, 0.25)",
-      "UPDATE {t} SET v = 7.5 WHERE id = 2",
-    ],
-    rewrites: true,
-  },
+  // FLOAT has no case here. A FLOAT column does not mirror even before a
+  // migration - the source renders 1234.5678 as 1234.57 and the replica as
+  // 1234.5677 (docs/limitations.md) - so a table built on one could only ever
+  // report that older divergence, never what the migration did to it.
   {
     name: 'varchar capacity shrinks',
     before: 'v VARCHAR(64) NULL',
@@ -186,7 +178,8 @@ const cases: Case[] = [
   {
     name: 'varchar becomes int',
     before: 'v VARCHAR(16) NULL',
-    rows: ["(1, '42')", "(2, 'abc')", "(3, '7.9')"],
+    // Row 1 is the witness, so it holds the value the conversion mangles.
+    rows: ["(1, 'abc')", "(2, '42')", "(3, '7.9')"],
     alter: 'MODIFY v INT NULL',
     writes: [
       "INSERT INTO {t} (id, v) VALUES (90, 11)",
@@ -287,7 +280,8 @@ const cases: Case[] = [
   {
     name: 'enum member is dropped',
     before: "v ENUM('alpha','beta','gamma') NULL",
-    rows: ["(1, 'alpha')", "(2, 'beta')", "(3, 'gamma')"],
+    // Row 1 holds the member the migration drops.
+    rows: ["(1, 'beta')", "(2, 'alpha')", "(3, 'gamma')"],
     alter: "MODIFY v ENUM('alpha','gamma') NULL",
     writes: [
       "INSERT INTO {t} (id, v) VALUES (90, 'gamma')",
@@ -298,6 +292,7 @@ const cases: Case[] = [
   {
     name: 'enum member is renamed',
     before: "v ENUM('draft','sent') NULL",
+    // Row 1 holds the member the rename removes.
     rows: ["(1, 'draft')", "(2, 'sent')"],
     alter: "MODIFY v ENUM('pending','sent') NULL",
     writes: [
@@ -320,7 +315,8 @@ const cases: Case[] = [
   {
     name: 'set members reorder',
     before: "v SET('a','b','c') NULL",
-    rows: ["(1, 'a')", "(2, 'b,c')", "(3, 'a,b,c')"],
+    // Row 1 holds more than one member, which is what a reorder re-renders.
+    rows: ["(1, 'b,c')", "(2, 'a')", "(3, 'a,b,c')"],
     alter: "MODIFY v SET('c','b','a') NULL",
     writes: [
       "INSERT INTO {t} (id, v) VALUES (90, 'a,c')",
@@ -501,6 +497,21 @@ async function pintailQuery(statement: string): Promise<unknown[][]> {
       throw error
     }
   }
+}
+
+/// The source's value with only the driver's representation normalised: text
+/// and the same bytes as a BLOB have to compare equal, and a float has to keep
+/// every digit the shared canonical form rounds away - rounding is exactly
+/// what hides the rewrites this measures.
+function sourceValue(value: unknown): string {
+  if (value === null || value === undefined) return 'NULL'
+  if (Buffer.isBuffer(value)) return value.toString('hex')
+  if (typeof value === 'string') return Buffer.from(value, 'utf8').toString('hex')
+  return String(value)
+}
+
+async function sourceRow(statement: string): Promise<string> {
+  return ((await mysqlRows(statement))[0] ?? []).map(sourceValue).join('|')
 }
 
 /// Compares one table against the source until they agree or the window runs
@@ -697,8 +708,7 @@ async function main() {
     // as rewriting that quietly stopped rewriting would leave a check that
     // passes without testing anything.
     const projection = testCase.projection ?? 'id, v'
-    const witness = async () =>
-      canonicalRow((await mysqlRows(`SELECT ${projection} FROM ${table} WHERE id = 1`))[0] ?? [])
+    const witness = async () => sourceRow(`SELECT ${projection} FROM ${table} WHERE id = 1`)
     const before = await witness()
     await sql(`ALTER TABLE ${table} ${testCase.alter}`)
     const after = await witness()
@@ -716,8 +726,7 @@ async function main() {
   for (const [index, generated] of generatedCases.entries()) {
     const table = `g_${index}`
     untouched.set(table, [1])
-    const witness = async () =>
-      canonicalRow((await mysqlRows(`SELECT id, base, v FROM ${table} WHERE id = 1`))[0] ?? [])
+    const witness = async () => sourceRow(`SELECT id, base, v FROM ${table} WHERE id = 1`)
     const before = await witness()
     await sql(`ALTER TABLE ${table} MODIFY v INT GENERATED ALWAYS AS ${generated.after} ${generated.kind}`)
     const after = await witness()
