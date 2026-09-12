@@ -6149,6 +6149,10 @@ pub(crate) fn evaluate_unary(
         // of carrying decimals as text.
         UnaryOp::Minus if matches!(data_type, Some(DataType::Decimal { .. })) => {
             let text = scalar_string(value)?;
+            // A negated zero stays unsigned: `MySQL` prints -0.00 as 0.00.
+            if text.bytes().all(|byte| matches!(byte, b'0' | b'.' | b'-')) {
+                return Ok(Value::Utf8(text.trim_start_matches('-').to_owned()));
+            }
             let negated = match text.strip_prefix('-') {
                 Some(positive) => positive.to_owned(),
                 None => format!("-{text}"),
