@@ -419,9 +419,24 @@ stays readable as a list of things to fix.
   and after the rename stay intact with no resync), storage-compatible
   MODIFY/CHANGE type changes, index-only changes, and table RENAME within
   the schema (the store directory and every metadata row keyed by the name
-  move at the binlog position; no recopy). What still marks the table
-  `needs_resync`: storage-incompatible type changes and key-strategy
-  changes. A rename into another schema is treated as a drop.
+  move at the binlog position; no recopy). A MODIFY/CHANGE is
+  storage-compatible only when the source's own declaration says the change
+  leaves stored values alone, which the mapped Pintail type cannot decide on
+  its own: a narrowing integer, a shrinking string, `DATETIME` becoming
+  `TIMESTAMP`, a dropped `ENUM` member, a reordered `SET`, a tightened
+  nullability and a rewritten generated expression all keep one mapped type
+  while the source rewrites rows underneath it. What still marks the table
+  `needs_resync`: those, other storage-incompatible type changes, and
+  key-strategy changes. A rename into another schema is treated as a drop.
+- A `MODIFY`/`CHANGE` that rewrites the values the source already holds
+  marks the table `needs_resync` rather than evolving in place, because an
+  `ALTER` carries no row events for the rows it rewrote. The resync is
+  charged even when the rewrite was empty in practice: a nullability
+  tightening on a column with no NULLs left, a `VARCHAR` shrink every value
+  already fits inside, an `ENUM` member dropped that no row used. The
+  declaration is all the stream has to go on - it cannot see the source's
+  rows - so the reading is the conservative one, and the cost is a full
+  recopy of a table where an in-place adoption would have been correct.
 - Readers that opened a table's snapshot before a `RENAME TABLE` keep the
   old directory and fail their next read; a client retries and the new
   name answers. The window is the moment the rename applies.
@@ -464,6 +479,11 @@ stays readable as a list of things to fix.
   boundary. Network exposure and TLS are deployment responsibilities.
 
 ## MySQL wire protocol
+
+- A `BIT` column is returned as an integer. `MySQL` returns it as the raw
+  bytes of the value (`BIT(16)` holding all ones reaches a client as
+  `0xffff`, not `65535`), so a client that reads the column as a byte string
+  sees a different type and a different value on the two engines.
 
 - `caching_sha2_password` serves both the fast-auth exchange and the
   full-authentication fallback (RSA key exchange toward a per-process
