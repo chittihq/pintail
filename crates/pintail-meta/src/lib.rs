@@ -1529,6 +1529,28 @@ impl MetaStore {
             .context("failed to commit schema-history update")
     }
 
+    /// Removes one schema generation that storage refused after it was
+    /// recorded, so the history never names a generation no store took.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the history row cannot be deleted.
+    pub fn forget_schema_version(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        version: u32,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM schema_history \
+                 WHERE db_id = ?1 AND table_name = ?2 AND version = ?3",
+                (database_id, table_name, i64::from(version)),
+            )
+            .context("failed to forget a refused schema generation")?;
+        Ok(())
+    }
+
     /// Returns a table's persisted schema generations in version order.
     ///
     /// # Errors

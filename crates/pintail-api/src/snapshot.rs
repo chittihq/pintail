@@ -902,24 +902,19 @@ fn open_store_with_history(
         StoreOptions::default(),
     )
     .map_err(display)?;
-    store
-        .evolve_schema(
-            adopted
-                .table_schema_with_version(version)
-                .map_err(display)?,
-        )
-        .map_err(display)?;
-    let columns_json = serde_json::to_string(&adopted.columns).map_err(display)?;
-    metadata
-        .record_schema_history(
-            database_id,
-            &source.name,
-            version,
-            None,
-            &columns_json,
-            &Utc::now().to_rfc3339(),
-        )
-        .map_err(display)?;
+    pintail_cdc::evolve_tracked_schema(
+        metadata,
+        database_id,
+        &source.name,
+        &mut store,
+        &adopted.columns,
+        adopted
+            .table_schema_with_version(version)
+            .map_err(display)?,
+        None,
+    )
+    .map_err(display)?
+    .map_err(display)?;
     source.columns = adopted.columns;
     Ok(store)
 }
