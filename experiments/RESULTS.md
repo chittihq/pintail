@@ -3882,3 +3882,37 @@ arms did nothing to contradict.
 **Gating unmerged branches is worth its twenty minutes for reasons other
 than the branch.** This run was meant to verify someone else's work. What
 it produced was the control arm for a defect nobody could reproduce.
+## e96 — One-byte dictionary indexes, built and not adopted
+
+PTSEG v4 encoding id 5 stores a dictionary block's indexes as `u8` instead
+of `u32` when the block holds at most 256 distinct values, behind
+`StoreOptions::compact_dictionary_codes`. The writer, the reader, an A/B
+`layout_probe` example and its tests were all written. None of it is
+adopted, and the probe was never run, because the two things it could win
+are already accounted for elsewhere in this file.
+
+**The bytes are LZ4's, not the encoding's.** An index array whose values
+are all below 256 is three zero bytes in four, which is exactly the
+redundancy LZ4 collects. The run-end experiment above measured the same
+effect from the other direction: after LZ4, run-end tied dictionary on
+clustered data, 941 KB against 954 KB, because "LZ4 already captures run
+redundancy, so run-end buys no bytes". A narrower index has no better
+claim on those bytes than a run length did.
+
+**The compute is not in the scan.** e10 put scan at memory bandwidth by
+about four cores, so decode is not the serialized cost of a query. The
+corpus analysis placed 93% of the remaining gap where MySQL itself needs
+more than 10ms, in the semantic-fidelity families, and traced it to the
+`Value` interchange between the columnar and scalar paths: e15 measured
+one kernel at 52.4ms over typed arrays, 539.5ms over a `Value` column and
+1229ms over `Value` rows. Reading a quarter as many index bytes still
+delivers them into that boundary.
+
+So the encoding is sound and its target is not the constraint. Format
+compatibility was not the reason to decline it — the owner's deployment
+can re-snapshot, which makes a version bump cheap. It was declined on
+size and on where the time is.
+
+**Verdict: not adopted.** Reach for this only if a measurement first
+shows a query whose cost is dictionary index decode, which no reading in
+this file yet does. The branch was deleted; this entry is what it left.
