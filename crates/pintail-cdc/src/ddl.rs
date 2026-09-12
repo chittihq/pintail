@@ -617,3 +617,118 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod migration_family_tests {
+    use super::{AlterKind, DdlAction, parse_ddl};
+
+    /// One statement per migration family an operator actually runs.
+    ///
+    /// Classification is the gate's first hurdle and the one with the worst
+    /// failure mode: a statement the parser cannot read comes back as a hard
+    /// error, and the database stops replicating at that offset. Reaching
+    /// `ModifyColumns` is all that is asked here - whether the change can then
+    /// be adopted in place is the compatibility check's decision, not the
+    /// parser's.
+    #[test]
+    fn every_type_change_reaches_the_compatibility_check() {
+        for statement in [
+            // Integer width and signedness.
+            "ALTER TABLE t MODIFY v BIGINT",
+            "ALTER TABLE t MODIFY COLUMN v SMALLINT",
+            "ALTER TABLE t MODIFY v INT UNSIGNED",
+            // Numeric representation, precision and scale.
+            "ALTER TABLE t MODIFY v DECIMAL(14,4)",
+            "ALTER TABLE t MODIFY v DOUBLE",
+            "ALTER TABLE t MODIFY v FLOAT",
+            // String capacity and string/numeric conversion.
+            "ALTER TABLE t MODIFY v VARCHAR(8)",
+            "ALTER TABLE t MODIFY v LONGTEXT",
+            "ALTER TABLE t MODIFY v INT",
+            // Text and binary.
+            "ALTER TABLE t MODIFY v BLOB",
+            "ALTER TABLE t MODIFY v VARBINARY(32)",
+            // Temporal flavour and fractional precision.
+            "ALTER TABLE t MODIFY v TIMESTAMP NULL",
+            "ALTER TABLE t MODIFY v DATETIME(6)",
+            "ALTER TABLE t MODIFY v DATE",
+            // Labelled types.
+            "ALTER TABLE t MODIFY v ENUM('alpha','gamma')",
+            "ALTER TABLE t MODIFY v SET('c','b','a')",
+            // Per-column character set and collation.
+            "ALTER TABLE t MODIFY v VARCHAR(32) CHARACTER SET utf8mb4",
+            "ALTER TABLE t MODIFY v VARCHAR(32) COLLATE utf8mb4_bin",
+            // Nullability and defaults carried on the same statement.
+            "ALTER TABLE t MODIFY v INT NOT NULL",
+            "ALTER TABLE t MODIFY v INT NOT NULL DEFAULT 0",
+            // A rename that also changes the type, spelled as CHANGE.
+            "ALTER TABLE t CHANGE COLUMN v v BIGINT NOT NULL",
+        ] {
+            let parsed = parse_ddl(statement, "app")
+                .unwrap_or_else(|error| panic!("{statement} must classify, not error: {error}"));
+            assert!(
+                matches!(
+                    parsed.actions.as_slice(),
+                    [DdlAction::Alter {
+                        kind: AlterKind::ModifyColumns(_),
+                        ..
+                    }]
+                ),
+                "{statement} classified as {:?}",
+                parsed.actions,
+            );
+        }
+    }
+
+    /// A generated column's expression is changed with the same statement
+    /// shape, and it is the family whose values move furthest: the source
+    /// recomputes every row and emits no row event for any of them.
+    #[test]
+    fn a_generated_expression_change_classifies_or_resnapshots() {
+        for statement in [
+            "ALTER TABLE t MODIFY g INT GENERATED ALWAYS AS (base * 100) STORED",
+            "ALTER TABLE t MODIFY g INT GENERATED ALWAYS AS (base + 1000) VIRTUAL",
+        ] {
+            let parsed = parse_ddl(statement, "app")
+                .unwrap_or_else(|error| panic!("{statement} must classify, not error: {error}"));
+            // Either reading is safe: ModifyColumns hands it to the
+            // compatibility check, which refuses a changed expression, and
+            // RequiresResnapshot goes straight to the same resync.
+            assert!(
+                matches!(
+                    parsed.actions.as_slice(),
+                    [DdlAction::Alter {
+                        kind: AlterKind::ModifyColumns(_) | AlterKind::RequiresResnapshot,
+                        ..
+                    }]
+                ),
+                "{statement} classified as {:?}",
+                parsed.actions,
+            );
+        }
+    }
+
+    /// Several changes in one statement: the classification has to cover all
+    /// of them or the strictest reading wins.
+    #[test]
+    fn a_combined_alter_is_read_as_a_whole() {
+        let parsed = parse_ddl(
+            "ALTER TABLE t MODIFY a BIGINT, MODIFY b VARCHAR(8), ADD COLUMN c INT NULL",
+            "app",
+        )
+        .expect("a statement MySQL accepts must not fail schema tracking");
+        // Mixed operations are not all modifies, so the whole statement takes
+        // the conservative route rather than adopting half of it.
+        assert!(
+            matches!(
+                parsed.actions.as_slice(),
+                [DdlAction::Alter {
+                    kind: AlterKind::RequiresResnapshot,
+                    ..
+                }]
+            ),
+            "classified as {:?}",
+            parsed.actions,
+        );
+    }
+}
