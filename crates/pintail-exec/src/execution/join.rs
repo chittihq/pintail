@@ -582,6 +582,11 @@ pub(super) struct HashJoinState {
     /// Bytes the build-side key filter's set holds, released once the
     /// probe is exhausted.
     filter_reserved: usize,
+    /// Bytes the resident build holds. Charged while the build is read,
+    /// and under a LIMIT it is the largest thing this operator holds: a
+    /// probe that stops early leaves the whole map charged against a
+    /// ceiling the operators above it still have to fit inside.
+    build_reserved: usize,
 }
 
 impl HashJoinState {
@@ -656,6 +661,12 @@ impl HashJoinState {
         self.clear_batch(memory);
         memory.release(self.filter_reserved);
         self.filter_reserved = 0;
+        memory.release(self.build_reserved);
+        self.build_reserved = 0;
+        if let Some(grace) = &mut self.grace {
+            memory.release(grace.partition_reserved);
+            grace.partition_reserved = 0;
+        }
         for (_, bytes) in self.prefetched.drain(..) {
             memory.release(bytes);
         }
@@ -967,6 +978,7 @@ pub(super) fn build_hash_join_state(
                 let mut partitions = GraceJoin::create();
                 spill_resident(&mut build, &mut partitions, memory)?;
                 memory.release(build_reserved);
+                build_reserved = 0;
                 grace = Some(partitions);
             }
             Err(error) => return Err(error),
@@ -992,6 +1004,7 @@ pub(super) fn build_hash_join_state(
         left_reserved: 0,
         prefetched: VecDeque::new(),
         filter_reserved: 0,
+        build_reserved,
     })
 }
 
@@ -3395,15 +3408,18 @@ mod tests {
             left_reserved: 0,
             prefetched: VecDeque::new(),
             filter_reserved: 0,
+            build_reserved: 0,
         };
-        // What a probe stopped under a LIMIT is holding: the build-side key
-        // filter, the batch it was reading, the row it had unpacked, and
-        // the batches read ahead of the build.
-        for (bytes, field) in [(4096_usize, 0_u8), (2048, 1), (1024, 2)] {
+        // What a probe stopped under a LIMIT is holding: the resident build
+        // itself - the largest of these - the build-side key filter, the
+        // batch it was reading, the row it had unpacked, and the batches
+        // read ahead of the build.
+        for (bytes, field) in [(65536_usize, 3_u8), (4096, 0), (2048, 1), (1024, 2)] {
             memory.reserve(bytes).expect("reserve");
             match field {
                 0 => state.filter_reserved = bytes,
                 1 => state.batch_reserved = bytes,
+                3 => state.build_reserved = bytes,
                 _ => state.left_reserved = bytes,
             }
         }
@@ -3417,6 +3433,40 @@ mod tests {
             memory.used(),
             baseline,
             "a probe that is never drained still squares its account"
+        );
+    }
+
+    /// A build that spilled holds its partitions instead of a resident map,
+    /// and that holding is the operator's, not the partition writer's.
+    #[test]
+    fn a_spilled_build_hands_its_partitions_back_too() {
+        use super::GraceJoin;
+        let memory = MemoryTracker::new(usize::MAX);
+        let baseline = memory.used();
+        let mut grace = GraceJoin::create();
+        memory.reserve(32768).expect("reserve");
+        grace.partition_reserved = 32768;
+        let mut state = HashJoinState {
+            build: PartitionedBuild::with_partitions(1),
+            grace: Some(grace),
+            key_bounds: None,
+            batch: None,
+            batch_reserved: 0,
+            row: 0,
+            match_index: 0,
+            left_values: None,
+            left_key: None,
+            left_reserved: 0,
+            prefetched: VecDeque::new(),
+            filter_reserved: 0,
+            build_reserved: 0,
+        };
+        assert!(memory.used() > baseline, "the partitions are charged");
+        state.release_all(&memory);
+        assert_eq!(
+            memory.used(),
+            baseline,
+            "the partitions are released with the rest of the state"
         );
     }
 
