@@ -754,18 +754,22 @@ pub(super) fn build_hash_join_state(
                      build_reserved: &mut usize,
                      bytes: usize|
      -> Result<(), ExecError> {
-        if grace.is_none()
-            && !build.is_empty()
-            && matches!(
-                memory.ensure_transient(bytes),
-                Err(ExecError::MemoryLimitExceeded { .. })
-            )
-        {
-            let mut partitions = GraceJoin::create();
-            spill_resident(build, &mut partitions, memory)?;
-            memory.release(*build_reserved);
-            *build_reserved = 0;
-            *grace = Some(partitions);
+        if grace.is_none() && !build.is_empty() {
+            // Only a full budget sends the build to partitions. Anything
+            // else `ensure_transient` answers - a cancellation, a deadline
+            // - is the query ending, and is carried out rather than
+            // swallowed for the next pull to rediscover.
+            match memory.ensure_transient(bytes) {
+                Ok(()) => {}
+                Err(ExecError::MemoryLimitExceeded { .. }) => {
+                    let mut partitions = GraceJoin::create();
+                    spill_resident(build, &mut partitions, memory)?;
+                    memory.release(*build_reserved);
+                    *build_reserved = 0;
+                    *grace = Some(partitions);
+                }
+                Err(error) => return Err(error),
+            }
         }
         Ok(())
     };
@@ -937,17 +941,17 @@ pub(super) fn build_hash_join_state(
     // Under a shared budget a build that fitted can still leave no room for
     // the probe to pull its next batch; it goes to partitions now, while it
     // still can, rather than failing the probe.
-    if grace.is_none()
-        && !build.is_empty()
-        && matches!(
-            memory.ensure_transient(probe_floor),
-            Err(ExecError::MemoryLimitExceeded { .. })
-        )
-    {
-        let mut partitions = GraceJoin::create();
-        spill_resident(&mut build, &mut partitions, memory)?;
-        memory.release(build_reserved);
-        grace = Some(partitions);
+    if grace.is_none() && !build.is_empty() {
+        match memory.ensure_transient(probe_floor) {
+            Ok(()) => {}
+            Err(ExecError::MemoryLimitExceeded { .. }) => {
+                let mut partitions = GraceJoin::create();
+                spill_resident(&mut build, &mut partitions, memory)?;
+                memory.release(build_reserved);
+                grace = Some(partitions);
+            }
+            Err(error) => return Err(error),
+        }
     }
     // A build that stayed resident (no grace spill) is never mutated again:
     // every remaining reader only probes it. Dense direct-address probe
