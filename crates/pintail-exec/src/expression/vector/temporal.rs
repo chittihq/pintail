@@ -77,7 +77,14 @@ pub(super) fn temporal_column(column: &ColumnVector) -> Option<Temporal<'_>> {
     let (TypedValues::Temporal { units, text }, validity) = column.typed()? else {
         return None;
     };
-    text.derived().then_some(Temporal {
+    // The text's spelling is not read here, only the units, and they are
+    // the exact instant wherever a packed temporal is built: every
+    // construction parses each row with the strict parser and abandons the
+    // packed column when any row fails. A column read from storage keeps
+    // the text as written, so requiring derived text kept every stored
+    // DATE and DATETIME off these kernels.
+    let _ = text;
+    Some(Temporal {
         units,
         validity,
         fsp,
@@ -805,18 +812,40 @@ mod tests {
     /// so the column is row evaluation's.
     #[test]
     fn a_kernel_declines_what_it_does_not_mirror() {
-        // Text kept as written: row evaluation reads the text itself.
-        let written = ColumnVector::new(
+        // Text kept as written still has a kernel, because the units beside
+        // it are the same instant the text spells: a column packs only when
+        // every row parses strictly, and row evaluation parses that same
+        // text. A spelling wider than the column's own fsp names the same
+        // instant, so it agrees too.
+        for written in [
+            "2024-01-05 10:00:00",
+            "2024-01-05 10:00:00.000",
+            "2024-01-05 00:00:00",
+        ] {
+            let column = ColumnVector::new(
+                DataType::DateTime64 { fsp: 0 },
+                vec![Value::Utf8(written.to_owned())],
+            )
+            .expect("column");
+            let batch = RecordBatch::new(1, vec![column]).expect("batch");
+            let expression = scalar(
+                ScalarFunction::DatePart(DatePart::Year),
+                vec![CompiledExpr::Column(0)],
+                DataType::Int64,
+            );
+            assert!(
+                agrees_with_rows(&expression, &batch, DataType::Int64),
+                "{written} answers as row evaluation does"
+            );
+        }
+        // Text no strict parse accepts packs nothing, so the kernel has no
+        // units to read and the row path answers alone.
+        let unparsed = ColumnVector::new(
             DataType::DateTime64 { fsp: 0 },
-            vec![Value::Utf8("2024-01-05 10:00:00".to_owned())],
+            vec![Value::Utf8("not a datetime".to_owned())],
         )
         .expect("column");
-        let batch = RecordBatch::new(1, vec![written]).expect("batch");
-        let expression = scalar(
-            ScalarFunction::DatePart(DatePart::Year),
-            vec![CompiledExpr::Column(0)],
-            DataType::Int64,
-        );
+        let batch = RecordBatch::new(1, vec![unparsed]).expect("batch");
         assert!(
             super::date_part_column(
                 &batch,
@@ -827,7 +856,6 @@ mod tests {
             )
             .is_none()
         );
-        assert!(agrees_with_rows(&expression, &batch, DataType::Int64));
         // A declared type that disagrees with row evaluation's answer.
         let batch = super::tests::batch(temporal(None));
         let expression = scalar(

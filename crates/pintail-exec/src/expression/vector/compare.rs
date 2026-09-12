@@ -46,6 +46,25 @@ pub(super) fn comparison_column(
     if data_type.is_some_and(|declared| declared != DataType::Boolean) {
         return None;
     }
+    // Tried first: a decimal comparison the binder cast to a common type
+    // that no packed decimal can hold declines at the cast, and would take
+    // the whole comparison to the row path.
+    if matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) && let Some(orderings) = super::numeric::scaled_orderings(batch, left, right, effects)
+    {
+        return truth_column(
+            orderings
+                .into_iter()
+                .map(|ordering| ordering.map(|ordering| holds(op, ordering))),
+        );
+    }
     let left = operand(batch, left, effects)?;
     let right = operand(batch, right, effects)?;
     if !left.varies() && !right.varies() {

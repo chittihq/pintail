@@ -18893,7 +18893,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150033 sync_runs rows for db_f4b096124494f12c6b0e0831ad6512d5"
+    "detail": "150034 sync_runs rows for db_a29d0c164ee8fa4c0ce180401b583a00"
   },
   {
     "phase": "activity-history",
@@ -18917,7 +18917,7 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 27ms p99 30ms"
+    "detail": "p50 28ms p99 32ms"
   },
   {
     "phase": "activity-history",
@@ -20188,7 +20188,7 @@
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 4918 vs source 4918"
+    "detail": "orders replica 5307 vs source 5307"
   },
   {
     "phase": "poll-storm",
@@ -26586,7 +26586,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_f4b096124494f12c6b0e0831ad6512d5\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-12T06:07:36.993239561+00:00\",\"updated_at\":\"2026-09-12T06:13:51.702396791+00:00\"},\"tables\":30,\"rows\":8831}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_a29d0c164ee8fa4c0ce180401b583a00\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-12T08:07:18.584462983+00:00\",\"updated_at\":\"2026-09-12T08:13:30.418522770+00:00\"},\"tables\":30,\"rows\":9220}"
   },
   {
     "phase": "drop-table-polling",
@@ -30394,7 +30394,7 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:the process survives the storm",
     "status": "PASS",
-    "detail": "wire 240 ok, http 82 ok, dashboards 138 ok; no errors"
+    "detail": "wire 240 ok, http 81 ok, dashboards 132 ok; no errors"
   },
   {
     "phase": "memory-pressure",
@@ -30406,31 +30406,31 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:work still gets done",
     "status": "PASS",
-    "detail": "wire 240 of 240, http 82"
+    "detail": "wire 240 of 240, http 81"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 265ms p99 1123ms over 240 queries"
+    "detail": "wire p50 211ms p99 1427ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 19ms over 10 samples"
+    "detail": "health p99 24ms over 9 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 126MB with a 256MB budget"
+    "detail": "peak RSS 132MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the replica catches up after the storm",
     "status": "PASS",
-    "detail": "big 201000 vs source 201000"
+    "detail": "big 200900 vs source 200900"
   },
   {
     "phase": "memory-pressure",
@@ -31712,7 +31712,7 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 61MB before, peak 196MB during (margin 768MB)"
+    "detail": "RSS 58MB before, peak 197MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",

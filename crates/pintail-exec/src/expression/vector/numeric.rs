@@ -2,9 +2,10 @@
 //! over packed columns.
 //!
 //! Row evaluation reads a decimal as text, parses it into an exact
-//! fraction, and formats its answer as text again. A decimal column whose
-//! text is derived from its scaled units needs neither step: the units are
-//! the fraction. Decimal arithmetic runs through the same exact fractions
+//! fraction, and formats its answer as text again. A packed decimal column
+//! needs neither step: its units are the fraction, whatever spelling the
+//! text beside them carries. Decimal arithmetic runs through the same
+//! exact fractions
 //! row evaluation uses, node for node, so the digits `MySQL` keeps inside
 //! a division and the rounding at the top come out the same.
 
@@ -121,8 +122,8 @@ pub(super) fn integer_column(
     ))
 }
 
-/// A decimal operand's scaled units: a packed decimal column whose text is
-/// derived from them, an integer column (scale zero), or a constant.
+/// A decimal operand's scaled units: a packed decimal column, an integer
+/// column (scale zero), or a constant.
 enum Scaled<'operand> {
     Decimal(&'operand DecimalUnits, u8, &'operand ValidityMask),
     Integers(Integers<'operand>),
@@ -153,7 +154,13 @@ fn scaled<'operand>(operand: &'operand Operand<'_>) -> Option<Scaled<'operand>> 
                     text,
                 },
                 validity,
-            ) if text.derived() && matches!(column.data_type(), DataType::Decimal { .. }) => {
+            ) if matches!(column.data_type(), DataType::Decimal { .. }) => {
+                // The text's spelling does not matter here, only the units,
+                // and they are always the exact value: every construction
+                // of a packed decimal parses each row with
+                // `parse_decimal_scaled`, which answers `None` rather than
+                // rounding when a digit past the scale is not zero, and
+                // abandons the packed column when any row answers `None`.
                 Some(Scaled::Decimal(values, *scale, validity))
             }
             _ => integers(operand).map(Scaled::Integers),
@@ -267,6 +274,136 @@ pub(super) fn same_scale_units(
         }
         _ => None,
     }
+}
+
+/// Whether this operand is an exact number a rescale can compare: a
+/// decimal or integer column, or an integer literal. Text and floating
+/// point are left out - `MySQL` compares a decimal against either by
+/// converting to double, which a rescale would not reproduce.
+fn exactly_numeric(operand: &Operand<'_>) -> bool {
+    match operand {
+        Operand::Column(column) => matches!(
+            column.data_type(),
+            DataType::Decimal { .. } | DataType::Int64 | DataType::UInt64
+        ),
+        Operand::Constant(Value::Int64(_) | Value::UInt64(_) | Value::Boolean(_)) => true,
+        Operand::Constant(_) => false,
+    }
+}
+
+/// Whether this operand is a decimal column.
+fn is_decimal_column(operand: &Operand<'_>) -> bool {
+    matches!(operand, Operand::Column(column) if matches!(column.data_type(), DataType::Decimal { .. }))
+}
+
+/// Two scaled decimals compared exactly, without widening either.
+///
+/// Lifting both to the larger scale is the obvious way and overflows for
+/// the shape that needs it most: `DECIMAL(38,0)` against `DECIMAL(20,3)`
+/// wants every unit multiplied by a thousand, which leaves `i128`. The
+/// integer parts are compared first and settle almost every row; only a
+/// tie reaches the fractions, and a fraction is smaller than its own
+/// scale's power, so lifting one cannot overflow. Rust truncates division
+/// toward zero, so a negative value's two parts are both non-positive and
+/// order together.
+fn exact_ordering(left: (i128, u8), right: (i128, u8)) -> Option<Ordering> {
+    let (left_units, left_scale) = left;
+    let (right_units, right_scale) = right;
+    let power = |scale: u8| 10_i128.checked_pow(u32::from(scale));
+    let (left_power, right_power) = (power(left_scale)?, power(right_scale)?);
+    let whole = (left_units / left_power).cmp(&(right_units / right_power));
+    if whole != Ordering::Equal {
+        return Some(whole);
+    }
+    let common = left_scale.max(right_scale);
+    let lifted =
+        |units: i128, scale: u8| power(common - scale).and_then(|factor| units.checked_mul(factor));
+    Some(
+        lifted(left_units % left_power, left_scale)?
+            .cmp(&lifted(right_units % right_power, right_scale)?),
+    )
+}
+
+/// The expression under a decimal cast that only widens it.
+///
+/// A comparison binds both sides as casts to one decimal type holding each
+/// exactly. That type can need more digits than a packed decimal has -
+/// `DECIMAL(38,0)` against `DECIMAL(20,3)` wants 41 - and the cast then
+/// declines, taking the whole comparison to the row path. Widening never
+/// rounds, so the comparison under the casts is the same one, and it is
+/// made at the common scale instead of a common type.
+fn under_widening_decimal_cast<'expr>(
+    expr: &'expr CompiledExpr,
+    batch: &RecordBatch,
+) -> &'expr CompiledExpr {
+    let CompiledExpr::Scalar { function, args, .. } = expr else {
+        return expr;
+    };
+    let target = match function {
+        pintail_sql::ScalarFunction::Cast(target)
+        | pintail_sql::ScalarFunction::DeclaredCast { target, .. } => *target,
+        _ => return expr,
+    };
+    let DataType::Decimal { precision, scale } = target else {
+        return expr;
+    };
+    let [CompiledExpr::Column(index)] = args.as_slice() else {
+        return expr;
+    };
+    let Some(source) = batch.column(*index).map(ColumnVector::data_type) else {
+        return expr;
+    };
+    let room = integer_digits(precision, scale);
+    match source {
+        DataType::Decimal {
+            precision: from_precision,
+            scale: from_scale,
+        } if scale >= from_scale && room >= integer_digits(from_precision, from_scale) => &args[0],
+        // i64 spans 19 digits, u64 twenty.
+        DataType::Int64 if room >= 19 => &args[0],
+        DataType::UInt64 if room >= 20 => &args[0],
+        _ => expr,
+    }
+}
+
+/// Each row's ordering of two exact numbers, lifted to their common scale.
+///
+/// `DECIMAL(38,0)` against `DECIMAL(20,3)`, or a decimal against an
+/// integer, are the same comparison row evaluation makes exactly - but the
+/// equality kernel beside this one takes only two decimals of one declared
+/// type, so every other pairing went row by row. A lift that would
+/// overflow `i128` declines the batch rather than wrapping.
+pub(super) fn scaled_orderings(
+    batch: &RecordBatch,
+    left: &CompiledExpr,
+    right: &CompiledExpr,
+    effects: &mut Effects,
+) -> Option<Vec<Option<Ordering>>> {
+    let rows = batch.row_count();
+    let left = operand(batch, under_widening_decimal_cast(left, batch), effects)?;
+    let right = operand(batch, under_widening_decimal_cast(right, batch), effects)?;
+    let (left, right) = (&left, &right);
+    if !exactly_numeric(left) || !exactly_numeric(right) {
+        return None;
+    }
+    // Two integers are the integer path's, which needs no rescale.
+    if !is_decimal_column(left) && !is_decimal_column(right) {
+        return None;
+    }
+    let (left, right) = (scaled(left)?, scaled(right)?);
+    let mut orderings = Vec::with_capacity(rows);
+    for row in 0..rows {
+        let (Some((left, left_scale)), Some((right, right_scale))) = (left.at(row), right.at(row))
+        else {
+            orderings.push(None);
+            continue;
+        };
+        orderings.push(Some(exact_ordering(
+            (left, left_scale),
+            (right, right_scale),
+        )?));
+    }
+    Some(orderings)
 }
 
 /// A decimal comparison of two exact numbers, each rescaled to the larger
