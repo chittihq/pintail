@@ -37,6 +37,8 @@ source read back afterwards.
 | `INT` → `INT UNSIGNED` | `-5` | `0` | **yes** |
 | `DECIMAL(10,2)` → `(14,4)` | `12.34` | `12.3400` | no |
 | `DECIMAL(14,4)` → `(10,1)` | `12.3456`, `-99999999.99` | `12.3`, `-100000000.0` | **yes** |
+| `DECIMAL(10,2)` → `DECIMAL(10,2) UNSIGNED` | `-5.25` | `0.00` | **yes** |
+| `DOUBLE` → `DOUBLE UNSIGNED` | `-2.5` | `0` | **yes** |
 | `DECIMAL(20,4)` → `DOUBLE` | `1234567890123456.1234` | `1.234567890123456e15` | **yes** |
 | `FLOAT` → `DOUBLE` | `0.1` | `0.10000000149011612` | **yes**, but see below |
 | `VARCHAR(64)` → `TEXT` → `LONGTEXT` | 26 characters | 26 characters | no |
@@ -97,6 +99,9 @@ alone:
   above), `BIT`, `DATE`, `DATETIME`, `TIMESTAMP`, `TIME`, `YEAR`, character
   data (`CHAR`/`VARCHAR`/the `TEXT` sizes), binary data, `ENUM`, `SET`,
   `JSON`, and anything unrecognised against its own spelling;
+- signedness may not change: an integer wears it in its family, and a
+  `DECIMAL` or a float wears it on the column type alone, but MySQL converts
+  every negative value to zero either way;
 - capacity may grow and never shrink — bits for integers and `BIT`, bytes for
   strings and binaries (character sets included, so `latin1` to `utf8mb4`
   widens), fractional-second digits for temporals, and both halves

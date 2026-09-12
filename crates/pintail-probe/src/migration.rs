@@ -50,6 +50,16 @@ pub(crate) fn unsafe_column_change(
 
     let before = Declaration::read(previous);
     let after = Declaration::read(refreshed);
+    // Signedness is carried on the column type rather than the data type, so
+    // an integer wears it in its family and a DECIMAL or a float does not.
+    // MySQL converts a negative value to zero either way.
+    if before.unsigned != after.unsigned {
+        return reason(format!(
+            "changed signedness from {} to {}, which converts every negative value the source \
+             held to zero",
+            previous.mysql_column_type, refreshed.mysql_column_type
+        ));
+    }
     if before.family != after.family {
         return reason(format!(
             "changed from {} to {}, which converts every stored value",
@@ -170,6 +180,8 @@ struct Declaration {
     capacity: Option<u64>,
     /// The numbers the declaration spells out, in order.
     numbers: Vec<u64>,
+    /// Whether the declaration is UNSIGNED.
+    unsigned: bool,
 }
 
 /// Declarations that convert into one another without rewriting values belong
@@ -241,6 +253,13 @@ impl Declaration {
             "json" => Family::Json,
             other => Family::Other(other.to_owned()),
         };
+        // Only a number is signed, and only its declaration says so. Reading
+        // the word anywhere else would find it inside an ENUM member.
+        let unsigned = unsigned
+            && matches!(
+                family,
+                Family::SignedInteger | Family::UnsignedInteger | Family::Decimal | Family::Float
+            );
         let numbers = declared_numbers(&column_type);
         let capacity = match family {
             Family::SignedInteger | Family::UnsignedInteger => integer_bits(&data_type),
@@ -258,6 +277,7 @@ impl Declaration {
             family,
             capacity,
             numbers,
+            unsigned,
         }
     }
 }
@@ -397,6 +417,21 @@ mod tests {
         assert!(adopts(
             &column("int", "int unsigned"),
             &column("bigint", "bigint unsigned"),
+        ));
+        // A DECIMAL wears UNSIGNED on the column type alone, so its family
+        // cannot carry the change the way an integer's does.
+        assert!(!adopts(
+            &column("decimal", "decimal(10,2)"),
+            &column("decimal", "decimal(10,2) unsigned"),
+        ));
+        assert!(!adopts(
+            &column("double", "double unsigned"),
+            &column("double", "double"),
+        ));
+        // The word inside an ENUM member is not a declaration of signedness.
+        assert!(adopts(
+            &column("enum", "enum('signed')"),
+            &column("enum", "enum('signed','unsigned')"),
         ));
     }
 
