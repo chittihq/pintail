@@ -28,6 +28,20 @@
 //! `EXPORT_SET`, `WEIGHT_STRING`, `SOUNDEX` - do not bind at all, which is
 //! a gap of a different kind and not a row-path cost.
 //!
+//! Nor is the one exception work to do. `JSON_EXTRACT` over a column of
+//! documents costs 95ms, and wrapped in `JSON_UNQUOTE` 119ms, because every
+//! row holds a different document and each is parsed once. A kernel cannot
+//! remove a parse per row, only move it: `parses_a_document` in
+//! `expression/vector/functions.rs` records the measurement that settled
+//! this already, 123ms adapted against 75ms read row by row. The row path
+//! is the faster option here, and the numbers below agree with the ones
+//! that put it there.
+//!
+//! The constant-document case is the odd one, at 64ms to parse the same
+//! small document 200,000 times. Folding it would take that to nothing,
+//! but `JSON_EXTRACT('{...}', '$.a')` with both arguments constant is a
+//! shape queries do not really have, so it is noted rather than chased.
+//!
 //! The other thing visible here is that the expensive kernels are the text
 //! ones: `CONCAT` 47ms, `MD5` 56ms, `LPAD` 52ms, `FIELD` 69ms, against 4ms
 //! for a bare column and 5ms for nested integer arithmetic. Text is where
@@ -64,6 +78,7 @@ fn schema() -> TableSchema {
             ),
             Column::new(4, "name", DataType::Utf8, false),
             Column::new(5, "seen", DataType::DateTime64 { fsp: 0 }, false),
+            Column::new(6, "meta", DataType::Json, false),
         ],
     )
     .expect("schema")
@@ -95,6 +110,11 @@ impl Fixture {
                                     "2026-{:02}-{:02} 10:00:00",
                                     id % 12 + 1,
                                     id % 28 + 1
+                                )),
+                                Value::Utf8(format!(
+                                    "{{\"score\":{},\"tag\":\"t{}\"}}",
+                                    id % 100,
+                                    id % 7
                                 )),
                             ],
                             id + 1,
@@ -200,9 +220,20 @@ fn which_projections_still_reach_the_row_path() {
         ),
         // The exotic end: if the row path is reachable at all, it is here.
         ("regexp", "SELECT name REGEXP '^n' FROM events"),
+        // A constant document and a column one are different questions: the
+        // first is one parse repeated, the second is a parse per row, and
+        // only the second is the shape a query actually has.
         (
-            "json extract",
+            "json extract, constant doc",
             "SELECT JSON_EXTRACT('{\"a\":1}', '$.a') FROM events",
+        ),
+        (
+            "json extract, column doc",
+            "SELECT JSON_EXTRACT(meta, '$.score') FROM events",
+        ),
+        (
+            "json unquote, column doc",
+            "SELECT JSON_UNQUOTE(JSON_EXTRACT(meta, '$.tag')) FROM events",
         ),
         ("json object", "SELECT JSON_OBJECT('k', amount) FROM events"),
         ("hex", "SELECT HEX(name) FROM events"),
