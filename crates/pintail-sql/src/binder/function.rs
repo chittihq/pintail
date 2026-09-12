@@ -1934,8 +1934,14 @@ pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
     }
 }
 
+/// Binds `left = right` for the comparisons that are written some other way:
+/// `<=>`, a simple `CASE`, a row-constructor `IN`. It must type the pair
+/// exactly as a written `=` does. It once skipped the DECIMAL scale
+/// unification, so those forms compared `0.0000` with `0.00` as different
+/// text on the row path while `=` called them equal.
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
     let (left, right) = super::unify_temporal_operands(left, right);
+    let (left, right) = super::unify_time_operands(left, right);
     let right = super::canonical_literal_operand(&left, right)?;
     let left = super::canonical_literal_operand(&right, left)?;
     let (left, right) = super::text_as_number(left, right);
@@ -1948,6 +1954,13 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
         });
     }
     ensure_supported_text_collation(&[&left, &right])?;
+    if super::is_exact_decimal_comparison(BinaryOp::Equal, &left, &right) {
+        return Ok(super::bind_exact_decimal_comparison(
+            BinaryOp::Equal,
+            left,
+            right,
+        ));
+    }
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
         data_type: Some(DataType::Boolean),
