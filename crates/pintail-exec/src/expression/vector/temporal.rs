@@ -134,6 +134,50 @@ fn moment<'operand>(operand: &'operand Operand<'_>) -> Option<Moment<'operand>> 
 }
 
 /// `DATE(x)` and `LAST_DAY(x)`: a date from a packed temporal.
+/// `DATE_FORMAT(column, 'constant')` over packed units.
+///
+/// Row evaluation forces the column's text, parses it back into a
+/// date-time, and formats that - the round trip e14 measured as `YEAR()`'s
+/// cost on the same columns. The units are already the date-time the parse
+/// would recover, so this formats straight from them. Only a constant
+/// format qualifies: a per-row format is row evaluation's.
+pub(super) fn date_format_column(
+    batch: &RecordBatch,
+    args: &[CompiledExpr],
+    data_type: Option<DataType>,
+    effects: &mut Effects,
+) -> Option<ColumnVector> {
+    let [argument, format] = args else {
+        return None;
+    };
+    if data_type.is_some_and(|declared| declared != DataType::Utf8) {
+        return None;
+    }
+    let CompiledExpr::Literal(Value::Utf8(format)) = format else {
+        return None;
+    };
+    let input = operand(batch, argument, effects)?;
+    let Operand::Column(column) = &input else {
+        return None;
+    };
+    let units = temporal_column(column)?;
+    let mut text = crate::array::StrColumn::default();
+    for row in 0..batch.row_count() {
+        if !units.validity.is_valid(row) {
+            text.push(b"");
+            continue;
+        }
+        let formatted =
+            crate::expression::temporal::mysql_date_format(units.datetime(row)?, format);
+        text.push(formatted.as_bytes());
+    }
+    Some(ColumnVector::from_typed(
+        DataType::Utf8,
+        TypedValues::Utf8(text),
+        units.validity.clone(),
+    ))
+}
+
 pub(super) fn date_of_column(
     batch: &RecordBatch,
     args: &[CompiledExpr],
@@ -648,6 +692,49 @@ mod tests {
                     "{function:?} over {fsp:?} has a kernel"
                 );
             }
+        }
+    }
+
+    /// `DATE_FORMAT` answers from the units what row evaluation answers
+    /// from the text, for a date and for both ends of the fsp range, and a
+    /// per-row format string still declines to the row path.
+    #[test]
+    fn date_formats_of_packed_temporals_match_row_evaluation() {
+        for fsp in [None, Some(0), Some(3), Some(6)] {
+            let batch = batch(temporal(fsp));
+            for format in [
+                "%Y-%m-%d %H:%i:%s.%f",
+                "%Y-%m",
+                "%d/%m/%Y",
+                "%H:%i",
+                "%W %M %Y",
+                "",
+            ] {
+                let expression = scalar(
+                    ScalarFunction::DateFormat,
+                    vec![
+                        CompiledExpr::Column(0),
+                        CompiledExpr::Literal(Value::Utf8(format.to_owned())),
+                    ],
+                    DataType::Utf8,
+                );
+                assert!(
+                    agrees_with_rows(&expression, &batch, DataType::Utf8),
+                    "{format:?} over {fsp:?} has a kernel"
+                );
+            }
+            // The format has to be one constant for every row; a column in
+            // its place is row evaluation's.
+            assert!(
+                super::date_format_column(
+                    &batch,
+                    &[CompiledExpr::Column(0), CompiledExpr::Column(0)],
+                    Some(DataType::Utf8),
+                    &mut super::Effects::default(),
+                )
+                .is_none(),
+                "a per-row format declines"
+            );
         }
     }
 
