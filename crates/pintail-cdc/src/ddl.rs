@@ -61,6 +61,11 @@ pub(crate) struct ParsedDdl {
 /// rejects, so it cannot help here. Handles the optional `IF EXISTS`, the
 /// schema qualifier, and backtick quoting.
 fn alter_table_target(statement: &str) -> Option<(Option<String>, String)> {
+    alter_table_parts(statement).map(|(schema, name, _)| (schema, name))
+}
+
+/// The schema, table and the clause text that follows the table name.
+fn alter_table_parts(statement: &str) -> Option<(Option<String>, String, &str)> {
     let rest = statement
         .trim_start()
         .get("ALTER TABLE".len()..)?
@@ -71,23 +76,109 @@ fn alter_table_target(statement: &str) -> Option<(Option<String>, String)> {
         .map_or(rest, str::trim_start);
     let mut schema = None;
     let mut name = String::new();
-    let mut chars = rest.chars().peekable();
+    let mut chars = rest.char_indices().peekable();
     let mut quoted = false;
-    while let Some(character) = chars.next() {
+    let mut end = rest.len();
+    while let Some((offset, character)) = chars.next() {
         match character {
             '`' => {
                 quoted = !quoted;
-                if !quoted && chars.peek() != Some(&'.') {
+                if !quoted && chars.peek().map(|&(_, next)| next) != Some('.') {
+                    end = offset + 1;
                     break;
                 }
             }
             // A qualifier means what came before was the schema, not the table.
             '.' if !quoted => schema = Some(std::mem::take(&mut name)),
-            c if !quoted && (c.is_whitespace() || c == '(') => break,
+            c if !quoted && (c.is_whitespace() || c == '(') => {
+                end = offset;
+                break;
+            }
             c => name.push(c),
         }
     }
-    (!name.is_empty()).then_some((schema, name))
+    (!name.is_empty()).then_some((schema, name, &rest[end..]))
+}
+
+/// Clauses that rebuild or re-describe a table without changing a row or a
+/// column: a forced rebuild, a physical reorder, and table options. The
+/// mirror holds decoded rows in its own layout, so none of them has anything
+/// to apply; the re-probe adopts whatever metadata they change.
+const REBUILD_ONLY_CLAUSES: &[&str] = &[
+    "FORCE",
+    "ORDER BY",
+    "ENGINE",
+    "ROW_FORMAT",
+    "AUTO_INCREMENT",
+    "COMMENT",
+    "ALGORITHM",
+    "LOCK",
+    "KEY_BLOCK_SIZE",
+    "STATS_PERSISTENT",
+    "STATS_AUTO_RECALC",
+    "STATS_SAMPLE_PAGES",
+    "AVG_ROW_LENGTH",
+    "CHECKSUM",
+    "DELAY_KEY_WRITE",
+    "PACK_KEYS",
+    "MAX_ROWS",
+    "MIN_ROWS",
+    "COMPRESSION",
+    "ENCRYPTION",
+    "DEFAULT CHARSET",
+    "DEFAULT CHARACTER SET",
+    "DEFAULT COLLATE",
+    "CHARSET",
+    "CHARACTER SET",
+    "COLLATE",
+];
+
+/// Whether every clause of an `ALTER TABLE` is rebuild-only. The parser does
+/// not read several of these forms, and an unreadable statement quarantines
+/// the table it names - so a routine `ALTER TABLE t FORCE` took a table out of
+/// service until someone resynchronised it.
+fn rebuild_only_alter(statement: &str) -> bool {
+    let Some((_, _, clauses)) = alter_table_parts(statement) else {
+        return false;
+    };
+    let clauses = clauses.trim().trim_end_matches(';').trim();
+    if clauses.is_empty() {
+        return false;
+    }
+    let mut depth = 0_i32;
+    let mut quote = None;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    for (offset, character) in clauses.char_indices() {
+        match (quote, character) {
+            (Some(open), c) if c == open => quote = None,
+            (None, '\'' | '"' | '`') => quote = Some(character),
+            (None, '(') => depth += 1,
+            (None, ')') => depth -= 1,
+            (None, ',') if depth == 0 => {
+                parts.push(&clauses[start..offset]);
+                start = offset + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&clauses[start..]);
+    for part in parts {
+        let clause = part.trim().to_ascii_uppercase();
+        let rebuild_only = REBUILD_ONLY_CLAUSES.iter().any(|option| {
+            clause
+                .strip_prefix(option)
+                .is_some_and(|after| after.is_empty() || after.starts_with([' ', '=', '\t', '\n']))
+        });
+        if !rebuild_only {
+            return false;
+        }
+        // ORDER BY comes last and its column list is comma-separated.
+        if clause.starts_with("ORDER BY") {
+            return true;
+        }
+    }
+    true
 }
 
 /// Parses one replicated DDL statement.
@@ -150,7 +241,8 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
     // statement alone does not say which kind it is.
     if normalized.starts_with("ALTER TABLE")
         && (normalized.contains(" CONVERT TO CHARACTER SET")
-            || normalized.contains(" CONVERT TO CHARSET"))
+            || normalized.contains(" CONVERT TO CHARSET")
+            || rebuild_only_alter(statement))
     {
         return Ok(alter_table_target(statement)
             .map(|(schema, table)| {
@@ -359,6 +451,40 @@ mod convert_charset_tests {
                 kind: AlterKind::IndexOnly,
             }],
         );
+    }
+
+    #[test]
+    fn a_rebuild_or_table_option_changes_no_row() {
+        for statement in [
+            "ALTER TABLE ledger FORCE",
+            "alter table ledger order by amount, id",
+            "ALTER TABLE `app`.`ledger` ENGINE=InnoDB",
+            "ALTER TABLE ledger ENGINE = InnoDB, ALGORITHM=INPLACE, LOCK=NONE",
+            "ALTER TABLE ledger ROW_FORMAT=DYNAMIC KEY_BLOCK_SIZE=8",
+            "ALTER TABLE ledger AUTO_INCREMENT = 1000;",
+            "ALTER TABLE ledger COMMENT 'a, b', STATS_PERSISTENT=1",
+            "ALTER TABLE ledger DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+        ] {
+            assert_eq!(
+                parse_ddl(statement, "app").expect(statement).actions,
+                vec![DdlAction::Alter {
+                    table: "ledger".to_owned(),
+                    kind: AlterKind::IndexOnly,
+                }],
+                "{statement}"
+            );
+        }
+        for statement in [
+            "ALTER TABLE ledger FORCE, ADD COLUMN note INT",
+            "ALTER TABLE ledger ADD PRIMARY KEY (id)",
+            "ALTER TABLE ledger ENGINE=InnoDB, DROP COLUMN amount",
+            "ALTER TABLE ledger",
+        ] {
+            assert!(
+                !super::rebuild_only_alter(statement),
+                "{statement} changes more than options"
+            );
+        }
     }
 
     #[test]
