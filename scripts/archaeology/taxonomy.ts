@@ -140,7 +140,7 @@ export const CLASSES: BugClass[] = [
     gates: ['oracle', 'mtr', 'join-spill'],
     relevance: 'core',
     rules: {
-      ...mysqlish(/sql\/(hash_join|sql_join_buffer|sql_executor|iterators\/.*join|composite_iterators)/),
+      ...mysqlish(/sql\/(hash_join|sql_join_buffer|sql_join_cache|sql_executor|iterators\/.*join|composite_iterators)/),
       clickhouse: [/src\/Interpreters\/(HashJoin|MergeJoin|FullSortingMergeJoin|GraceHashJoin|ConcurrentHashJoin|JoinSwitcher|joinDispatch)/, /src\/Processors\/Transforms\/.*Join/],
     },
   },
@@ -299,6 +299,30 @@ export const CLASSES: BugClass[] = [
     },
   },
 ]
+
+/// Which classes have a gate that GENERATES new cases against an oracle, as
+/// opposed to replaying cases someone wrote. A hand-written gate catches the
+/// bugs its author imagined; the generated ones are how a class stops
+/// depending on that. Classes absent here are the verification backlog.
+export const GENERATORS: Record<string, string> = {
+  decimal: 'oracle fuzz (DECIMAL family)',
+  'float-format': 'oracle fuzz (numeric family)',
+  collation: 'oracle fuzz (string family, collation matrix)',
+  temporal: 'oracle fuzz (temporal family)',
+  json: 'oracle fuzz (JSON family)',
+  'type-coercion': 'oracle fuzz (all families)',
+  'string-functions': 'oracle fuzz (string, hash and encoding families)',
+  aggregation: 'oracle fuzz (grouping family), live-replication-queries',
+  window: 'oracle fuzz (window family)',
+  'planner-wrong-result': 'oracle fuzz (join, subquery and set families), metamorphic pack',
+  'join-execution': 'oracle fuzz (join families)',
+  'sort-limit': 'oracle fuzz (ordered answers)',
+  'binlog-events': 'fuzz-binlog (decoder input only)',
+  'columnar-merge': 'recovery-sequences, live-replication-queries',
+  'storage-format': 'fuzz-storage',
+  'crash-recovery': 'crash-fuzz, recovery-sequences',
+  'wire-protocol': 'fuzz-wire (packet parsing only)',
+}
 
 /// Test files a fix commit may add or change, per project.
 export const TEST_PATHS: Record<Project, RegExp> = {

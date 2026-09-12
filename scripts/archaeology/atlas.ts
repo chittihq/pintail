@@ -3,7 +3,7 @@
 /// classes Pintail can have, with the Pintail gate that covers each class.
 ///
 /// Usage:  bun run scripts/archaeology/atlas.ts fetch     # clone or update
-///         bun run scripts/archaeology/atlas.ts extract   # records-*.jsonl
+///         bun run scripts/archaeology/atlas.ts extract [mysql mariadb clickhouse]
 ///         bun run scripts/archaeology/atlas.ts render    # docs/design/bug-atlas.md
 ///
 /// Upstream repositories are cloned without file contents into
@@ -14,7 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, appendFileSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { CLASSES, bugIds, classify, testPaths, type Project } from './taxonomy.ts'
+import { CLASSES, GENERATORS, bugIds, classify, testPaths, type Project } from './taxonomy.ts'
 
 const root = resolve(import.meta.dir, '..', '..')
 export const dataDir = process.env.PINTAIL_ARCHAEOLOGY_DIR ?? join(homedir(), 'pintail-archaeology')
@@ -41,9 +41,10 @@ function run(cwd: string, ...args: string[]) {
   return proc.stdout.toString()
 }
 
-function fetchAll() {
+function fetchAll(only: string[]) {
   mkdirSync(dataDir, { recursive: true })
   for (const [project, upstream] of Object.entries(UPSTREAMS)) {
+    if (only.length && !only.includes(project)) continue
     const dir = join(dataDir, upstream.dir)
     if (!existsSync(join(dir, '.git'))) {
       console.log(`${project}: cloning`)
@@ -83,7 +84,9 @@ function clickhouseFixes(dir: string): Set<number> {
 }
 
 async function* logRecords(dir: string, args: string[]) {
-  const proc = Bun.spawn(['git', '-C', dir, 'log', ...args, '--name-only', '--format=%x1e%H%x1f%aI%x1f%B%x1d'], { stdout: 'pipe', stderr: 'inherit' })
+  // --no-renames: rename detection reads file contents, which a blobless
+  // clone fetches one object at a time.
+  const proc = Bun.spawn(['git', '-C', dir, 'log', ...args, '--no-renames', '--name-only', '--format=%x1e%H%x1f%aI%x1f%B%x1d'], { stdout: 'pipe', stderr: 'inherit' })
   const decoder = new TextDecoder()
   let buffer = ''
   const parse = (chunk: string) => {
@@ -107,9 +110,10 @@ async function* logRecords(dir: string, args: string[]) {
   if ((await proc.exited) !== 0) throw new Error(`git log failed in ${dir}`)
 }
 
-async function extract() {
+async function extract(only: string[]) {
   for (const [name, upstream] of Object.entries(UPSTREAMS)) {
     const project = name as Project
+    if (only.length && !only.includes(project)) continue
     const dir = join(dataDir, upstream.dir)
     if (!existsSync(join(dir, '.git'))) { console.log(`${project}: not cloned, skipping`); continue }
     const out = join(dataDir, `records-${project}.jsonl`)
@@ -200,7 +204,11 @@ function render() {
   }
   lines.push('')
   lines.push('## Classes', '')
-  lines.push('| Class | Relevance | MySQL | MariaDB | ClickHouse | With test | Pintail gates |', '|---|---|---:|---:|---:|---:|---|')
+  lines.push('ClickHouse fixes are the pull requests its in-tree changelogs list under a bug-fix heading, so its')
+  lines.push('counts start with the oldest changelog kept in its repository and are not comparable across periods.', '')
+  lines.push('"Generated" names the gate that produces new cases against an oracle for the class. A class with')
+  lines.push('only hand-written gates is covered for the bugs someone thought of; those rows are the backlog.', '')
+  lines.push('| Class | Relevance | MySQL | MariaDB | ClickHouse | With test | Pintail gates | Generated |', '|---|---|---:|---:|---:|---:|---|---|')
   const ranked = [...CLASSES].sort((a, b) => {
     const total = (id: string) => projects.reduce((n, p) => n + (summaries[p].perClass.get(id)?.bugs ?? 0), 0)
     const order = { core: 0, adjacent: 1, 'out-of-scope': 2 }
@@ -210,7 +218,8 @@ function render() {
     const cells = projects.map((p) => cls.rules[p] ? fmt(summaries[p].perClass.get(cls.id)?.bugs ?? 0) : '-')
     const tested = projects.reduce((n, p) => n + (summaries[p].perClass.get(cls.id)?.tested ?? 0), 0)
     const gates = cls.relevance === 'out-of-scope' ? 'n/a' : cls.gates.length ? cls.gates.map((g) => '`' + g + '`').join(', ') : '**uncovered**'
-    lines.push(`| ${cls.title} | ${cls.relevance} | ${cells.join(' | ')} | ${fmt(tested)} | ${gates} |`)
+    const generated = cls.relevance === 'out-of-scope' ? 'n/a' : GENERATORS[cls.id] ?? '**none**'
+    lines.push(`| ${cls.title} | ${cls.relevance} | ${cells.join(' | ')} | ${fmt(tested)} | ${gates} | ${generated} |`)
   }
   lines.push('')
   lines.push('## Trajectories', '')
@@ -232,8 +241,8 @@ function render() {
 
 if (import.meta.main) {
   const command = process.argv[2]
-  if (command === 'fetch') fetchAll()
-  else if (command === 'extract') await extract()
+  if (command === 'fetch') fetchAll(process.argv.slice(3))
+  else if (command === 'extract') await extract(process.argv.slice(3))
   else if (command === 'render') render()
   else { console.error('usage: atlas.ts fetch|extract|render'); process.exit(2) }
 }
