@@ -5,6 +5,7 @@
 //! the same typed row representation.
 
 mod canonical;
+mod json;
 mod row;
 mod schema;
 mod value;
@@ -16,6 +17,7 @@ pub use canonical::{
     parse_datetime_micros, parse_decimal_rounded, parse_decimal_scaled, parse_time_micros,
     round_micros_to_fsp,
 };
+pub use json::mysql_json_text;
 pub use row::{KeyPart, PrimaryKey, StoredRow};
 pub use schema::{Column, KeyMode, SchemaError, TableSchema, declaration_labels};
 pub use value::{DataType, DecimalQuotient, Float64, NATIVE_DECIMAL_MAX_PRECISION, Value};

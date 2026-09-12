@@ -5009,45 +5009,7 @@ fn decimal_integer_bound(text: &str, ceiling: bool) -> Result<Value, ExecError> 
     Ok(Value::Int64(integer))
 }
 
-/// Renders a JSON value the way `MySQL` prints JSON columns: `", "`
-/// between members, `": "` after object keys, and object keys ordered by
-/// length then bytes (the binary-JSON normalization order).
-pub(crate) fn mysql_json_text(value: &serde_json::Value) -> String {
-    fn write(value: &serde_json::Value, output: &mut String) {
-        match value {
-            serde_json::Value::Array(items) => {
-                output.push('[');
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
-                    }
-                    write(item, output);
-                }
-                output.push(']');
-            }
-            serde_json::Value::Object(members) => {
-                let mut keys: Vec<&String> = members.keys().collect();
-                keys.sort_by(|left, right| {
-                    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
-                });
-                output.push('{');
-                for (index, key) in keys.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
-                    }
-                    output.push_str(&serde_json::Value::String((*key).clone()).to_string());
-                    output.push_str(": ");
-                    write(&members[*key], output);
-                }
-                output.push('}');
-            }
-            other => output.push_str(&other.to_string()),
-        }
-    }
-    let mut output = String::new();
-    write(value, &mut output);
-    output
-}
+pub(crate) use pintail_types::mysql_json_text;
 
 /// Maps a SQL value to the JSON value `MySQL` would store for it inside
 /// `JSON_OBJECT`/`JSON_ARRAY`: NULL becomes JSON null, numbers stay

@@ -1120,10 +1120,7 @@ pub fn map_mysql_value(
                 .ok_or_else(|| mapping_error(table, column, "JSON is not valid UTF-8"))?;
             let parsed: serde_json::Value = serde_json::from_str(&text)
                 .map_err(|error| mapping_error(table, column, format!("invalid JSON: {error}")))?;
-            Value::Utf8(
-                serde_json::to_string(&parsed)
-                    .map_err(|error| mapping_error(table, column, error.to_string()))?,
-            )
+            Value::Utf8(pintail_types::mysql_json_text(&parsed))
         }
     };
     Ok(mapped)
