@@ -1329,8 +1329,8 @@ pub struct GroupedFoldInput {
 pub struct InsertOnlyDelta {
     pub(crate) directory: std::path::PathBuf,
     pub(crate) generation: u64,
-    /// Same scan signature the settled memo keys on (projection,
-    /// predicates, limit), so the delta finds its base entry.
+    /// The scan signature the settled memo keys on, from the same
+    /// constructor that side uses, so the delta finds its base entry.
     pub(crate) scan: String,
     pub(crate) types: Vec<DataType>,
     pub(crate) rows: Vec<Vec<Value>>,

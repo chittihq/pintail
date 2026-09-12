@@ -20,6 +20,9 @@ pub struct ExecCounters {
     pub rows_sorted: u64,
     /// Cells copied from rows back into columns.
     pub cells_regathered: u64,
+    /// Aggregates answered by merging an insert-only memtable delta onto a
+    /// memoized settled result, rather than reading the table.
+    pub settled_delta_merges: u64,
 }
 
 thread_local! {
@@ -29,6 +32,7 @@ thread_local! {
             rows_projected_scalar: 0,
             rows_sorted: 0,
             cells_regathered: 0,
+            settled_delta_merges: 0,
         })
     };
 }

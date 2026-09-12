@@ -2480,6 +2480,9 @@ pub(super) fn build_hash_aggregate(
                 .map(|row| estimated_row_payload_bytes(row))
                 .sum();
             memory.reserve(payload)?;
+            crate::counters::count(|counters| {
+                counters.settled_delta_merges = counters.settled_delta_merges.saturating_add(1);
+            });
             return Ok(MaterializedRows {
                 rows: merged,
                 position: 0,
