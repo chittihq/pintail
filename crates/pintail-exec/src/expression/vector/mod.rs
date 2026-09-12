@@ -263,6 +263,7 @@ fn specific_scalar(
         ScalarFunction::DateInterval { unit, subtract } => {
             temporal::date_interval_column(batch, args, unit, subtract, data_type, effects)
         }
+        ScalarFunction::DateFormat => temporal::date_format_column(batch, args, data_type, effects),
         ScalarFunction::Date | ScalarFunction::LastDay => {
             temporal::date_of_column(batch, args, function, data_type, effects)
         }

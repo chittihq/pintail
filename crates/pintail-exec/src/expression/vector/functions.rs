@@ -588,9 +588,6 @@ fn rounded(
         return None;
     }
     let digits = mysql_decimals(digits).ok()?;
-    if digits < 0 {
-        return None;
-    }
     let input_scale = i64::from(*scale);
     let render_scale =
         u8::try_from(digits.clamp(0, declared_render_cap(argument_types, input_scale))).ok()?;
@@ -598,20 +595,34 @@ fn rounded(
         return None;
     }
     let factor = 10_i128.checked_pow(u32::from(scale.checked_sub(render_scale)?))?;
+    // Digits left of the point: the answer keeps scale zero and its low
+    // `-digits` digits are zeroed, which is what the row path does after
+    // its own divide. `ROUND(1234.56, -1)` is 1230.
+    let zeroed = if digits < 0 {
+        10_i128.checked_pow(u32::try_from(digits.saturating_neg()).ok()?.min(38))?
+    } else {
+        1
+    };
     let mut units = Vec::with_capacity(values.len());
     for row in 0..values.len() {
         let value = values.get(row).unwrap_or(0);
-        units.push(if round {
-            // Half away from zero, as an exact decimal rounds.
+        let whole = if round {
+            // Half away from zero, as an exact decimal rounds. Rounding to
+            // a place left of the point rounds at that place, so the
+            // divisor carries the zeroed digits with it.
+            let step = factor.checked_mul(zeroed)?;
             let magnitude = value
                 .unsigned_abs()
-                .checked_add((factor / 2).unsigned_abs())?
-                / factor.unsigned_abs();
+                .checked_add((step / 2).unsigned_abs())?
+                / step.unsigned_abs();
             let magnitude = i128::try_from(magnitude).ok()?;
+            let magnitude = magnitude.checked_mul(zeroed)?;
             if value < 0 { -magnitude } else { magnitude }
         } else {
-            value / factor
-        });
+            // Truncation toward zero, then the low digits dropped.
+            value / factor / zeroed * zeroed
+        };
+        units.push(whole);
     }
     Some(ColumnVector::from_typed(
         declared,
