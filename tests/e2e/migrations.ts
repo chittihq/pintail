@@ -34,6 +34,7 @@ import {
   publishedPort,
   freePort,
   waitForMysql,
+  canonicalRow,
   diffRows,
 } from './lib'
 
@@ -691,13 +692,42 @@ async function main() {
     // only the source rewrote, and the only evidence of a migration the mirror
     // adopted when it should not have.
     untouched.set(table, [1])
+    // What the source itself does to the witness row is the premise the whole
+    // case rests on, so it is measured rather than assumed: a family recorded
+    // as rewriting that quietly stopped rewriting would leave a check that
+    // passes without testing anything.
+    const projection = testCase.projection ?? 'id, v'
+    const witness = async () =>
+      canonicalRow((await mysqlRows(`SELECT ${projection} FROM ${table} WHERE id = 1`))[0] ?? [])
+    const before = await witness()
     await sql(`ALTER TABLE ${table} ${testCase.alter}`)
+    const after = await witness()
+    record(
+      table,
+      testCase.name,
+      testCase.rewrites
+        ? 'the source rewrote the row it already held'
+        : 'the source left the row it already held alone',
+      (after !== before) === testCase.rewrites ? 'PASS' : 'FAIL',
+      (after !== before) === testCase.rewrites ? undefined : `${before} -> ${after}`,
+    )
     for (const write of testCase.writes) await sql(write.replaceAll('{t}', table))
   }
   for (const [index, generated] of generatedCases.entries()) {
     const table = `g_${index}`
     untouched.set(table, [1])
+    const witness = async () =>
+      canonicalRow((await mysqlRows(`SELECT id, base, v FROM ${table} WHERE id = 1`))[0] ?? [])
+    const before = await witness()
     await sql(`ALTER TABLE ${table} MODIFY v INT GENERATED ALWAYS AS ${generated.after} ${generated.kind}`)
+    const after = await witness()
+    record(
+      table,
+      generated.name,
+      'the source recomputed the row it already held',
+      after === before ? 'FAIL' : 'PASS',
+      after === before ? `${before} was not recomputed` : undefined,
+    )
     await sql(`INSERT INTO ${table} (id, base) VALUES (3, 30)`)
     await sql(`UPDATE ${table} SET base = 21 WHERE id = 2`)
   }
@@ -735,10 +765,6 @@ async function main() {
 
 function publish() {
   const failed = results.filter((result) => result.status === 'FAIL')
-  const byFamily = new Map<string, Check[]>()
-  for (const result of results) {
-    byFamily.set(result.family, [...(byFamily.get(result.family) ?? []), result])
-  }
   const lines = [
     '# Pintail schema-migration differential gate',
     '',
