@@ -93,6 +93,7 @@ pub(super) fn open(
         runs,
         current: first,
         restrictions: Vec::new(),
+        started: false,
     })))
 }
 
@@ -105,21 +106,60 @@ struct RunStream {
     /// as it does. A stream that has started ignores one, so a restriction
     /// arriving mid-stream would otherwise reach only the open run.
     restrictions: Vec<(usize, Value, Value)>,
+    /// Whether a batch has been pulled. The identity below names every run
+    /// this stream will read, which is only what it has left to read while
+    /// this is false.
+    started: bool,
 }
 
-/// The fold and memo inputs a run stream does not answer.
+/// The fold inputs a run stream does not answer, and the memo identity it
+/// now does.
 ///
-/// Each of them describes the scan its stream was opened for -
-/// `settled_identity` puts that scan's own predicates in the signature the
-/// aggregate memo keys on - and a run stream is many scans, read in
-/// sequence. Handing back the first run's would name a whole query with
-/// the identity of a fraction of it, and the memo would answer the next
-/// query from those rows, so a run stream declines all four rather than
-/// forwarding one. `key IN (...)` over a settled snapshot therefore folds
-/// no SMAs and fills no memo entry; composing the runs' identities into
-/// one that names the original scan would lift that, and is not attempted
-/// here because an identity that is merely plausible is worse than none.
+/// The three fold inputs describe per-segment spans of a bare full-table
+/// scan. A run stream is a handful of key ranges, which is not that shape
+/// at all, so it declines them rather than describing a fraction of itself
+/// as the whole.
+///
+/// `settled_identity` is different, and used to be declined with them, on
+/// the grounds that the first run's identity would name a whole query with
+/// the identity of a fraction of it. That reasoning was wrong: `run_scan`
+/// clones the scan and only adds key bounds to it, so every run carries the
+/// whole original predicate list - the entire `IN` list included - and the
+/// first run's signature already distinguishes two queries that ask for
+/// different keys. Declining cost the memo entry for no safety.
+///
+/// What is built below composes every run's signature anyway, because the
+/// correctness above is a property of `run_scan` rather than of this
+/// identity. A run that carried only its own bounds would make the first
+/// run's signature ambiguous between any two queries sharing a first run,
+/// and the memo answers from an entry it believes describes the same rows.
+/// Naming each run in order depends on nothing but the runs.
+///
+/// Two conditions keep it exact. It is refused once a batch has been
+/// pulled, because from then on the runs left are not the runs named. And
+/// the first run, already opened when the stream was built, contributes
+/// the identity its own stream reports - which is where the table, the
+/// manifest generation and the instance come from, so none of the three is
+/// guessed here.
 impl BatchStream for RunStream {
+    fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
+        use std::fmt::Write as _;
+        if self.started {
+            return None;
+        }
+        let (directory, generation, first) = self.current.as_ref()?.settled_identity()?;
+        let mut signature = format!("runs[{first}");
+        for run in &self.runs {
+            let _ = write!(
+                signature,
+                ";{:?}|{:?}|{:?}",
+                run.projected_column_ids, run.predicates, run.limit
+            );
+        }
+        signature.push(']');
+        Some((directory, generation, signature))
+    }
+
     fn restrict_key_position_range(&mut self, position: usize, min: &Value, max: &Value) {
         if let Some(stream) = &mut self.current {
             stream.restrict_key_position_range(position, min, max);
@@ -128,6 +168,7 @@ impl BatchStream for RunStream {
     }
 
     fn next_batch(&mut self, available_memory: usize) -> Result<Option<RecordBatch>, ExecError> {
+        self.started = true;
         loop {
             if let Some(stream) = &mut self.current {
                 if let Some(batch) = stream.next_batch(available_memory)? {
