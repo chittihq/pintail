@@ -273,7 +273,9 @@ stays readable as a list of things to fix.
   persistent per-segment SMA fold.
 - A missing `FLUSH TABLES WITH READ LOCK` privilege can be allowed explicitly,
   but worker start instants can then differ and the result reports the degraded
-  guarantee.
+  guarantee. The same degraded start applies when a source table stays in use
+  (a `LOCK TABLES` holder or a long query) for the two seconds a copy waits
+  before taking the lock.
 - A source changed between resume attempts can leave a mixed-time snapshot
   until the mandatory post-snapshot CDC catch-up replays the overlap. On
   binlog-disabled sources, polling and reconciliation own that convergence.
