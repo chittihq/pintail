@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Empty-needle search boundaries, trailing escapes in `LIKE`, and signed
+  and unsigned overflow limits in `CONV`.
+
 - FLOAT casts preserve single-precision values, decimal guard digits survive
   floating casts, and FLOAT text/binary results retain their distinct
   precision. String and temporal consumers honor FLOAT formatting.

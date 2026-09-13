@@ -5517,21 +5517,35 @@ fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
         Some(rest) => (true, rest),
         None => (false, trimmed.strip_prefix('+').unwrap_or(trimmed)),
     };
+    let limit = if from < 0 {
+        (i64::MAX as u64) + u64::from(negative)
+    } else {
+        u64::MAX
+    };
     let mut magnitude = 0_u64;
+    let mut overflow = false;
     for character in digits.chars() {
         let Some(digit) = character.to_digit(from_base) else {
             break;
         };
-        // MySQL saturates an overlong source at the unsigned ceiling rather
-        // than wrapping to a small number.
-        magnitude = magnitude
+        if let Some(value) = magnitude
             .checked_mul(u64::from(from_base))
             .and_then(|scaled| scaled.checked_add(u64::from(digit)))
-            .unwrap_or(u64::MAX);
+            .filter(|value| *value <= limit)
+        {
+            magnitude = value;
+        } else {
+            magnitude = limit;
+            overflow = true;
+        }
     }
     // A leading minus wraps in the 64-bit space, exactly as MySQL's
     // unsigned reading does; these are reinterpretations, not conversions.
-    let value = if negative {
+    let value = if negative && overflow && from > 0 {
+        // An overflowing negative unsigned input saturates at zero;
+        // a representable magnitude still wraps in the unsigned domain.
+        0
+    } else if negative {
         magnitude.wrapping_neg()
     } else {
         magnitude
@@ -6267,15 +6281,15 @@ fn locate(needle: &str, haystack: &str, start: i64) -> u64 {
         return 0;
     }
     let start = usize::try_from(start - 1).unwrap_or(usize::MAX);
-    let haystack_lower = haystack.to_owned();
-    let Some(start_byte) = haystack_lower
+    let Some(start_byte) = haystack
         .char_indices()
-        .nth(start)
         .map(|(index, _)| index)
+        .chain(std::iter::once(haystack.len()))
+        .nth(start)
     else {
         return 0;
     };
-    let suffix = &haystack_lower[start_byte..];
+    let suffix = &haystack[start_byte..];
     let Some(byte_position) = suffix.find(needle) else {
         return 0;
     };
@@ -6295,10 +6309,7 @@ fn like_matches(
     let mut pattern = pattern.chars();
     while let Some(character) = pattern.next() {
         if Some(character) == escape {
-            let Some(literal) = pattern.next() else {
-                return false;
-            };
-            tokens.push(LikeToken::Literal(literal));
+            tokens.push(LikeToken::Literal(pattern.next().unwrap_or(character)));
         } else {
             tokens.push(match character {
                 '%' => LikeToken::AnyMany,

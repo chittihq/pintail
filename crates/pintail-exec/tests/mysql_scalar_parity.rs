@@ -666,3 +666,25 @@ fn float_casts_narrow_values_and_preserve_decimal_guard_digits() {
         ),
     ]);
 }
+
+#[test]
+fn string_search_boundaries_and_conversion_overflow() {
+    for (expression, expected) in [
+        ("LOCATE('', '')", "1"),
+        ("LOCATE('', 'abc', 4)", "4"),
+        ("LOCATE('', 'abc', 5)", "0"),
+        ("CHAR(92) LIKE CHAR(92)", "Boolean(true)"),
+        (
+            "CONCAT('a', CHAR(92)) LIKE CONCAT('%', CHAR(92))",
+            "Boolean(true)",
+        ),
+        ("CONV('9223372036854775808', -10, 16)", "7FFFFFFFFFFFFFFF"),
+        ("CONV('-9223372036854775809', -10, 16)", "8000000000000000"),
+        ("CONV('-18446744073709551615', 10, 16)", "1"),
+        ("CONV('-18446744073709551616', 10, 16)", "0"),
+        ("CONV('29223372036854775809', -10, 16)", "7FFFFFFFFFFFFFFF"),
+        ("CONV('-29223372036854775809', -10, 16)", "8000000000000000"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
