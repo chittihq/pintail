@@ -96,6 +96,30 @@ A runner on an idle host cycles SQL fuzz seeds, simulation seeds and suite
 sweeps, minimizes each disagreement and appends it to a findings ledger that
 becomes the next fix's regression case.
 
+## What the replay found
+
+The first burn-down (P1c, P1d) fixed defects the existing gates did not reach.
+
+- **Wrong answers.** Numeric readings of DATE, DATETIME and TIME; packed and
+  punctuated date strings; two-digit years; exact integer casts of text;
+  TRUNCATE and DIV on large integers; `CAST AS BINARY(n)`; GREATEST and LEAST
+  across types; text past the TIME range; character set introducers read as
+  UTF-8; local ENUM, SET, JSON and DECIMAL values stored as written; local
+  tables given the wrong collation; session settings (`div_precision_increment`,
+  `sql_select_limit`, `time_zone = @@global.time_zone`) accepted and ignored.
+- **Refusals of valid SQL.** User variables, legacy `utf8` collations, string
+  positions past the 64-bit range, literal column defaults, hexadecimal and
+  signed literals in local INSERTs.
+- **Change-capture stalls.** A copy waiting without bound on a table another
+  session locked (and a timed-out global lock leaving tables marked for flush);
+  a probe row count waiting on a write lock; two source tables whose names
+  differ only in case stopping the stream for the whole database.
+
+Open: after a resnapshot fails on a locked table, every table in the database
+reports the error until the supervisor retries, and one replay run saw a table
+re-created with a new schema fail change capture with a fingerprint mismatch
+that a rerun of the same file did not reproduce.
+
 ## Gates added
 
 | Gate | Profile | Ratchet |
