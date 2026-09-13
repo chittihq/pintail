@@ -3882,14 +3882,20 @@ arms did nothing to contradict.
 **Gating unmerged branches is worth its twenty minutes for reasons other
 than the branch.** This run was meant to verify someone else's work. What
 it produced was the control arm for a defect nobody could reproduce.
+
 ## e96 — One-byte dictionary indexes, built and not adopted
 
-PTSEG v4 encoding id 5 stores a dictionary block's indexes as `u8` instead
-of `u32` when the block holds at most 256 distinct values, behind
+A segment encoding that stores a dictionary block's indexes as `u8`
+instead of `u32` when the block holds at most 256 distinct values, behind
 `StoreOptions::compact_dictionary_codes`. The writer, the reader, an A/B
 `layout_probe` example and its tests were all written. None of it is
 adopted, and the probe was never run, because the two things it could win
 are already accounted for elsewhere in this file.
+
+It claimed a segment format version while it was being written. It never
+shipped, and version 4 belongs to the descriptor digest instead - so this
+entry describes the encoding and takes no version number with it. An
+encoding that is adopted later takes the next one free at that time.
 
 **The bytes are LZ4's, not the encoding's.** An index array whose values
 are all below 256 is three zero bytes in four, which is exactly the
