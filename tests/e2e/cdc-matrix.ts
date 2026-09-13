@@ -304,8 +304,11 @@ async function runLeg(leg: Leg, binary: string): Promise<LegResult> {
       poll_interval_seconds: 1,
       reconcile_interval_seconds: 2,
     })
-    const probe = await mirror.api<{ recommended_mode?: string; mode?: string }>(`/api/databases/${database.id}/probe`)
-    result.mode = String(probe.recommended_mode ?? probe.mode ?? '?')
+    // The probe answers the report, and the mode it recommends lives under
+    // `capabilities`. Read from the top level it was always undefined, so
+    // every leg reported its mode as `?` - and nothing checked it.
+    const probe = await mirror.api<{ capabilities?: { recommended_mode?: string } }>(`/api/databases/${database.id}/probe`)
+    result.mode = String(probe.capabilities?.recommended_mode ?? '?')
     await mirror.api(`/api/databases/${database.id}/snapshot`, 'POST', { force: false })
     const key = await mirror.api<{ secret: string }>(`/api/databases/${database.id}/api-keys`, 'POST', { name: 'matrix', scopes: ['query', 'read'] })
     const connectReplica = async () => {
@@ -461,7 +464,16 @@ async function runLeg(leg: Leg, binary: string): Promise<LegResult> {
 }
 
 async function main() {
-  const selected = process.env.CDC_MATRIX_LEGS ? LEGS.filter((leg) => process.env.CDC_MATRIX_LEGS!.split(',').includes(leg.name)) : LEGS
+  let selected = LEGS
+  if (process.env.CDC_MATRIX_LEGS) {
+    // A name that matches nothing used to select nothing, and a run of zero
+    // legs printed PASS. The gate has to fail on a typo, not congratulate it.
+    const wanted = process.env.CDC_MATRIX_LEGS.split(',').map((name) => name.trim()).filter(Boolean)
+    const unknown = wanted.filter((name) => !LEGS.some((leg) => leg.name === name))
+    if (unknown.length) throw new Error(`CDC_MATRIX_LEGS names no such leg: ${unknown.join(', ')} (have ${LEGS.map((leg) => leg.name).join(', ')})`)
+    selected = LEGS.filter((leg) => wanted.includes(leg.name))
+  }
+  if (!selected.length) throw new Error('no legs selected; the matrix proves nothing')
   let binary = process.env.PINTAIL_CDC_MATRIX_BINARY ? resolve(process.env.PINTAIL_CDC_MATRIX_BINARY) : ''
   if (!binary) {
     await command(['cargo', 'build', '--release', '-p', 'pintail'])
@@ -473,6 +485,17 @@ async function main() {
     const result = await runLeg(leg, binary)
     results.push(result)
     log(`${leg.name}: mode ${result.mode}, ${result.rounds} rounds, ${result.transactions} transactions, ${result.statements} statements, ${result.schemaChanges} schema changes, ${result.restarts} restarts, ${result.divergences.length} divergences${result.error ? `, error ${result.error}` : ''} in ${((performance.now() - started) / 1000).toFixed(0)}s`)
+  }
+  // A leg declares which replication mode it exists to cover. One that fell
+  // back to polling still reported PASS, so a source that quietly stopped
+  // being streamable counted as change-capture coverage.
+  for (const leg of selected) {
+    const result = results.find((r) => r.leg === leg.name)
+    const wanted = leg.cdc ? 'cdc' : 'polling'
+    if (result && !result.error && result.mode !== wanted) {
+      result.error = `leg covers ${wanted} but the database ran in ${result.mode}`
+      log(`${leg.name} ERROR ${result.error}`)
+    }
   }
   const failed = results.filter((r) => r.divergences.length || r.error)
   const lines = [
