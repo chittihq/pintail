@@ -302,3 +302,9 @@ fn greatest_and_least_compare_in_one_domain() {
         ("GREATEST(1, 2.5, 3)", "3.0"),
     ]);
 }
+
+#[test]
+fn an_assignment_inside_a_query_is_refused() {
+    // Only SET assigns a user variable; see docs/limitations.md.
+    assert!(scalar("@n := 1").starts_with("error"));
+}
