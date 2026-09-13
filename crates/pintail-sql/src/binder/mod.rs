@@ -4778,7 +4778,7 @@ fn aggregate_result_type(
             let exact = input_type.and_then(exact_numeric_digits);
             if let Some((scale, integer_digits)) = exact {
                 let result_scale = scale
-                    .saturating_add(DIVISION_SCALE_INCREMENT)
+                    .saturating_add(crate::bound::session_div_precision_increment())
                     .min(MAX_DECIMAL_SCALE);
                 Ok((
                     Some(DataType::Decimal {
@@ -5325,8 +5325,6 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
     }
 }
 
-/// `MySQL` `div_precision_increment` default: division and `AVG` widen the
-/// dividend's scale by four fraction digits.
 /// Aggregate output column of a decorrelated scalar-subquery derived table.
 const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
 
@@ -5373,7 +5371,6 @@ fn expression_scope(local: &[BoundTable], outer: &[BoundTable]) -> Vec<BoundTabl
     visible
 }
 
-const DIVISION_SCALE_INCREMENT: u8 = 4;
 /// Pintail v1 decimal bounds (`DataType::is_valid`).
 const MAX_DECIMAL_SCALE: u8 = 30;
 const MAX_DECIMAL_PRECISION: u8 = 65;
@@ -5384,7 +5381,7 @@ fn division_result_type(left: DataType, right: DataType) -> Option<DataType> {
     // MySQL: result scale is dividend scale + increment; the integer part
     // can grow by the divisor's scale (dividing by a small fraction).
     let scale = left_scale
-        .saturating_add(DIVISION_SCALE_INCREMENT)
+        .saturating_add(crate::bound::session_div_precision_increment())
         .min(MAX_DECIMAL_SCALE);
     let precision = left_integer
         .saturating_add(right_scale)

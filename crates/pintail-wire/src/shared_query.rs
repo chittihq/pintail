@@ -81,6 +81,8 @@ pub(crate) struct SharedQueryKey {
     pub(crate) collation: &'static str,
     pub(crate) group_concat_max_len: usize,
     pub(crate) cte_max_recursion_depth: u64,
+    /// Fraction digits division and `AVG` add, which change the answer's scale.
+    pub(crate) div_precision_increment: u8,
     /// The session's `sql_mode` flags: the same text binds to a different
     /// statement, or evaluates differently, under another mode.
     pub(crate) parse_mode: pintail_sql::ParseMode,
@@ -99,6 +101,7 @@ impl SharedQueryKey {
             collation: pintail_sql::session_default_collation(),
             group_concat_max_len: pintail_exec::session_group_concat_max_len(),
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
+            div_precision_increment: pintail_sql::session_div_precision_increment(),
             parse_mode: pintail_sql::session_parse_mode(),
         }
     }
@@ -401,6 +404,7 @@ mod tests {
             collation: "utf8mb4_0900_ai_ci",
             group_concat_max_len: 1024,
             cte_max_recursion_depth: 1000,
+            div_precision_increment: 4,
             parse_mode: pintail_sql::ParseMode::default(),
         }
     }

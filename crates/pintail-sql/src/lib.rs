@@ -33,11 +33,12 @@ pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
-    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
-    IntervalUnit, JSON_TEXT_COLLATION, MembershipError, MembershipLookup, PreparedMembership,
-    SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction, comparison_collation,
-    session_default_collation, session_timestamp_zone, set_session_default_collation,
-    set_session_timestamp_zone,
+    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_DIV_PRECISION_INCREMENT,
+    DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, JSON_TEXT_COLLATION, MembershipError,
+    MembershipLookup, PreparedMembership, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp,
+    WindowFunction, comparison_collation, session_default_collation,
+    session_div_precision_increment, session_timestamp_zone, set_session_default_collation,
+    set_session_div_precision_increment, set_session_timestamp_zone,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

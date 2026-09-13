@@ -360,6 +360,29 @@ impl BoundExpr {
     }
 }
 
+thread_local! {
+    static SESSION_DIV_PRECISION_INCREMENT: std::cell::Cell<u8> =
+        const { std::cell::Cell::new(DEFAULT_DIV_PRECISION_INCREMENT) };
+}
+
+/// `MySQL`'s default `div_precision_increment`: division and `AVG` widen the
+/// dividend's scale by this many fraction digits.
+pub const DEFAULT_DIV_PRECISION_INCREMENT: u8 = 4;
+
+/// Installs the connection's `div_precision_increment` for the current
+/// thread's statement, or restores the default with `None`. `MySQL` accepts
+/// 0 to 30.
+pub fn set_session_div_precision_increment(increment: Option<u8>) {
+    SESSION_DIV_PRECISION_INCREMENT
+        .with(|cell| cell.set(increment.unwrap_or(DEFAULT_DIV_PRECISION_INCREMENT).min(30)));
+}
+
+/// The fraction digits division and `AVG` add on this thread's statement.
+#[must_use]
+pub fn session_div_precision_increment() -> u8 {
+    SESSION_DIV_PRECISION_INCREMENT.with(std::cell::Cell::get)
+}
+
 /// Installs the connection's default collation for the current thread's
 /// statement, or clears it with `None`.
 pub fn set_session_default_collation(collation: Option<&'static str>) {

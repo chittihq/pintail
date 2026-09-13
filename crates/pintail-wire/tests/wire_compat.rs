@@ -496,6 +496,24 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         Some("@price".to_owned())
     );
     named.drop_result().await.expect("drain");
+    // div_precision_increment widens division and AVG, and a setting saved
+    // in a user variable can be put back.
+    connection
+        .query_drop("SET @saved = @@div_precision_increment")
+        .await
+        .expect("save the increment");
+    connection
+        .query_drop("SET div_precision_increment = 6")
+        .await
+        .expect("widen division");
+    let widened: Option<String> = connection.query_first("SELECT 1/3").await.expect("1/3");
+    assert_eq!(widened.as_deref(), Some("0.333333"));
+    connection
+        .query_drop("SET div_precision_increment = @saved")
+        .await
+        .expect("restore the increment");
+    let restored: Option<String> = connection.query_first("SELECT 1/3").await.expect("1/3");
+    assert_eq!(restored.as_deref(), Some("0.3333"));
     connection
         .query_drop("SET SESSION group_concat_max_len = 5")
         .await

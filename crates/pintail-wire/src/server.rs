@@ -720,6 +720,8 @@ struct Session {
     condition_count: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
+    /// Fraction digits division and `AVG` add to the dividend's scale.
+    div_precision_increment: u8,
     /// `SET @name = expr` values, each the literal its expression evaluated
     /// to, read by every later statement on this connection.
     user_variables: pintail_sql::UserVariables,
@@ -742,6 +744,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             condition_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
+            div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
             user_variables: pintail_sql::UserVariables::default(),
         }
     }
@@ -1187,6 +1190,9 @@ impl Backend {
                     // brackets exactly one statement.
                     let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
                     pintail_sql::set_session_default_collation(Some(session.collation_connection));
+                    pintail_sql::set_session_div_precision_increment(Some(
+                        session.div_precision_increment,
+                    ));
                     pintail_exec::set_session_group_concat_max_len(Some(
                         session.group_concat_max_len,
                     ));
@@ -1211,6 +1217,7 @@ impl Backend {
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
+                    pintail_sql::set_session_div_precision_increment(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
@@ -1470,6 +1477,21 @@ impl Backend {
             .trim()
             .trim_matches(['\'', '"'])
             .to_owned();
+        // A user variable on the right is the value it holds, so a setting saved
+        // with SET @saved = @@name can be put back.
+        let value = match value
+            .strip_prefix('@')
+            .filter(|name| !name.starts_with('@'))
+        {
+            Some(variable) => match session.user_variables.get(&variable.to_ascii_lowercase()) {
+                Some(
+                    sqlparser::ast::Value::Number(text, _)
+                    | sqlparser::ast::Value::SingleQuotedString(text),
+                ) => text.clone(),
+                _ => String::new(),
+            },
+            None => value,
+        };
         match name {
             "time_zone" => {
                 // The global zone, or DEFAULT, is the zone a new session starts in.
@@ -1524,6 +1546,17 @@ impl Backend {
                     .and_then(|limit| usize::try_from(limit).ok())
                     .ok_or_else(|| "group_concat_max_len must be an unsigned integer".to_owned())?;
                 session.group_concat_max_len = limit.max(4);
+                Ok(())
+            }
+            "div_precision_increment" => {
+                let increment = value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|increment| *increment <= 30)
+                    .ok_or_else(|| {
+                        format!("Variable 'div_precision_increment' can't be set to the value of '{value}'")
+                    })?;
+                session.div_precision_increment = increment;
                 Ok(())
             }
             "cte_max_recursion_depth" => {
@@ -3070,6 +3103,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         )
     } else if normalized.contains("@@warning_count") {
         ("@@warning_count", Value::UInt64(session.condition_count))
+    } else if normalized.contains("@@div_precision_increment") {
+        (
+            "@@div_precision_increment",
+            Value::UInt64(u64::from(session.div_precision_increment)),
+        )
     } else if normalized.contains("@@cte_max_recursion_depth") {
         (
             "@@cte_max_recursion_depth",
