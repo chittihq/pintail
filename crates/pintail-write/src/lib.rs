@@ -608,15 +608,45 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
             )));
         }
     };
+    // An unquoted number in an ENUM or SET column is a position, never a
+    // label. Matched as a label first, VALUES (2) into ENUM('2','1') stored
+    // '2' where MySQL stores '1' - the second member.
+    if matches!(value, SqlValue::Number(..)) && enum_or_set(column).is_some() {
+        return enum_or_set_by_number(&text, column)
+            .map(Value::Utf8)
+            .ok_or_else(|| {
+                WriteError::Invalid(format!(
+                    "Incorrect value '{text}' for column '{}': Data truncated",
+                    column.name
+                ))
+            });
+    }
     typed_value(&text, column)
 }
 
-/// Converts one literal's text into the physical value the column stores.
-///
-/// `DataType::storage_type` decides the variant: a `TINYINT` column stores
-/// an `Int64` and a `DECIMAL` stores its exact text, exactly as a
-/// replicated row of the same column does, so a locally written row and a
-/// mirrored one are indistinguishable to every reader below this point.
+/// Whether the column is an ENUM or a SET, and which.
+fn enum_or_set(column: &SourceColumn) -> Option<&'static str> {
+    ["enum", "set"]
+        .into_iter()
+        .find(|kind| column.mysql_data_type.eq_ignore_ascii_case(kind))
+}
+
+/// The label an ENUM position names, or the members a SET bitmask names.
+fn enum_or_set_by_number(text: &str, column: &SourceColumn) -> Option<String> {
+    match enum_or_set(column)? {
+        "enum" => {
+            let labels = pintail_types::declaration_labels(&column.mysql_column_type, "enum")?;
+            let index: usize = text.trim().parse().ok()?;
+            labels.get(index.checked_sub(1)?).cloned()
+        }
+        _ => {
+            let labels = pintail_types::declaration_labels(&column.mysql_column_type, "set")?;
+            let mask: u64 = text.trim().parse().ok()?;
+            (labels.len() >= 64 || mask >> labels.len() == 0).then(|| set_from_mask(mask, &labels))
+        }
+    }
+}
+
 /// Rewrites `1.5e3` as `1500` and `15e-2` as `0.15`, moving the decimal
 /// point through the digits instead of through a double. Returns `None`
 /// when the text is not a number in exponent form, or when the exponent is
@@ -666,6 +696,12 @@ fn expand_exponent(text: &str) -> Option<String> {
     })
 }
 
+/// Converts one literal's text into the physical value the column stores.
+///
+/// `DataType::storage_type` decides the variant: a `TINYINT` column stores
+/// an `Int64` and a `DECIMAL` stores its exact text, exactly as a
+/// replicated row of the same column does, so a locally written row and a
+/// mirrored one are indistinguishable to every reader below this point.
 fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
     let wrong = |reason: &str| {
         WriteError::Invalid(format!(
@@ -823,15 +859,18 @@ fn set_labels(text: &str, column: &SourceColumn) -> Option<String> {
             }
         }
     }
-    Some(
-        labels
-            .iter()
-            .enumerate()
-            .filter(|(position, _)| mask >> position & 1 == 1)
-            .map(|(_, label)| label.as_str())
-            .collect::<Vec<_>>()
-            .join(","),
-    )
+    Some(set_from_mask(mask, &labels))
+}
+
+/// The members a SET bitmask names, in declaration order.
+fn set_from_mask(mask: u64, labels: &[String]) -> String {
+    labels
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| mask >> position & 1 == 1)
+        .map(|(_, label)| label.as_str())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// A narrow integer column must refuse a value it cannot hold. The schema
@@ -914,9 +953,12 @@ fn mysql_terms(
 ) -> Result<(String, String, Option<u8>, Option<u8>), WriteError> {
     // ENUM and SET are rendered as the source reports them - labels as
     // declared, no space after a comma - so their labels can be read back.
+    // A backslash is escaped the way MySQL escapes it in COLUMN_TYPE, and
+    // the reader undoes that: left bare, a label holding one came back
+    // without it and no insert into the column could ever match a label.
     let quoted = |labels: &mut dyn Iterator<Item = &str>| {
         labels
-            .map(|label| format!("'{}'", label.replace('\'', "''")))
+            .map(|label| format!("'{}'", label.replace('\\', "\\\\").replace('\'', "''")))
             .collect::<Vec<_>>()
             .join(",")
     };
@@ -1015,7 +1057,7 @@ fn reject_unsupported_table_features(create: &CreateTable) -> Result<(), WriteEr
             "A table must have at least one column".to_owned(),
         ));
     }
-    if let Some(charset) = unsupported_character_set(&create.to_string()) {
+    if let Some(charset) = unsupported_character_set(create) {
         return Err(WriteError::Unsupported(format!(
             "character set {charset} is not supported on a local table"
         )));
@@ -1037,8 +1079,12 @@ fn default_collation(charset: &str) -> String {
 }
 
 /// The table's default character set and collation, from its options.
+///
+/// Quoted text names nothing: a table COMMENT reading "collate carefully"
+/// was taken as the table's collation, after which every comparison on its
+/// text columns was refused - behaviour changed by a comment.
 fn table_text_defaults(create: &CreateTable) -> (Option<String>, Option<String>) {
-    let options = create.table_options.to_string().to_ascii_lowercase();
+    let options = unquoted(&create.table_options.to_string()).to_ascii_lowercase();
     let words = options
         .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
         .filter(|word| !word.is_empty())
@@ -1058,6 +1104,22 @@ fn table_text_defaults(create: &CreateTable) -> (Option<String>, Option<String>)
     (charset, collation)
 }
 
+/// The text with every quoted run removed, so a comment or a default value
+/// cannot be read as if it were part of the definition.
+fn unquoted(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len());
+    let mut quote = None;
+    for character in text.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None if matches!(character, '\'' | '"') => quote = Some(character),
+            None => kept.push(character),
+        }
+    }
+    kept
+}
+
 /// Character sets whose text is stored here exactly as the source spells it.
 const STORED_CHARACTER_SETS: [&str; 6] =
     ["utf8mb4", "utf8mb3", "utf8", "ascii", "latin1", "binary"];
@@ -1070,41 +1132,36 @@ const STORED_CHARACTER_SETS: [&str; 6] =
 /// the hex and the ordering of its UTF-8 form: a plausible, wrong answer to
 /// every query that looks at the encoding. A replicated source already
 /// quarantines such a column; a local table refuses it.
-fn unsupported_character_set(definition: &str) -> Option<String> {
-    // Quoted text - a comment, a default - names nothing.
-    let mut unquoted = String::with_capacity(definition.len());
-    let mut quote = None;
-    for character in definition.chars() {
-        match quote {
-            Some(open) if character == open => quote = None,
-            Some(_) => {}
-            None if matches!(character, '\'' | '"') => quote = Some(character),
-            None => unquoted.push(character),
-        }
-    }
-    let upper = unquoted.to_ascii_uppercase();
-    let words = upper
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|word| !word.is_empty())
-        .collect::<Vec<_>>();
+///
+/// Read from the parsed definition, not from its text. Swept as words, a
+/// column NAMED `charset` was read as declaring one and refused outright,
+/// and the type or name that happened to follow it decided the answer.
+fn unsupported_character_set(create: &CreateTable) -> Option<String> {
     let mut named = Vec::new();
-    for (index, word) in words.iter().enumerate() {
-        match *word {
-            "CHARSET" => named.extend(words.get(index + 1)),
-            "CHARACTER" if words.get(index + 1) == Some(&"SET") => {
-                named.extend(words.get(index + 2))
+    let (table_charset, table_collation) = table_text_defaults(create);
+    named.extend(table_charset);
+    named.extend(table_collation);
+    for column in &create.columns {
+        for option in &column.options {
+            match &option.option {
+                ColumnOption::CharacterSet(name) | ColumnOption::Collation(name) => {
+                    named.push(name.to_string());
+                }
+                _ => {}
             }
-            "COLLATE" => named.extend(
-                words
-                    .get(index + 1)
-                    .and_then(|collation| collation.split('_').next()),
-            ),
-            _ => {}
         }
     }
     named
         .into_iter()
-        .map(|name| name.to_ascii_lowercase())
+        // A collation names its charset in the part before the first
+        // underscore; a charset is already that name.
+        .map(|name| {
+            let name = name.trim_matches(['`', '\'', '"']).to_ascii_lowercase();
+            match name.split_once('_') {
+                Some((charset, _)) => charset.to_owned(),
+                None => name,
+            }
+        })
         .find(|name| !STORED_CHARACTER_SETS.contains(&name.as_str()))
 }
 
