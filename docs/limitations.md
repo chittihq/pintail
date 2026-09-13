@@ -670,7 +670,8 @@ but may be wrong.
   indexes are accepted at `CREATE TABLE` and not enforced: a duplicate the
   source would refuse is stored. `AUTO_INCREMENT` is accepted but never
   assigns a value; an `INSERT` that leaves the column out is refused. A
-  column `DEFAULT` other than `NULL` is refused at `CREATE TABLE`.
+  column `DEFAULT` must be `NULL`, a number or a string; an expression default
+  such as `CURRENT_TIMESTAMP` is refused at `CREATE TABLE`.
 - `INSERT` takes literal values only; an expression such as `1 + 1` or
   `NOW()` is refused rather than evaluated.
 - A local table cannot be joined against a replicated one. A query reaches
