@@ -650,13 +650,20 @@ impl HashJoinState {
     /// Hands back everything this state still holds against the query's
     /// ceiling.
     ///
-    /// Every release site is on a path the probe reaches by running out of
-    /// rows, and a parent that stops early - a `LIMIT` that has its rows,
-    /// a query that failed beside this one - never takes it. What stayed
-    /// charged was charged for the rest of the query, so an operator above
-    /// saw a ceiling this join was no longer using. The state holds no
-    /// tracker of its own to do this from `Drop`, so the plan calls it on
-    /// the way down.
+    /// Every other release site is on a path the probe reaches by running
+    /// out of rows, and a parent that stops early - a `LIMIT` that has its
+    /// rows, a query that failed beside this one - never takes it. This is
+    /// what squares the account in that case. The state holds no tracker of
+    /// its own to do it from `Drop`, so the plan calls it on the way down.
+    ///
+    /// What that is worth today is accounting, not headroom. The plan's
+    /// walk runs from `Execution::drop` and nowhere else, so by the time
+    /// this fires no operator above is still running to spend what it
+    /// returns, and `MemoryTracker::drop` repays the shared budget whether
+    /// or not this ran. The headroom only appears once an operator releases
+    /// when it FINISHES rather than when the query is dropped; until then,
+    /// read this as keeping the numbers honest - which is worth having,
+    /// since it is what makes a leak visible at all.
     pub(super) fn release_all(&mut self, memory: &MemoryTracker) {
         self.clear_batch(memory);
         memory.release(self.filter_reserved);
