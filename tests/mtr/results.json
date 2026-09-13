@@ -3,7 +3,7 @@
   "repo": "mysql/mysql-server",
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
-  "measuredAt": "2026-09-13T20:14:47.395Z",
+  "measuredAt": "2026-09-13T20:46:17.640Z",
   "totals": {
     "exact": 3448,
     "compared": 3884,

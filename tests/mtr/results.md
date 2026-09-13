@@ -1,6 +1,6 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-13T20:14:47.394Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-13T20:46:17.638Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
 **3,448 of 3,884 compared SELECTs match MySQL byte-for-byte** (88.8%), **out of 23,119 SELECTs replayed** - 19,235 never reached a comparison, so this is a share of what could be compared and not of the suite. 395 differ in rows, 41 in column names only. 4,217 SELECTs Pintail could not run, 10,132 were not compared because their tables were changed by statements a local database cannot follow, 2,909 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. Fixtures: 10,562 accepted, 680 rejected by Pintail, 28,755 outside the replayed subset.
 
