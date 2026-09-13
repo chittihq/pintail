@@ -525,7 +525,8 @@ function hasOuterOrderBy(sql: string): boolean {
     const char = lower[index]
     if (char === '(') depth += 1
     else if (char === ')') depth -= 1
-    else if (depth === 0 && lower.startsWith('order by', index)) return true
+    // ORDER BY NULL asks for no order at all.
+    else if (depth === 0 && lower.startsWith('order by', index)) return !/^order by\s+null\b/.test(lower.slice(index))
   }
   return false
 }
