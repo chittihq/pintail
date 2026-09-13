@@ -495,6 +495,11 @@ stays readable as a list of things to fix.
   bytes of the value (`BIT(16)` holding all ones reaches a client as
   `0xffff`, not `65535`), so a client that reads the column as a byte string
   sees a different type and a different value on the two engines.
+- User variables are assigned only by `SET @name = expr`. An assignment inside
+  a query - `SELECT @n := @n + 1`, `SELECT ... INTO @n` - is refused, and a
+  variable holds the literal its expression answered, so one assigned from a
+  DATE or DATETIME reads back as that text rather than as a temporal value.
+  The HTTP query API has no session and does not keep them.
 
 - `caching_sha2_password` serves both the fast-auth exchange and the
   full-authentication fallback (RSA key exchange toward a per-process

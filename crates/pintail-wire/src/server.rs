@@ -720,6 +720,9 @@ struct Session {
     condition_count: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
+    /// `SET @name = expr` values, each the literal its expression evaluated
+    /// to, read by every later statement on this connection.
+    user_variables: pintail_sql::UserVariables,
 }
 
 impl Default for Session {
@@ -739,6 +742,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             condition_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
+            user_variables: pintail_sql::UserVariables::default(),
         }
     }
 }
@@ -1189,14 +1193,17 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(Some(
                         session.cte_max_recursion_depth,
                     ));
-                    let answer = engine.execute_answer(
-                        &database_id,
-                        &sql,
-                        max_result_rows(),
-                        deadline,
-                        sink.as_mut()
-                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
-                    );
+                    let answer =
+                        pintail_sql::with_user_variables(session.user_variables.clone(), || {
+                            engine.execute_answer(
+                                &database_id,
+                                &sql,
+                                max_result_rows(),
+                                deadline,
+                                sink.as_mut()
+                                    .map(|sink| sink as &mut dyn crate::engine::RowSink),
+                            )
+                        });
                     let warnings = (
                         pintail_exec::take_session_group_concat_warnings(),
                         pintail_exec::take_session_division_warnings(),
@@ -1370,6 +1377,55 @@ impl Backend {
         unsupported_transaction_guarantee(sql)
     }
 
+    /// The user variables a `SET` statement assigns, when it assigns nothing
+    /// else. `:=` is `MySQL`'s other spelling of the assignment.
+    fn user_variable_assignments(&self, sql: &str) -> Option<Vec<(String, sqlparser::ast::Expr)>> {
+        if !normalized_command(sql).starts_with("set @") {
+            return None;
+        }
+        let mode = self
+            .session
+            .lock()
+            .ok()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .unwrap_or_default();
+        pintail_sql::with_parse_mode(mode, || {
+            let assignments = |sql: &str| {
+                pintail_sql::parse_statement(sql)
+                    .ok()
+                    .and_then(|statement| pintail_sql::user_variable_assignments(&statement))
+            };
+            assignments(sql).or_else(|| assignments(&sql.replace(":=", "=")))
+        })
+    }
+
+    /// Evaluates each assignment in order - a later one reads an earlier one -
+    /// and records the value it answered.
+    async fn assign_user_variables(
+        &self,
+        assignments: Vec<(String, sqlparser::ast::Expr)>,
+    ) -> Result<(), QueryError> {
+        for (name, expression) in assignments {
+            let output = Backend::execute(self, &format!("SELECT {expression}")).await?;
+            let data_type = output.fields.first().and_then(|field| field.data_type);
+            let value = output
+                .rows
+                .into_values()
+                .into_iter()
+                .next()
+                .and_then(|row| row.into_iter().next())
+                .unwrap_or(Value::Null);
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|error| QueryError::Internal(error.to_string()))?;
+            let mut variables = (*session.user_variables).clone();
+            variables.insert(name, user_variable_literal(value, data_type));
+            session.user_variables = std::sync::Arc::new(variables);
+        }
+        Ok(())
+    }
+
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
     // One arm per session command; splitting hides the correspondence.
@@ -1490,6 +1546,42 @@ impl Backend {
             // replicated database - a local one refuses it before reaching
             // here, see `unsupported_transaction_guarantee`).
             _ => Ok(()),
+        }
+    }
+}
+
+/// The literal a user variable keeps for a value: a query reading it binds
+/// as if this had been written in its place, so a DECIMAL stays exact and a
+/// double stays a double.
+fn user_variable_literal(value: Value, data_type: Option<DataType>) -> sqlparser::ast::Value {
+    use sqlparser::ast::Value as Literal;
+    match value {
+        Value::Null => Literal::Null,
+        Value::Boolean(flag) => Literal::Number(u8::from(flag).to_string(), false),
+        Value::Int64(number) => Literal::Number(number.to_string(), false),
+        Value::UInt64(number) => Literal::Number(number.to_string(), false),
+        Value::Float64(number) => {
+            let text = number.mysql_text();
+            Literal::Number(
+                if text.contains(['e', 'E']) {
+                    text
+                } else {
+                    format!("{text}e0")
+                },
+                false,
+            )
+        }
+        Value::DecimalAverage(average) => Literal::Number(average.label, false),
+        Value::Utf8(text) if matches!(data_type, Some(DataType::Decimal { .. })) => {
+            Literal::Number(text, false)
+        }
+        Value::Utf8(text) | Value::Enum { label: text, .. } => Literal::SingleQuotedString(text),
+        Value::Binary(bytes) => {
+            Literal::HexStringLiteral(bytes.iter().fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(hex, "{byte:02X}");
+                hex
+            }))
         }
     }
 }
@@ -1670,6 +1762,12 @@ impl Handler for Backend {
                 "statement is not valid UTF-8".to_owned(),
             );
         };
+        if let Some(assignments) = self.user_variable_assignments(sql) {
+            return match self.assign_user_variables(assignments).await {
+                Ok(()) => Response::Ok(OkPacket::default(), String::new()),
+                Err(error) => Response::Error(error_kind(&error), error.to_string()),
+            };
+        }
         if is_session_command(sql) {
             if let Some(rejection) = self.transaction_guarantee_rejection(sql) {
                 return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());

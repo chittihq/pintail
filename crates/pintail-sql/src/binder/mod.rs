@@ -2724,6 +2724,12 @@ fn bind_expr_inner(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     match expr {
+        Expr::Identifier(identifier)
+            if identifier.quote_style.is_none()
+                && let Some(value) = crate::user_variables::user_variable(&identifier.value) =>
+        {
+            bind_literal(&value)
+        }
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),

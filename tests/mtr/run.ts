@@ -509,7 +509,7 @@ function isSimpleCreate(sql: string): boolean {
 }
 
 function isSession(sql: string): boolean {
-  return /^\s*(?:set\s+(?!global\b|@|password)|use\s+\w+)/i.test(sql)
+  return /^\s*(?:set\s+(?!global\b|@@|password)|use\s+\w+)/i.test(sql)
 }
 
 function hasOuterOrderBy(sql: string): boolean {

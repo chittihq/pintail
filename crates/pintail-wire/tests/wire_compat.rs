@@ -470,6 +470,32 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("sql mode probe");
     assert_eq!(mode.as_deref(), Some("STRICT_TRANS_TABLES"));
+    // User variables hold what their expression answered, typed as written:
+    // a decimal stays exact, and a later assignment reads an earlier one.
+    connection
+        .query_drop("SET @price = 1.50, @label := 'x''y', @twice = @price * 2")
+        .await
+        .expect("user variable assignment");
+    let variables: Option<(String, String, String, Option<String>)> = connection
+        .query_first("SELECT @price, @LABEL, @twice, @unset")
+        .await
+        .expect("user variable read");
+    assert_eq!(
+        variables,
+        Some(("1.50".to_owned(), "x'y".to_owned(), "3.00".to_owned(), None))
+    );
+    let named = connection
+        .query_iter("SELECT @price")
+        .await
+        .expect("user variable projection");
+    assert_eq!(
+        named
+            .columns_ref()
+            .first()
+            .map(|column| column.name_str().into_owned()),
+        Some("@price".to_owned())
+    );
+    named.drop_result().await.expect("drain");
     connection
         .query_drop("SET SESSION group_concat_max_len = 5")
         .await
