@@ -172,3 +172,21 @@ fn truncate_and_div_keep_integers_exact() {
         ("7.9e0 DIV 2", "3"),
     ]);
 }
+
+#[test]
+fn crc32_reads_the_text_mysql_would_show() {
+    assert_answers(&[
+        ("CRC32(CAST('{\"a\": 1}' AS JSON))", "4221669015"),
+        ("CRC32(1.5e0)", "2270993338"),
+        ("CRC32(1.50)", "3756579112"),
+    ]);
+}
+
+#[test]
+fn a_decimal_cast_clamps_to_its_declared_range() {
+    assert_answers(&[
+        ("CAST(TIME'838:59:59' AS DECIMAL(7,2))", "99999.99"),
+        ("CAST(TIME'01:02:03' AS DECIMAL(7,2))", "10203.00"),
+        ("CAST(123456.7 AS DECIMAL(7,2))", "99999.99"),
+    ]);
+}

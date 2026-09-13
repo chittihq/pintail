@@ -368,3 +368,19 @@ fn enum_and_set_values_are_stored_as_their_declared_labels() {
         assert!(stored(refused).is_err(), "{refused}");
     }
 }
+
+#[test]
+fn a_json_value_is_stored_as_mysql_prints_it() {
+    let plan = create("CREATE TABLE j (id INT PRIMARY KEY, d JSON)").expect("binds");
+    let stored = |document: &str| {
+        let statement =
+            parse_statement(&format!("INSERT INTO j VALUES (1, '{document}')")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1].clone())
+    };
+    // Measured against MySQL 8.4.
+    assert_eq!(
+        stored(r#"{"b":1,  "a" : [1,2]}"#).expect("binds"),
+        Value::Utf8(r#"{"a": [1, 2], "b": 1}"#.to_owned())
+    );
+    assert!(stored("{not json").is_err());
+}

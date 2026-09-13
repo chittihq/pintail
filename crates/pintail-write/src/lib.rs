@@ -526,6 +526,13 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
                 fsp,
             )));
         }
+        // A JSON column stores the document as MySQL prints it back: keys in
+        // its normalized order and its own spacing, whatever was written.
+        DataType::Json => {
+            let document: serde_json::Value =
+                serde_json::from_str(text).map_err(|_| wrong("Invalid JSON text"))?;
+            return Ok(Value::Utf8(pintail_types::mysql_json_text(&document)));
+        }
         _ => {}
     }
     let value = match column.pintail_type.storage_type() {
