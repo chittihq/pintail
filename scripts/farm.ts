@@ -13,8 +13,8 @@
 ///
 /// Usage:  bun run scripts/farm.ts                       # until stopped
 ///         bun run scripts/farm.ts --cycles 3 --jobs cdc-sim,disk-faults
-/// Docker jobs (sql-fuzz, cdc-matrix, mtr-replica) use the DOCKER_HOST the
-/// shell has; run the farm on a host no gate is measuring on.
+/// Docker jobs (sql-fuzz, cdc-matrix) use the DOCKER_HOST the shell has; run
+/// the farm on a host no gate is measuring on.
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'

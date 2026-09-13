@@ -1712,9 +1712,20 @@ impl Backend {
                 session.sql_select_limit = (limit < u64::MAX).then_some(limit);
                 Ok(())
             }
-            // These change answers - day and month names, week numbers - and only
-            // their defaults are implemented, so another value is refused rather
-            // than accepted and ignored.
+            // These change ANSWERS - day and month names, week numbers - and
+            // only their defaults are implemented, so another value is
+            // refused rather than accepted and ignored.
+            //
+            // Checked against the rule that a setting a client sends
+            // automatically is never refused: neither of these is one. A
+            // driver negotiating a connection sets charsets, time zones and
+            // row caps; the locale for DAYNAME and the week-number
+            // convention are an application's deliberate choice, and the
+            // BI-client gate connects through the MySQL CLI, Go, JDBC,
+            // Python and bun without either appearing. Accepting one and
+            // ignoring it would answer a question wrongly rather than
+            // refusing to answer it, which is the trade that rule exists to
+            // avoid, not to make.
             "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
                 "Unknown locale: '{value}' (only en_US is supported)"
             )),
