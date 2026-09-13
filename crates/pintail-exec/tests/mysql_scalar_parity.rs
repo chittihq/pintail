@@ -910,3 +910,24 @@ fn weekday_names_keep_their_implicit_numeric_value() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn time_intervals_keep_signed_duration_and_precision() {
+    for (expression, expected) in [
+        ("DATE_ADD(TIME '23:59:59', INTERVAL 2 SECOND)", "24:00:01"),
+        ("DATE_SUB(TIME '00:00:01', INTERVAL 2 SECOND)", "-00:00:01"),
+        ("DATE_ADD(TIME '838:59:59', INTERVAL 1 SECOND)", "NULL"),
+        (
+            "DATE_ADD(TIME '10:20:30.125', INTERVAL 1 MINUTE)",
+            "10:21:30.125",
+        ),
+        ("DATE_ADD('10:20:30', INTERVAL 1 MINUTE)", "NULL"),
+        (
+            "STR_TO_DATE('10:20:30', '%H:%i:%s') + INTERVAL 10 MINUTE",
+            "10:30:30",
+        ),
+        ("clock + INTERVAL 1 SECOND", "11:11:12"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

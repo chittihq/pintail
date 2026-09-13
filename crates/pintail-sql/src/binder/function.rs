@@ -1679,6 +1679,11 @@ pub(super) fn bind_scalar(
                 }
                 // Fractional seconds survive the arithmetic at the input's
                 // precision; a DATE moved by a time unit becomes DATETIME.
+                Some(DataType::Time64 { fsp })
+                    if matches!(unit, IntervalUnit::Hour | IntervalUnit::Minute | IntervalUnit::Second) =>
+                {
+                    DataType::Time64 { fsp }
+                }
                 Some(DataType::DateTime64 { fsp }) => DataType::DateTime64 { fsp },
                 Some(DataType::Date32) => DataType::DateTime64 { fsp: 0 },
                 _ => DataType::Utf8,

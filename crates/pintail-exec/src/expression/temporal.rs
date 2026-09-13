@@ -302,17 +302,6 @@ pub(super) fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
     Some(format!("{base}.{}", &micros[..fraction_digits]))
 }
 
-/// Translates a `MySQL` format string into a chrono *parse* format for
-/// `STR_TO_DATE`.
-///
-/// This is the direction `DATE_FORMAT` used to share, and it carries the same
-/// defect: directives outside the mapped set are forwarded to chrono, whose
-/// dialect assigns several of the same letters different meanings, so an
-/// unmapped directive parses against the wrong field instead of erroring.
-/// Emitting output could be fixed by rendering each directive directly;
-/// parsing cannot borrow that fix, because it needs a real parser rather than
-/// a renderer. Tracked separately — see the `STR_TO_DATE` note in
-/// `docs/limitations.md`.
 const WEEK_MONDAY_FIRST: u32 = 1;
 const WEEK_YEAR: u32 = 2;
 const WEEK_FIRST_WEEKDAY: u32 = 4;

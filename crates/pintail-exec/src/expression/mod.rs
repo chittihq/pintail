@@ -3266,6 +3266,26 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::DateInterval { unit, subtract } => {
             let input = scalar_string(&values[0])?;
+            if let Some(DataType::Time64 { fsp }) = data_type {
+                let Some(time) = parse_temporal_micros(&input).filter(|time| !time.datetime) else {
+                    return Ok(Value::Null);
+                };
+                let seconds = match unit {
+                    IntervalUnit::Hour => 3_600,
+                    IntervalUnit::Minute => 60,
+                    IntervalUnit::Second => 1,
+                    _ => return Ok(Value::Null),
+                };
+                let amount = i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000;
+                let total = time.micros + if subtract { -amount } else { amount };
+                // Interval arithmetic rejects an out-of-range TIME; ADDTIME
+                // uses the same duration carrier but clamps its result.
+                return Ok(if total.abs() > MAX_TIME_MICROS {
+                    Value::Null
+                } else {
+                    Value::Utf8(render_time_micros(total, fsp))
+                });
+            }
             let value = parse_mysql_datetime(&input)?;
             let amount = mysql_i64(&values[1])?;
             let value = apply_interval(value, amount, unit, subtract)?;

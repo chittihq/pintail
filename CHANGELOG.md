@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Hour, minute and second intervals on typed `TIME` values preserve signed
+  durations and fractional precision, returning NULL on range overflow.
+
 - `DAYNAME` retains its weekday number in arithmetic, numeric comparisons
   and numeric aggregates while explicit casts still convert the label.
 
