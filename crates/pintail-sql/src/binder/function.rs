@@ -1103,7 +1103,9 @@ fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
         | SqlDataType::Character(Some(sqlparser::ast::CharacterLength::IntegerLength {
             length,
             ..
-        })) => u32::try_from(*length).ok(),
+        }))
+        // BINARY(n) is a byte count, and the cast pads to it.
+        | SqlDataType::Binary(Some(length)) => u32::try_from(*length).ok(),
         _ => None,
     }
 }
@@ -1369,6 +1371,7 @@ pub(super) fn bind_scalar(
             )
         }
         ScalarFunction::Round { decimal: false }
+        | ScalarFunction::Truncate { decimal: false }
         | ScalarFunction::Ceil { decimal: false }
         | ScalarFunction::Floor { decimal: false } => (
             Some(match args[0].data_type.map(DataType::storage_type) {
@@ -1396,8 +1399,7 @@ pub(super) fn bind_scalar(
         | ScalarFunction::Ln
         | ScalarFunction::LogBase
         | ScalarFunction::Log2
-        | ScalarFunction::Log10
-        | ScalarFunction::Truncate { decimal: false } => (
+        | ScalarFunction::Log10 => (
             // MySQL returns NULL outside a function's domain (SQRT of a
             // negative, logs of non-positives), so these stay nullable.
             Some(DataType::Float64),

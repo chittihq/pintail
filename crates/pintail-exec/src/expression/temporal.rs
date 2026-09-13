@@ -13,6 +13,20 @@ use super::scalar_string;
 use crate::ExecError;
 
 pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
+    // A year written with one or two digits names the nearest century the
+    // way MySQL reads it: 00-69 are 2000-2069 and 70-99 are 1970-1999.
+    let year_digits = value.find('-').unwrap_or(0);
+    if (1..=2).contains(&year_digits)
+        && value[..year_digits]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit())
+    {
+        let year: u32 = value[..year_digits]
+            .parse()
+            .map_err(|_| ExecError::InvalidDateTime)?;
+        let century = if year < 70 { 2000 } else { 1900 };
+        return parse_mysql_datetime(&format!("{}{}", century + year, &value[year_digits..]));
+    }
     for format in [
         "%Y-%m-%d %H:%M:%S%.f",
         "%Y-%m-%dT%H:%M:%S%.f",
@@ -521,4 +535,94 @@ pub(super) fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
         debug_assert!(written.is_ok(), "writing into a String cannot fail");
     }
     output
+}
+
+/// The date and time `MySQL` reads from an integer given where a date is
+/// expected: YYMMDD, YYYYMMDD, YYMMDDHHMMSS or YYYYMMDDHHMMSS, with a
+/// two-digit year taking the nearest century.
+pub(super) fn numeric_datetime(number: i128) -> Option<NaiveDateTime> {
+    let (date, time) = match number {
+        101..=691_231 => (number + 20_000_000, 0),
+        700_101..=991_231 => (number + 19_000_000, 0),
+        10_000_101..=99_991_231 => (number, 0),
+        101_000_000..=691_231_235_959 => (number / 1_000_000 + 20_000_000, number % 1_000_000),
+        700_101_000_000..=991_231_235_959 => (number / 1_000_000 + 19_000_000, number % 1_000_000),
+        10_000_101_000_000..=99_991_231_235_959 => (number / 1_000_000, number % 1_000_000),
+        _ => return None,
+    };
+    let part = |value: i128, divisor: i128| u32::try_from(value / divisor % 100).ok();
+    NaiveDate::from_ymd_opt(
+        i32::try_from(date / 10_000).ok()?,
+        part(date, 100)?,
+        part(date, 1)?,
+    )?
+    .and_hms_opt(part(time, 10_000)?, part(time, 100)?, part(time, 1)?)
+}
+
+/// A date part of a value `MySQL` does not store as a date: an integer is a
+/// packed date and time, or for the time-of-day parts a packed HHMMSS time,
+/// and text that holds only a time still has an hour, minute and second.
+pub(super) fn date_part_of(value: &Value, integer: bool, part: DatePart) -> Result<u64, ExecError> {
+    let number = match value {
+        Value::Int64(number) if integer => Some(i128::from(*number)),
+        Value::UInt64(number) if integer => Some(i128::from(*number)),
+        _ => None,
+    };
+    if matches!(part, DatePart::Hour | DatePart::Minute | DatePart::Second) {
+        let time = match number {
+            // A number with more digits than the largest TIME is a date and
+            // time; one between the two is neither.
+            Some(number) if number.unsigned_abs() < 10_000_000_000 => {
+                Some(packed_time(number.unsigned_abs()).ok_or(ExecError::InvalidDateTime)?)
+            }
+            Some(_) => None,
+            None => {
+                let text = scalar_string(value)?;
+                match parse_mysql_datetime(&text) {
+                    Ok(datetime) => return Ok(date_part(datetime, part)),
+                    Err(_) => Some(text_time(&text).ok_or(ExecError::InvalidDateTime)?),
+                }
+            }
+        };
+        if let Some((hours, minutes, seconds)) = time {
+            return Ok(match part {
+                DatePart::Hour => hours,
+                DatePart::Minute => minutes,
+                _ => seconds,
+            });
+        }
+    }
+    let datetime = match number {
+        Some(number) => numeric_datetime(number).ok_or(ExecError::InvalidDateTime)?,
+        None => parse_mysql_datetime(&scalar_string(value)?)?,
+    };
+    Ok(date_part(datetime, part))
+}
+
+/// HHMMSS packed into an integer, up to the largest TIME.
+fn packed_time(number: u128) -> Option<(u64, u64, u64)> {
+    let minutes = u64::try_from(number / 100 % 100).ok()?;
+    let seconds = u64::try_from(number % 100).ok()?;
+    (number <= 8_385_959 && minutes < 60 && seconds < 60)
+        .then(|| Some((u64::try_from(number / 10_000).ok()?, minutes, seconds)))
+        .flatten()
+}
+
+/// A time written `[-]H:MM[:SS[.fraction]]`; hours are not limited to a day.
+fn text_time(text: &str) -> Option<(u64, u64, u64)> {
+    let text = text.trim();
+    let text = text.strip_prefix('-').unwrap_or(text);
+    let field = |text: &str| -> Option<u64> {
+        (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| text.parse().ok())
+            .flatten()
+    };
+    let mut fields = text.split(':');
+    let hours = field(fields.next()?)?;
+    let minutes = field(fields.next()?)?;
+    let seconds = match fields.next() {
+        None => 0,
+        Some(seconds) => field(seconds.split_once('.').map_or(seconds, |(whole, _)| whole))?,
+    };
+    (fields.next().is_none() && minutes < 60 && seconds < 60).then_some((hours, minutes, seconds))
 }

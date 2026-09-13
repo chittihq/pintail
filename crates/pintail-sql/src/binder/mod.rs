@@ -2993,9 +2993,29 @@ fn bind_expr_inner(
         // DATE '...', TIME '...', TIMESTAMP '...': the literal cast to its type.
         Expr::TypedString(typed) => {
             let inner = Expr::Value(typed.value.clone());
+            // A TIME or TIMESTAMP literal keeps the fraction digits it is
+            // written with: TIMESTAMP '01:02:03.25' has two.
+            let written = match (&typed.data_type, &typed.value.value) {
+                (
+                    sqlparser::ast::DataType::Timestamp(None, zone)
+                    | sqlparser::ast::DataType::Time(None, zone),
+                    SqlValue::SingleQuotedString(text),
+                ) => text
+                    .rsplit_once('.')
+                    .map(|(_, fraction)| fraction.len())
+                    .filter(|digits| (1..=6).contains(digits))
+                    .and_then(|digits| u64::try_from(digits).ok())
+                    .map(|digits| match typed.data_type {
+                        sqlparser::ast::DataType::Timestamp(..) => {
+                            sqlparser::ast::DataType::Timestamp(Some(digits), *zone)
+                        }
+                        _ => sqlparser::ast::DataType::Time(Some(digits), *zone),
+                    }),
+                _ => None,
+            };
             bind_cast(
                 &inner,
-                &typed.data_type,
+                written.as_ref().unwrap_or(&typed.data_type),
                 tables,
                 aggregates,
                 windows,
@@ -3696,7 +3716,7 @@ fn bind_binary(
             | BinaryOperator::Modulo
             | BinaryOperator::MyIntegerDivide
     ) {
-        (time_as_number(left), time_as_number(right))
+        (temporal_as_number(left), temporal_as_number(right))
     } else {
         (left, right)
     };
@@ -5413,6 +5433,23 @@ fn arithmetic_type(
             scale,
         });
     }
+    // DIV answers a BIGINT whatever its operands: the quotient is taken in
+    // their own domain and then cut toward zero, so 1.2e19 DIV 2 is exact
+    // and 7.5 DIV 2.5 is 3, not 7 DIV 2.
+    if op == BinaryOp::IntegerDivide
+        && [left, right].iter().any(|operand| {
+            matches!(
+                operand,
+                DataType::Float64
+                    | DataType::Float32
+                    | DataType::Decimal { .. }
+                    | DataType::Utf8
+                    | DataType::Binary
+            )
+        })
+    {
+        return Some(DataType::Int64);
+    }
     if op == BinaryOp::Divide
         || left == DataType::Float64
         || right == DataType::Float64
@@ -5603,8 +5640,47 @@ fn unify_temporal_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
 /// Integer digits of a TIME read as a number: 838:59:59 is 8385959.
 const TIME_NUMBER_DIGITS: u8 = 7;
 
+/// Whole digits of a DATETIME read as a number: YYYYMMDDHHMMSS.
+const DATETIME_NUMBER_DIGITS: u8 = 14;
+
 /// A TIME in a numeric context is the number `[-]HHMMSS[.ffffff]` in `MySQL`,
 /// at the value's fractional precision: `TIME + 0` is that number.
+/// An arithmetic operand read as a number: a TIME, DATE or DATETIME is its
+/// digits - HHMMSS, YYYYMMDD and YYYYMMDDHHMMSS[.fraction].
+fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+    // The TIME-valued functions answer text; from integer arguments their
+    // TIME has whole seconds.
+    if let BoundExprKind::Scalar { function, args } = &expr.kind
+        && matches!(
+            function,
+            ScalarFunction::SecToTime
+                | ScalarFunction::AddTime
+                | ScalarFunction::SubTime
+                | ScalarFunction::TimeDiff
+        )
+        && expr.data_type == Some(DataType::Utf8)
+        && args.iter().all(|argument| {
+            matches!(
+                argument.data_type.map(DataType::storage_type),
+                Some(DataType::Int64 | DataType::UInt64)
+            )
+        })
+    {
+        return time_as_number(cast_to(expr, DataType::Time64 { fsp: 0 }));
+    }
+    match expr.data_type {
+        Some(DataType::Date32 | DataType::DateTime64 { fsp: 0 }) => cast_to(expr, DataType::Int64),
+        Some(DataType::DateTime64 { fsp }) => cast_to(
+            expr,
+            DataType::Decimal {
+                precision: DATETIME_NUMBER_DIGITS + fsp,
+                scale: fsp,
+            },
+        ),
+        _ => time_as_number(expr),
+    }
+}
+
 fn time_as_number(expr: BoundExpr) -> BoundExpr {
     match expr.data_type {
         Some(DataType::Time64 { fsp: 0 }) => cast_to(expr, DataType::Int64),

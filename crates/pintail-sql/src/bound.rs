@@ -984,7 +984,8 @@ pub enum ScalarFunction {
     DeclaredCast {
         /// Requested scalar type.
         target: DataType,
-        /// Maximum character count of an explicit CHAR declaration.
+        /// Maximum character count of an explicit CHAR declaration, or the exact
+        /// byte count of a BINARY one.
         characters: Option<u32>,
     },
     /// Current local date and time.
