@@ -133,7 +133,7 @@ fn string_boundaries_match_for_literals_and_column_expressions() {
         ("REPLACE('é猫', '', 'x')", "é猫"),
         ("SUBSTRING('é猫', -3)", ""),
         ("SUBSTRING('é猫', -2, 1)", "é"),
-        ("INSERT('é猫', 3, 0, 'x')", "é猫"),
+        ("INSERT('é猫', 3, 0, 'x')", "é猫x"),
         ("INSERT('', 1, 0, 'x')", ""),
     ]);
 }
@@ -155,11 +155,29 @@ fn binary_string_functions_preserve_bytes_and_result_types() {
         ("RIGHT(X'FF0080', 2)", "Binary([0, 128])"),
         ("REPLACE(X'FF0080', X'FF', X'FE')", "Binary([254, 0, 128])"),
         ("INSERT(X'FF0080', 2, 1, X'FE')", "Binary([255, 254, 128])"),
-        ("HEX(INSERT('é猫', 2, 1, X'FF'))", "C3FFE78CAB"),
-        ("HEX(REPLACE('é猫', '猫', X'FF'))", "C3A9FF"),
+        ("HEX(INSERT('é猫', 2, 1, X'20'))", "C3A920"),
+        ("REPLACE('é猫', '猫', X'C3A9')", "éé"),
         ("HEX(LEFT(X'FF0080', 0))", ""),
         ("HEX(RIGHT(X'FF0080', 8))", "FF0080"),
         ("HEX(REPLACE(X'FF', NULL, X'80'))", "NULL"),
+    ]);
+}
+
+#[test]
+fn insert_uses_subject_charset_and_byte_boundary() {
+    for text in ["'é猫'", "REPEAT('é猫', id)"] {
+        assert_answers(&[
+            (&format!("HEX(INSERT({text}, 2, 1, X'20'))"), "C3A920"),
+            (&format!("HEX(INSERT({text}, 2, 1, X'C3A9'))"), "C3A9C3A9"),
+            (&format!("INSERT({text}, 3, 0, 'x')"), "é猫x"),
+            (&format!("INSERT({text}, 4, 0, 'x')"), "é猫"),
+        ]);
+        assert!(scalar(&format!("INSERT({text}, 2, 1, X'FF')")).starts_with("error"));
+        assert!(scalar(&format!("REPLACE({text}, '猫', X'FF')")).starts_with("error"));
+    }
+    assert_answers(&[
+        ("INSERT('é', 2, 1, X'20')", "é "),
+        ("HEX(INSERT(X'C3A9E78CAB', 2, 1, ' '))", "C320E78CAB"),
     ]);
 }
 

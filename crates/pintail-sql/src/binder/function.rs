@@ -1318,12 +1318,12 @@ pub(super) fn bind_scalar(
             )
         }
         ScalarFunction::Replace
-            if args.iter().any(|argument| argument.data_type == Some(DataType::Binary)) =>
+            if args[0].data_type == Some(DataType::Binary) =>
         {
             (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }
         ScalarFunction::Insert
-            if [0, 3].iter().any(|position| args[*position].data_type == Some(DataType::Binary)) =>
+            if args[0].data_type == Some(DataType::Binary) =>
         {
             (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }

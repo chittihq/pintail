@@ -9,10 +9,11 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 ## Implemented slices
 
 - Empty-search `REPLACE` leaves the input unchanged. String `INSERT` rejects
-  a position past the last character, including an empty input.
+  positions beyond the byte length and applies character positions within
+  that boundary, including the multibyte append case.
 - `LEFT`, `RIGHT`, `REPLACE` and string `INSERT` preserve binary operands and
-  declare binary results. Mixed text/binary operations use the text's UTF-8
-  bytes. Tests exercise literals, column expressions, and direct results.
+  declare binary results for binary subjects. Replacement functions convert
+  replacement operands to the subject's charset, rejecting invalid UTF-8. Tests exercise literals, column expressions, and direct results.
 - Aggregate-local integer ORDER BY positions resolve against `GROUP_CONCAT`
   arguments, with invalid positions rejected. DISTINCT without explicit
   ordering sorts by the original arguments, preserving numeric ordering.

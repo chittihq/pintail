@@ -314,7 +314,7 @@ fn insert_and_time_follow_mysql() {
             text("QuWhattic"),
             text("Quadratic"),
             text("QuWhat"),
-            text("QuadraticX"),
+            text("Quadratic"),
             text("01:02:03"),
             text("01:02:03"),
             text("01:02:03.000123"),

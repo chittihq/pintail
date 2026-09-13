@@ -2355,7 +2355,7 @@ fn evaluate_eager_scalar_inner(
                 .map_err(|_| ExecError::NumericOverflow)?,
         })),
         ScalarFunction::Replace => {
-            let binary = values.iter().any(|value| matches!(value, Value::Binary(_)));
+            let binary = matches!(values[0], Value::Binary(_));
             let string: fn(&Value) -> Result<String, ExecError> =
                 if binary { byte_text } else { scalar_string };
             let text = string(&values[0])?;
@@ -2673,11 +2673,10 @@ fn evaluate_eager_scalar_inner(
             repeat_capped(&text, count)
         }
         ScalarFunction::Insert => {
-            // Positions count characters from one. A position outside the
-            // string returns it unchanged; a length past the end, or a
-            // negative one, replaces the rest of the string.
-            let binary =
-                matches!(values[0], Value::Binary(_)) || matches!(values[3], Value::Binary(_));
+            // The subject determines the charset. The initial position check
+            // uses its byte length, then positions address characters. Thus a
+            // multibyte subject can accept an append position that ASCII cannot.
+            let binary = matches!(values[0], Value::Binary(_));
             let string: fn(&Value) -> Result<String, ExecError> =
                 if binary { byte_text } else { scalar_string };
             let result_value = |text: String| {
@@ -2693,7 +2692,12 @@ fn evaluate_eager_scalar_inner(
             let replacement = string(&values[3])?;
             let characters: Vec<char> = text.chars().collect();
             let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
-            if position < 1 || position > total {
+            let byte_length = if binary {
+                total
+            } else {
+                i64::try_from(text.len()).map_err(|_| ExecError::NumericOverflow)?
+            };
+            if position < 1 || position > byte_length || position.saturating_sub(1) > total {
                 return Ok(result_value(text));
             }
             let start = position - 1;
