@@ -2440,8 +2440,14 @@ fn evaluate_eager_scalar_inner(
                 text.truncate(offset);
             }
             // BINARY(n) holds exactly n bytes: a shorter value is padded with
-            // zero bytes and a longer one cut.
+            // zero bytes and a longer one cut. A declared length past the
+            // packet cap is NULL, as MySQL answers it - the padding is never
+            // built. Without the check, CAST(x AS BINARY(2000000000))
+            // allocated two gigabytes for every row it touched.
             if let (Some(bytes), Value::Binary(data)) = (characters, &mut value) {
+                if bytes > BINARY_CAST_CAP {
+                    return Ok(Value::Null);
+                }
                 data.resize(bytes as usize, 0);
             }
             Ok(value)
@@ -4738,6 +4744,13 @@ fn decimal_units_of(value: &Value) -> Option<(i128, u8)> {
 /// `REPEAT`/`SPACE`/pad results are capped at 4096 bytes
 /// (`docs/limitations.md`); `MySQL`'s cap is `max_allowed_packet`.
 const STRING_BUILD_CAP: usize = 4096;
+
+/// The widest `CAST(x AS BINARY(n))` that is built rather than answered
+/// NULL. `MySQL` compares `n` against `max_allowed_packet` and returns NULL
+/// with warning 1301 above it; this is that variable's default, so the
+/// answer matches a stock server exactly (`docs/limitations.md` records
+/// that it does not follow a server whose limit was raised).
+const BINARY_CAST_CAP: u32 = 64 * 1024 * 1024;
 
 fn repeat_capped(text: &str, count: i64) -> Result<Value, ExecError> {
     let count = usize::try_from(count).unwrap_or(usize::MAX);

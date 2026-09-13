@@ -40,7 +40,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1907;
+const EXPECTED_CASES: usize = 1908;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -2476,6 +2476,12 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST('101112' AS TIME), TIME('101112'), \
              CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
              CAST('850:00:00' AS TIME)",
+        ),
+        ordered(
+            "hand-written cast binary width",
+            "SELECT LENGTH(CAST(1 AS BINARY(100))), \
+             CAST(1 AS BINARY(2000000000)), \
+             LENGTH(CAST('ab' AS BINARY(1)))",
         ),
         ordered(
             "hand-written cast temporal invalid",

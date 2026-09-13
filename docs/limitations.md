@@ -187,6 +187,7 @@ stays readable as a list of things to fix.
   probe warning and deliberately decline exact-numeric expression semantics.
 
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
+- `CAST(x AS BINARY(n))` is NULL for an `n` above 64 MiB, matching what MySQL answers at the default `max_allowed_packet`. A server whose limit was raised builds wider values than this does.
 
 ### Planning and execution
 

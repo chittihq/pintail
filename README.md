@@ -56,7 +56,7 @@ MySQL 8.4 and 8.0 servers before it merges.
 
 | Gate | What it compares | Size | Last result |
 |---|---|---:|---|
-| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,907 queries | 1,907 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
+| Differential oracle | Each query's typed result on Pintail and on MySQL, byte for byte | 1,908 queries | 1,908 match; the [known-failure ledger](tests/sqllogic/tests/support/oracle_known_failures.json) is empty |
 | Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
 | MySQL's own regression suite | `mysql-test` from [mysql/mysql-server](https://github.com/mysql/mysql-server/tree/trunk/mysql-test/t), replayed statement by statement against Pintail and a live MySQL 8.4 | 633 files, 23,118 SELECTs replayed | [3,444 of 3,880 compared match](tests/mtr/results.md); MariaDB's suite is replayed beside it |
 | Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
