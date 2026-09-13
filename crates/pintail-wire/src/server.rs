@@ -784,6 +784,7 @@ fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
 struct Session {
     time_zone: String,
     calendar_locale: &'static str,
+    timestamp_micros: Option<i64>,
     default_week_format: u8,
     sql_mode: String,
     charset_client: String,
@@ -820,6 +821,7 @@ impl Default for Session {
         Self {
             time_zone: "SYSTEM".to_owned(),
             calendar_locale: "en_US",
+            timestamp_micros: None,
             default_week_format: 0,
             sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
@@ -1280,6 +1282,7 @@ impl Backend {
                     // optimization runs on this thread, so install-and-restore
                     // brackets exactly one statement.
                     let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                    pintail_exec::set_session_timestamp_micros(session.timestamp_micros);
                     pintail_exec::set_session_default_week_format(Some(
                         session.default_week_format,
                     ));
@@ -1323,6 +1326,7 @@ impl Backend {
                     let _ = pintail_exec::set_session_time_zone(None);
                     let _ = pintail_exec::set_session_calendar_locale(None);
                     pintail_exec::set_session_default_week_format(None);
+                    pintail_exec::set_session_timestamp_micros(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
                     // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
@@ -1605,6 +1609,36 @@ impl Backend {
             None => value,
         };
         match name {
+            "timestamp" => {
+                let raw = command.split_once('=').map_or("", |(_, rhs)| rhs).trim();
+                let quoted = raw.starts_with(['\'', '"'])
+                    || raw.strip_prefix('@').is_some_and(|variable| {
+                        matches!(
+                            session.user_variables.get(&variable.to_ascii_lowercase()),
+                            Some(sqlparser::ast::Value::SingleQuotedString(_))
+                        )
+                    });
+                if quoted {
+                    return Err("Incorrect argument type to variable 'timestamp'".to_owned());
+                }
+                let micros = if value.eq_ignore_ascii_case("default") {
+                    0
+                } else {
+                    pintail_types::parse_decimal_rounded(&value, 6).ok_or_else(|| {
+                        "Incorrect argument type to variable 'timestamp'".to_owned()
+                    })?
+                };
+                session.timestamp_micros = if micros <= 0 {
+                    None
+                } else if (1_000_000..=2_147_483_647_000_000).contains(&micros) {
+                    Some(i64::try_from(micros).expect("timestamp is bounded"))
+                } else {
+                    return Err(format!(
+                        "Variable 'timestamp' can't be set to the value of '{value}'"
+                    ));
+                };
+                Ok(())
+            }
             "time_zone" => {
                 // The global zone, or DEFAULT, is the zone a new session starts in.
                 let value = if value.eq_ignore_ascii_case("@@global.time_zone")
@@ -3281,6 +3315,14 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         || normalized.contains("@@autocommit")
     {
         ("@@auto_increment_increment", Value::UInt64(1))
+    } else if normalized.contains("@@timestamp") {
+        let micros = session
+            .timestamp_micros
+            .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
+        // The system variable itself is an approximate seconds value.
+        #[allow(clippy::cast_precision_loss)]
+        let seconds = micros as f64 / 1_000_000.0;
+        ("@@timestamp", Value::float64(seconds))
     } else if normalized.contains("@@max_allowed_packet") {
         ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
     } else if normalized.contains("@@lower_case_table_names") {

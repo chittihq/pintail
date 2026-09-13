@@ -50,8 +50,9 @@ pub use explain::{
 };
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
 pub use optimizer::{
-    Optimizer, session_default_week_format, session_time_zone_key, set_session_default_week_format,
-    set_session_time_zone,
+    Optimizer, session_default_week_format, session_statement_year, session_time_zone_key,
+    session_timestamp_micros, set_session_default_week_format, set_session_time_zone,
+    set_session_timestamp_micros,
 };
 pub use storage::{PhysicalScanStats, SnapshotScanProvider};
 

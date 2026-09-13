@@ -2488,7 +2488,11 @@ fn evaluate_eager_scalar_inner(
         | ScalarFunction::DeclaredCast {
             target: DataType::Year,
             ..
-        } => cast_mysql_year(&values[0], argument_types.first().copied().flatten()),
+        } => cast_mysql_year(
+            &values[0],
+            argument_types.first().copied().flatten(),
+            values.get(1),
+        ),
         ScalarFunction::Cast(target) => cast_scalar(
             &numeric_cast_operand(&values[0], argument_types, target),
             Some(target),
@@ -3309,27 +3313,13 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::UInt64(mysql_yearweek(value)))
         }
         ScalarFunction::TimeToSec => {
-            let text = scalar_string(&values[0])?;
-            let (negative, rest) = text
-                .strip_prefix('-')
-                .map_or((false, text.as_str()), |rest| (true, rest));
-            let mut parts = rest.split(':');
-            let hours = parts
-                .next()
-                .and_then(|part| part.parse::<i64>().ok())
-                .ok_or(ExecError::InvalidDateTime)?;
-            let minutes = parts
-                .next()
-                .and_then(|part| part.parse::<i64>().ok())
-                .unwrap_or(0);
-            let seconds = parts
-                .next()
-                .and_then(|part| part.split('.').next())
-                .and_then(|part| part.parse::<i64>().ok())
-                .unwrap_or(0);
-            // The text is a TIME first, clamped to 838:59:59.
-            let total = (hours * 3600 + minutes * 60 + seconds).min(838 * 3600 + 59 * 60 + 59);
-            Ok(Value::Int64(if negative { -total } else { total }))
+            let Some(time) = cast_mysql_time(&scalar_string(&values[0])?, 6) else {
+                return Ok(Value::Null);
+            };
+            let parsed = parse_temporal_micros(&time).ok_or(ExecError::InvalidDateTime)?;
+            Ok(Value::Int64(
+                i64::try_from(parsed.micros / 1_000_000).map_err(|_| ExecError::NumericOverflow)?,
+            ))
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
             let (Some(left), Some(right)) = (
@@ -4307,22 +4297,49 @@ fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
     )
 }
 
-fn cast_mysql_year(value: &Value, source_type: Option<DataType>) -> Result<Value, ExecError> {
+fn json_year_number(value: &Value) -> Result<f64, ExecError> {
+    let document = parse_json_argument(value)?;
+    Ok(match document {
+        serde_json::Value::Number(number) => number.as_f64().unwrap_or(0.0).round_ties_even(),
+        serde_json::Value::Bool(value) => f64::from(value),
+        serde_json::Value::String(text) => {
+            let prefix: String = text
+                .trim_start()
+                .chars()
+                .enumerate()
+                .take_while(|(index, character)| {
+                    character.is_ascii_digit() || (*index == 0 && matches!(character, '+' | '-'))
+                })
+                .map(|(_, character)| character)
+                .collect();
+            prefix.parse::<f64>().unwrap_or(0.0)
+        }
+        _ => 0.0,
+    })
+}
+
+fn cast_mysql_year(
+    value: &Value,
+    source_type: Option<DataType>,
+    statement_year: Option<&Value>,
+) -> Result<Value, ExecError> {
     let (number, string_input) = match source_type {
         Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
             let text = scalar_string(value)?;
             let year = text
                 .get(..4)
                 .and_then(|year| year.parse::<u64>().ok())
-                .filter(|year| *year != 0);
+                .filter(|year| *year == 0 || (1901..=2155).contains(year));
             return Ok(year.map_or(Value::Null, Value::UInt64));
         }
         Some(DataType::Time64 { .. }) => {
-            return Ok(Value::UInt64(
-                u64::try_from(Local::now().year()).unwrap_or(0),
-            ));
+            return Ok(Value::UInt64(statement_year.map_or_else(
+                || u64::try_from(Local::now().year()).unwrap_or(0),
+                |year| mysql_u64(year).unwrap_or(0),
+            )));
         }
-        Some(DataType::Utf8 | DataType::Binary | DataType::Json) => {
+        Some(DataType::Json) => (json_year_number(value)?, false),
+        Some(DataType::Utf8 | DataType::Binary) => {
             let text = scalar_string(value)?;
             let trimmed = text.trim_start();
             let unsigned = trimmed

@@ -594,6 +594,62 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET sql_mode = @saved_names_mode")
         .await
         .expect("restore name mode");
+    connection
+        .query_drop("SET @saved_clock_zone = @@time_zone")
+        .await
+        .expect("save clock zone");
+    connection
+        .query_drop("SET time_zone = '+00:00'")
+        .await
+        .expect("UTC clock");
+    for (timestamp, year, now) in [
+        (1_593_561_600_u64, 2020_u64, "2020-07-01 00:00:00"),
+        (1_625_097_600_u64, 2021_u64, "2021-07-01 00:00:00"),
+    ] {
+        connection
+            .query_drop(format!("SET timestamp = {timestamp}"))
+            .await
+            .expect("fix statement clock");
+        let clock: Option<(String, u64, u64)> = connection
+            .query_first("SELECT NOW(), CAST(TIME'01:02:03' AS YEAR), UNIX_TIMESTAMP()")
+            .await
+            .expect("fixed clock reaches runtime and cached plans");
+        assert_eq!(clock, Some((now.to_owned(), year, timestamp)));
+    }
+    assert!(
+        connection
+            .query_drop("SET timestamp = 2147483647.5")
+            .await
+            .is_err()
+    );
+    assert!(connection.query_drop("SET timestamp = 0.5").await.is_err());
+    assert!(
+        connection
+            .query_drop("SET timestamp = '1593561600'")
+            .await
+            .is_err()
+    );
+    connection
+        .query_drop("SET timestamp = 1609457400")
+        .await
+        .expect("year boundary");
+    connection
+        .query_drop("SET time_zone = '+01:00'")
+        .await
+        .expect("shift calendar year");
+    let boundary: Option<(String, u64)> = connection
+        .query_first("SELECT NOW(), CAST(TIME'01:02:03' AS YEAR)")
+        .await
+        .expect("fixed clock uses the session calendar");
+    assert_eq!(boundary, Some(("2021-01-01 00:30:00".to_owned(), 2021)));
+    connection
+        .query_drop("SET time_zone = @saved_clock_zone")
+        .await
+        .expect("restore clock zone");
+    connection
+        .query_drop("SET timestamp = DEFAULT")
+        .await
+        .expect("restore clock");
     for (charset, encoded) in [("ucs2", "0037"), ("utf8mb4", "37"), ("utf32", "00000037")] {
         connection
             .query_drop(format!("SET character_set_connection = '{charset}'"))

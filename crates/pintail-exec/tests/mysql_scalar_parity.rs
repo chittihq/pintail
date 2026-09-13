@@ -620,3 +620,25 @@ fn encoded_constants_keep_temporal_and_binary_comparisons() {
         assert_eq!(answer, expected, "{expression}");
     }
 }
+
+#[test]
+fn year_casts_and_seconds_read_temporal_shapes() {
+    assert_answers(&[
+        ("CAST(TIMESTAMP'2010-01-01 00:00' AS YEAR)", "2010"),
+        ("CAST(TIMESTAMP'0579-10-10 10:10:10' AS YEAR)", "NULL"),
+        ("CAST(CAST('{}' AS JSON) AS YEAR)", "0"),
+        ("TIME_TO_SEC(CAST('2030' AS YEAR))", "1230"),
+        ("TIME_TO_SEC(-2030.12)", "-1230"),
+        ("TIME_TO_SEC('2001-01-02 03:04:05')", "11045"),
+        ("TIME_TO_SEC('900:00:00')", "3020399"),
+    ]);
+}
+
+#[test]
+fn a_time_column_year_captures_the_statement_clock() {
+    pintail_exec::set_session_timestamp_micros(Some(1_593_561_600_000_000));
+    let answer = evaluate_rows_after_plan("CAST(clock AS YEAR)", 1, || {
+        pintail_exec::set_session_timestamp_micros(None);
+    });
+    assert_eq!(answer, "2020");
+}

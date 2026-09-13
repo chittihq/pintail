@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Session-fixed statement clocks and TIME-to-YEAR casts, including year
+  boundaries across time zones. Temporal casts accept omitted seconds,
+  enforce YEAR's range, and read JSON values and compact times correctly.
+
 - UCS-2, UTF-16 and UTF-32 expression encoding for introducers, `CONVERT`,
   connection-generated strings and byte-reading functions, with encoding
   captured in query plans and isolated cached answers.

@@ -25,16 +25,7 @@ impl Optimizer {
     pub fn optimize(plan: LogicalPlan) -> LogicalPlan {
         // MySQL pins every current-time function in a statement to one
         // timestamp; capture it once so folding sees a single instant.
-        let utc = chrono::Utc::now();
-        let local = match SESSION_TIME_ZONE.get() {
-            None => chrono::Local::now().naive_local(),
-            Some(SessionZone::Fixed(offset)) => utc.with_timezone(&offset).naive_local(),
-            Some(SessionZone::Named(zone)) => utc.with_timezone(&zone).naive_local(),
-        };
-        STATEMENT_NOW.set(Some(StatementNow {
-            local,
-            unix: utc.timestamp(),
-        }));
+        STATEMENT_NOW.set(Some(statement_now()));
         let plan = fold_constants(plan);
         // After folding so `DATE(c) = CURDATE()` sees a literal; before
         // pushdown so the produced column ranges reach the scan's pruning
@@ -579,9 +570,43 @@ enum SessionZone {
 }
 
 thread_local! {
+    static SESSION_TIMESTAMP_MICROS: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
     static SESSION_DEFAULT_WEEK_FORMAT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     static SESSION_TIME_ZONE: std::cell::Cell<Option<SessionZone>> =
         const { std::cell::Cell::new(None) };
+}
+
+/// Install a fixed statement clock, or restore the real clock with `None`.
+pub fn set_session_timestamp_micros(timestamp: Option<i64>) {
+    SESSION_TIMESTAMP_MICROS.set(timestamp);
+}
+
+/// The fixed clock that participates in query-sharing identity.
+#[must_use]
+pub fn session_timestamp_micros() -> Option<i64> {
+    SESSION_TIMESTAMP_MICROS.get()
+}
+
+/// The calendar year of this session's clock, needed by year-dependent caches.
+#[must_use]
+pub fn session_statement_year() -> i32 {
+    chrono::Datelike::year(&statement_now().local)
+}
+
+fn statement_now() -> StatementNow {
+    let utc = SESSION_TIMESTAMP_MICROS
+        .get()
+        .and_then(chrono::DateTime::from_timestamp_micros)
+        .unwrap_or_else(chrono::Utc::now);
+    let local = match SESSION_TIME_ZONE.get() {
+        None => utc.with_timezone(&chrono::Local).naive_local(),
+        Some(SessionZone::Fixed(offset)) => utc.with_timezone(&offset).naive_local(),
+        Some(SessionZone::Named(zone)) => utc.with_timezone(&zone).naive_local(),
+    };
+    StatementNow {
+        local,
+        unix: utc.timestamp(),
+    }
 }
 
 /// Installs the default week mode for planning, clamping it to 0 through 7.
@@ -769,6 +794,25 @@ fn fold_arithmetic(
 
 /// Resolve connection settings once, before expressions move to worker threads.
 fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
+    if matches!(
+        function,
+        ScalarFunction::Cast(DataType::Year)
+            | ScalarFunction::DeclaredCast {
+                target: DataType::Year,
+                ..
+            }
+    ) && args.len() == 1
+        && matches!(args[0].data_type, Some(DataType::Time64 { .. }))
+        && let Some(now) = STATEMENT_NOW.get()
+    {
+        args.push(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Int64(i64::from(chrono::Datelike::year(
+                &now.local,
+            )))),
+            data_type: Some(DataType::Int64),
+            nullable: false,
+        });
+    }
     let locale_arity = match function {
         ScalarFunction::DayName | ScalarFunction::MonthName => Some(1),
         ScalarFunction::DateFormat => Some(2),

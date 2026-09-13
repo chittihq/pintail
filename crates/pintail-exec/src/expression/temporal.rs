@@ -52,6 +52,8 @@ pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecErr
         "%Y-%m-%dT%H:%M:%S%.f",
         "%Y-%m-%d %H:%M:%S",
         "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M",
     ] {
         if let Ok(value) = NaiveDateTime::parse_from_str(value, format) {
             return Ok(value);

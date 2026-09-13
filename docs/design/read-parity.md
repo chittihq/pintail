@@ -137,3 +137,12 @@ source-column collations outrank encoded literals, and a binary comparison
 observes the text operand's encoded bytes. Binary-to-text conversions pad
 partial wide units and return NULL for invalid encoded input; UCS-2 raw
 code units remain available to byte consumers.
+
+### Statement clocks and temporal casts
+
+`SET timestamp` captures a fixed clock alongside the session time zone.
+Planning captures the calendar year for TIME-to-YEAR casts before execution
+moves to workers. Query sharing includes the fixed clock and calendar year,
+so both changing a session override and crossing a real year boundary
+separate answers. Compact numeric `TIME_TO_SEC` inputs share the TIME parser;
+YEAR casts apply their domain range and JSON's integer conversion rules.

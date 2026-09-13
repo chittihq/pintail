@@ -78,6 +78,8 @@ pub(crate) struct SharedQueryKey {
     pub(crate) sql: String,
     pub(crate) max_rows: usize,
     pub(crate) time_zone: Option<String>,
+    pub(crate) timestamp_micros: Option<i64>,
+    pub(crate) statement_year: i32,
     pub(crate) character_set: pintail_types::CharacterSet,
     pub(crate) calendar_locale: &'static str,
     pub(crate) default_week_format: u8,
@@ -103,6 +105,8 @@ impl SharedQueryKey {
             sql: sql.to_owned(),
             max_rows,
             time_zone: pintail_exec::session_time_zone_key(),
+            timestamp_micros: pintail_exec::session_timestamp_micros(),
+            statement_year: pintail_exec::session_statement_year(),
             character_set: pintail_sql::session_character_set(),
             calendar_locale: pintail_exec::session_calendar_locale(),
             default_week_format: pintail_exec::session_default_week_format(),
@@ -410,6 +414,8 @@ mod tests {
             sql: sql.to_owned(),
             max_rows: 100,
             time_zone: None,
+            timestamp_micros: None,
+            statement_year: 2020,
             character_set: pintail_types::CharacterSet::Utf8Mb4,
             calendar_locale: "en_US",
             default_week_format: 0,
@@ -498,6 +504,18 @@ mod tests {
             },
             SharedQueryKey {
                 time_zone: Some("f19800".to_owned()),
+                ..base.clone()
+            },
+            SharedQueryKey {
+                statement_year: 2021,
+                ..base.clone()
+            },
+            SharedQueryKey {
+                timestamp_micros: Some(1_593_561_600_000_000),
+                ..base.clone()
+            },
+            SharedQueryKey {
+                character_set: pintail_types::CharacterSet::Ucs2,
                 ..base.clone()
             },
             SharedQueryKey {
