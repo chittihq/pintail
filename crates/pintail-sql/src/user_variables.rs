@@ -9,7 +9,7 @@
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
-use sqlparser::ast::{Expr, Set, Statement, Value};
+use sqlparser::ast::Value;
 
 /// A connection's variables by lowercase name, without the `@`.
 pub type UserVariables = Arc<HashMap<String, Value>>;
@@ -50,62 +50,14 @@ pub(crate) fn user_variable(name: &str) -> Option<Value> {
     )
 }
 
-/// The user variables a `SET` statement assigns, as (name, expression)
-/// pairs in order. `None` unless every assignment targets a user variable.
-#[must_use]
-pub fn user_variable_assignments(statement: &Statement) -> Option<Vec<(String, Expr)>> {
-    let Statement::Set(set) = statement else {
-        return None;
-    };
-    let pairs = match set {
-        Set::SingleAssignment {
-            scope: None,
-            hivevar: false,
-            variable,
-            values,
-        } if values.len() == 1 => vec![(variable.to_string(), values[0].clone())],
-        Set::MultipleAssignments { assignments } => assignments
-            .iter()
-            .map(|assignment| (assignment.name.to_string(), assignment.value.clone()))
-            .collect(),
-        _ => return None,
-    };
-    pairs
-        .into_iter()
-        .map(|(name, value)| {
-            let name = name
-                .strip_prefix('@')
-                .filter(|rest| !rest.starts_with('@'))?;
-            Some((name.to_ascii_lowercase(), value))
-        })
-        .collect()
-}
+// A `SET` list is read from its own text by the wire layer, not from a
+// parsed form: rendering an expression back to SQL loses backslash escapes,
+// and the list can mix user variables with session settings, which a parse
+// into user-variable pairs alone cannot represent.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse_statement;
-
-    #[test]
-    fn assignments_name_only_user_variables() {
-        let statement = parse_statement("SET @a = 1, @B = 'x''y', @c = @a * 2").expect("parses");
-        let pairs = user_variable_assignments(&statement).expect("user variables");
-        assert_eq!(
-            pairs
-                .iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect::<Vec<_>>(),
-            ["a=1", "b='x''y'", "c=@a * 2"]
-        );
-        for other in [
-            "SET sql_mode = ''",
-            "SET @@session.time_zone = '+00:00'",
-            "SET @a = 1, x = 2",
-        ] {
-            let statement = parse_statement(other).expect("parses");
-            assert!(user_variable_assignments(&statement).is_none(), "{other}");
-        }
-    }
 
     #[test]
     fn a_reference_reads_the_scoped_value_or_null() {

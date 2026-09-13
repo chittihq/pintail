@@ -569,10 +569,63 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .expect("no rows");
     let none: Vec<u64> = connection.query("SELECT 1").await.expect("capped at zero");
     assert!(none.is_empty());
+    // A user variable is assigned by this connection's own machinery, which
+    // the client's row cap has no business limiting: at zero, every
+    // assignment used to store NULL.
+    connection
+        .query_drop("SET @under_cap = 5")
+        .await
+        .expect("assign under a zero cap");
     connection
         .query_drop("SET @@sql_select_limit= @save_limit")
         .await
         .expect("restore the cap");
+    let under_cap: Option<u64> = connection
+        .query_first("SELECT @under_cap")
+        .await
+        .expect("read back");
+    assert_eq!(under_cap, Some(5));
+    // A backslash survives the assignment: the value is not rendered back to
+    // SQL and re-parsed, which turned 'C:\\temp' into a tab.
+    connection
+        .query_drop(r"SET @path = 'C:\\temp'")
+        .await
+        .expect("assign a path");
+    let path: Option<String> = connection.query_first("SELECT @path").await.expect("path");
+    assert_eq!(path.as_deref(), Some(r"C:\temp"));
+    // := is the other spelling, and it is not rewritten inside a literal.
+    connection
+        .query_drop("SET @spelled := 'a:=b'")
+        .await
+        .expect("assign with :=");
+    let spelled: Option<String> = connection
+        .query_first("SELECT @spelled")
+        .await
+        .expect("spelled");
+    assert_eq!(spelled.as_deref(), Some("a:=b"));
+    // One SET can mix the two kinds, and both halves have to be applied.
+    connection
+        .query_drop("SET @mixed = 7, sql_select_limit = 1")
+        .await
+        .expect("mixed list");
+    let mixed: Option<u64> = connection
+        .query_first("SELECT @mixed")
+        .await
+        .expect("mixed");
+    assert_eq!(mixed, Some(7));
+    let capped_again: Vec<u64> = connection
+        .query("SELECT 1 UNION ALL SELECT 2")
+        .await
+        .expect("capped");
+    assert_eq!(
+        capped_again.len(),
+        1,
+        "the setting beside the user variable applies too"
+    );
+    connection
+        .query_drop("SET sql_select_limit = DEFAULT")
+        .await
+        .expect("uncap");
     let restored_rows: Vec<u64> = connection.query("SELECT 1").await.expect("uncapped");
     assert_eq!(restored_rows.len(), 1);
     connection
