@@ -40,6 +40,7 @@ const rustfsName = `pintail-browser-rustfs-${process.pid}-${nonce}`
 // Pinned rather than :latest - RustFS is pre-1.0 and the gate should not
 // change behaviour because an upstream tag moved.
 const RUSTFS_IMAGE = 'rustfs/rustfs:1.0.0-beta.12'
+const AWS_CLI_IMAGE = 'public.ecr.aws/aws-cli/aws-cli:latest'
 const RUSTFS = { user: 'rustfsadmin', password: 'rustfs-secret', bucket: 'pintail-browser' }
 const DATABASE = 'smoke_db'
 // A schema the probe user can reach but holds no table privilege on.
@@ -306,20 +307,32 @@ async function main() {
     if (attempt >= 120) throw new Error('RustFS did not become ready in time')
     await Bun.sleep(500)
   }
-  // mc runs on the Docker host and reaches RustFS over the container's own
-  // network namespace, so bucket creation does not depend on the published
-  // port being reachable from here. mc is an S3 client, not a MinIO-only one.
+  // The client runs on the Docker host and reaches RustFS over the
+  // container's own network namespace, so bucket creation does not depend on
+  // the published port being reachable from here.
+  //
+  // The AWS CLI rather than MinIO's `mc`: `mc`'s image stopped being
+  // anonymously pullable from Docker Hub and failed every CI run, while
+  // passing anywhere it was already cached. This one comes from AWS's public
+  // registry, which does not gate pulls, and it speaks S3 rather than
+  // MinIO - the server underneath has never been MinIO here anyway.
   await docker(
     'run',
     '--rm',
     '--network',
     `container:${rustfsName}`,
-    '--entrypoint',
-    'sh',
-    'minio/mc:latest',
-    '-c',
-    `mc alias set local http://127.0.0.1:9000 ${RUSTFS.user} ${RUSTFS.password} >/dev/null` +
-      ` && mc mb --ignore-existing local/${RUSTFS.bucket} >/dev/null`,
+    '--env',
+    `AWS_ACCESS_KEY_ID=${RUSTFS.user}`,
+    '--env',
+    `AWS_SECRET_ACCESS_KEY=${RUSTFS.password}`,
+    '--env',
+    'AWS_DEFAULT_REGION=us-east-1',
+    AWS_CLI_IMAGE,
+    's3',
+    'mb',
+    `s3://${RUSTFS.bucket}`,
+    '--endpoint-url',
+    'http://127.0.0.1:9000',
   )
 
   const binary = await buildPintail()

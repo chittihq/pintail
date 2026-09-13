@@ -37,7 +37,7 @@ PINTAIL_EXTERNAL_WIRE_CLIENTS=1 \
 PINTAIL_MYSQL_CLI=/opt/homebrew/opt/mysql-client@8.4/bin/mysql \
   cargo test -p pintail-wire --test wire_compat -- --nocapture
 PINTAIL_DASHBOARD_PREBUILT=1 \
-  cargo test -p pintail-backup --test minio_restore -- --ignored --nocapture
+  cargo test -p pintail-backup --test s3_restore -- --ignored --nocapture
 PINTAIL_DASHBOARD_PREBUILT=1 \
   cargo test -p pintail-api --test mysql_api \
   -- --ignored --nocapture --test-threads=1
