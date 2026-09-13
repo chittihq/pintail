@@ -1200,12 +1200,34 @@ interface Baseline {
   files: Record<string, string[]>
 }
 
+/// Records what this run proved exact.
+///
+/// The baseline is a ratchet, so a run may only ever speak for the files it
+/// ran. Writing it from the run alone erased every other file's entry:
+/// `MTR_FILES=x MTR_BANK=1` reduced the whole baseline to one file, and so
+/// did any run that reached fewer files than the selection - which is how a
+/// regression could be banked away instead of caught.
 function bank(results: FileResult[], mysqlVersion: string) {
-  const files: Record<string, string[]> = {}
-  for (const r of results) if (r.exact.length) files[r.file] = r.exact
+  // A corpus that is not the pinned one numbers its statements differently,
+  // so its results cannot join a baseline that describes the pinned one.
+  if (LOCAL_DIR) throw new Error('MTR_BANK=1 banks the pinned suite; unset MTR_LOCAL_DIR')
+  const previous = existsSync(baselinePath)
+    ? (JSON.parse(readFileSync(baselinePath, 'utf8')) as Baseline)
+    : undefined
+  if (previous && previous.ref !== REF) {
+    throw new Error(`the baseline was banked at ${previous.ref.slice(0, 12)}, this run fetches ${REF.slice(0, 12)}; rebank the whole suite`)
+  }
+  const files: Record<string, string[]> = { ...(previous?.files ?? {}) }
+  for (const r of results) {
+    if (r.exact.length) files[r.file] = r.exact
+    // A file that ran and proved nothing gives up whatever it held: that is
+    // the ratchet turning, and the gate reports it as lost statements first.
+    else delete files[r.file]
+  }
   const baseline: Baseline = { suite: SUITE_NAME, ref: REF, oracle: mysqlVersion, files }
   writeFileSync(baselinePath, JSON.stringify(baseline, null, 1) + '\n')
-  log(`banked ${Object.values(files).reduce((n, ids) => n + ids.length, 0)} exact statements across ${Object.keys(files).length} files`)
+  const kept = Object.keys(files).length - results.filter((r) => r.exact.length).length
+  log(`banked ${Object.values(files).reduce((n, ids) => n + ids.length, 0)} exact statements across ${Object.keys(files).length} files (${kept} carried over from files this run did not run)`)
 }
 
 /// Statements the baseline holds as exact that this run did not match.
