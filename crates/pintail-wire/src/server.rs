@@ -1472,6 +1472,14 @@ impl Backend {
             .to_owned();
         match name {
             "time_zone" => {
+                // The global zone, or DEFAULT, is the zone a new session starts in.
+                let value = if value.eq_ignore_ascii_case("@@global.time_zone")
+                    || value.eq_ignore_ascii_case("default")
+                {
+                    self.fresh_session().time_zone
+                } else {
+                    value
+                };
                 if pintail_exec::set_session_time_zone(Some(&value)) {
                     let _ = pintail_exec::set_session_time_zone(None);
                     session.time_zone = value;

@@ -5886,10 +5886,11 @@ fn exact_numeric_type(data_type: Option<DataType>) -> bool {
 /// A literal behind a character set introducer (`_utf8mb4 '...'`,
 /// `_binary X'00'`). The introducer names how the literal's bytes are
 /// encoded: under a UTF-8 set they are this engine's own text, under
-/// `_binary` they are bytes, and under `_latin1` or `_ascii` they spell the
-/// same text only while every byte is ASCII. Any other set - `_ucs2`,
-/// `_utf16`, a non-ASCII latin1 literal - would need transcoding, and reading
-/// its bytes as UTF-8 answers different text, so it is refused.
+/// `_binary` they are bytes, and under a single- or multi-byte set such as
+/// `_latin1` or `_koi8r` they spell the same text only while every byte is
+/// ASCII. A wide set (`_ucs2`, `_utf16`, `_utf32`) or a non-ASCII literal
+/// would need transcoding, and reading its bytes as UTF-8 answers different
+/// text, so it is refused.
 fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
     let charset = prefix
         .strip_prefix('_')
@@ -5915,9 +5916,9 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
             Ok(text) => Value::Utf8(text.to_owned()),
             Err(_) => return refuse(),
         },
-        "latin1" | "ascii" if bytes.is_ascii() => {
-            Value::Utf8(String::from_utf8_lossy(bytes).into_owned())
-        }
+        // A wide set never spells ASCII as ASCII; every other set does.
+        "ucs2" | "utf16" | "utf16le" | "utf32" => return refuse(),
+        _ if bytes.is_ascii() => Value::Utf8(String::from_utf8_lossy(bytes).into_owned()),
         _ => return refuse(),
     };
     Ok(BoundExpr {
