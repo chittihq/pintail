@@ -665,6 +665,32 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET character_set_connection = 'utf8mb4'")
         .await
         .expect("restore connection encoding");
+    let floats: Option<(String, String)> = connection
+        .query_first("SELECT CAST(1.23456789 AS FLOAT), CONCAT(CAST(20000101235959 AS FLOAT))")
+        .await
+        .expect("FLOAT text rendering");
+    assert_eq!(
+        floats,
+        Some(("1.23457".to_owned(), "2.00001e13".to_owned()))
+    );
+    let floats: Option<(f64, f64)> = connection
+        .exec_first("SELECT CAST(1.23456789 AS FLOAT), CAST(1/3 AS DOUBLE)", ())
+        .await
+        .expect("FLOAT binary precision and decimal guard digits");
+    assert_eq!(floats, Some((f64::from(1.234_567_9_f32), 0.333_333_333)));
+    let stored_floats: Vec<Option<String>> = connection
+        .query("SELECT float_value FROM type_fidelity ORDER BY id")
+        .await
+        .expect("replica FLOAT text and NULL");
+    assert_eq!(stored_floats, vec![Some("1234.57".to_owned()), None]);
+    let stored_float: Option<f64> = connection
+        .exec_first(
+            "SELECT float_value FROM type_fidelity WHERE id = ?",
+            (1_u64,),
+        )
+        .await
+        .expect("replica FLOAT binary precision");
+    assert_eq!(stored_float, Some(f64::from(1_234.567_7_f32)));
     // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
     // setMaxRows asks; a written LIMIT is its own.
     connection
@@ -1535,6 +1561,7 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
                     Value::Binary(vec![0, 255, 16, 222, 173, 190, 239]),
                     Value::Boolean(true),
                     Value::Int64(-128),
+                    Value::float64(f64::from(1_234.567_7_f32)),
                 ],
                 1,
                 false,
@@ -1552,6 +1579,7 @@ fn seed_replica(data_dir: &std::path::Path, metadata_path: &std::path::Path) {
                     Value::Binary(Vec::new()),
                     Value::Boolean(false),
                     Value::Int64(0),
+                    Value::Null,
                 ],
                 2,
                 false,
@@ -1663,6 +1691,7 @@ fn type_table() -> SourceTable {
             true,
         ),
         ("signed_value", "tinyint", "tinyint", DataType::Int8, true),
+        ("float_value", "float", "float", DataType::Float32, true),
     ];
     let mut columns = vec![SourceColumn {
         id: 1,

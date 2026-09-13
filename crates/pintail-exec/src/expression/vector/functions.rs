@@ -81,9 +81,11 @@ const fn reads_internal_digits(function: ScalarFunction) -> bool {
             | ScalarFunction::Truncate { decimal: true }
             | ScalarFunction::Ceil { decimal: true }
             | ScalarFunction::Floor { decimal: true }
-            | ScalarFunction::Cast(DataType::Decimal { .. })
+            | ScalarFunction::Cast(
+                DataType::Decimal { .. } | DataType::Float32 | DataType::Float64
+            )
             | ScalarFunction::DeclaredCast {
-                target: DataType::Decimal { .. },
+                target: DataType::Decimal { .. } | DataType::Float32 | DataType::Float64,
                 ..
             }
     )

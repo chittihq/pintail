@@ -133,6 +133,29 @@ impl Float64 {
         }
     }
 
+    /// FLOAT's six significant digits in a result cell.
+    #[must_use]
+    pub fn mysql_float_text(self) -> String {
+        let value = self.get();
+        if value == 0.0 {
+            return "0".to_owned();
+        }
+        let rounded = format!("{value:.5e}").parse::<f64>().unwrap_or(value);
+        Self::new(rounded).mysql_text()
+    }
+
+    /// FLOAT's text conversion uses its twelve-character display width.
+    #[must_use]
+    pub fn mysql_float_string(self) -> String {
+        let text = self.mysql_float_text();
+        if text.len() <= 12 {
+            text
+        } else {
+            let value = text.parse::<f64>().unwrap_or(self.get());
+            format!("{value:e}")
+        }
+    }
+
     /// Returns the original IEEE-754 bits.
     #[must_use]
     pub fn to_bits(self) -> u64 {

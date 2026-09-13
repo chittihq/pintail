@@ -2457,8 +2457,8 @@ fn encode_rows(
                         into.push_binary_row(&cells);
                     } else {
                         let mut text = into.text_row();
-                        for value in row {
-                            put_text_value(&mut text, value);
+                        for (field, value) in fields.iter().zip(row) {
+                            put_text_value(&mut text, value, field.data_type);
                         }
                     }
                     after_row(into)?;
@@ -2475,8 +2475,10 @@ fn encode_rows(
                         into.push_binary_row(&cells);
                     } else {
                         let mut text = into.text_row();
-                        for column in batch.columns() {
-                            column.with_cell(row, |cell| put_text_cell(&mut text, cell));
+                        for (field, column) in fields.iter().zip(batch.columns()) {
+                            column.with_cell(row, |cell| {
+                                put_text_cell(&mut text, cell, field.data_type);
+                            });
                         }
                     }
                     after_row(into)?;
@@ -2621,13 +2623,20 @@ impl crate::engine::RowSink for WireSink {
 
 /// Writes one value as a text-protocol cell, straight into the row: the
 /// same bytes [`text_column_value`] renders, without a buffer per cell.
-fn put_text_value(row: &mut TextRow<'_>, value: &Value) {
+fn put_text_value(row: &mut TextRow<'_>, value: &Value, data_type: Option<DataType>) {
     match value {
         Value::Null => row.null(),
         Value::Boolean(value) => row.signed(i64::from(*value)),
         Value::Int64(value) => row.signed(*value),
         Value::UInt64(value) => row.unsigned(*value),
-        Value::Float64(value) => row.bytes(value.mysql_text().as_bytes()),
+        Value::Float64(value) => row.bytes(
+            if data_type == Some(DataType::Float32) {
+                value.mysql_float_text()
+            } else {
+                value.mysql_text()
+            }
+            .as_bytes(),
+        ),
         Value::Utf8(value) | Value::Enum { label: value, .. } => row.bytes(value.as_bytes()),
         Value::DecimalAverage(average) => row.bytes(average.label.as_bytes()),
         Value::Binary(value) => row.bytes(value),
@@ -2636,14 +2645,24 @@ fn put_text_value(row: &mut TextRow<'_>, value: &Value) {
 
 /// Writes one batch cell as a text-protocol cell: the bytes its value would
 /// render as, read from the column without materializing it.
-fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>) {
+fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, data_type: Option<DataType>) {
     match cell {
         Cell::Null => row.null(),
         Cell::Signed(value) => row.signed(value),
         Cell::Unsigned(value) => row.unsigned(value),
-        Cell::Float(value) => row.bytes(pintail_types::Float64::new(value).mysql_text().as_bytes()),
+        Cell::Float(value) => {
+            let value = pintail_types::Float64::new(value);
+            row.bytes(
+                if data_type == Some(DataType::Float32) {
+                    value.mysql_float_text()
+                } else {
+                    value.mysql_text()
+                }
+                .as_bytes(),
+            );
+        }
         Cell::Text(bytes) => row.bytes(bytes),
-        Cell::Value(value) => put_text_value(row, value),
+        Cell::Value(value) => put_text_value(row, value, data_type),
     }
 }
 

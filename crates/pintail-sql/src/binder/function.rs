@@ -52,7 +52,7 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
             }
             6
         }
-        Some(DataType::Float64 | DataType::Binary) => 6,
+        Some(DataType::Float32 | DataType::Float64 | DataType::Binary) => 6,
         _ => 0,
     }
 }
@@ -1182,6 +1182,16 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
     // through to `None` and reject. Fractional-second precision rides along
     // where MySQL allows it.
     match data_type {
+        SqlDataType::Float(info) => {
+            use sqlparser::ast::ExactNumberInfo;
+            return match info {
+                ExactNumberInfo::None | ExactNumberInfo::Precision(0..=24) => {
+                    Some(DataType::Float32)
+                }
+                ExactNumberInfo::Precision(25..=53) => Some(DataType::Float64),
+                _ => None,
+            };
+        }
         SqlDataType::Date => return Some(DataType::Date32),
         SqlDataType::Datetime(fsp) | SqlDataType::Timestamp(fsp, _) => {
             let fsp = fsp
@@ -1227,6 +1237,7 @@ pub(super) fn bind_scalar(
     function: ScalarFunction,
     args: Vec<BoundExpr>,
 ) -> Result<BoundExpr, BindError> {
+    let args = float_string_arguments(function, args);
     let args = if matches!(
         function,
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
@@ -1357,7 +1368,7 @@ pub(super) fn bind_scalar(
         {
             (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }
-        ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
+        ScalarFunction::ConcatWs
             if args
                 .iter()
                 .any(|argument| argument.data_type == Some(DataType::Binary)) =>
@@ -1483,7 +1494,7 @@ pub(super) fn bind_scalar(
             extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
+        ScalarFunction::FloatString | ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
@@ -2105,4 +2116,72 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
             right: Box::new(right),
         },
     })
+}
+
+/// A floating value retains its binary precision until a string consumer.
+pub(super) fn float_string_argument(expression: BoundExpr) -> BoundExpr {
+    if expression.data_type != Some(DataType::Float32) {
+        return expression;
+    }
+    crate::text_charset::annotate(
+        crate::text_charset::wrap(expression, ScalarFunction::FloatString, DataType::Utf8),
+        crate::session_character_set(),
+    )
+}
+
+fn float_string_arguments(function: ScalarFunction, args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    use ScalarFunction as F;
+    let mixed_text = args
+        .iter()
+        .any(|argument| argument.data_type == Some(DataType::Utf8));
+    args.into_iter()
+        .enumerate()
+        .map(|(index, argument)| {
+            let string = match function {
+                F::Concat | F::ConcatWs | F::Replace | F::TrimPattern { .. } | F::FindInSet => true,
+                F::If => mixed_text && index > 0,
+                F::Coalesce => mixed_text,
+                F::Elt => index > 0,
+                F::Insert => index == 0 || index == 3,
+                F::Lpad | F::Rpad => index == 0 || index == 2,
+                F::Locate
+                | F::Instr
+                | F::SubstringIndex
+                | F::RegexpLike { .. }
+                | F::RegexpSubstr
+                | F::RegexpInstr => index < 2,
+                F::RegexpReplace => index < 3,
+                F::Cast(DataType::Utf8 | DataType::Binary)
+                | F::DeclaredCast {
+                    target: DataType::Utf8 | DataType::Binary,
+                    ..
+                }
+                | F::Length
+                | F::CharLength
+                | F::Lower
+                | F::Upper
+                | F::Trim
+                | F::Left
+                | F::Right
+                | F::Substring
+                | F::Reverse
+                | F::Repeat
+                | F::Ascii
+                | F::Ord
+                | F::Md5
+                | F::Sha1
+                | F::Sha2
+                | F::Crc32
+                | F::ToBase64
+                | F::FromBase64
+                | F::Unhex => index == 0,
+                _ => false,
+            };
+            if string {
+                float_string_argument(argument)
+            } else {
+                argument
+            }
+        })
+        .collect()
 }

@@ -146,3 +146,13 @@ moves to workers. Query sharing includes the fixed clock and calendar year,
 so both changing a session override and crossing a real year boundary
 separate answers. Compact numeric `TIME_TO_SEC` inputs share the TIME parser;
 YEAR casts apply their domain range and JSON's integer conversion rules.
+
+### Floating-point casts
+
+FLOAT casts narrow the numeric value to single precision while retaining
+that logical type through planning and result metadata. Numeric consumers
+read the narrowed value; string consumers use six significant digits and
+the FLOAT display width. Text-protocol result cells and binary-protocol
+values have separate rendering tests, including a stored FLOAT column and
+NULL. Floating casts join the decimal guard-digit path in both scalar and
+vector execution so division is not rounded prematurely.

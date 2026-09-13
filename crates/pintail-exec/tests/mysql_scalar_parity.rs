@@ -642,3 +642,27 @@ fn a_time_column_year_captures_the_statement_clock() {
     });
     assert_eq!(answer, "2020");
 }
+
+#[test]
+fn float_casts_narrow_values_and_preserve_decimal_guard_digits() {
+    assert_answers(&[
+        ("CAST(CAST(16777217 AS FLOAT) AS SIGNED)", "16777216"),
+        (
+            "CAST(CAST(1.23456789 AS FLOAT) AS DOUBLE)",
+            "float 1.2345678806304932",
+        ),
+        ("CAST(1/3 AS DOUBLE)", "float 0.333333333"),
+        ("MAKETIME(1, 2, CAST('1.6' AS FLOAT))", "01:02:01.600000"),
+        (
+            "TIMEDIFF(CAST('101112' AS DOUBLE), TIME'101010')",
+            "00:01:02.000000",
+        ),
+        ("CONCAT(CAST(1.23456789 AS FLOAT))", "1.23457"),
+        ("CONCAT(CAST(20000101235959 AS FLOAT))", "2.00001e13"),
+        ("CAST(CAST(1.23456789 AS FLOAT) AS CHAR)", "1.23457"),
+        (
+            "CAST(CAST(1.23456789 AS FLOAT) AS DECIMAL(12,9))",
+            "1.234567881",
+        ),
+    ]);
+}

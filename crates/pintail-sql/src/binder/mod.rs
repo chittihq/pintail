@@ -4756,6 +4756,11 @@ fn bind_aggregate(
     {
         ensure_supported_text_collation(&[expression])?;
     }
+    let expr = if aggregate_function == AggregateFunction::GroupConcat {
+        expr.map(function::float_string_argument)
+    } else {
+        expr
+    };
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let charset = expr
         .as_ref()

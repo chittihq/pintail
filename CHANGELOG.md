@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- FLOAT casts preserve single-precision values, decimal guard digits survive
+  floating casts, and FLOAT text/binary results retain their distinct
+  precision. String and temporal consumers honor FLOAT formatting.
+
 - Session-fixed statement clocks and TIME-to-YEAR casts, including year
   boundaries across time zones. Temporal casts accept omitted seconds,
   enforce YEAR's range, and read JSON values and compact times correctly.

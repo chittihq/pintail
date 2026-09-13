@@ -823,6 +823,8 @@ pub enum ScalarFunction {
         /// Strip from the end.
         trailing: bool,
     },
+    /// Render a single-precision value in a string context.
+    FloatString,
     /// Normalize Unicode into a SQL character set and retain its identity.
     TextCharset(pintail_types::CharacterSet),
     /// Read encoded bytes as Unicode, retaining the original character set.

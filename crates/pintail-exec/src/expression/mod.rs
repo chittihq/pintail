@@ -1498,7 +1498,7 @@ impl CompiledExpr {
                     ScalarFunction::JsonType => 16,
                     ScalarFunction::JsonDepth
                     | ScalarFunction::JsonOverlaps
-                    | ScalarFunction::JsonMemberOf => 24,
+                    | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate => string_arguments.saturating_mul(12),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
@@ -1784,7 +1784,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonContainsPath
                     | ScalarFunction::JsonDepth
                     | ScalarFunction::JsonOverlaps
-                    | ScalarFunction::JsonMemberOf => 24,
+                    | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
                     ScalarFunction::Repeat
                     | ScalarFunction::Insert
                     | ScalarFunction::Space
@@ -2072,9 +2072,9 @@ fn evaluate_scalar(
         | ScalarFunction::Truncate { decimal: true }
         | ScalarFunction::Ceil { decimal: true }
         | ScalarFunction::Floor { decimal: true }
-        | ScalarFunction::Cast(DataType::Decimal { .. })
+        | ScalarFunction::Cast(DataType::Decimal { .. } | DataType::Float32 | DataType::Float64)
         | ScalarFunction::DeclaredCast {
-            target: DataType::Decimal { .. },
+            target: DataType::Decimal { .. } | DataType::Float32 | DataType::Float64,
             ..
         } => {
             // The rounding family reads a computed operand's internal digits,
@@ -2232,6 +2232,9 @@ fn evaluate_eager_scalar_inner(
                 text.to_uppercase()
             }))
         }
+        ScalarFunction::FloatString => Ok(Value::Utf8(
+            pintail_types::Float64::new(mysql_f64(&values[0])?).mysql_float_string(),
+        )),
         ScalarFunction::TextCharset(charset) => {
             let text = scalar_string(&values[0])?;
             charset
@@ -3323,8 +3326,8 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
             let (Some(left), Some(right)) = (
-                parse_temporal_micros(&scalar_string(&values[0])?),
-                parse_temporal_micros(&scalar_string(&values[1])?),
+                temporal_argument(&values[0], argument_types.first().copied().flatten())?,
+                temporal_argument(&values[1], argument_types.get(1).copied().flatten())?,
             ) else {
                 return Ok(Value::Null);
             };
@@ -3347,8 +3350,8 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::TimeDiff => {
             let (Some(left), Some(right)) = (
-                parse_temporal_micros(&scalar_string(&values[0])?),
-                parse_temporal_micros(&scalar_string(&values[1])?),
+                temporal_argument(&values[0], argument_types.first().copied().flatten())?,
+                temporal_argument(&values[1], argument_types.get(1).copied().flatten())?,
             ) else {
                 return Ok(Value::Null);
             };
@@ -3568,6 +3571,23 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::MakeTime => {
             let hour = mysql_i64(&values[0])?;
             let minute = mysql_i64(&values[1])?;
+            if matches!(
+                argument_types.get(2),
+                Some(Some(DataType::Float32 | DataType::Float64))
+            ) {
+                let seconds = mysql_f64(&values[2])?;
+                if !(0.0..60.0).contains(&seconds) {
+                    return Ok(Value::Null);
+                }
+                let text = format!("{seconds:.6}");
+                let (whole, fraction) = text.split_once('.').ok_or(ExecError::InvalidDateTime)?;
+                let whole = whole
+                    .parse::<i64>()
+                    .map_err(|_| ExecError::InvalidDateTime)?;
+                return Ok(make_time(hour, minute, whole).map_or(Value::Null, |clock| {
+                    Value::Utf8(format!("{clock}.{fraction}"))
+                }));
+            }
             // MySQL keeps a fractional second: MAKETIME(12,15,30.5) is
             // 12:15:30.500000. The fraction is read from the argument's own
             // text so its digit count survives the integer conversion.
@@ -4061,7 +4081,11 @@ fn numeric_cast_operand<'a>(
 ) -> std::borrow::Cow<'a, Value> {
     let numeric = matches!(
         target,
-        DataType::Decimal { .. } | DataType::Int64 | DataType::UInt64 | DataType::Float64
+        DataType::Decimal { .. }
+            | DataType::Int64
+            | DataType::UInt64
+            | DataType::Float32
+            | DataType::Float64
     );
     if numeric && matches!(argument_types.first(), Some(Some(DataType::Time64 { .. }))) {
         // An integer target reads a whole-second TIME straight from its
@@ -4160,6 +4184,16 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
     // has to truncate the time, not merely relabel the column. MySQL answers
     // NULL for a value it cannot interpret rather than raising.
     match data_type {
+        Some(DataType::Float32) => {
+            // Narrow once; subsequent numeric consumers read the narrowed bits.
+            #[allow(clippy::cast_possible_truncation)]
+            let narrowed = mysql_f64(value)? as f32;
+            return if narrowed.is_finite() {
+                Ok(Value::float64(f64::from(narrowed)))
+            } else {
+                Err(ExecError::NumericOverflow)
+            };
+        }
         Some(DataType::Date32) => {
             let text = scalar_string(value)?;
             if let Some((date, _)) = canonical_temporal(&text) {
@@ -4390,6 +4424,18 @@ struct TemporalMicros {
 
 /// The largest TIME, 838:59:59, in microseconds.
 const MAX_TIME_MICROS: i128 = (838 * 3600 + 59 * 60 + 59) * 1_000_000;
+
+fn temporal_argument(
+    value: &Value,
+    data_type: Option<DataType>,
+) -> Result<Option<TemporalMicros>, ExecError> {
+    let text = if matches!(data_type, Some(DataType::Float32 | DataType::Float64)) {
+        format!("{:.6}", mysql_f64(value)?)
+    } else {
+        scalar_string(value)?
+    };
+    Ok(parse_temporal_micros(&text))
+}
 
 fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
     let text = text.trim();
