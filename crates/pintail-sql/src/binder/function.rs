@@ -1422,11 +1422,11 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::If => (
-            common_result_type(&args[1..])?,
+            conditional_result_type(&args[1..])?,
             args[1..].iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Coalesce => (
-            common_result_type(&args)?,
+            conditional_result_type(&args)?,
             args.iter().all(|argument| argument.nullable),
         ),
         ScalarFunction::NullIf => (args[0].data_type, true),
@@ -1750,6 +1750,16 @@ pub(super) fn bind_scalar(
     let charset = crate::text_charset::scalar_charset(function, &args);
     let mut args = args;
     coerce_decimal_branches(function, data_type, &mut args);
+    if data_type == Some(DataType::Binary) {
+        let branches = match function {
+            ScalarFunction::If => &mut args[1..],
+            ScalarFunction::Coalesce => &mut args[..],
+            _ => &mut [],
+        };
+        for branch in branches {
+            *branch = crate::text_charset::encoded(branch.clone());
+        }
+    }
     let mut function = function;
     crate::text_charset::byte_arguments(&mut function, &mut args);
     Ok(crate::text_charset::annotate(
@@ -1938,6 +1948,22 @@ fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindErro
         }));
     }
     common_result_type(args)
+}
+
+fn conditional_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
+    let common = common_result_type(args)?;
+    // A possible binary result keeps the conditional in the byte domain,
+    // even when the branch selected on this row is text.
+    Ok(
+        if args
+            .iter()
+            .any(|arg| arg.data_type == Some(DataType::Binary))
+        {
+            Some(DataType::Binary)
+        } else {
+            common
+        },
+    )
 }
 
 fn common_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {

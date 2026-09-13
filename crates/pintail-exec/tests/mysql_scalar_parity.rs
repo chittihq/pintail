@@ -731,3 +731,24 @@ fn string_search_preserves_accents_and_source_character_positions() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn conditional_binary_branches_keep_bytes_and_comparison_domain() {
+    for (expression, expected) in [
+        ("IF(id = 1, BINARY 'A', 'a') = 'a'", "Boolean(false)"),
+        ("IF(id = 1, 'A', BINARY 'a') = 'a'", "Boolean(false)"),
+        (
+            "CASE WHEN id = 1 THEN BINARY 'A' ELSE 'a' END = 'a'",
+            "Boolean(false)",
+        ),
+        (
+            "COALESCE(IF(id = 1, NULL, 'a'), BINARY 'A') = 'a'",
+            "Boolean(false)",
+        ),
+        ("HEX(IF(id = 1, X'FF', 'a'))", "FF"),
+        ("HEX(IF(id = 1, _ucs2 X'044F', BINARY 'a'))", "044F"),
+        ("HEX(COALESCE(_ucs2 X'044F', BINARY 'a'))", "044F"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
