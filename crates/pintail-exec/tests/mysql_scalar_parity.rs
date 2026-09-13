@@ -243,6 +243,12 @@ fn a_decimal_cast_clamps_to_its_declared_range() {
         ("CAST(TIME'838:59:59' AS DECIMAL(7,2))", "99999.99"),
         ("CAST(TIME'01:02:03' AS DECIMAL(7,2))", "10203.00"),
         ("CAST(123456.7 AS DECIMAL(7,2))", "99999.99"),
+        ("CAST(id * 111111 AS DECIMAL(7,2))", "99999.99"),
+        ("CAST(REPEAT('1', id * 6) AS DECIMAL(7,2))", "99999.99"),
+        (
+            "CAST(CAST(REPEAT('1', id * 6) AS TIME) AS DECIMAL(7,2))",
+            "99999.99",
+        ),
     ]);
 }
 
@@ -359,6 +365,17 @@ fn text_read_as_a_time_is_clamped_and_compact_digits_stay_a_time() {
         ("EXTRACT(HOUR FROM '100000:02:03')", "838"),
         ("HOUR('230322')", "23"),
         ("ADDTIME('230322', '1')", "23:03:23"),
+        ("CAST(REPEAT('1', id * 6) AS TIME)", "11:11:11"),
+        (
+            "CAST(CONCAT(REPEAT('1', id * 6), '.25') AS TIME(2))",
+            "11:11:11.25",
+        ),
+        (
+            "CAST(CONCAT('-', REPEAT('1', id * 6)) AS TIME)",
+            "-11:11:11",
+        ),
+        ("CAST(CONCAT('2006010', id) AS TIME)", "838:59:59"),
+        ("CAST(CONCAT('2006010111121', id) AS TIME)", "11:12:11"),
     ]);
 }
 

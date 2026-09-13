@@ -4127,7 +4127,15 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
 /// rounded before the documented +/-838:59:59 clamp.
 fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
     let text = text.trim();
-    if let Ok(datetime) = parse_mysql_datetime(text) {
+    let unsigned = text.trim_start_matches(['-', '+']);
+    let whole = unsigned
+        .split_once('.')
+        .map_or(unsigned, |(whole, _)| whole);
+    // A short run of digits is HHMMSS here, even if the same digits are
+    // also a valid compact calendar date. Full compact datetimes retain
+    // their clock portion.
+    let compact_time = whole.len() < 12 && whole.bytes().all(|byte| byte.is_ascii_digit());
+    if !compact_time && let Ok(datetime) = parse_mysql_datetime(text) {
         let fraction = format!("{:06}", datetime.and_utc().timestamp_subsec_micros());
         return format_mysql_time(
             false,
