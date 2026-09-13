@@ -1294,6 +1294,17 @@ async function main() {
   }
   const [[version]] = await mysqlRoot.query<mysql.RowDataPacket[][]>({ sql: 'SELECT VERSION()', rowsAsArray: true })
   const mysqlVersion = String((version as unknown as string[])[0])
+  // The baseline records which oracle proved its statements exact, and
+  // `mysql:8.4` is a moving tag. A patch release that changes an answer
+  // would otherwise show up as a Pintail regression - the gate cannot tell
+  // the two apart, so it says which one this is and asks for a deliberate
+  // rebank instead of guessing.
+  if (baseline && baseline.oracle !== mysqlVersion) {
+    throw new Error(
+      `the baseline was banked against MySQL ${baseline.oracle}, this run uses ${mysqlVersion}: ` +
+        'the oracle moved. Review the differences and rebank with MTR_BANK=1, or pin MTR_ORACLE_IMAGE to the banked version.',
+    )
+  }
 
   const binary = await buildPintail()
   pintailDataDir = mkdtempSync(join(tmpdir(), 'pintail-mtr-'))
