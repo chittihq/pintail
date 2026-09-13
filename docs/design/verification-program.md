@@ -115,6 +115,8 @@ The first burn-down (P1c, P1d) fixed defects the existing gates did not reach.
   a probe row count waiting on a write lock; two source tables whose names
   differ only in case stopping the stream for the whole database.
 
+Open: in one replayed file the stream went quiet, with no error, after a copy
+that fell back to per-worker snapshots beside a table in use.
 Open: after a resnapshot fails on a locked table, every table in the database
 reports the error until the supervisor retries, and one replay run saw a table
 re-created with a new schema fail change capture with a fingerprint mismatch
