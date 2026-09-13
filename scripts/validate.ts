@@ -704,14 +704,25 @@ async function dockerHostPreflight(
       status('preflight: could not read docker host free space (continuing)')
     }
   }
-  const leftovers = await docker(['ps', '-a', '--format', '{{.Names}}'])
+  // A leftover is a container a PREVIOUS run abandoned, which means one
+  // that is not running. A running container with a harness prefix belongs
+  // to somebody - another run on this host, or the farm, which names its
+  // CDC-matrix containers under the e2e prefix - and removing it killed
+  // their work mid-test. Two docker hosts and split stages make concurrent
+  // runs ordinary, so the state is checked rather than the name alone.
+  const leftovers = await docker(['ps', '-a', '--format', '{{.Names}}\t{{.State}}'])
   const owned = leftovers.output
     .split('\n')
-    .filter((name) => OWNED_CONTAINER_PREFIXES.some((prefix) => name.startsWith(prefix)))
-    .filter((name) => !name.includes(KEPT_CONTAINER_MARKER))
-  for (const name of owned) {
+    .map((line) => line.split('\t'))
+    .filter(([name]) => name && OWNED_CONTAINER_PREFIXES.some((prefix) => name.startsWith(prefix)))
+    .filter(([name]) => !name!.includes(KEPT_CONTAINER_MARKER))
+  for (const [name, state] of owned) {
+    if (state !== 'exited' && state !== 'created' && state !== 'dead') {
+      status(`preflight: leaving ${state} harness container ${name} alone - it is someone's run`)
+      continue
+    }
     status(`preflight: removing leftover harness container ${name}`)
-    await docker(['rm', '-f', name])
+    await docker(['rm', '-f', name!])
   }
   return null
 }
