@@ -3230,7 +3230,8 @@ fn evaluate_eager_scalar_inner(
                 .and_then(|part| part.split('.').next())
                 .and_then(|part| part.parse::<i64>().ok())
                 .unwrap_or(0);
-            let total = hours * 3600 + minutes * 60 + seconds;
+            // The text is a TIME first, clamped to 838:59:59.
+            let total = (hours * 3600 + minutes * 60 + seconds).min(838 * 3600 + 59 * 60 + 59);
             Ok(Value::Int64(if negative { -total } else { total }))
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
@@ -4195,6 +4196,9 @@ struct TemporalMicros {
     fsp: u8,
 }
 
+/// The largest TIME, 838:59:59, in microseconds.
+const MAX_TIME_MICROS: i128 = (838 * 3600 + 59 * 60 + 59) * 1_000_000;
+
 fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
     let text = text.trim();
     let fraction_digits = |text: &str| -> u8 {
@@ -4202,7 +4206,10 @@ fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
             u8::try_from(fraction.len().min(6)).unwrap_or(6)
         })
     };
-    if let Ok(datetime) = parse_mysql_datetime(text) {
+    // Digits alone are a packed TIME here (HHMMSS), not a packed date.
+    if !text.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(datetime) = parse_mysql_datetime(text)
+    {
         return Some(TemporalMicros {
             micros: i128::from(datetime.and_utc().timestamp_micros()),
             datetime: true,
@@ -4246,6 +4253,8 @@ fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
         .checked_add(hours.checked_mul(3_600)?)?
         .checked_add(minutes * 60 + seconds)?;
     let total = i128::from(seconds_total) * 1_000_000 + i128::from(micro_fraction);
+    // Text read as a TIME is clamped to the type's range, as MySQL clamps it.
+    let total = total.min(MAX_TIME_MICROS);
     Some(TemporalMicros {
         micros: if negative { -total } else { total },
         datetime: false,

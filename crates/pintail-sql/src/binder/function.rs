@@ -1179,6 +1179,14 @@ pub(super) fn bind_scalar(
     function: ScalarFunction,
     args: Vec<BoundExpr>,
 ) -> Result<BoundExpr, BindError> {
+    let args = if matches!(
+        function,
+        ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
+    ) {
+        extremum_operands(args)
+    } else {
+        args
+    };
     // Exact-decimal math flags resolve here, once the operand types are
     // known, so every construction site stays oblivious.
     let arg0_decimal = matches!(
@@ -1197,6 +1205,12 @@ pub(super) fn bind_scalar(
                 && args
                     .get(1)
                     .is_some_and(|digits| signed_integer_constant(digits).is_some()),
+        },
+        ScalarFunction::Greatest { .. } => ScalarFunction::Greatest {
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
+        },
+        ScalarFunction::Least { .. } => ScalarFunction::Least {
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
         other => other,
     };
@@ -1746,6 +1760,59 @@ fn coerce_decimal_branches(
 /// computing with it, so a mix of signed and unsigned integers - which
 /// arithmetic widens to DOUBLE - stays exact here, as `MySQL` keeps it: a
 /// DECIMAL wide enough for either sign of BIGINT.
+/// GREATEST and LEAST compare every argument in one domain, as `MySQL` does:
+/// as dates and times when any argument is a DATE or DATETIME, as strings
+/// when a string meets a number, and as numbers otherwise. Each argument is
+/// cast into that domain, so `GREATEST('11', 5, 2)` is `'5'` and
+/// `LEAST(DATE '2005-05-05', 20010101)` is `2001-01-01`.
+fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let types = args
+        .iter()
+        .filter_map(|argument| argument.data_type)
+        .collect::<Vec<_>>();
+    let fsp = types
+        .iter()
+        .filter_map(|data_type| match data_type {
+            DataType::DateTime64 { fsp } => Some(*fsp),
+            _ => None,
+        })
+        .max();
+    let numeric = |data_type: &DataType| {
+        matches!(
+            data_type.storage_type(),
+            DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Decimal { .. }
+        )
+    };
+    // A TIME mixed with other types follows no single domain in MySQL, so
+    // those arguments keep the comparison they had.
+    let target = if types
+        .iter()
+        .any(|data_type| matches!(data_type, DataType::Time64 { .. }))
+    {
+        return args;
+    } else if let Some(fsp) = fsp {
+        DataType::DateTime64 { fsp }
+    } else if types.contains(&DataType::Date32) {
+        DataType::Date32
+    } else if types.contains(&DataType::Utf8) && types.iter().any(numeric) {
+        DataType::Utf8
+    } else {
+        return args;
+    };
+    args.into_iter()
+        .map(|argument| {
+            if argument
+                .data_type
+                .is_none_or(|data_type| data_type == target)
+            {
+                argument
+            } else {
+                super::cast_to(argument, target)
+            }
+        })
+        .collect()
+}
+
 fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
     let types = args
         .iter()

@@ -238,3 +238,67 @@ fn a_character_set_introducer_decides_what_the_literal_bytes_mean() {
         assert!(scalar(refused).starts_with("error"), "{refused}");
     }
 }
+
+#[test]
+fn dates_written_as_digits_or_with_other_punctuation_are_dates() {
+    assert_answers(&[
+        ("DAYNAME(19700101)", "Thursday"),
+        ("MONTHNAME(19700101)", "January"),
+        (
+            "DATE_FORMAT('19980131131415', '%Y|%H|%i|%S')",
+            "1998|13|14|15",
+        ),
+        ("TO_DAYS('960101')", "729024"),
+        ("CAST(FROM_DAYS(TO_DAYS('960101')) AS CHAR)", "1996-01-01"),
+        ("CAST(CAST('2006.1.1' AS DATE) AS CHAR)", "2006-01-01"),
+        ("CAST(CAST(20060101 AS DATE) AS CHAR)", "2006-01-01"),
+        (
+            "CAST('2005.09.01' - INTERVAL 6 MONTH AS CHAR)",
+            "2005-03-01",
+        ),
+        ("CAST(DATE('98/02/03') AS CHAR)", "1998-02-03"),
+    ]);
+}
+
+#[test]
+fn a_date_shifted_past_year_9999_is_null() {
+    assert_answers(&[
+        (
+            "DATE_ADD('1997-12-31 23:59:59', INTERVAL 100000 MONTH)",
+            "NULL",
+        ),
+        ("DATE_ADD('9999-12-31 23:59:59', INTERVAL 1 SECOND)", "NULL"),
+    ]);
+}
+
+#[test]
+fn text_read_as_a_time_is_clamped_and_compact_digits_stay_a_time() {
+    assert_answers(&[
+        ("TIME_TO_SEC('916:40:00')", "3020399"),
+        ("SUBTIME('916:40:00', '416:40:00')", "422:19:59"),
+        ("EXTRACT(HOUR FROM '100000:02:03')", "838"),
+        ("HOUR('230322')", "23"),
+        ("ADDTIME('230322', '1')", "23:03:23"),
+    ]);
+}
+
+#[test]
+fn greatest_and_least_compare_in_one_domain() {
+    assert_answers(&[
+        ("GREATEST('11', 5, 2)", "5"),
+        ("LEAST('11', 5, 2)", "11"),
+        (
+            "CAST(GREATEST(DATE '2005-05-05', 20010101, 20040404, 20030303) AS CHAR)",
+            "2005-05-05",
+        ),
+        (
+            "CAST(LEAST(DATE '2005-05-05', 20030303, 20010101, 20040404) AS CHAR)",
+            "2001-01-01",
+        ),
+        (
+            "CAST(LEAST(DATE '2005-05-05', '20030303', '20010101', '20040404') AS CHAR)",
+            "2001-01-01",
+        ),
+        ("GREATEST(1, 2.5, 3)", "3.0"),
+    ]);
+}
