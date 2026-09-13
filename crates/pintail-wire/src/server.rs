@@ -1549,6 +1549,48 @@ impl Backend {
         Ok(())
     }
 
+    /// Numeric clock assignments evaluate expressions in the current session
+    /// before changing its clock. Reuse query evaluation for SQL coercion,
+    /// time zones and user variables, then apply the same range/type checks.
+    async fn evaluate_session_command(&self, sql: &str) -> Result<(), String> {
+        let command = sql.trim().trim_end_matches(';').trim();
+        if let Some((target, expression)) = command.split_once('=') {
+            let target = normalized_command(target);
+            if matches!(
+                target.as_str(),
+                "set timestamp"
+                    | "set session timestamp"
+                    | "set local timestamp"
+                    | "set @@timestamp"
+                    | "set @@session.timestamp"
+            ) && !expression.trim().eq_ignore_ascii_case("default")
+            {
+                let output = Backend::execute(self, &format!("SELECT {expression}"))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if output.fields.len() != 1 || output.rows.len() != 1 {
+                    return Err("timestamp assignment requires one scalar value".to_owned());
+                }
+                let data_type = output.fields[0].data_type;
+                let value = output
+                    .rows
+                    .into_values()
+                    .into_iter()
+                    .next()
+                    .and_then(|row| row.into_iter().next())
+                    .unwrap_or(Value::Null);
+                let literal = match value {
+                    Value::Float64(number) => {
+                        sqlparser::ast::Value::Number(number.get().to_string(), false)
+                    }
+                    value => user_variable_literal(value, data_type),
+                };
+                return self.apply_session_command(&format!("SET timestamp = {literal}"));
+            }
+        }
+        self.apply_session_command(sql)
+    }
+
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
     // One arm per session command; splitting hides the correspondence.
@@ -2048,7 +2090,7 @@ impl Handler for Backend {
             if let Some(rejection) = self.transaction_guarantee_rejection(sql) {
                 return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
             }
-            return match self.apply_session_command(sql) {
+            return match self.evaluate_session_command(sql).await {
                 Ok(()) => Response::Ok(OkPacket::default(), String::new()),
                 Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
             };

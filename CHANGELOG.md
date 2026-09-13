@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `SET timestamp` evaluates numeric SQL expressions in the current
+  session before capturing the statement clock.
+
 - Qualified identifier result labels stop at the identifier under
   `IGNORE_SPACE`, preserving the distinct unqualified-label behavior.
 

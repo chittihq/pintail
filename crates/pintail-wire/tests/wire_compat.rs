@@ -616,6 +616,31 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .expect("fixed clock reaches runtime and cached plans");
         assert_eq!(clock, Some((now.to_owned(), year, timestamp)));
     }
+    connection
+        .query_drop("SET timestamp = UNIX_TIMESTAMP('2020-12-22 03:30:00')")
+        .await
+        .expect("clock expression");
+    let expression_clock: Option<(String, u64)> = connection
+        .query_first("SELECT NOW(), CAST(TIME'08:09:10' AS YEAR)")
+        .await
+        .expect("expression clock captured in plan");
+    assert_eq!(
+        expression_clock,
+        Some(("2020-12-22 03:30:00".to_owned(), 2020))
+    );
+    connection
+        .query_drop("SET @clock_before_increment = @@timestamp")
+        .await
+        .expect("save expression clock");
+    connection
+        .query_drop("SET timestamp = @clock_before_increment + 60")
+        .await
+        .expect("relative clock expression");
+    let advanced_clock: Option<String> = connection
+        .query_first("SELECT NOW()")
+        .await
+        .expect("advanced clock");
+    assert_eq!(advanced_clock.as_deref(), Some("2020-12-22 03:31:00"));
     assert!(
         connection
             .query_drop("SET timestamp = 2147483647.5")
