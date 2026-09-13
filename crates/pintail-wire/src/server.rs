@@ -722,6 +722,8 @@ struct Session {
     max_execution_time_ms: u64,
     /// Fraction digits division and `AVG` add to the dividend's scale.
     div_precision_increment: u8,
+    /// `sql_select_limit`: the most rows a SELECT without its own LIMIT returns.
+    sql_select_limit: Option<u64>,
     /// `SET @name = expr` values, each the literal its expression evaluated
     /// to, read by every later statement on this connection.
     user_variables: pintail_sql::UserVariables,
@@ -745,6 +747,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
             div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
+            sql_select_limit: None,
             user_variables: pintail_sql::UserVariables::default(),
         }
     }
@@ -1193,6 +1196,7 @@ impl Backend {
                     pintail_sql::set_session_div_precision_increment(Some(
                         session.div_precision_increment,
                     ));
+                    pintail_sql::set_session_select_limit(session.sql_select_limit);
                     pintail_exec::set_session_group_concat_max_len(Some(
                         session.group_concat_max_len,
                     ));
@@ -1218,6 +1222,7 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
                     pintail_sql::set_session_div_precision_increment(None);
+                    pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
@@ -1590,18 +1595,22 @@ impl Backend {
                 session.max_execution_time_ms = limit;
                 Ok(())
             }
-            // These change answers - row counts, day and month names, week
-            // numbers - and only
+            // BI drivers set this to cap what a statement returns (a JDBC
+            // setMaxRows); DEFAULT, or the largest value, removes the cap.
+            "sql_select_limit" => {
+                if value.eq_ignore_ascii_case("default") {
+                    session.sql_select_limit = None;
+                    return Ok(());
+                }
+                let limit = value.trim().parse::<u64>().map_err(|_| {
+                    format!("Variable 'sql_select_limit' can't be set to the value of '{value}'")
+                })?;
+                session.sql_select_limit = (limit < u64::MAX).then_some(limit);
+                Ok(())
+            }
+            // These change answers - day and month names, week numbers - and only
             // their defaults are implemented, so another value is refused rather
             // than accepted and ignored.
-            "sql_select_limit"
-                if !(value.eq_ignore_ascii_case("default")
-                    || value.trim() == "18446744073709551615") =>
-            {
-                Err(format!(
-                    "Variable 'sql_select_limit' can't be set to the value of '{value}' (only DEFAULT is supported)"
-                ))
-            }
             "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
                 "Unknown locale: '{value}' (only en_US is supported)"
             )),
@@ -3156,6 +3165,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         )
     } else if normalized.contains("@@warning_count") {
         ("@@warning_count", Value::UInt64(session.condition_count))
+    } else if normalized.contains("@@sql_select_limit") {
+        (
+            "@@sql_select_limit",
+            Value::UInt64(session.sql_select_limit.unwrap_or(u64::MAX)),
+        )
     } else if normalized.contains("@@div_precision_increment") {
         (
             "@@div_precision_increment",

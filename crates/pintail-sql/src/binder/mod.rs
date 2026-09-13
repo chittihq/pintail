@@ -113,6 +113,13 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
         let mut bound = self.bind_query(query, &[])?;
+        // sql_select_limit caps a statement's own result when the statement
+        // sets no LIMIT; subqueries and a written LIMIT are untouched.
+        if bound.limit.is_none()
+            && let Some(count) = crate::bound::session_select_limit()
+        {
+            bound.limit = Some(BoundLimit { offset: 0, count });
+        }
         // Each expression was checked for a single supported collation as it
         // was bound. This resolves the query as a whole, which is the level
         // the executor works at: one comparison rule for the whole plan. A

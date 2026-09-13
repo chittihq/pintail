@@ -523,12 +523,26 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .await
             .is_err()
     );
-    assert!(
-        connection
-            .query_drop("SET SQL_SELECT_LIMIT = 1")
-            .await
-            .is_err()
-    );
+    // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
+    // setMaxRows asks; a written LIMIT is its own.
+    connection
+        .query_drop("SET SQL_SELECT_LIMIT = 1")
+        .await
+        .expect("cap SELECT results");
+    let capped: Vec<u64> = connection
+        .query("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
+        .await
+        .expect("capped select");
+    assert_eq!(capped.len(), 1);
+    let written: Vec<u64> = connection
+        .query("SELECT 1 UNION ALL SELECT 2 LIMIT 2")
+        .await
+        .expect("written limit");
+    assert_eq!(written.len(), 2);
+    connection
+        .query_drop("SET SQL_SELECT_LIMIT = DEFAULT")
+        .await
+        .expect("remove the cap");
     connection
         .query_drop("SET lc_time_names = 'en_US'")
         .await

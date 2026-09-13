@@ -377,6 +377,23 @@ pub fn set_session_div_precision_increment(increment: Option<u8>) {
         .with(|cell| cell.set(increment.unwrap_or(DEFAULT_DIV_PRECISION_INCREMENT).min(30)));
 }
 
+thread_local! {
+    static SESSION_SELECT_LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs the connection's `sql_select_limit` for the current thread's
+/// statement, or clears it with `None`: the most rows a top-level SELECT
+/// without its own LIMIT returns.
+pub fn set_session_select_limit(limit: Option<u64>) {
+    SESSION_SELECT_LIMIT.with(|cell| cell.set(limit));
+}
+
+/// The row limit a top-level SELECT without its own LIMIT takes on this thread.
+#[must_use]
+pub fn session_select_limit() -> Option<u64> {
+    SESSION_SELECT_LIMIT.with(std::cell::Cell::get)
+}
+
 /// The fraction digits division and `AVG` add on this thread's statement.
 #[must_use]
 pub fn session_div_precision_increment() -> u8 {

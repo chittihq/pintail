@@ -37,8 +37,9 @@ pub use bound::{
     DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, JSON_TEXT_COLLATION, MembershipError,
     MembershipLookup, PreparedMembership, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp,
     WindowFunction, comparison_collation, session_default_collation,
-    session_div_precision_increment, session_timestamp_zone, set_session_default_collation,
-    set_session_div_precision_increment, set_session_timestamp_zone,
+    session_div_precision_increment, session_select_limit, session_timestamp_zone,
+    set_session_default_collation, set_session_div_precision_increment, set_session_select_limit,
+    set_session_timestamp_zone,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{
