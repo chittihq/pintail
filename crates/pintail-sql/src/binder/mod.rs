@@ -8155,10 +8155,9 @@ mod tests {
             bind("SELECT * FROM Events FETCH FIRST 1 ROW ONLY"),
             Err(BindError::UnsupportedQueryClause(_))
         ));
-        assert!(matches!(
-            bind("SELECT STR_TO_DATE('29th February 2024', '%D %M %Y')"),
-            Err(BindError::UnsupportedExpression(_))
-        ));
+        let date =
+            bind("SELECT STR_TO_DATE('29th February 2024', '%D %M %Y')").expect("ordinal date");
+        assert_eq!(date.projection[0].expr.data_type, Some(DataType::Date32));
     }
 
     #[test]

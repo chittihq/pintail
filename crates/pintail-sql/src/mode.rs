@@ -16,6 +16,10 @@ pub struct ParseMode {
     pub no_unsigned_subtraction: bool,
     /// Function-name lexing consumes whitespace after identifier tokens.
     pub ignore_space: bool,
+    /// Date parsing rejects any zero date component.
+    pub no_zero_date: bool,
+    /// Date parsing rejects zero month/day when the year is nonzero.
+    pub no_zero_in_date: bool,
 }
 
 impl ParseMode {
@@ -33,6 +37,8 @@ impl ParseMode {
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
             no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
             ignore_space: has("IGNORE_SPACE"),
+            no_zero_date: has("NO_ZERO_DATE"),
+            no_zero_in_date: has("NO_ZERO_IN_DATE"),
         }
     }
 }

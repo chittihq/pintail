@@ -1312,17 +1312,6 @@ pub(super) fn bind_scalar(
     ) {
         ensure_supported_text_collation(&args.iter().collect::<Vec<_>>())?;
     }
-    if function == ScalarFunction::StrToDate
-        && let Some(BoundExpr {
-            kind: BoundExprKind::Literal(Value::Utf8(format)),
-            ..
-        }) = args.get(1)
-        && !str_to_date_format_supported(format)
-    {
-        return Err(BindError::UnsupportedExpression(format!(
-            "STR_TO_DATE format {format:?}"
-        )));
-    }
     if matches!(
         function,
         ScalarFunction::RegexpLike { .. }
@@ -1567,38 +1556,9 @@ pub(super) fn bind_scalar(
         ),
         // NULL out of range / on malformed or unmatched input, like MySQL.
         ScalarFunction::MakeDate => (Some(DataType::Date32), true),
-        // With a literal format the output shape is static: the evaluator
-        // parses as a datetime when the format carries time specifiers and
-        // as a bare date otherwise, so the declared type follows the format.
-        // A time-only format is declared TIME for metadata parity with
-        // MySQL; the evaluator's NULL there is a pre-existing value gap
-        // recorded in docs/limitations.md. A non-literal format stays a
-        // string - the shape genuinely is unknown until runtime.
-        ScalarFunction::StrToDate => (
-            Some(match args.get(1) {
-                Some(BoundExpr {
-                    kind: BoundExprKind::Literal(Value::Utf8(format)),
-                    ..
-                }) => {
-                    let time = str_to_date_has_specifier(
-                        format,
-                        &['H', 'h', 'I', 'k', 'l', 'i', 's', 'f', 'p', 'r', 'T'],
-                    );
-                    let date = str_to_date_has_specifier(
-                        format,
-                        &['Y', 'y', 'm', 'c', 'd', 'e', 'b', 'M', 'j', 'W', 'a'],
-                    );
-                    match (date, time) {
-                        (true, true) => DataType::DateTime64 { fsp: 0 },
-                        (true, false) => DataType::Date32,
-                        (false, true) => DataType::Time64 { fsp: 0 },
-                        (false, false) => DataType::Utf8,
-                    }
-                }
-                _ => DataType::Utf8,
-            }),
-            true,
-        ),
+        // Dynamic formats have a DATETIME(6) result, including time-only
+        // inputs; a known format retains its narrower date/time shape.
+        ScalarFunction::StrToDate => (Some(str_to_date_result_type(&args)), true),
         // MAKETIME and CONVERT_TZ stay strings for the same reason as
         // SEC_TO_TIME: their fractional width follows the input value.
         ScalarFunction::Sha2
@@ -1751,6 +1711,15 @@ pub(super) fn bind_scalar(
             *branch = crate::text_charset::encoded(branch.clone());
         }
     }
+    if function == ScalarFunction::StrToDate {
+        let mode = crate::session_parse_mode();
+        let policy = u64::from(mode.no_zero_date) | (u64::from(mode.no_zero_in_date) << 1);
+        args.push(BoundExpr {
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+            kind: BoundExprKind::Literal(Value::UInt64(policy)),
+        });
+    }
     let mut function = function;
     crate::text_charset::byte_arguments(&mut function, &mut args);
     Ok(crate::text_charset::annotate(
@@ -1778,42 +1747,34 @@ fn str_to_date_has_specifier(format: &str, wanted: &[char]) -> bool {
     false
 }
 
-fn str_to_date_format_supported(format: &str) -> bool {
-    let mut characters = format.chars();
-    while let Some(character) = characters.next() {
-        if character == '%'
-            && !matches!(
-                characters.next(),
-                Some(
-                    'c' | 'e'
-                        | 'M'
-                        | 'k'
-                        | 'l'
-                        | 'i'
-                        | 's'
-                        | 'f'
-                        | 'Y'
-                        | 'y'
-                        | 'm'
-                        | 'd'
-                        | 'H'
-                        | 'h'
-                        | 'I'
-                        | 'p'
-                        | 'b'
-                        | 'W'
-                        | 'a'
-                        | 'j'
-                        | 'r'
-                        | 'T'
-                        | '%'
-                )
-            )
-        {
-            return false;
-        }
+fn str_to_date_result_type(args: &[BoundExpr]) -> DataType {
+    let Some(value) = args.get(1).and_then(crate::text_charset::literal_value) else {
+        return DataType::DateTime64 { fsp: 6 };
+    };
+    let Value::Utf8(format) = value.as_ref() else {
+        return DataType::DateTime64 { fsp: 6 };
+    };
+    let time = str_to_date_has_specifier(
+        format,
+        &['H', 'h', 'I', 'k', 'l', 'i', 's', 'S', 'f', 'p', 'r', 'T'],
+    );
+    let date = str_to_date_has_specifier(
+        format,
+        &[
+            'Y', 'y', 'm', 'c', 'd', 'e', 'D', 'b', 'M', 'j', 'W', 'a', 'w', 'U', 'u', 'V', 'v',
+            'X', 'x',
+        ],
+    );
+    let fsp = if str_to_date_has_specifier(format, &['f']) {
+        6
+    } else {
+        0
+    };
+    match (date, time) {
+        (true, true) => DataType::DateTime64 { fsp },
+        (false, true) => DataType::Time64 { fsp },
+        _ => DataType::Date32,
     }
-    true
 }
 
 /// A decimal-unified COALESCE/GREATEST/LEAST must also coerce its branch

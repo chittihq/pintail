@@ -1,10 +1,11 @@
+mod str_to_date;
 mod temporal;
 mod vector;
 
 pub(crate) use temporal::shift_temporal_value;
 use temporal::{
-    TO_DAYS_EPOCH_OFFSET, apply_interval, chrono_parse_format, convert_tz, mysql_date_format,
-    mysql_yearweek, parse_mysql_datetime, timestamp_diff,
+    TO_DAYS_EPOCH_OFFSET, apply_interval, convert_tz, mysql_date_format, mysql_yearweek,
+    parse_mysql_datetime, timestamp_diff,
 };
 
 use std::{cmp::Ordering, sync::Arc};
@@ -3429,16 +3430,10 @@ fn evaluate_eager_scalar_inner(
         )),
         ScalarFunction::StrToDate => {
             let text = scalar_string(&values[0])?;
-            let Some(format) = chrono_parse_format(&scalar_string(&values[1])?) else {
-                return Ok(Value::Null);
-            };
-            if let Ok(value) = NaiveDateTime::parse_from_str(&text, &format) {
-                return Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()));
-            }
-            if let Ok(value) = chrono::NaiveDate::parse_from_str(&text, &format) {
-                return Ok(Value::Utf8(value.format("%Y-%m-%d").to_string()));
-            }
-            Ok(Value::Null)
+            let format = scalar_string(&values[1])?;
+            let policy = values.get(2).map(mysql_u64).transpose()?.unwrap_or(0);
+            Ok(str_to_date::parse(&text, &format, data_type, policy)
+                .map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::ConvertTz => {
             let text = scalar_string(&values[0])?;
@@ -3873,7 +3868,9 @@ fn evaluate_eager_scalar_inner(
         // The JSON constructors already emit canonical MySQL text. Re-casting
         // would round-trip it through serde_json, whose Number cannot hold a
         // DECIMAL's scale, so {"d": 10.50} would come back as {"d": 10.5}.
-        ScalarFunction::JsonObject | ScalarFunction::JsonArray => Ok(value),
+        ScalarFunction::JsonObject | ScalarFunction::JsonArray | ScalarFunction::StrToDate => {
+            Ok(value)
+        }
         _ => cast_scalar(&value, data_type),
     })
 }

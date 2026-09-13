@@ -771,3 +771,94 @@ fn dynamic_decimal_rounding_retains_declared_scale() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn date_format_parsing_handles_partial_values_and_mysql_directives() {
+    for (expression, expected) in [
+        (
+            "STR_TO_DATE('17-03-2008 2:59:58.999', '%d-%m-%Y %H:%i:%s.%f')",
+            "2008-03-17 02:59:58.999000",
+        ),
+        ("STR_TO_DATE('10:20:10', '%h:%i:%s.%f')", "10:20:10.000000"),
+        ("STR_TO_DATE('10:00 PM', '%h:%i %p')", "22:00:00"),
+        (
+            "STR_TO_DATE('17-03-2008', '%d-%m-%Y %H:%i:%S')",
+            "2008-03-17 00:00:00",
+        ),
+        ("STR_TO_DATE('02', '%d')", "0000-00-02"),
+        ("STR_TO_DATE('08-03-17', '%Y-%m-%d')", "2008-03-17"),
+        ("STR_TO_DATE('0008-03-17', '%Y-%m-%d')", "0008-03-17"),
+        ("STR_TO_DATE('17 SEPTEMB 2008', '%d %M %Y')", "2008-09-17"),
+        ("STR_TO_DATE('17th May 2008', '%D %b %Y')", "2008-05-17"),
+        (
+            "STR_TO_DATE('2008-....03ABCD-17 2:11:12.0012', '%Y-%.%m%@-%d %H:%i:%S.%f')",
+            "2008-03-17 02:11:12.001200",
+        ),
+        ("STR_TO_DATE('060 2008', '%j %Y')", "2008-02-29"),
+        ("STR_TO_DATE('0000-00-00', '%Y-%m-%d')", "0000-00-00"),
+        ("STR_TO_DATE(SPACE(2), '1')", "0000-00-00"),
+        (
+            "STR_TO_DATE('2008-03-17 10:11:12 PM', '%Y-%m-%d %H:%i:%S %p')",
+            "NULL",
+        ),
+        ("STR_TO_DATE('2023-02-31', '%Y-%m-%d')", "NULL"),
+        (
+            "STR_TO_DATE('2008-03-17', IF(id = 1, '%Y-%m-%d', '%d'))",
+            "2008-03-17 00:00:00.000000",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
+
+#[test]
+fn date_format_parsing_captures_zero_date_policy() {
+    for (mode, expression, expected) in [
+        ("NO_ZERO_DATE", "STR_TO_DATE('02', '%d')", "NULL"),
+        (
+            "NO_ZERO_DATE",
+            "STR_TO_DATE('0000-01-02', '%Y-%m-%d')",
+            "NULL",
+        ),
+        (
+            "NO_ZERO_IN_DATE",
+            "STR_TO_DATE('2020-00-02', '%Y-%m-%d')",
+            "NULL",
+        ),
+        (
+            "NO_ZERO_IN_DATE",
+            "STR_TO_DATE('0000-01-02', '%Y-%m-%d')",
+            "0000-01-02",
+        ),
+        (
+            "NO_ZERO_DATE",
+            "STR_TO_DATE('10:20:10', '%H:%i:%s')",
+            "10:20:10",
+        ),
+        (
+            "",
+            "STR_TO_DATE('Tuesday 00 2002', '%W %U %Y')",
+            "2002-01-01",
+        ),
+        (
+            "",
+            "STR_TO_DATE('Thursday 53 1998', '%W %u %Y')",
+            "1998-12-31",
+        ),
+        (
+            "",
+            "STR_TO_DATE('Sunday 01 2001', '%W %v %x')",
+            "2001-01-07",
+        ),
+        (
+            "",
+            "STR_TO_DATE('Tuesday 52 2001', '%W %V %X')",
+            "2002-01-01",
+        ),
+        ("", "STR_TO_DATE('Tuesday 52 2001', '%W %V %x')", "NULL"),
+    ] {
+        pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+            assert_eq!(scalar(expression), expected, "{mode}: {expression}");
+        });
+    }
+}

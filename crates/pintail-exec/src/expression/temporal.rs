@@ -308,47 +308,6 @@ pub(super) fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
 /// parsing cannot borrow that fix, because it needs a real parser rather than
 /// a renderer. Tracked separately — see the `STR_TO_DATE` note in
 /// `docs/limitations.md`.
-pub(super) fn chrono_parse_format(value: &str) -> Option<String> {
-    let mut output = String::with_capacity(value.len());
-    let mut characters = value.chars();
-    while let Some(character) = characters.next() {
-        if character != '%' {
-            output.push(character);
-            continue;
-        }
-        let Some(specifier) = characters.next() else {
-            output.push('%');
-            return None;
-        };
-        output.push_str(match specifier {
-            'c' => "%-m",
-            'e' => "%-d",
-            'M' => "%B",
-            'k' => "%-H",
-            'l' => "%-I",
-            'i' => "%M",
-            's' => "%S",
-            'f' => "%6f",
-            'Y' => "%Y",
-            'y' => "%y",
-            'm' => "%m",
-            'd' => "%d",
-            'H' => "%H",
-            'h' | 'I' => "%I",
-            'p' => "%p",
-            'b' => "%b",
-            'W' => "%A",
-            'a' => "%a",
-            'j' => "%j",
-            'r' => "%I:%M:%S %p",
-            'T' => "%H:%M:%S",
-            '%' => "%%",
-            _ => return None,
-        });
-    }
-    Some(output)
-}
-
 const WEEK_MONDAY_FIRST: u32 = 1;
 const WEEK_YEAR: u32 = 2;
 const WEEK_FIRST_WEEKDAY: u32 = 4;

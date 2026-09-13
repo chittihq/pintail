@@ -8,6 +8,12 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 
 ## Implemented slices
 
+- `STR_TO_DATE` parses ordinal dates, week years, character-class skipping,
+  incomplete input and fractional times directly. Plans capture zero-date
+  SQL modes; dynamic formats produce DATETIME(6), while literal formats
+  retain their declared date/time shape. Other temporal consumers still
+  have gaps for partial dates.
+
 - Result labels keep the first adjacent literal, preserve regular-expression
   spelling, remove trailing comments, and truncate at a UTF-8 boundary within
   255 bytes. `IGNORE_SPACE`, including its handshake capability, controls

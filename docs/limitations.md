@@ -187,8 +187,6 @@ stays readable as a list of things to fix.
   `TIME`-valued function result (`SEC_TO_TIME`, `ADDTIME`, `TIMEDIFF`) is
   typed as text, so used in arithmetic it coerces as a string would
   (`SEC_TO_TIME(9001) + 0` is 2), where MySQL yields the `HHMMSS` number.
-- `STR_TO_DATE` supports the calendar/date, clock, month/weekday name, day-of-year, fractional-second, and composite clock directives used by the reporting corpus. Literal formats containing an unimplemented MySQL-only directive (ordinal dates or week/year reconstruction) reject at bind time; dynamic unsupported formats return `NULL`. They are never forwarded to chrono under a different meaning. `DATE_FORMAT` implements MySQL's full directive inventory, including the four `WEEK` numbering modes behind `%U %u %V %v` and their paired years `%X %x`, and copies an unrecognized directive's bare character the way MySQL does.
-
 - Pintail maps an empty scalar-subquery result to `NULL`. During oracle development, MySQL 8.4's constant `SELECT` with `LIMIT 0` produced a special-case result that did not follow this behavior; that MySQL-only corner is excluded from the common-workload corpus.
 
 - Source `DECIMAL` columns above precision 38 are replicated as text with a
@@ -627,15 +625,6 @@ but may be wrong.
   MySQL's own column types (TIME, DATETIME, LONG_BLOB) as direct
   projections; wrapped in another expression they fall back to
   MYSQL_TYPE_VAR_STRING, because the wrapper's shape owns the result.
-
-- STR_TO_DATE with a non-literal format expression advertises
-  MYSQL_TYPE_VAR_STRING - the output shape is unknowable at bind time.
-  With a literal format the declared type follows the format's
-  specifiers, as in MySQL.
-
-- STR_TO_DATE with a time-only format returns NULL where MySQL returns
-  a TIME value; the declared column type (TIME) matches MySQL, the
-  value does not.
 
 - EXTRACT with a composite unit (YEAR_MONTH, DAY_HOUR, ...) is rejected
   at parse: the SQL parser dependency does not recognize MySQL's

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `STR_TO_DATE` handles partial input, fractions, ordinal dates, week years
+  and character-class directives, with captured zero-date modes and correct
+  date/time result types for literal and dynamic formats.
+
 - `SET timestamp` evaluates numeric SQL expressions in the current
   session before capturing the statement clock.
 
