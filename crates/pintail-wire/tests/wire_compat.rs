@@ -510,6 +510,21 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET div_precision_increment = 6")
         .await
         .expect("widen division");
+    // The column metadata carries the session's own scale. A driver that
+    // formats by `decimals` would otherwise print the widened answer at
+    // four places, having been told the default.
+    let widened_meta = connection
+        .query_iter("SELECT 1/3")
+        .await
+        .expect("division metadata");
+    assert_eq!(
+        widened_meta
+            .columns_ref()
+            .first()
+            .map(mysql_async::Column::decimals),
+        Some(6)
+    );
+    widened_meta.drop_result().await.expect("drain");
     // Settings whose other values are not implemented are refused, not ignored.
     assert!(
         connection

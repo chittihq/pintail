@@ -98,6 +98,12 @@ fn set_flags(column: &mut Column, flags: u16) {
 fn unsigned(column: &Column) -> bool {
     column.colflags.contains(ColumnFlags::UNSIGNED_FLAG)
 }
+/// Fraction digits this session's division and `AVG` add. Column metadata
+/// is built on the statement's own thread, inside the bracket that installs
+/// the session's setting, so this is that session's value.
+fn division_increment() -> u32 {
+    u32::from(pintail_sql::session_div_precision_increment())
+}
 fn integer(column: &Column) -> bool {
     matches!(
         column.coltype,
@@ -135,18 +141,22 @@ fn aggregate(
                 && (integer(&input) || input.coltype == ColumnType::MysqlTypeNewdecimal)
             {
                 let digits = precision(&input);
+                // AVG widens by the session's own increment, not a fixed
+                // four: a driver told the default scale after the session
+                // raised it reads the answer at the wrong precision.
+                let widen = division_increment();
                 column.coltype = ColumnType::MysqlTypeNewdecimal;
                 column.decimals = input
                     .decimals
                     .saturating_add(if aggregate.function == AggregateFunction::Average {
-                        4
+                        u8::try_from(widen).unwrap_or(u8::MAX)
                     } else {
                         0
                     })
                     .min(30);
                 let precision = (digits
                     + if aggregate.function == AggregateFunction::Average {
-                        4
+                        widen
                     } else {
                         22
                     })
@@ -423,7 +433,10 @@ fn expression(
                         ((lp - ls).max(rp - rs) + ls.max(rs) + 1, ls.max(rs))
                     }
                     BinaryOp::Multiply => (lp + rp, ls + rs),
-                    BinaryOp::Divide => (lp + rs + 4, ls + 4),
+                    BinaryOp::Divide => {
+                        let widen = division_increment();
+                        (lp + rs + widen, ls + widen)
+                    }
                     _ => (precision(&column), u32::from(column.decimals)),
                 };
                 column.decimals = u8::try_from(scale.min(30)).unwrap_or(30);
