@@ -259,6 +259,16 @@ pub(super) fn decimal_cast_column(
         && let DataType::Time64 { .. } = column.data_type()
         && let Some(units) = time_numbers(column, scale)
     {
+        let limit = 10_i128.checked_pow(u32::from(precision))?;
+        if units
+            .0
+            .iter()
+            .any(|value| value.unsigned_abs() >= limit.unsigned_abs())
+        {
+            // Let scalar evaluation clamp out-of-range values to the
+            // declared precision rather than emitting oversized decimals.
+            return None;
+        }
         return Some(ColumnVector::from_typed(
             target,
             TypedValues::Decimal128 {

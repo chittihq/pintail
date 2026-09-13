@@ -12,7 +12,14 @@ use pintail_store::{StoreOptions, TableStore};
 use pintail_types::{Column, DataType, KeyPart, PrimaryKey, StoredRow, TableSchema, Value};
 
 fn schema() -> TableSchema {
-    TableSchema::new(1, vec![Column::new(1, "id", DataType::UInt64, false)]).expect("schema")
+    TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "clock", DataType::Time64 { fsp: 0 }, true),
+        ],
+    )
+    .expect("schema")
 }
 
 /// The single value `SELECT <expression> FROM one` answers, rendered as text.
@@ -38,7 +45,14 @@ fn evaluate_rows(expression: &str, rows: u64) -> String {
                 .map(|id| {
                     StoredRow::new(
                         PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
-                        vec![Value::UInt64(id)],
+                        vec![
+                            Value::UInt64(id),
+                            match id {
+                                2 => Value::Utf8("-11:11:11".to_owned()),
+                                3 => Value::Null,
+                                _ => Value::Utf8("11:11:11".to_owned()),
+                            },
+                        ],
                         id,
                         false,
                     )
@@ -243,6 +257,8 @@ fn a_decimal_cast_clamps_to_its_declared_range() {
         ("CAST(TIME'838:59:59' AS DECIMAL(7,2))", "99999.99"),
         ("CAST(TIME'01:02:03' AS DECIMAL(7,2))", "10203.00"),
         ("CAST(123456.7 AS DECIMAL(7,2))", "99999.99"),
+        ("CAST(clock AS DECIMAL(7,2))", "99999.99"),
+        ("CAST(clock AS DECIMAL(8,2))", "111111.00"),
         ("CAST(id * 111111 AS DECIMAL(7,2))", "99999.99"),
         ("CAST(REPEAT('1', id * 6) AS DECIMAL(7,2))", "99999.99"),
         (
@@ -250,6 +266,14 @@ fn a_decimal_cast_clamps_to_its_declared_range() {
             "99999.99",
         ),
     ]);
+}
+
+#[test]
+fn temporal_column_casts_clamp_both_signs_and_preserve_nulls() {
+    assert_eq!(
+        evaluate_rows("GROUP_CONCAT(CAST(clock AS DECIMAL(7,2)) ORDER BY id)", 3),
+        "99999.99,-99999.99"
+    );
 }
 
 #[test]
