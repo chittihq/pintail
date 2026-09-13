@@ -1549,6 +1549,13 @@ impl BoundExpr {
     /// and they simply do not have to agree with each other.
     #[must_use]
     pub fn text_collation(&self) -> Option<&'static str> {
+        if let BoundExprKind::Scalar { function, args } = &self.kind {
+            match function {
+                ScalarFunction::Locate => return args[1].text_collation(),
+                ScalarFunction::Instr | ScalarFunction::Field => return args[0].text_collation(),
+                _ => {}
+            }
+        }
         // Coercibility 0: one explicit COLLATE dictates the whole
         // comparison, whatever the columns underneath carry.
         let mut explicit = Vec::new();

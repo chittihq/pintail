@@ -1237,7 +1237,36 @@ pub(super) fn bind_scalar(
     function: ScalarFunction,
     args: Vec<BoundExpr>,
 ) -> Result<BoundExpr, BindError> {
-    let args = float_string_arguments(function, args);
+    let mut args = float_string_arguments(function, args);
+    let subject = match function {
+        ScalarFunction::Locate => Some(1),
+        ScalarFunction::Instr | ScalarFunction::Field => Some(0),
+        _ => None,
+    };
+    if let Some(index) = subject {
+        ensure_supported_text_collation(&[&args[index]])?;
+        let collation = if args[index].data_type == Some(DataType::Binary) {
+            crate::bound::NamedCollation::Bin
+        } else {
+            crate::bound::NamedCollation::from_name(
+                args[index]
+                    .text_collation()
+                    .unwrap_or(crate::session_default_collation()),
+            )
+            .ok_or_else(|| BindError::UnsupportedExpression("string search collation".to_owned()))?
+        };
+        // Capture the subject's comparison profile, including the session
+        // default, before another operand or later session can affect it.
+        let argument = args[index].clone();
+        args[index] = BoundExpr {
+            data_type: argument.data_type,
+            nullable: argument.nullable,
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::Collate { collation },
+                args: vec![argument],
+            },
+        };
+    }
     let args = if matches!(
         function,
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
@@ -1275,14 +1304,12 @@ pub(super) fn bind_scalar(
     };
     if matches!(
         function,
-        ScalarFunction::Locate
-            | ScalarFunction::Like { .. }
+        ScalarFunction::Like { .. }
             | ScalarFunction::InList { .. }
             | ScalarFunction::Between { .. }
             | ScalarFunction::NullIf
             | ScalarFunction::Greatest { .. }
             | ScalarFunction::Least { .. }
-            | ScalarFunction::Instr
             | ScalarFunction::FindInSet
             | ScalarFunction::RegexpLike { .. }
             | ScalarFunction::RegexpSubstr
@@ -1349,9 +1376,7 @@ pub(super) fn bind_scalar(
             )
         }
         ScalarFunction::Lpad | ScalarFunction::Rpad
-            if [0, 2]
-                .iter()
-                .any(|position| args[*position].data_type == Some(DataType::Binary)) =>
+            if args[0].data_type == Some(DataType::Binary) =>
         {
             (
                 Some(DataType::Binary),

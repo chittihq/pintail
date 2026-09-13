@@ -688,3 +688,22 @@ fn string_search_boundaries_and_conversion_overflow() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn string_search_and_padding_use_subject_semantics() {
+    for (expression, expected) in [
+        ("LOCATE('HE', 'hello' COLLATE utf8mb4_bin)", "0"),
+        ("LOCATE('HE' COLLATE utf8mb4_bin, 'hello')", "1"),
+        ("INSTR('hello', BINARY 'HE')", "1"),
+        ("INSTR(BINARY 'hello', 'HE')", "0"),
+        ("LOCATE(X'44', _utf8mb4'abcdef')", "4"),
+        ("INSTR(_utf8mb4'abcdef', X'44')", "4"),
+        ("HEX(RPAD('я', 3, X'20'))", "D18F2020"),
+        ("HEX(LPAD('я', 3, X'20'))", "2020D18F"),
+        ("HEX(RPAD(BINARY 'я', 3, ' '))", "D18F20"),
+        ("FIELD('b', 'A' COLLATE utf8mb4_bin, 'B')", "2"),
+        ("FIELD('b' COLLATE utf8mb4_bin, 'A', 'B')", "0"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

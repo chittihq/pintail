@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- String search and `FIELD` capture the subject collation; binary patterns
+  retain text-subject search and padding semantics.
+
 - Empty-needle search boundaries, trailing escapes in `LIKE`, and signed
   and unsigned overflow limits in `CONV`.
 

@@ -2440,11 +2440,11 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::Utf8(value.chars().skip(skip).collect()))
         }
         ScalarFunction::Locate => {
-            // A binary operand makes the comparison case-sensitive, because
-            // there is no collation to fold under.
-            let binary = binary_operand(&values[0..2]);
-            let needle = fold_unless_binary(&scalar_string(&values[0])?, binary);
-            let haystack = fold_unless_binary(&scalar_string(&values[1])?, binary);
+            let binary = matches!(values[1], Value::Binary(_));
+            let text = if binary { byte_text } else { scalar_string };
+            let exact = binary || collation == Collation::Utf8mb4Bin;
+            let needle = fold_unless_binary(&text(&values[0])?, exact);
+            let haystack = fold_unless_binary(&text(&values[1])?, exact);
             let start = values
                 .get(2)
                 .map(saturating_argument)
@@ -2772,9 +2772,8 @@ fn evaluate_eager_scalar_inner(
             repeat_capped(" ", count)
         }
         ScalarFunction::Lpad | ScalarFunction::Rpad => {
-            // A binary operand pads and truncates by bytes.
-            let binary =
-                matches!(values[0], Value::Binary(_)) || matches!(values[2], Value::Binary(_));
+            // The subject determines whether lengths count bytes or characters.
+            let binary = matches!(values[0], Value::Binary(_));
             let text: fn(&Value) -> Result<String, ExecError> =
                 if binary { byte_text } else { scalar_string };
             let padded = mysql_pad(
@@ -2789,9 +2788,11 @@ fn evaluate_eager_scalar_inner(
             })
         }
         ScalarFunction::Instr => {
-            let binary = binary_operand(&values[0..2]);
-            let haystack = fold_unless_binary(&scalar_string(&values[0])?, binary);
-            let needle = fold_unless_binary(&scalar_string(&values[1])?, binary);
+            let binary = matches!(values[0], Value::Binary(_));
+            let text = if binary { byte_text } else { scalar_string };
+            let exact = binary || collation == Collation::Utf8mb4Bin;
+            let haystack = fold_unless_binary(&text(&values[0])?, exact);
+            let needle = fold_unless_binary(&text(&values[1])?, exact);
             Ok(Value::UInt64(locate(&needle, &haystack, 1)))
         }
         ScalarFunction::FindInSet => {

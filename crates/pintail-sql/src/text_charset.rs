@@ -27,6 +27,10 @@ pub(crate) fn character_set(expression: &BoundExpr) -> CharacterSet {
             function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
             ..
         } => *charset,
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Collate { .. },
+            args,
+        } => character_set(&args[0]),
         BoundExprKind::Column(column) => column
             .collation
             .as_deref()
