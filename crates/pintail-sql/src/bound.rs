@@ -51,6 +51,10 @@ pub fn comparison_collation(name: &str) -> Option<&'static str> {
     let twin = lower
         .strip_prefix("utf8mb3_")
         .or_else(|| lower.strip_prefix("utf8_"))
+        .or_else(|| lower.strip_prefix("ucs2_"))
+        .or_else(|| lower.strip_prefix("utf16_"))
+        .or_else(|| lower.strip_prefix("utf16le_"))
+        .or_else(|| lower.strip_prefix("utf32_"))
         .filter(|rest| matches!(*rest, "general_ci" | "unicode_ci" | "bin"))
         .map(|rest| format!("utf8mb4_{rest}"));
     let wanted = twin.as_deref().unwrap_or(&lower);
@@ -528,6 +532,31 @@ impl BoundExpr {
         }
     }
 
+    /// Encoded literals/generated text are a weaker tier than source columns.
+    fn collect_encoded_collations(&self, collations: &mut Vec<String>) {
+        match &self.kind {
+            BoundExprKind::Scalar {
+                function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
+                ..
+            } => {
+                collations.push(charset.default_collation().to_owned());
+            }
+            BoundExprKind::Scalar { args, .. } => {
+                for argument in args {
+                    argument.collect_encoded_collations(collations);
+                }
+            }
+            BoundExprKind::Binary { left, right, .. } => {
+                left.collect_encoded_collations(collations);
+                right.collect_encoded_collations(collations);
+            }
+            BoundExprKind::Unary { expr, .. }
+            | BoundExprKind::PreparedIn { expr, .. }
+            | BoundExprKind::IsNull { expr, .. } => expr.collect_encoded_collations(collations),
+            _ => {}
+        }
+    }
+
     /// Whether any JSON string producer (`JSON_UNQUOTE`, `->>`, `JSON_VALUE`,
     /// `JSON_TYPE`) feeds this expression's text.
     fn reads_json_text(&self) -> bool {
@@ -800,6 +829,8 @@ pub enum ScalarFunction {
     DecodeText(pintail_types::CharacterSet),
     /// Materialize SQL text bytes at a byte-observing boundary.
     EncodeText(pintail_types::CharacterSet),
+    /// Align and validate binary-to-text conversion bytes without decoding.
+    PadTextBytes(pintail_types::CharacterSet),
     /// Leading logical character encoded in its SQL character set.
     EncodedOrd(pintail_types::CharacterSet),
     /// Encoded byte length.
@@ -1527,6 +1558,9 @@ impl BoundExpr {
         }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
+        if collations.is_empty() {
+            self.collect_encoded_collations(&mut collations);
+        }
         collations.sort_unstable();
         collations.dedup();
         match collations.as_slice() {

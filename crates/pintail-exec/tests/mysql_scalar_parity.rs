@@ -596,3 +596,27 @@ fn connection_encoding_is_captured_in_generated_and_aggregate_text() {
         assert_eq!(answer, expected, "{expression}");
     }
 }
+
+#[test]
+fn encoded_constants_keep_temporal_and_binary_comparisons() {
+    for (expression, expected) in [
+        ("CAST('2016-12-13' AS DATE) = '20161213'", "Boolean(true)"),
+        (
+            "CAST('2016-12-13' AS DATE) IN ('20161213')",
+            "Boolean(true)",
+        ),
+        ("'a' = 'a '", "Boolean(true)"),
+        ("'a\\0' < 'a'", "Boolean(true)"),
+        ("BINARY 'a\\0' > 'a'", "Boolean(true)"),
+        ("HEX(CONVERT(0xAA USING ucs2))", "00AA"),
+        ("HEX(CONVERT(0xFF USING utf8mb4))", "NULL"),
+        ("HEX(CONVERT(0xD800 USING utf16))", "NULL"),
+    ] {
+        pintail_sql::set_session_character_set(Some(pintail_types::CharacterSet::Ucs2));
+        pintail_sql::set_session_default_collation(Some("ucs2_general_ci"));
+        let answer = scalar(expression);
+        pintail_sql::set_session_character_set(None);
+        pintail_sql::set_session_default_collation(None);
+        assert_eq!(answer, expected, "{expression}");
+    }
+}

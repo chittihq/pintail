@@ -2,7 +2,7 @@
 //! Unicode value carrier. Only byte-observing operations materialize bytes.
 use std::cell::Cell;
 
-use pintail_types::{CharacterSet, DataType};
+use pintail_types::{CharacterSet, DataType, Value};
 
 use crate::{BoundExpr, BoundExprKind, ScalarFunction};
 
@@ -76,7 +76,13 @@ pub(crate) fn encoded(expression: BoundExpr) -> BoundExpr {
     {
         // An introducer preserves bytes even when they cannot be decoded to
         // Unicode. A byte consumer need not decode and then encode them.
-        return args[0].clone();
+        let mut converted = wrap(
+            args[0].clone(),
+            ScalarFunction::PadTextBytes(charset),
+            DataType::Binary,
+        );
+        converted.nullable = true;
+        return converted;
     }
     if charset == CharacterSet::Utf8Mb4 {
         return expression;
@@ -148,5 +154,45 @@ pub(crate) fn byte_arguments(function: &mut ScalarFunction, args: &mut [BoundExp
             | F::ToBase64
     ) {
         *first = encoded(first.clone());
+    }
+}
+
+/// Constant discovery crosses encoding operations without discarding the
+/// representation used by non-constant execution.
+pub(crate) fn literal_value(expression: &BoundExpr) -> Option<std::borrow::Cow<'_, Value>> {
+    use std::borrow::Cow;
+    match &expression.kind {
+        BoundExprKind::Literal(value) => Some(Cow::Borrowed(value)),
+        BoundExprKind::Scalar {
+            function: ScalarFunction::TextCharset(charset),
+            args,
+        } => {
+            let value = literal_value(&args[0])?;
+            let Value::Utf8(text) = value.as_ref() else {
+                return None;
+            };
+            Some(Cow::Owned(Value::Utf8(
+                charset.decode(&charset.encode(text))?,
+            )))
+        }
+        BoundExprKind::Scalar {
+            function: ScalarFunction::DecodeText(charset),
+            args,
+        } => {
+            let value = literal_value(&args[0])?;
+            let Value::Binary(bytes) = value.as_ref() else {
+                return None;
+            };
+            Some(Cow::Owned(Value::Utf8(charset.decode(bytes)?)))
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn binary_pair(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    if left.data_type == Some(DataType::Binary) || right.data_type == Some(DataType::Binary) {
+        (encoded(left), encoded(right))
+    } else {
+        (left, right)
     }
 }

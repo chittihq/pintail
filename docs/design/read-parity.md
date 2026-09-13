@@ -130,3 +130,10 @@ shared-query key. UCS-2, UTF-16 (both byte orders) and UTF-32 have explicit
 codecs; this does not enable wide client/result wire encodings or wide local
 column declarations. Full coercibility and encoded aggregate truncation
 remain separate work.
+
+Encoding regression checks also cross constant discovery and comparison
+binding: temporal literals remain recognizable behind encoding operations,
+source-column collations outrank encoded literals, and a binary comparison
+observes the text operand's encoded bytes. Binary-to-text conversions pad
+partial wide units and return NULL for invalid encoded input; UCS-2 raw
+code units remain available to byte consumers.

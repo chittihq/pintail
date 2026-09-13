@@ -84,6 +84,25 @@ impl CharacterSet {
         bytes
     }
 
+    /// Align a binary-to-text conversion and validate its encoded units.
+    /// UCS-2 admits every code unit at the byte boundary, including surrogates.
+    #[must_use]
+    pub fn converted_bytes(self, bytes: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+        let width = self.minimum_width();
+        let padding = (width - bytes.len() % width) % width;
+        let bytes = if padding == 0 {
+            std::borrow::Cow::Borrowed(bytes)
+        } else {
+            let mut padded = vec![0; padding];
+            padded.extend_from_slice(bytes);
+            std::borrow::Cow::Owned(padded)
+        };
+        if self != Self::Ucs2 && self.decode(&bytes).is_none() {
+            return None;
+        }
+        Some(bytes)
+    }
+
     /// Decode valid encoded text. Ill-formed input has no Unicode carrier.
     #[must_use]
     pub fn decode(self, bytes: &[u8]) -> Option<String> {

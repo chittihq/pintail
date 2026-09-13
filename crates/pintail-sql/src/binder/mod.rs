@@ -3725,6 +3725,7 @@ fn bind_binary(
         let right = canonical_literal_operand(&left, right)?;
         let left = canonical_literal_operand(&right, left)?;
         let (left, right) = text_as_number(left, right);
+        let (left, right) = crate::text_charset::binary_pair(left, right);
         rewrite_json_comparison(left, right)
     } else {
         (left, right)
@@ -5860,10 +5861,11 @@ fn canonical_literal_operand(
         }
         _ => return Ok(operand),
     };
-    let text = match &operand.kind {
-        BoundExprKind::Literal(Value::Utf8(text)) => text.clone(),
-        BoundExprKind::Literal(Value::Int64(number)) if *number > 0 => number.to_string(),
-        BoundExprKind::Literal(Value::UInt64(number)) => number.to_string(),
+    let literal = crate::text_charset::literal_value(&operand);
+    let text = match literal.as_deref() {
+        Some(Value::Utf8(text)) => text.clone(),
+        Some(Value::Int64(number)) if *number > 0 => number.to_string(),
+        Some(Value::UInt64(number)) => number.to_string(),
         _ => return Ok(operand),
     };
     let Some(parsed) = TemporalLiteral::parse(&text) else {
@@ -5901,7 +5903,8 @@ fn canonical_literal_operand(
 /// prefix where it is compared. The DECIMAL carrier is text, so compared as
 /// written `balance > '100.5'` would have compared strings.
 fn numeric_literal(operand: BoundExpr) -> BoundExpr {
-    let BoundExprKind::Literal(Value::Utf8(text)) = &operand.kind else {
+    let literal = crate::text_charset::literal_value(&operand);
+    let Some(Value::Utf8(text)) = literal.as_deref() else {
         return operand;
     };
     let number = text.trim();
@@ -5975,6 +5978,9 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
         let width = encoding.minimum_width();
         let mut padded = vec![0; (width - bytes.len() % width) % width];
         padded.extend_from_slice(bytes);
+        if encoding.converted_bytes(&padded).is_none() {
+            return refuse();
+        }
         return Ok(crate::text_charset::wrap(
             BoundExpr {
                 data_type: Some(DataType::Binary),

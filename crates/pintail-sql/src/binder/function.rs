@@ -42,7 +42,8 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
         Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
         Some(DataType::Utf8) => {
             if parses_datetime
-                && let BoundExprKind::Literal(Value::Utf8(text)) = &argument.kind
+                && let Some(value) = crate::text_charset::literal_value(argument)
+                && let Value::Utf8(text) = value.as_ref()
                 && super::TemporalLiteral::parse(text).is_some()
             {
                 return text.rsplit_once('.').map_or(0, |(_, fraction)| {
@@ -1088,11 +1089,13 @@ pub(super) fn bind_convert(
     {
         let argument = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
         return if argument.data_type == Some(DataType::Binary) {
-            Ok(crate::text_charset::wrap(
+            let mut decoded = crate::text_charset::wrap(
                 argument,
                 ScalarFunction::DecodeText(encoding),
                 DataType::Utf8,
-            ))
+            );
+            decoded.nullable = true;
+            Ok(decoded)
         } else {
             let cast = crate::text_charset::wrap(
                 argument,
@@ -1594,7 +1597,7 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
+        ScalarFunction::PadTextBytes(_) | ScalarFunction::Unhex | ScalarFunction::FromBase64 => (Some(DataType::Binary), true),
         // NULL arguments are skipped, so the result itself is never NULL.
         ScalarFunction::Char => (Some(DataType::Binary), false),
         ScalarFunction::Rand | ScalarFunction::Pi | ScalarFunction::RandSeeded => {
@@ -2076,6 +2079,7 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
     let right = super::canonical_literal_operand(&left, right)?;
     let left = super::canonical_literal_operand(&right, left)?;
     let (left, right) = super::text_as_number(left, right);
+    let (left, right) = crate::text_charset::binary_pair(left, right);
     let (left, right) = super::rewrite_json_comparison(left, right);
     if !comparable(left.data_type, right.data_type) {
         return Err(BindError::InvalidBinaryTypes {

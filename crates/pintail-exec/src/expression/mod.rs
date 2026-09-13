@@ -1444,6 +1444,7 @@ impl CompiledExpr {
                 let first = string(0);
                 let output = match function {
                     ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
@@ -1643,6 +1644,7 @@ impl CompiledExpr {
                 let first = bound(0);
                 match function {
                     ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
@@ -2237,14 +2239,21 @@ fn evaluate_eager_scalar_inner(
                 .map(Value::Utf8)
                 .ok_or(ExecError::InvalidExpressionType)
         }
-        ScalarFunction::DecodeText(charset) => {
+        ScalarFunction::DecodeText(charset) | ScalarFunction::PadTextBytes(charset) => {
             let Value::Binary(bytes) = &values[0] else {
                 return Err(ExecError::InvalidExpressionType);
             };
-            charset
-                .decode(bytes)
-                .map(Value::Utf8)
-                .ok_or(ExecError::InvalidExpressionType)
+            let Some(bytes) = charset.converted_bytes(bytes) else {
+                return Ok(Value::Null);
+            };
+            if matches!(function, ScalarFunction::PadTextBytes(_)) {
+                Ok(Value::Binary(bytes.into_owned()))
+            } else {
+                charset
+                    .decode(&bytes)
+                    .map(Value::Utf8)
+                    .ok_or(ExecError::InvalidExpressionType)
+            }
         }
         ScalarFunction::EncodeText(charset) => {
             Ok(Value::Binary(charset.encode(&scalar_string(&values[0])?)))
