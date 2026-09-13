@@ -204,6 +204,17 @@ pub trait Handler: Send + Sync {
     async fn finish_stream(&mut self, _delivered: bool) {}
 }
 
+/// How waiting for the next command ended.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Wait {
+    /// A command has begun to arrive and is ready to serve.
+    Command,
+    /// The peer closed while nothing was in flight - an ordinary ending.
+    PeerClosed,
+    /// Nothing arrived within the idle deadline.
+    Idle,
+}
+
 /// What probing for a disconnected peer turned up.
 #[derive(Debug)]
 pub enum WatchOutcome {
@@ -249,6 +260,10 @@ pub struct Connection<R, W> {
     reader: PacketReader<R>,
     writer: PacketWriter<W>,
     capabilities: CapabilityFlags,
+    /// Set when the disconnect watch ended a command, so the caller can say
+    /// why the connection closed instead of reporting the same silent
+    /// `Ok(false)` it gets for an orderly `QUIT`.
+    watch_ended: bool,
 }
 
 impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W> {
@@ -258,6 +273,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             reader: PacketReader::new(reader),
             writer: PacketWriter::new(writer),
             capabilities: CapabilityFlags::empty(),
+            watch_ended: false,
         }
     }
 
@@ -471,6 +487,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             reader,
             writer,
             capabilities: CapabilityFlags::empty(),
+            watch_ended: false,
         }
     }
 
@@ -523,7 +540,10 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         tokio::select! {
             biased;
             outcome = watch.watch() => match outcome {
-                WatchOutcome::Disconnected => None,
+                WatchOutcome::Disconnected => {
+                    self.watch_ended = true;
+                    None
+                }
                 WatchOutcome::Primed(bytes) => {
                     self.reader.prime(bytes);
                     Some(handler_future.await)
@@ -531,6 +551,13 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
             },
             response = &mut handler_future => Some(response),
         }
+    }
+
+    /// Whether the last command ended because the disconnect watch reported
+    /// the peer gone, rather than because the peer asked to quit.
+    #[must_use]
+    pub const fn ended_by_disconnect_watch(&self) -> bool {
+        self.watch_ended
     }
 
     /// Waits for the next command to arrive, giving up after `idle`.
@@ -547,10 +574,12 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
     ///
     /// # Errors
     /// Propagates I/O failures from the underlying stream.
-    pub async fn await_command(&mut self, idle: std::time::Duration) -> std::io::Result<bool> {
+    pub async fn await_command(&mut self, idle: std::time::Duration) -> std::io::Result<Wait> {
         match tokio::time::timeout(idle, self.reader.wait_for_packet()).await {
-            Ok(result) => result,
-            Err(_) => Ok(false),
+            Ok(Ok(true)) => Ok(Wait::Command),
+            Ok(Ok(false)) => Ok(Wait::PeerClosed),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Ok(Wait::Idle),
         }
     }
 
@@ -890,7 +919,7 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
 mod tests {
     use super::{
         Connection, DisconnectWatch, Handler, InitialResponse, PreparedStatement, Response,
-        ResultSet, RowChunk, RowStream, WatchOutcome, server_capabilities,
+        ResultSet, RowChunk, RowStream, Wait, WatchOutcome, server_capabilities,
     };
     use crate::handshake::{CapabilityFlags, HandshakeResponse, SCRAMBLE_SIZE};
     use crate::packet::PacketReader;
@@ -1614,8 +1643,9 @@ mod tests {
         let idle = std::time::Duration::from_millis(20);
 
         // The command is already there, so waiting returns at once.
-        assert!(
+        assert_eq!(
             connection.await_command(idle).await.expect("io"),
+            Wait::Command,
             "a command already in flight is not an idle connection"
         );
         // Serving it takes six times the deadline, and must not be cut off.
@@ -1636,11 +1666,12 @@ mod tests {
         input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
         let mut output = Vec::new();
         let mut connection = Connection::new(input.as_slice(), &mut output);
-        assert!(
+        assert_eq!(
             connection
                 .await_command(std::time::Duration::from_secs(5))
                 .await
-                .expect("io")
+                .expect("io"),
+            Wait::Command
         );
         let mut handler = Fixture {
             accept: true,

@@ -21,7 +21,7 @@ pub use resultset::{
 };
 pub use server::{
     Connection, DisconnectWatch, Handler, InitialResponse, PreparedStatement, Response, ResultSet,
-    RowChunk, RowStream, WatchOutcome,
+    RowChunk, RowStream, Wait, WatchOutcome,
 };
 pub use types::{Column, ColumnFlags, ColumnType, ErrorKind, StatusFlags};
 pub use value::{

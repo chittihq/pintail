@@ -16,7 +16,7 @@ use pintail_meta::{ApiKeyRecord, MetaStore};
 use pintail_protocol::{
     BinaryValue, CapabilityFlags, Column, ColumnFlags, ColumnType, Connection, DisconnectWatch,
     EncodedRows, ErrorKind, Handler, HandshakeResponse, IntWidth, OkPacket, PacketWriter,
-    PreparedStatement, Response, ResultSet, RowChunk, RowStream, SCRAMBLE_SIZE, TextRow,
+    PreparedStatement, Response, ResultSet, RowChunk, RowStream, SCRAMBLE_SIZE, TextRow, Wait,
     WatchOutcome, decode_execute_parameters, encode_binary_datetime, encode_binary_int,
     encode_binary_time, encode_error, packet::put_length_encoded_bytes,
 };
@@ -181,7 +181,10 @@ pub async fn serve(
         );
         backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
         tokio::spawn(async move {
-            let _ = serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await;
+            match serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await {
+                Ok(end) => log_connection_close(end),
+                Err(error) => log_connection_end(&error),
+            }
         });
     }
 }
@@ -388,8 +391,9 @@ where
                     // Both released with the task, whatever ends it.
                     let _permit = permit;
                     let _active = active;
-                    if let Err(error) = serve_connection(stream, backend, tls, idle_timeout).await {
-                        log_connection_end(&error);
+                    match serve_connection(stream, backend, tls, idle_timeout).await {
+                        Ok(end) => log_connection_close(end),
+                        Err(error) => log_connection_end(&error),
                     }
                 });
             }
@@ -452,17 +456,64 @@ impl DisconnectWatch for TcpDisconnectWatch {
     }
 }
 
-/// Reports why a wire connection ended.
+/// Why a wire connection ended, when it ended without an I/O error.
 ///
-/// The accept loop used to discard this with `let _ =`, so a client that
-/// failed to authenticate or was refused for an unsupported command left no
-/// trace anywhere - the connection simply closed and the operator was told
-/// nothing by either side.
+/// Every one of these used to close the socket and say nothing, which is
+/// indistinguishable to a client and to an operator reading the log. A
+/// connection that goes away mid-query is then unattributable after the
+/// fact: the client can only report that it went away, and the server,
+/// which is the only side that knows, did not write it down.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConnectionEnd {
+    /// The client sent `COM_QUIT`.
+    PeerQuit,
+    /// The peer closed while no command was in flight.
+    PeerClosed,
+    /// Nothing arrived within the idle deadline.
+    IdleDeadline,
+    /// The disconnect watch reported the peer gone while a command ran, so
+    /// the reply was never written.
+    DisconnectNoticed,
+    /// The handshake was refused.
+    AuthenticationFailed,
+    /// A plaintext client reached a listener that requires TLS.
+    TlsRequired,
+}
+
+impl ConnectionEnd {
+    /// Whether this ending is the ordinary business of a connection pool
+    /// rather than something an operator should look at.
+    const fn routine(self) -> bool {
+        matches!(self, Self::PeerQuit | Self::PeerClosed | Self::IdleDeadline)
+    }
+
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::PeerQuit => "the client sent QUIT",
+            Self::PeerClosed => "the peer closed while idle",
+            Self::IdleDeadline => "the idle deadline elapsed",
+            Self::DisconnectNoticed => "the peer went away while a command was running",
+            Self::AuthenticationFailed => "authentication was refused",
+            Self::TlsRequired => "the client offered no TLS and this listener requires it",
+        }
+    }
+}
+
+/// Records how a connection ended when no I/O error carried the reason.
+fn log_connection_close(end: ConnectionEnd) {
+    if end.routine() {
+        pintail_log::log_debug!("wire connection closed: {}", end.reason());
+    } else {
+        pintail_log::log_info!("wire connection closed: {}", end.reason());
+    }
+}
+
+/// Reports why a wire connection ended in an I/O failure.
 ///
 /// A peer hanging up is normal and logs only at debug: every pooled client
 /// disconnect would otherwise read as a server fault. Anything else is a real
-/// failure and logs at error.
-///
+/// failure and logs at error, with the kind, since the kind is what says
+/// whether the peer left or something here broke.
 fn log_connection_end(error: &io::Error) {
     let benign = matches!(
         error.kind(),
@@ -474,7 +525,7 @@ fn log_connection_end(error: &io::Error) {
     if benign {
         pintail_log::log_debug!("wire connection closed by peer: {error}");
     } else {
-        pintail_log::log_error!("wire connection failed: {error}");
+        pintail_log::log_error!("wire connection failed ({:?}): {error}", error.kind());
     }
 }
 
@@ -483,7 +534,7 @@ async fn serve_connection(
     backend: Backend,
     tls: Option<WireTls>,
     idle_timeout: Duration,
-) -> io::Result<()> {
+) -> io::Result<ConnectionEnd> {
     // Small response packets must not wait for acknowledgements of earlier
     // packets before the rest of the response can reach the client.
     stream.set_nodelay(true)?;
@@ -512,7 +563,9 @@ async fn serve_connection(
         // A required-TLS listener drops a plaintext client after the
         // greeting rather than serve it unencrypted; MySQL clients report
         // the closed connection as "server requires secure transport".
-        (pintail_protocol::InitialResponse::Full(_), Some(tls)) if tls.required => Ok(()),
+        (pintail_protocol::InitialResponse::Full(_), Some(tls)) if tls.required => {
+            Ok(ConnectionEnd::TlsRequired)
+        }
         (pintail_protocol::InitialResponse::Full(response), _) => {
             run_connection(connection, response, backend, scramble, watch, idle_timeout).await
         }
@@ -555,7 +608,7 @@ async fn run_connection<R, W>(
     scramble: [u8; SCRAMBLE_SIZE],
     mut watch: TcpDisconnectWatch,
     idle_timeout: Duration,
-) -> io::Result<()>
+) -> io::Result<ConnectionEnd>
 where
     R: tokio::io::AsyncRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send,
@@ -564,25 +617,27 @@ where
         .await
         .is_err()
     {
-        return Ok(());
+        return Ok(ConnectionEnd::AuthenticationFailed);
     }
     loop {
         // The deadline belongs on waiting for a command, not on serving one.
         // Wrapped around the whole of `serve_one` it closes the socket part
         // way through a long query, with no error packet - which a client
         // cannot tell from the server dying.
-        match connection.await_command(idle_timeout).await {
-            Ok(true) => {}
-            Ok(false) => return Ok(()),
-            Err(error) => return Err(error),
+        match connection.await_command(idle_timeout).await? {
+            Wait::Command => {}
+            Wait::PeerClosed => return Ok(ConnectionEnd::PeerClosed),
+            Wait::Idle => return Ok(ConnectionEnd::IdleDeadline),
         }
-        match connection
+        if !connection
             .serve_one_with_disconnect_watch(&mut backend, &mut watch)
-            .await
+            .await?
         {
-            Ok(true) => {}
-            Ok(false) => return Ok(()),
-            Err(error) => return Err(error),
+            return Ok(if connection.ended_by_disconnect_watch() {
+                ConnectionEnd::DisconnectNoticed
+            } else {
+                ConnectionEnd::PeerQuit
+            });
         }
     }
 }
@@ -593,7 +648,7 @@ async fn run_connection_without_watch<R, W>(
     mut backend: Backend,
     scramble: [u8; SCRAMBLE_SIZE],
     idle_timeout: Duration,
-) -> io::Result<()>
+) -> io::Result<ConnectionEnd>
 where
     R: tokio::io::AsyncRead + Unpin + Send,
     W: tokio::io::AsyncWrite + Unpin + Send,
@@ -602,18 +657,16 @@ where
         .await
         .is_err()
     {
-        return Ok(());
+        return Ok(ConnectionEnd::AuthenticationFailed);
     }
     loop {
-        match connection.await_command(idle_timeout).await {
-            Ok(true) => {}
-            Ok(false) => return Ok(()),
-            Err(error) => return Err(error),
+        match connection.await_command(idle_timeout).await? {
+            Wait::Command => {}
+            Wait::PeerClosed => return Ok(ConnectionEnd::PeerClosed),
+            Wait::Idle => return Ok(ConnectionEnd::IdleDeadline),
         }
-        match connection.serve_one(&mut backend).await {
-            Ok(true) => {}
-            Ok(false) => return Ok(()),
-            Err(error) => return Err(error),
+        if !connection.serve_one(&mut backend).await? {
+            return Ok(ConnectionEnd::PeerQuit);
         }
     }
 }
