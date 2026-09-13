@@ -485,6 +485,41 @@ fn primary_key(
     PrimaryKey::new(parts).map_err(|error| WriteError::Invalid(error.to_string()))
 }
 
+/// A hexadecimal literal (`X'4142'`, `0x4142`): its bytes in a binary column,
+/// the text they spell in a text column, and their big-endian value in an
+/// integer column - the three readings MySQL gives it by context.
+fn hex_literal(digits: &str, column: &SourceColumn) -> Result<Value, WriteError> {
+    let wrong = || {
+        WriteError::Invalid(format!(
+            "Incorrect value X'{digits}' for column '{}'",
+            column.name
+        ))
+    };
+    let padded = if digits.len() % 2 == 1 {
+        format!("0{digits}")
+    } else {
+        digits.to_owned()
+    };
+    let bytes = (0..padded.len())
+        .step_by(2)
+        .map(|start| u8::from_str_radix(&padded[start..start + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| wrong())?;
+    match column.pintail_type.storage_type() {
+        DataType::Binary => Ok(Value::Binary(bytes)),
+        DataType::Utf8 => String::from_utf8(bytes)
+            .map_err(|_| wrong())
+            .and_then(|text| typed_value(&text, column)),
+        DataType::Int64 | DataType::UInt64 if bytes.len() <= 8 => {
+            let number = bytes
+                .iter()
+                .fold(0_u64, |number, byte| number << 8 | u64::from(*byte));
+            typed_value(&number.to_string(), column)
+        }
+        _ => Err(wrong()),
+    }
+}
+
 /// The text of a column default this write path can apply: a number, a
 /// signed number or a string. An expression default is `None`.
 fn default_literal(expr: &Expr) -> Option<String> {
@@ -541,9 +576,11 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
     };
     let text = match value {
         SqlValue::Null => return Ok(Value::Null),
-        SqlValue::Boolean(flag) => return Ok(Value::Boolean(*flag)),
+        // TRUE and FALSE are the numbers 1 and 0 to whatever column takes them.
+        SqlValue::Boolean(flag) => u8::from(*flag).to_string(),
         SqlValue::Number(number, _) => number.clone(),
         SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => text.clone(),
+        SqlValue::HexStringLiteral(digits) => return hex_literal(digits, column),
         other => {
             return Err(WriteError::Unsupported(format!(
                 "value `{other}` is not supported in INSERT"

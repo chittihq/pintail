@@ -440,3 +440,25 @@ fn a_literal_column_default_fills_an_omitted_column() {
             .is_err()
     );
 }
+
+#[test]
+fn hex_and_boolean_literals_take_their_column_reading() {
+    let plan = create(
+        "CREATE TABLE h (id INT PRIMARY KEY, raw VARBINARY(4), label VARCHAR(4), n INT, flag TINYINT)",
+    )
+    .expect("binds");
+    let statement = parse_statement("INSERT INTO h VALUES (1, X'4142', 0x4142, X'4142', TRUE)")
+        .expect("parses");
+    let rows = bind_insert_from(&statement, &plan.table, 1)
+        .expect("binds")
+        .rows;
+    assert_eq!(
+        rows[0].values()[1..],
+        [
+            Value::Binary(b"AB".to_vec()),
+            Value::Utf8("AB".to_owned()),
+            Value::Int64(16706),
+            Value::Int64(1)
+        ]
+    );
+}
