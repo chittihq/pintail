@@ -202,6 +202,7 @@ pub(super) fn bind_window_function(
                 }
                 _ => return Err(BindError::UnsupportedAggregate(function.to_string())),
             };
+            let expr = super::numeric_aggregate_input(aggregate_function, expr);
             let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
             (
                 WindowFunction::Aggregate(BoundAggregate {

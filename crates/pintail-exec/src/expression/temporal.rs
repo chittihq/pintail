@@ -80,9 +80,9 @@ pub(super) fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {
         DatePart::Second => u64::from(value.second()),
         DatePart::Quarter => u64::from((value.month() - 1) / 3 + 1),
         // MySQL DAYOFWEEK: 1 = Sunday .. 7 = Saturday.
-        DatePart::DayOfWeek => u64::from(value.weekday().num_days_from_sunday() + 1),
+        DatePart::DayOfWeek => u64::from((mysql_weekday(value.date()) + 1) % 7 + 1),
         // MySQL WEEKDAY: 0 = Monday .. 6 = Sunday.
-        DatePart::WeekDay => u64::from(value.weekday().num_days_from_monday()),
+        DatePart::WeekDay => u64::from(mysql_weekday(value.date())),
         DatePart::DayOfYear => u64::from(value.ordinal()),
         DatePart::Week => mysql_week_mode0(value.date()),
         DatePart::IsoWeek => u64::from(value.date().iso_week().week()),

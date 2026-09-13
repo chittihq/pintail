@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `DAYNAME` retains its weekday number in arithmetic, numeric comparisons
+  and numeric aggregates while explicit casts still convert the label.
+
 - Temporal casts and date/time consumers retain parsed partial dates and
   fractional precision. Day-only clock formats form durations; early
   `FROM_DAYS` inputs and year-zero calendar labels match MySQL.

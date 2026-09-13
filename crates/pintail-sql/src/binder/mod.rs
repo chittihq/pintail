@@ -4759,7 +4759,7 @@ fn bind_aggregate(
     let expr = if aggregate_function == AggregateFunction::GroupConcat {
         expr.map(function::float_string_argument)
     } else {
-        expr
+        numeric_aggregate_input(aggregate_function, expr)
     };
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let charset = expr
@@ -4825,6 +4825,23 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
         "BIT_OR" => Some(AggregateFunction::BitOr),
         "BIT_XOR" => Some(AggregateFunction::BitXor),
         _ => None,
+    }
+}
+
+fn numeric_aggregate_input(
+    function: AggregateFunction,
+    expr: Option<BoundExpr>,
+) -> Option<BoundExpr> {
+    if matches!(
+        function,
+        AggregateFunction::Sum
+            | AggregateFunction::Average
+            | AggregateFunction::StdDev { .. }
+            | AggregateFunction::Variance { .. }
+    ) {
+        expr.map(|value| implicit_day_number(&value).unwrap_or(value))
+    } else {
+        expr
     }
 }
 
@@ -5709,11 +5726,57 @@ const TIME_NUMBER_DIGITS: u8 = 7;
 /// Whole digits of a DATETIME read as a number: YYYYMMDDHHMMSS.
 const DATETIME_NUMBER_DIGITS: u8 = 14;
 
+/// DAYNAME exposes a weekday number in implicit numeric contexts. Explicit
+/// casts and string-producing wrappers read its label instead; IF delegates
+/// the numeric context to its selected branch, while COALESCE materializes text.
+fn implicit_day_number(expr: &BoundExpr) -> Option<BoundExpr> {
+    let BoundExprKind::Scalar { function, args } = &expr.kind else {
+        return None;
+    };
+    match function {
+        ScalarFunction::DayName => Some(cast_to(
+            BoundExpr {
+                data_type: Some(DataType::Int64),
+                nullable: expr.nullable,
+                kind: BoundExprKind::Scalar {
+                    function: ScalarFunction::DatePart(DatePart::WeekDay),
+                    args: vec![args[0].clone()],
+                },
+            },
+            DataType::Float64,
+        )),
+        ScalarFunction::TextCharset(_) | ScalarFunction::Collate { .. } => {
+            implicit_day_number(&args[0])
+        }
+        ScalarFunction::If => {
+            let yes = implicit_day_number(&args[1]);
+            let no = implicit_day_number(&args[2]);
+            if yes.is_none() && no.is_none() {
+                return None;
+            }
+            let mut selected = expr.clone();
+            selected.kind = BoundExprKind::Scalar {
+                function: ScalarFunction::If,
+                args: vec![
+                    args[0].clone(),
+                    yes.unwrap_or_else(|| args[1].clone()),
+                    no.unwrap_or_else(|| args[2].clone()),
+                ],
+            };
+            Some(cast_to(selected, DataType::Float64))
+        }
+        _ => None,
+    }
+}
+
 /// A TIME in a numeric context is the number `[-]HHMMSS[.ffffff]` in `MySQL`,
 /// at the value's fractional precision: `TIME + 0` is that number.
 /// An arithmetic operand read as a number: a TIME, DATE or DATETIME is its
 /// digits - HHMMSS, YYYYMMDD and YYYYMMDDHHMMSS[.fraction].
 fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+    if let Some(number) = implicit_day_number(&expr) {
+        return number;
+    }
     // The TIME-valued functions answer text; from integer arguments their
     // TIME has whole seconds.
     if let BoundExprKind::Scalar { function, args } = &expr.kind
@@ -5812,6 +5875,23 @@ fn is_plain_text(expr: &BoundExpr) -> bool {
 /// written `99.00 > '100.5x'` held; the text side is read as a double, and
 /// the comparison then reads the DECIMAL as one too.
 fn text_as_number(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    let numeric = |expr: &BoundExpr| {
+        matches!(expr.data_type, Some(DataType::Decimal { .. }))
+            || matches!(
+                expr.data_type.map(DataType::storage_type),
+                Some(DataType::Boolean | DataType::Int64 | DataType::UInt64 | DataType::Float64)
+            )
+    };
+    let left = if numeric(&right) {
+        implicit_day_number(&left).unwrap_or(left)
+    } else {
+        left
+    };
+    let right = if numeric(&left) {
+        implicit_day_number(&right).unwrap_or(right)
+    } else {
+        right
+    };
     let decimal = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Decimal { .. }));
     if decimal(&left) && is_plain_text(&right) {
         (left, cast_to(right, DataType::Float64))

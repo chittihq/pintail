@@ -893,3 +893,20 @@ fn parsed_partial_dates_survive_temporal_consumers() {
         assert_eq!(scalar(&expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn weekday_names_keep_their_implicit_numeric_value() {
+    for (expression, expected) in [
+        ("DAYNAME('2008-03-18') + 0", "float 1"),
+        ("DAYNAME('2008-03-18') = 1", "Boolean(true)"),
+        ("DAYNAME('2008-03-18') = 'Tuesday'", "Boolean(true)"),
+        ("CAST(DAYNAME('2008-03-18') AS SIGNED)", "0"),
+        ("CONCAT(DAYNAME('2008-03-18')) + 0", "float 0"),
+        ("IF(id = 1, DAYNAME('2008-03-18'), '') + 0", "float 1"),
+        ("COALESCE(DAYNAME('2008-03-18'), '') + 0", "float 0"),
+        ("SUM(DAYNAME('2008-03-18'))", "float 1"),
+        ("SUM(DAYNAME('2008-03-18')) OVER ()", "float 1"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
