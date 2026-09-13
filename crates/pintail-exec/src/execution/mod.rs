@@ -3876,7 +3876,7 @@ impl PullOperator {
                     }
                     *state = Some(Box::new(built));
                 }
-                next_hash_join_batch(
+                let result = next_hash_join_batch(
                     left,
                     *kind,
                     left_key,
@@ -3888,7 +3888,17 @@ impl PullOperator {
                     residual_columns,
                     state.as_mut().expect("initialized above"),
                     memory,
-                )
+                );
+                // Exhausted means served: the grace loop keeps answering
+                // until every partition has been, so `None` here is the
+                // join's last word. What it was holding goes back now,
+                // while whatever runs above it still needs the ceiling.
+                if matches!(result, Ok(None))
+                    && let Some(state) = state.as_mut()
+                {
+                    state.finish(memory);
+                }
+                result
             }
             Self::Profiled { input, slot, sink } => {
                 let started = Instant::now();

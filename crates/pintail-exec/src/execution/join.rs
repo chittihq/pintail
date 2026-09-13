@@ -664,6 +664,23 @@ impl HashJoinState {
     /// when it FINISHES rather than when the query is dropped; until then,
     /// read this as keeping the numbers honest - which is worth having,
     /// since it is what makes a leak visible at all.
+    /// Frees what the join needed only while it was running, once it has
+    /// served its last row.
+    ///
+    /// The build table is dead the moment the probe is exhausted - a left or
+    /// anti join emits its unmatched build rows before that point, so nothing
+    /// reads it afterwards - but it was kept, and kept charged, until the
+    /// whole execution was dropped. An aggregate or a sort above the join
+    /// runs after it finishes and had to fit under a ceiling holding a hash
+    /// table nobody could read.
+    ///
+    /// Releasing the reservation alone would only correct the bookkeeping;
+    /// the table is cleared too, so the memory genuinely comes back.
+    pub(super) fn finish(&mut self, memory: &MemoryTracker) {
+        self.release_all(memory);
+        self.build.clear();
+    }
+
     pub(super) fn release_all(&mut self, memory: &MemoryTracker) {
         self.clear_batch(memory);
         memory.release(self.filter_reserved);
