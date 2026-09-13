@@ -4599,7 +4599,25 @@ fn bind_aggregate(
             }
             sqlparser::ast::FunctionArgumentClause::OrderBy(keys) => {
                 for key in keys {
-                    let bound = bind_expr(&key.expr, tables, subqueries)?;
+                    let expression = if let Expr::Value(value) = &key.expr
+                        && let SqlValue::Number(number, _) = &value.value
+                        && !number.contains(['.', 'e', 'E'])
+                    {
+                        let index = number
+                            .parse::<usize>()
+                            .ok()
+                            .and_then(|position| position.checked_sub(1))
+                            .ok_or_else(|| BindError::InvalidOrderBy(key.expr.to_string()))?;
+                        let Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(expression))) =
+                            arguments.args.get(index)
+                        else {
+                            return Err(BindError::InvalidOrderBy(key.expr.to_string()));
+                        };
+                        expression
+                    } else {
+                        &key.expr
+                    };
+                    let bound = bind_expr(expression, tables, subqueries)?;
                     if bound.data_type == Some(DataType::Json) {
                         return Err(BindError::UnsupportedAggregate(format!(
                             "{function}: ORDER BY over JSON requires JSON-aware ordering"
@@ -4616,6 +4634,19 @@ fn bind_aggregate(
         Some(DuplicateTreatment::Distinct) => true,
         None | Some(DuplicateTreatment::All) => false,
     };
+    // DISTINCT emits values in argument order when no explicit ordering
+    // overrides it. Keep the original types as keys, so numbers sort as
+    // numbers even though the aggregate renders them as text.
+    if aggregate_function == AggregateFunction::GroupConcat && distinct && order_within.is_empty() {
+        for argument in &arguments.args {
+            let FunctionArg::Unnamed(FunctionArgExpr::Expr(expression)) = argument else {
+                return Err(BindError::UnsupportedAggregate(function.to_string()));
+            };
+            let bound = bind_expr(expression, tables, subqueries)?;
+            ensure_supported_text_collation(&[&bound])?;
+            order_within.push((bound, true));
+        }
+    }
     // MySQL's grammar has no JSON_ARRAYAGG(DISTINCT ...).
     if distinct && aggregate_function == AggregateFunction::JsonArrayAgg {
         return Err(BindError::UnsupportedAggregate(function.to_string()));

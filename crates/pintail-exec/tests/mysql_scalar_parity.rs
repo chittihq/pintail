@@ -25,16 +25,26 @@ fn scalar(expression: &str) -> String {
 }
 
 fn evaluate(expression: &str) -> String {
+    evaluate_rows(expression, 1)
+}
+
+fn evaluate_rows(expression: &str, rows: u64) -> String {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
     table
-        .bulk_ingest_snapshot(vec![StoredRow::new(
-            PrimaryKey::new(vec![KeyPart::UInt64(1)]).expect("key"),
-            vec![Value::UInt64(1)],
-            1,
-            false,
-        )])
+        .bulk_ingest_snapshot(
+            (1..=rows)
+                .map(|id| {
+                    StoredRow::new(
+                        PrimaryKey::new(vec![KeyPart::UInt64(id)]).expect("key"),
+                        vec![Value::UInt64(id)],
+                        id,
+                        false,
+                    )
+                })
+                .collect(),
+        )
         .expect("ingest");
     let snapshot = table.snapshot();
     let database_id = DatabaseId::new(1);
@@ -43,7 +53,7 @@ fn evaluate(expression: &str) -> String {
         table_id,
         "one",
         schema(),
-        TableStatistics::with_row_count(1),
+        TableStatistics::with_row_count(rows),
     )
     .expect("entry");
     let database = DatabaseEntry::new(database_id, "app", [entry]).expect("database");
@@ -111,6 +121,31 @@ fn string_boundaries_match_for_literals_and_column_expressions() {
         ("SUBSTRING('é猫', -2, 1)", "é"),
         ("INSERT('é猫', 3, 0, 'x')", "é猫"),
         ("INSERT('', 1, 0, 'x')", ""),
+    ]);
+}
+
+#[test]
+fn binary_string_functions_preserve_bytes_and_result_types() {
+    for bytes in ["X'FF0080'", "IF(id = 1, X'FF0080', NULL)"] {
+        assert_answers(&[
+            (&format!("HEX(LEFT({bytes}, 2))"), "FF00"),
+            (&format!("HEX(RIGHT({bytes}, 2))"), "0080"),
+            (&format!("HEX(REPLACE({bytes}, X'FF', X'FE'))"), "FE0080"),
+            (&format!("HEX(REPLACE({bytes}, X'', X'FE'))"), "FF0080"),
+            (&format!("HEX(INSERT({bytes}, 2, 1, X'FE'))"), "FFFE80"),
+            (&format!("HEX(INSERT({bytes}, 4, 0, X'FE'))"), "FF0080"),
+        ]);
+    }
+    assert_answers(&[
+        ("LEFT(X'FF0080', 2)", "Binary([255, 0])"),
+        ("RIGHT(X'FF0080', 2)", "Binary([0, 128])"),
+        ("REPLACE(X'FF0080', X'FF', X'FE')", "Binary([254, 0, 128])"),
+        ("INSERT(X'FF0080', 2, 1, X'FE')", "Binary([255, 254, 128])"),
+        ("HEX(INSERT('é猫', 2, 1, X'FF'))", "C3FFE78CAB"),
+        ("HEX(REPLACE('é猫', '猫', X'FF'))", "C3A9FF"),
+        ("HEX(LEFT(X'FF0080', 0))", ""),
+        ("HEX(RIGHT(X'FF0080', 8))", "FF0080"),
+        ("HEX(REPLACE(X'FF', NULL, X'80'))", "NULL"),
     ]);
 }
 
@@ -209,6 +244,31 @@ fn a_decimal_cast_clamps_to_its_declared_range() {
         ("CAST(TIME'01:02:03' AS DECIMAL(7,2))", "10203.00"),
         ("CAST(123456.7 AS DECIMAL(7,2))", "99999.99"),
     ]);
+}
+
+#[test]
+fn group_concat_orders_by_argument_positions() {
+    assert_eq!(evaluate_rows("GROUP_CONCAT(4-id ORDER BY 1)", 3), "1,2,3");
+    assert_eq!(
+        evaluate_rows("GROUP_CONCAT(4-id ORDER BY 1 DESC)", 3),
+        "3,2,1"
+    );
+    assert_eq!(
+        evaluate_rows("GROUP_CONCAT(id,4-id ORDER BY 2)", 3),
+        "31,22,13"
+    );
+    for invalid in ["GROUP_CONCAT(id ORDER BY 0)", "GROUP_CONCAT(id ORDER BY 2)"] {
+        assert!(scalar(invalid).starts_with("error"));
+    }
+}
+
+#[test]
+fn group_concat_distinct_has_sorted_output_without_an_order_clause() {
+    assert_eq!(evaluate_rows("GROUP_CONCAT(DISTINCT 4-id)", 3), "1,2,3");
+    assert_eq!(
+        evaluate_rows("GROUP_CONCAT(DISTINCT IF(id=2, 2, 10))", 3),
+        "2,10"
+    );
 }
 
 #[test]
@@ -339,29 +399,3 @@ fn time_and_makedate_follow_the_type_ranges() {
         ("MAKEDATE(9999, 366)", "NULL"),
     ]);
 }
-
-#[test]
-fn binary_string_functions_preserve_bytes_and_result_types() {
-    for bytes in ["X'FF0080'", "IF(id = 1, X'FF0080', NULL)"] {
-        assert_answers(&[
-            (&format!("HEX(LEFT({bytes}, 2))"), "FF00"),
-            (&format!("HEX(RIGHT({bytes}, 2))"), "0080"),
-            (&format!("HEX(REPLACE({bytes}, X'FF', X'FE'))"), "FE0080"),
-            (&format!("HEX(REPLACE({bytes}, X'', X'FE'))"), "FF0080"),
-            (&format!("HEX(INSERT({bytes}, 2, 1, X'FE'))"), "FFFE80"),
-            (&format!("HEX(INSERT({bytes}, 4, 0, X'FE'))"), "FF0080"),
-        ]);
-    }
-    assert_answers(&[
-        ("LEFT(X'FF0080', 2)", "Binary([255, 0])"),
-        ("RIGHT(X'FF0080', 2)", "Binary([0, 128])"),
-        ("REPLACE(X'FF0080', X'FF', X'FE')", "Binary([254, 0, 128])"),
-        ("INSERT(X'FF0080', 2, 1, X'FE')", "Binary([255, 254, 128])"),
-        ("HEX(INSERT('é猫', 2, 1, X'FF'))", "C3FFE78CAB"),
-        ("HEX(REPLACE('é猫', '猫', X'FF'))", "C3A9FF"),
-        ("HEX(LEFT(X'FF0080', 0))", ""),
-        ("HEX(RIGHT(X'FF0080', 8))", "FF0080"),
-        ("HEX(REPLACE(X'FF', NULL, X'80'))", "NULL"),
-    ]);
-}
-
