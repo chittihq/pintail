@@ -30,10 +30,10 @@ pub use execution::{
     with_execution_cancellation,
 };
 pub use execution::{
-    MemoryBudget, MemoryScope, init_shared_memory_budget, session_cte_max_recursion_depth,
-    session_group_concat_max_len, set_session_cte_max_recursion_depth,
-    set_session_group_concat_max_len, shared_memory_budget, take_session_division_warnings,
-    take_session_group_concat_warnings,
+    MemoryBudget, MemoryScope, init_parallel_pool, init_shared_memory_budget,
+    session_cte_max_recursion_depth, session_group_concat_max_len,
+    set_session_cte_max_recursion_depth, set_session_group_concat_max_len, shared_memory_budget,
+    take_session_division_warnings, take_session_group_concat_warnings,
 };
 pub use execution::{
     dependent_memo_disabled, dependent_memo_hits, dependent_memo_misses,

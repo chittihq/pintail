@@ -372,6 +372,11 @@ fn oracle_case_inventory_matches_the_declared_gate() {
 
 #[allow(clippy::too_many_lines)]
 fn run_oracle() -> Result<(), String> {
+    // The server does this at startup; a test binary has no startup, so
+    // without it the workers here keep the platform's smaller stacks and
+    // this runs a different engine from the one that ships. Already-built
+    // is not an error: another test in this binary got there first.
+    let _ = pintail_exec::init_parallel_pool();
     let evidence = std::env::var("PINTAIL_ORACLE_EVIDENCE")
         .ok()
         .map(|path| {
