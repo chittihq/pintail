@@ -1,8 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-13T17:44:43.258Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-13T20:41:52.557Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-**3,444 of 3,880 compared SELECTs match MySQL byte-for-byte** (88.8%), **out of 23,118 SELECTs replayed** - 19,238 never reached a comparison, so this is a share of what could be compared and not of the suite. 395 differ in rows, 41 in column names only. 4,220 SELECTs Pintail could not run, 10,118 were not compared because their tables were changed by statements a local database cannot follow, 2,902 failed on MySQL itself, 1,998 depend on the clock, session or server and were not compared. Fixtures: 10,562 accepted, 680 rejected by Pintail, 28,755 outside the replayed subset.
+Replay mode: local. Source commit: b0018f48de96a7a299c166b032b85d828fe397ac; source dirty: false. Binary SHA-256: 7d693dc2e161b6079f7da35bc5ef0ba4909b44e8a7bc2527f09b9f54fa4ac88f.
+
+**3,476 of 3,882 compared SELECTs match MySQL byte-for-byte** (89.5%), **out of 23,118 SELECTs replayed** - 19,236 never reached a comparison, so this is a share of what could be compared and not of the suite. 365 differ in rows, 41 in column names only. 4,218 SELECTs Pintail could not run, 10,118 were not compared because their tables were changed by statements a local database cannot follow, 2,902 failed on MySQL itself, 1,998 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 10,562 accepted, 680 rejected by Pintail, 28,755 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -34,7 +36,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | bool | 30 | 15 | 1 | 0 | 4 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
 | bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
 | case | 140 | 33 | 2 | 0 | 2 | 11 | 0 | 49 | 3 | 11 | 7 | 22 |
-| cast | 564 | 130 | 35 | 0 | 31 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
+| cast | 564 | 131 | 34 | 0 | 31 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
 | change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 |
 | character_set_deprecation | 100 | 8 | 0 | 0 | 26 | 0 | 0 | 13 | 21 | 13 | 3 | 13 |
 | charset | 77 | 0 | 1 | 2 | 0 | 4 | 0 | 15 | 1 | 6 | 11 | 36 |
@@ -119,8 +121,8 @@ Column names are compared with rows. Row order is compared when the outer query 
 | ctype_utf16le | 566 | 34 | 6 | 0 | 115 | 80 | 0 | 67 | 32 | 152 | 35 | 34 |
 | ctype_utf32 | 551 | 32 | 6 | 0 | 138 | 68 | 0 | 52 | 34 | 122 | 49 | 42 |
 | ctype_utf32_uca | 455 | 15 | 6 | 0 | 98 | 46 | 0 | 28 | 6 | 213 | 29 | 8 |
-| ctype_utf8 | 1816 | 249 | 14 | 0 | 95 | 119 | 0 | 567 | 27 | 345 | 70 | 318 |
-| ctype_utf8mb4 | 1034 | 116 | 11 | 0 | 106 | 97 | 0 | 314 | 13 | 176 | 86 | 104 |
+| ctype_utf8 | 1816 | 250 | 13 | 0 | 95 | 119 | 0 | 567 | 27 | 345 | 70 | 318 |
+| ctype_utf8mb4 | 1034 | 117 | 10 | 0 | 106 | 97 | 0 | 314 | 13 | 176 | 86 | 104 |
 | ctype_utf8mb4_uca | 217 | 0 | 0 | 0 | 2 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
 | datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | date_formats | 120 | 19 | 12 | 0 | 31 | 6 | 0 | 19 | 0 | 7 | 15 | 11 |
@@ -198,7 +200,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_digest | 566 | 473 | 0 | 0 | 9 | 0 | 0 | 16 | 1 | 14 | 22 | 8 |
 | func_digest_small_buffer | 12 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 9 | 0 | 1 |
 | func_equal | 29 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 3 |
-| func_gconcat | 261 | 51 | 8 | 0 | 23 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
+| func_gconcat | 261 | 54 | 5 | 0 | 23 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
 | func_group | 725 | 161 | 4 | 0 | 25 | 57 | 0 | 265 | 11 | 46 | 21 | 126 |
 | func_if | 99 | 21 | 5 | 1 | 11 | 0 | 0 | 45 | 0 | 1 | 1 | 13 |
 | func_in_all | 297 | 66 | 1 | 1 | 21 | 11 | 0 | 103 | 2 | 19 | 10 | 62 |
@@ -220,11 +222,11 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
 | func_sapdb | 88 | 45 | 4 | 0 | 28 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
 | func_set | 77 | 18 | 3 | 0 | 17 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
-| func_str | 834 | 341 | 10 | 9 | 170 | 13 | 0 | 145 | 3 | 17 | 18 | 94 |
+| func_str | 834 | 345 | 6 | 9 | 170 | 13 | 0 | 145 | 3 | 17 | 18 | 94 |
 | func_test | 221 | 91 | 10 | 3 | 24 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
-| func_time | 599 | 277 | 19 | 0 | 66 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
-| func_timestamp | 7 | 0 | 1 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
-| func_unixtime | 96 | 31 | 17 | 0 | 2 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
+| func_time | 599 | 282 | 14 | 0 | 66 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
+| func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
+| func_unixtime | 96 | 47 | 3 | 0 | 0 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
 | func_uuid | 99 | 0 | 0 | 0 | 29 | 9 | 0 | 12 | 3 | 8 | 3 | 35 |
 | func_weight_string | 84 | 1 | 0 | 0 | 17 | 7 | 0 | 12 | 2 | 14 | 5 | 26 |
 | function_defaults | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
@@ -655,7 +657,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 152 | Error: unsupported expression: weight_string(_) |
 | 77 | INSERT: Error: only literal values are supported in INSERT, got _ |
 | 70 | Error: unsupported expression: AES_ENCRYPT(_, @KEY1, @IVA) |
-| 69 | Error: numeric expression overflow |
+| 67 | Error: numeric expression overflow |
 | 58 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
 | 45 | Error: unsupported expression: ST_GeomFromText(_) |
 | 43 | DDL: Error: character set utf32 is not supported on a local table |
@@ -674,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 28 | Error: unknown table mtr_ctype_gb18030_encoding_cn.��һ |
 | 28 | Error: unknown table mtr_ctype_gb18030_encoding_utf8.表一 |
 
-Per-file diffs for mismatches are written to `tests/mtr/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mu09yg5c-1691605/diffs/` (not committed).

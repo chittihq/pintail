@@ -1,13 +1,22 @@
 {
   "suite": "mariadb",
+  "mode": "local",
   "repo": "MariaDB/server",
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
-  "measuredAt": "2026-09-13T17:53:35.186Z",
+  "provenance": {
+    "sourceCommit": "b0018f48de96a7a299c166b032b85d828fe397ac",
+    "sourceDirty": true,
+    "binarySha256": "7d693dc2e161b6079f7da35bc5ef0ba4909b44e8a7bc2527f09b9f54fa4ac88f"
+  },
+  "artifacts": "validate-out/mtr/runs/mu0a536h-1691589",
+  "measuredAt": "2026-09-13T20:46:24.115Z",
   "totals": {
-    "exact": 6823,
+    "exact": 6849,
     "compared": 7946,
-    "queries": 23732
+    "queries": 23732,
+    "replayed": 30174,
+    "notCompared": 22228
   },
   "results": [
     {
@@ -927,8 +936,8 @@
       "file": "cast",
       "statements": 366,
       "counts": {
-        "exact": 111,
-        "mismatch": 22,
+        "exact": 112,
+        "mismatch": 21,
         "name-mismatch": 0,
         "pintail-error": 26,
         "mysql-error": 9,
@@ -3874,8 +3883,8 @@
       "file": "ctype_utf8",
       "statements": 1845,
       "counts": {
-        "exact": 256,
-        "mismatch": 15,
+        "exact": 258,
+        "mismatch": 13,
         "name-mismatch": 7,
         "pintail-error": 80,
         "mysql-error": 29,
@@ -4020,8 +4029,8 @@
       "file": "ctype_utf8mb4",
       "statements": 1460,
       "counts": {
-        "exact": 137,
-        "mismatch": 11,
+        "exact": 138,
+        "mismatch": 10,
         "name-mismatch": 7,
         "pintail-error": 158,
         "mysql-error": 36,
@@ -5993,8 +6002,8 @@
       "file": "func_gconcat",
       "statements": 255,
       "counts": {
-        "exact": 47,
-        "mismatch": 8,
+        "exact": 50,
+        "mismatch": 5,
         "name-mismatch": 0,
         "pintail-error": 20,
         "mysql-error": 4,
@@ -6672,8 +6681,8 @@
       "file": "func_str",
       "statements": 955,
       "counts": {
-        "exact": 346,
-        "mismatch": 7,
+        "exact": 350,
+        "mismatch": 3,
         "name-mismatch": 9,
         "pintail-error": 160,
         "mysql-error": 64,
@@ -6818,8 +6827,8 @@
       "file": "func_time",
       "statements": 1047,
       "counts": {
-        "exact": 318,
-        "mismatch": 123,
+        "exact": 327,
+        "mismatch": 114,
         "name-mismatch": 0,
         "pintail-error": 96,
         "mysql-error": 19,
@@ -6910,8 +6919,8 @@
       "file": "func_time_round",
       "statements": 139,
       "counts": {
-        "exact": 3,
-        "mismatch": 58,
+        "exact": 4,
+        "mismatch": 57,
         "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 2,
@@ -6936,8 +6945,8 @@
       "file": "func_timestamp",
       "statements": 7,
       "counts": {
-        "exact": 0,
-        "mismatch": 1,
+        "exact": 1,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
@@ -14589,8 +14598,8 @@
       "file": "timezone2",
       "statements": 357,
       "counts": {
-        "exact": 22,
-        "mismatch": 10,
+        "exact": 23,
+        "mismatch": 9,
         "name-mismatch": 0,
         "pintail-error": 4,
         "mysql-error": 2,
@@ -15017,8 +15026,8 @@
       "file": "type_date",
       "statements": 431,
       "counts": {
-        "exact": 36,
-        "mismatch": 24,
+        "exact": 37,
+        "mismatch": 23,
         "name-mismatch": 0,
         "pintail-error": 9,
         "mysql-error": 4,
@@ -15638,8 +15647,8 @@
       "file": "type_timestamp",
       "statements": 810,
       "counts": {
-        "exact": 17,
-        "mismatch": 3,
+        "exact": 19,
+        "mismatch": 1,
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 3,
