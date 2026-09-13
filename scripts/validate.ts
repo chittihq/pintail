@@ -234,7 +234,7 @@ const STAGES: Stage[] = [
     timeoutMinutes: 90,
     // Builds a container image before it says anything.
     stallMinutes: 25,
-    command: ['bun', 'run', 'run.ts'],
+    command: ['bash', '-c', 'bun install --frozen-lockfile && bun run e2e'],
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
@@ -272,7 +272,7 @@ const STAGES: Stage[] = [
     },
     timeoutMinutes: 90,
     stallMinutes: 25,
-    command: ['bun', 'run', 'run.ts'],
+    command: ['bash', '-c', 'bun install --frozen-lockfile && bun run e2e'],
     cwd: join(repository, 'tests', 'e2e'),
   },
   {
