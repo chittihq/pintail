@@ -1386,7 +1386,7 @@ impl Backend {
 
     /// The user variables a `SET` statement assigns, when it assigns nothing
     /// else. `:=` is `MySQL`'s other spelling of the assignment.
-    fn user_variable_assignments(&self, sql: &str) -> Option<Vec<(String, sqlparser::ast::Expr)>> {
+    fn user_variable_assignments(&self, sql: &str) -> Option<Vec<(String, String)>> {
         if !normalized_command(sql).starts_with("set @") {
             return None;
         }
@@ -1402,7 +1402,15 @@ impl Backend {
                     .ok()
                     .and_then(|statement| pintail_sql::user_variable_assignments(&statement))
             };
-            assignments(sql).or_else(|| assignments(&sql.replace(":=", "=")))
+            assignments(sql)
+                .or_else(|| assignments(&sql.replace(":=", "=")))
+                .map(|pairs| {
+                    pairs
+                        .into_iter()
+                        .map(|(name, expression)| (name, expression.to_string()))
+                        .collect()
+                })
+                .or_else(|| single_user_variable_assignment(sql))
         })
     }
 
@@ -1410,7 +1418,7 @@ impl Backend {
     /// and records the value it answered.
     async fn assign_user_variables(
         &self,
-        assignments: Vec<(String, sqlparser::ast::Expr)>,
+        assignments: Vec<(String, String)>,
     ) -> Result<(), QueryError> {
         for (name, expression) in assignments {
             let output = Backend::execute(self, &format!("SELECT {expression}")).await?;
@@ -1607,6 +1615,33 @@ impl Backend {
             _ => Ok(()),
         }
     }
+}
+
+/// `SET @name = expression` read from its text, for an assignment the parser
+/// does not take as one - `SET @saved=@@div_precision_increment` among them.
+/// One assignment only; the expression is checked when it is evaluated.
+fn single_user_variable_assignment(sql: &str) -> Option<Vec<(String, String)>> {
+    let body = sql.trim().trim_end_matches(';').trim();
+    let rest = body
+        .get(..3)
+        .filter(|head| head.eq_ignore_ascii_case("set"))
+        .map(|_| body[3..].trim_start())?;
+    let rest = rest
+        .strip_prefix('@')
+        .filter(|rest| !rest.starts_with('@'))?;
+    let name_end = rest
+        .find(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$' | '.'))
+        })
+        .unwrap_or(rest.len());
+    let (name, rest) = rest.split_at(name_end);
+    let rest = rest.trim_start();
+    let expression = rest
+        .strip_prefix(":=")
+        .or_else(|| rest.strip_prefix('='))?
+        .trim();
+    (!name.is_empty() && !expression.is_empty())
+        .then(|| vec![(name.to_ascii_lowercase(), expression.to_owned())])
 }
 
 /// The literal a user variable keeps for a value: a query reading it binds

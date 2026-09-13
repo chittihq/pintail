@@ -512,6 +512,12 @@ function isSession(sql: string): boolean {
   return /^\s*(?:set\s+(?!global\b|@@|password)|use\s+\w+)/i.test(sql)
 }
 
+/// A LIMIT with no outer ORDER BY keeps whichever rows the server reaches
+/// first, which neither server defines, so its rows are not compared.
+function unorderedLimit(sql: string): boolean {
+  return /\blimit\s+\d/i.test(sql) && !hasOuterOrderBy(sql)
+}
+
 function hasOuterOrderBy(sql: string): boolean {
   let depth = 0
   const lower = sql.toLowerCase()
@@ -694,7 +700,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
       }
       if (isQuery(sql)) {
         const id = statementId(name, sql, seen)
-        if (VOLATILE.test(sql)) {
+        if (VOLATILE.test(sql) || unorderedLimit(sql)) {
           counts.volatile += 1
           continue
         }
@@ -993,7 +999,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
       if (/^set (session )?autocommit\s*=\s*(1|on)/.test(shape)) inTransaction = false
       if (isQuery(sql) && !statement.expectError) {
         const id = statementId(name, sql, seen)
-        if (VOLATILE.test(sql)) { counts.volatile += 1; continue }
+        if (VOLATILE.test(sql) || unorderedLimit(sql)) { counts.volatile += 1; continue }
         if (statement.masked) { counts.skipped += 1; continue }
         if (inTransaction || temporary.touchesTainted(sql)) { counts.tainted += 1; continue }
         let expected: Answer
