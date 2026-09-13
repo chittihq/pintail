@@ -335,3 +335,36 @@ fn a_text_column_takes_the_collation_mysql_would_give_it() {
         Some("utf8mb4_0900_ai_ci")
     );
 }
+
+#[test]
+fn enum_and_set_values_are_stored_as_their_declared_labels() {
+    let plan =
+        create("CREATE TABLE e (id INT PRIMARY KEY, v ENUM('a','b','c'), s SET('a','b','c'))")
+            .expect("binds");
+    assert_eq!(plan.table.columns[1].mysql_column_type, "enum('a','b','c')");
+    let stored = |values: &str| {
+        let statement = parse_statement(&format!("INSERT INTO e VALUES {values}")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1..].to_vec())
+    };
+    let labels = |v: &str, s: &str| vec![Value::Utf8(v.to_owned()), Value::Utf8(s.to_owned())];
+    // Measured against MySQL 8.4: each row reads back as ('b', 'a,c') but the last.
+    assert_eq!(
+        stored("(1, 'B', 'c,a')").expect("binds"),
+        labels("b", "a,c")
+    );
+    assert_eq!(stored("(2, 2, 5)").expect("binds"), labels("b", "a,c"));
+    assert_eq!(stored("(3, '2', '5')").expect("binds"), labels("b", "a,c"));
+    assert_eq!(
+        stored("(4, 'c ', 'A,a,b')").expect("binds"),
+        labels("c", "a,b")
+    );
+    assert_eq!(stored("(5, 'a', '')").expect("binds"), labels("a", ""));
+    for refused in [
+        "(6, 0, NULL)",
+        "(7, 'x', NULL)",
+        "(8, NULL, 'x')",
+        "(9, NULL, 8)",
+    ] {
+        assert!(stored(refused).is_err(), "{refused}");
+    }
+}

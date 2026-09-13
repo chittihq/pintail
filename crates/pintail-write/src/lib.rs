@@ -547,6 +547,12 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             Value::UInt64(number)
         }
         DataType::Float64 => Value::float64(text.parse().map_err(|_| wrong("expected a number"))?),
+        DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("enum") => {
+            Value::Utf8(enum_label(text, column).ok_or_else(|| wrong("Data truncated"))?)
+        }
+        DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("set") => {
+            Value::Utf8(set_labels(text, column).ok_or_else(|| wrong("Data truncated"))?)
+        }
         DataType::Utf8 => Value::Utf8(text.to_owned()),
         DataType::Binary => Value::Binary(text.as_bytes().to_vec()),
         other => {
@@ -557,6 +563,57 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         }
     };
     Ok(value)
+}
+
+/// The declared label an ENUM value names: a label matched regardless of
+/// case and trailing spaces, or a one-based index written as a number. The
+/// column stores the label as declared, as a replicated row carries it.
+fn enum_label(text: &str, column: &SourceColumn) -> Option<String> {
+    let labels = pintail_types::declaration_labels(&column.mysql_column_type, "enum")?;
+    let wanted = text.trim_end_matches(' ');
+    if let Some(label) = labels
+        .iter()
+        .find(|label| label.eq_ignore_ascii_case(wanted))
+    {
+        return Some(label.clone());
+    }
+    let index: usize = text.trim().parse().ok()?;
+    labels.get(index.checked_sub(1)?).cloned()
+}
+
+/// The members a SET value names, in declaration order and each once: a
+/// comma-separated list matched regardless of case, or a member bitmask
+/// written as a number.
+fn set_labels(text: &str, column: &SourceColumn) -> Option<String> {
+    let labels = pintail_types::declaration_labels(&column.mysql_column_type, "set")?;
+    let mut mask = 0_u64;
+    if !text.is_empty() {
+        for member in text.split(',') {
+            let wanted = member.trim_end_matches(' ');
+            match labels
+                .iter()
+                .position(|label| label.eq_ignore_ascii_case(wanted))
+            {
+                Some(position) => mask |= 1 << position,
+                None => {
+                    mask = text.trim().parse().ok()?;
+                    if labels.len() < 64 && mask >> labels.len() != 0 {
+                        return None;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    Some(
+        labels
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| mask >> position & 1 == 1)
+            .map(|(_, label)| label.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// A narrow integer column must refuse a value it cannot hold. The schema
@@ -637,7 +694,27 @@ fn text_collation(bare: &str) -> Option<&'static str> {
 fn mysql_terms(
     data_type: &SqlDataType,
 ) -> Result<(String, String, Option<u8>, Option<u8>), WriteError> {
-    let full = data_type.to_string().to_ascii_lowercase();
+    // ENUM and SET are rendered as the source reports them - labels as
+    // declared, no space after a comma - so their labels can be read back.
+    let quoted = |labels: &mut dyn Iterator<Item = &str>| {
+        labels
+            .map(|label| format!("'{}'", label.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let full = match data_type {
+        SqlDataType::Enum(members, _) => format!(
+            "enum({})",
+            quoted(&mut members.iter().map(|member| match member {
+                sqlparser::ast::EnumMember::Name(name)
+                | sqlparser::ast::EnumMember::NamedValue(name, _) => name.as_str(),
+            }))
+        ),
+        SqlDataType::Set(members) => {
+            format!("set({})", quoted(&mut members.iter().map(String::as_str)))
+        }
+        _ => data_type.to_string().to_ascii_lowercase(),
+    };
     let bare = full
         .split(['(', ' '])
         .next()
