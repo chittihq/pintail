@@ -273,6 +273,18 @@ pub struct SourceColumn {
     /// Raw stored-generation expression, without the surrounding `AS (...)`.
     #[serde(default)]
     pub generation_expression: String,
+    /// Whether the probe that recorded this column read generation
+    /// expressions at all.
+    ///
+    /// An empty `generation_expression` says two different things: this
+    /// column has none, and this column was recorded before the expression
+    /// was captured. A migration decision needs to tell them apart, because
+    /// a changed expression recorded as empty looks exactly like an
+    /// unchanged one and is adopted in place, leaving every row holding what
+    /// the old expression produced. Probes written before this field decode
+    /// it as `false`, which is what marks them as the second case.
+    #[serde(default)]
+    pub generation_captured: bool,
     /// Raw `INFORMATION_SCHEMA.COLUMNS.EXTRA` metadata.
     #[serde(default)]
     pub extra: String,
@@ -833,6 +845,9 @@ async fn probe_table(
             collation: raw.collation,
             generated_stored,
             generation_expression: raw.generation_expression,
+            // This probe reads GENERATION_EXPRESSION, so an empty one here
+            // means the column has none.
+            generation_captured: true,
             extra: raw.extra,
             auto_increment,
             default_value: raw.default_value,
@@ -1164,6 +1179,7 @@ pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, Prob
         collation: raw.collation,
         generated_stored: false,
         generation_expression: String::new(),
+        generation_captured: true,
         extra: String::new(),
         auto_increment: false,
         default_value: None,
@@ -1536,6 +1552,7 @@ mod tests {
             collation: None,
             generated_stored: false,
             generation_expression: String::new(),
+            generation_captured: true,
             extra: "VIRTUAL GENERATED".to_owned(),
             auto_increment: false,
             default_value: None,
@@ -1610,6 +1627,7 @@ mod tests {
                     collation: None,
                     generated_stored: false,
                     generation_expression: String::new(),
+                    generation_captured: true,
                     extra: String::new(),
                     auto_increment: true,
                     default_value: None,
@@ -1627,6 +1645,7 @@ mod tests {
                     collation: None,
                     generated_stored: false,
                     generation_expression: String::new(),
+                    generation_captured: true,
                     extra: String::new(),
                     auto_increment: false,
                     default_value: None,
@@ -1853,6 +1872,7 @@ mod stabilization_tests {
             collation: None,
             generated_stored: false,
             generation_expression: String::new(),
+            generation_captured: true,
             extra: String::new(),
             auto_increment: false,
             default_value: None,

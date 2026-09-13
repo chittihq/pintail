@@ -35,6 +35,7 @@ fn column(id: u32, name: &str, data_type: DataType) -> SourceColumn {
         collation: None,
         generated_stored: false,
         generation_expression: String::new(),
+        generation_captured: true,
         extra: String::new(),
         auto_increment: false,
         default_value: None,

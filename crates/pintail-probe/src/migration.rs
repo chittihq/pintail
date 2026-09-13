@@ -190,11 +190,27 @@ fn generation_change(previous: &SourceColumn, refreshed: &SourceColumn) -> Optio
                 .to_owned()
         });
     }
-    // A probe recorded before the expression was captured reads as empty, and
-    // an empty expression on one side alone says nothing about a change.
+    if !was {
+        return None;
+    }
+    // An empty expression means "this column has none" only when the probe
+    // that recorded it read expressions at all. A record written before
+    // that cannot be compared: a changed expression is indistinguishable
+    // from an unchanged one, and adopting it in place leaves every row
+    // holding what the old expression produced. That is the same mistake
+    // the other arms here were written to stop - a check that runs, sees
+    // nothing, and reads the absence of evidence as evidence of safety - so
+    // the unreadable case refuses and resyncs once, rather than guessing.
+    if !previous.generation_captured {
+        return Some(
+            "was recorded before generated expressions were read, so a change to this one \
+             cannot be ruled out"
+                .to_owned(),
+        );
+    }
     let before = previous.generation_expression.trim();
     let after = refreshed.generation_expression.trim();
-    (was && !before.is_empty() && !after.is_empty() && before != after)
+    (before != after)
         .then(|| "changed its generated expression, which recomputes every existing row".to_owned())
 }
 
@@ -414,6 +430,7 @@ mod tests {
             collation: None,
             generated_stored: false,
             generation_expression: String::new(),
+            generation_captured: true,
             extra: String::new(),
             auto_increment: false,
             default_value: None,
@@ -717,6 +734,7 @@ mod tests {
         let generated = |expression: &str| SourceColumn {
             generated_stored: true,
             generation_expression: expression.to_owned(),
+            generation_captured: true,
             extra: "STORED GENERATED".to_owned(),
             ..column("int", "int")
         };
@@ -730,9 +748,41 @@ mod tests {
         ));
         assert!(!adopts(&column("int", "int"), &generated("(`base` * 2)")));
         assert!(!adopts(&generated("(`base` * 2)"), &column("int", "int")));
-        // A probe stored before expressions were captured reads as empty, and
-        // says nothing about a change.
-        assert!(adopts(&generated(""), &generated("(`base` * 2)")));
+        // A probe that read expressions and recorded none means the column had
+        // none, which for a generated column is a change to whatever it has
+        // now rather than something to wave through.
+        assert!(!adopts(&generated(""), &generated("(`base` * 2)")));
+    }
+
+    /// A record written before expressions were read cannot be compared, and
+    /// the difference between "none" and "not read" is the whole point of
+    /// keeping the marker: without it a changed expression is adopted in
+    /// place and every row keeps what the old expression produced.
+    #[test]
+    fn an_expression_that_was_never_read_is_not_evidence_of_no_change() {
+        let recorded = |expression: &str, captured: bool| SourceColumn {
+            generated_stored: true,
+            generation_expression: expression.to_owned(),
+            generation_captured: captured,
+            extra: "STORED GENERATED".to_owned(),
+            ..column("int", "int")
+        };
+        // The old probe read nothing, so the refreshed expression may or may
+        // not be the one its rows were computed with. Refuse and resync once.
+        assert!(!adopts(
+            &recorded("", false),
+            &recorded("(`base` * 2)", true)
+        ));
+        // Even where the two happen to agree, the previous side is not
+        // evidence: it was never read.
+        assert!(!adopts(&recorded("", false), &recorded("", true)));
+        // A record that did read expressions and found the same one is
+        // adopted, which is what keeps the cost to records that predate the
+        // marker rather than every generated column.
+        assert!(adopts(
+            &recorded("(`base` * 2)", true),
+            &recorded("(`base` * 2)", true)
+        ));
     }
 
     #[test]
