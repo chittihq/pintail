@@ -77,6 +77,9 @@ pub(super) fn parse(
         Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
         _ => 0,
     };
+    if time_only {
+        parts.hour += parts.day * 24;
+    }
     let mut time = format!("{:02}:{:02}:{:02}", parts.hour, parts.minute, parts.second);
     if fsp > 0 {
         time.push('.');
@@ -181,7 +184,9 @@ impl Parts {
             return None;
         }
         let year = i32::try_from(self.year).ok()?;
-        if let Some(ordinal) = self.year_day {
+        if let Some(ordinal) = self.year_day
+            && self.year != 0
+        {
             self.set_date(NaiveDate::from_yo_opt(year, ordinal)?)?;
         }
         if let Some((mode, week)) = self.week {

@@ -1646,7 +1646,10 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Time => (
-            Some(DataType::Time64 { fsp: 0 }),
+            Some(DataType::Time64 { fsp: match args[0].data_type {
+                Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
+                _ => 0,
+            } }),
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::FromUnixTime => (
@@ -1761,8 +1764,7 @@ fn str_to_date_result_type(args: &[BoundExpr]) -> DataType {
     let date = str_to_date_has_specifier(
         format,
         &[
-            'Y', 'y', 'm', 'c', 'd', 'e', 'D', 'b', 'M', 'j', 'W', 'a', 'w', 'U', 'u', 'V', 'v',
-            'X', 'x',
+            'Y', 'y', 'm', 'c', 'b', 'M', 'j', 'W', 'a', 'w', 'U', 'u', 'V', 'v', 'X', 'x',
         ],
     );
     let fsp = if str_to_date_has_specifier(format, &['f']) {

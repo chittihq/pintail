@@ -862,3 +862,34 @@ fn date_format_parsing_captures_zero_date_policy() {
         });
     }
 }
+
+#[test]
+fn parsed_partial_dates_survive_temporal_consumers() {
+    let date = "STR_TO_DATE('10:20:10', IF(id = 1, '%H:%i:%s', '%d'))";
+    for (expression, expected) in [
+        (format!("CAST({date} AS DATETIME)"), "0000-00-00 10:20:10"),
+        (format!("DATE({date})"), "0000-00-00"),
+        (format!("TIME({date})"), "10:20:10.000000"),
+        (
+            "TIME(STR_TO_DATE('2008-03-17 10:20:10', '%Y-%m-%d %H:%i:%s.%f'))".to_owned(),
+            "10:20:10.000000",
+        ),
+        ("MONTHNAME(STR_TO_DATE(1, '%m'))".to_owned(), "January"),
+        ("LAST_DAY('2008-02-00')".to_owned(), "2008-02-29"),
+        ("FROM_DAYS(1)".to_owned(), "0000-00-00"),
+        (
+            "STR_TO_DATE('02 10:11:12', '%d %H:%i:%S.%f')".to_owned(),
+            "58:11:12.000000",
+        ),
+        (
+            "DATE_FORMAT('0000-01-01', '%W %d %M %Y')".to_owned(),
+            "Sunday 01 January 0000",
+        ),
+        (
+            "DATE_FORMAT('0000-02-28', '%W %d %M %Y')".to_owned(),
+            "Tuesday 28 February 0000",
+        ),
+    ] {
+        assert_eq!(scalar(&expression), expected, "{expression}");
+    }
+}

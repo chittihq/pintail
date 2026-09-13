@@ -2497,11 +2497,27 @@ fn evaluate_eager_scalar_inner(
             argument_types.first().copied().flatten(),
             values.get(1),
         ),
-        ScalarFunction::Cast(target) => cast_scalar(
-            &numeric_cast_operand(&values[0], argument_types, target),
-            Some(target),
-        ),
+        ScalarFunction::Cast(target) => {
+            if let Some(value) = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                target,
+            ) {
+                return Ok(value);
+            }
+            cast_scalar(
+                &numeric_cast_operand(&values[0], argument_types, target),
+                Some(target),
+            )
+        }
         ScalarFunction::DeclaredCast { target, characters } => {
+            if let Some(value) = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                target,
+            ) {
+                return Ok(value);
+            }
             let mut value = cast_scalar(
                 &numeric_cast_operand(&values[0], argument_types, target),
                 Some(target),
@@ -3161,6 +3177,13 @@ fn evaluate_eager_scalar_inner(
         )),
         ScalarFunction::CurrentDate => Ok(Value::Utf8(Local::now().format("%Y-%m-%d").to_string())),
         ScalarFunction::Date => {
+            if let Some(value) = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                DataType::Date32,
+            ) {
+                return Ok(value);
+            }
             let text = scalar_string(&values[0])?;
             if let Some((date, _)) = canonical_temporal(&text) {
                 return Ok(Value::Utf8(date.to_owned()));
@@ -3173,6 +3196,13 @@ fn evaluate_eager_scalar_inner(
             ))
         }
         ScalarFunction::Time => {
+            if let Some(value) = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                data_type.unwrap_or(DataType::Time64 { fsp: 0 }),
+            ) {
+                return Ok(value);
+            }
             // The time of a datetime, or a bare time kept as it was written;
             // fractional seconds survive when present.
             let text = scalar_string(&values[0])?;
@@ -3270,31 +3300,44 @@ fn evaluate_eager_scalar_inner(
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
             Ok(Value::Utf8(
                 expression_calendar_locale(values, 1).days
-                    [value.weekday().num_days_from_monday() as usize]
+                    [temporal::mysql_weekday(value.date()) as usize]
                     .to_owned(),
             ))
         }
         ScalarFunction::MonthName => {
-            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            Ok(Value::Utf8(
-                expression_calendar_locale(values, 1).months[value.month0() as usize].to_owned(),
-            ))
+            let text = scalar_string(&values[0])?;
+            let month = if let Some((date, _)) = canonical_temporal_parts(&text, true) {
+                date[5..7]
+                    .parse::<usize>()
+                    .map_err(|_| ExecError::InvalidDateTime)?
+            } else {
+                parse_mysql_datetime(&text)?.month() as usize
+            };
+            Ok(month
+                .checked_sub(1)
+                .and_then(|month| expression_calendar_locale(values, 1).months.get(month))
+                .map_or(Value::Null, |name| Value::Utf8((*name).to_owned())))
         }
         ScalarFunction::LastDay => {
-            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
-            let first_next = if value.month() == 12 {
-                chrono::NaiveDate::from_ymd_opt(value.year() + 1, 1, 1)
+            let text = scalar_string(&values[0])?;
+            let (year, month) = if let Some((date, _)) = canonical_temporal_parts(&text, true) {
+                (
+                    date[..4]
+                        .parse::<u32>()
+                        .map_err(|_| ExecError::InvalidDateTime)?,
+                    date[5..7]
+                        .parse::<u32>()
+                        .map_err(|_| ExecError::InvalidDateTime)?,
+                )
             } else {
-                chrono::NaiveDate::from_ymd_opt(value.year(), value.month() + 1, 1)
-            }
-            .ok_or(ExecError::InvalidDateTime)?;
-            Ok(Value::Utf8(
-                first_next
-                    .pred_opt()
-                    .ok_or(ExecError::InvalidDateTime)?
-                    .format("%Y-%m-%d")
-                    .to_string(),
-            ))
+                let date = parse_mysql_datetime(&text)?;
+                (
+                    u32::try_from(date.year()).map_err(|_| ExecError::InvalidDateTime)?,
+                    date.month(),
+                )
+            };
+            let days = mysql_month_days(year, month).ok_or(ExecError::InvalidDateTime)?;
+            return Ok(Value::Utf8(format!("{year:04}-{month:02}-{days:02}")));
         }
         ScalarFunction::ToDays => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
@@ -3307,7 +3350,14 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::UInt64(u64::try_from(days).unwrap_or(0)))
         }
         ScalarFunction::FromDays => {
-            let days = mysql_i64(&values[0])? - TO_DAYS_EPOCH_OFFSET;
+            let number = mysql_i64(&values[0])?;
+            if number <= 365 {
+                return Ok(Value::Utf8("0000-00-00".to_owned()));
+            }
+            if number > 3_652_424 {
+                return Ok(Value::Null);
+            }
+            let days = number - TO_DAYS_EPOCH_OFFSET;
             let date = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
                 .expect("epoch is valid")
                 .checked_add_signed(chrono::Duration::days(days))
@@ -3916,6 +3966,10 @@ fn byte_text(value: &Value) -> Result<String, ExecError> {
 /// split into its date and its time, when it names a real day and a clock
 /// time. Any other spelling takes the general parser.
 fn canonical_temporal(text: &str) -> Option<(&str, Option<&str>)> {
+    canonical_temporal_parts(text, false)
+}
+
+fn canonical_temporal_parts(text: &str, allow_zero: bool) -> Option<(&str, Option<&str>)> {
     let bytes = text.as_bytes();
     let digits = |from: usize, to: usize| {
         bytes
@@ -3931,14 +3985,12 @@ fn canonical_temporal(text: &str) -> Option<(&str, Option<&str>)> {
         return None;
     }
     let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
-    let month_days = match month {
-        2 if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        _ => return None,
+    let month_days = if month == 0 && allow_zero {
+        31
+    } else {
+        mysql_month_days(year, month)?
     };
-    if year == 0 || day == 0 || day > month_days {
+    if (!allow_zero && (year == 0 || day == 0)) || day > month_days {
         return None;
     }
     if bytes.len() == 10 {
@@ -3960,6 +4012,53 @@ fn canonical_temporal(text: &str) -> Option<(&str, Option<&str>)> {
         _ => false,
     };
     (clock && fraction).then(|| (&text[..10], Some(&text[11..])))
+}
+
+fn mysql_month_days(year: u32, month: u32) -> Option<u32> {
+    Some(match month {
+        2 if year != 0
+            && ((year.is_multiple_of(4) && !year.is_multiple_of(100))
+                || year.is_multiple_of(400)) =>
+        {
+            29
+        }
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    })
+}
+
+/// Stored and typed temporal values already passed their producer's validity
+/// rules. A cast must preserve their zero components rather than parse them
+/// again as untyped strings under civil-calendar rules.
+fn cast_temporal_carrier(
+    value: &Value,
+    source: Option<DataType>,
+    target: DataType,
+) -> Option<Value> {
+    if !matches!(source, Some(DataType::Date32 | DataType::DateTime64 { .. })) {
+        return None;
+    }
+    let Value::Utf8(text) = value else {
+        return None;
+    };
+    let (date, time) = canonical_temporal_parts(text, true)?;
+    let clock = time.unwrap_or("00:00:00");
+    match target {
+        DataType::Date32 => Some(Value::Utf8(date.to_owned())),
+        DataType::Time64 { fsp } => {
+            Some(cast_mysql_time(clock, fsp).map_or(Value::Null, Value::Utf8))
+        }
+        DataType::DateTime64 { fsp } if canonical_temporal(text).is_none() => {
+            let clock = cast_mysql_time(clock, fsp)?;
+            if clock.starts_with("24:") {
+                return Some(Value::Null);
+            }
+            Some(Value::Utf8(format!("{date} {clock}")))
+        }
+        _ => None,
+    }
 }
 
 /// A canonical DATE or DATETIME rendered as `DATETIME(fsp)` by padding, when

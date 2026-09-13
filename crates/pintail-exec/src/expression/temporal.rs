@@ -12,6 +12,11 @@ use pintail_types::Value;
 use super::scalar_string;
 use crate::ExecError;
 
+/// The first two months of year zero precede its omitted leap day.
+pub(super) fn mysql_weekday(date: NaiveDate) -> u32 {
+    (date.weekday().num_days_from_monday() + u32::from(date.year() == 0 && date.month() <= 2)) % 7
+}
+
 pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
     // Digits alone are a packed date or date and time: YYMMDD, YYYYMMDD,
     // YYMMDDHHMMSS or YYYYMMDDHHMMSS.
@@ -442,7 +447,7 @@ pub(super) fn mysql_date_format_locale(
         };
         let written = match specifier {
             'a' => {
-                output.push_str(locale.short_days[value.weekday().num_days_from_monday() as usize]);
+                output.push_str(locale.short_days[mysql_weekday(value.date()) as usize]);
                 Ok(())
             }
             'b' => {
@@ -488,10 +493,10 @@ pub(super) fn mysql_date_format_locale(
             'V' => write!(output, "{:02}", mysql_calc_week(value.date(), 2).1),
             'v' => write!(output, "{:02}", mysql_calc_week(value.date(), 3).1),
             'W' => {
-                output.push_str(locale.days[value.weekday().num_days_from_monday() as usize]);
+                output.push_str(locale.days[mysql_weekday(value.date()) as usize]);
                 Ok(())
             }
-            'w' => write!(output, "{}", value.weekday().num_days_from_sunday()),
+            'w' => write!(output, "{}", (mysql_weekday(value.date()) + 1) % 7),
             'X' => write!(output, "{:04}", mysql_calc_week(value.date(), 2).0),
             'x' => write!(output, "{:04}", mysql_calc_week(value.date(), 3).0),
             'Y' => write!(output, "{:04}", value.year()),

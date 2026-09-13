@@ -11,8 +11,10 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 - `STR_TO_DATE` parses ordinal dates, week years, character-class skipping,
   incomplete input and fractional times directly. Plans capture zero-date
   SQL modes; dynamic formats produce DATETIME(6), while literal formats
-  retain their declared date/time shape. Other temporal consumers still
-  have gaps for partial dates.
+  retain their declared date/time shape. Typed partial dates survive date,
+  time and datetime casts; month names and month ends accept zero days.
+  Day-only clock formats form durations, while early day numbers retain
+  the zero date. Calendar arithmetic still requires a complete date.
 
 - Result labels keep the first adjacent literal, preserve regular-expression
   spelling, remove trailing comments, and truncate at a UTF-8 boundary within
