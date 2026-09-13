@@ -435,11 +435,24 @@ impl DisconnectWatch for TcpDisconnectWatch {
     async fn watch(&mut self) -> WatchOutcome {
         let mut probe_byte = [0_u8; 1];
         loop {
-            if self.probe.readable().await.is_err() {
+            // Three different things end a connection here, and only one of
+            // them is a client hanging up. Collapsing them into a bare
+            // verdict and dropping the error made a real disconnect and a
+            // misclassified transient failure read identically afterwards -
+            // which is why a connection lost mid-query could not be
+            // attributed to either. Whatever decided it is now written down.
+            if let Err(error) = self.probe.readable().await {
+                pintail_log::log_error!(
+                    "wire disconnect watch: readiness failed ({:?}): {error}",
+                    error.kind()
+                );
                 return WatchOutcome::Disconnected;
             }
             match self.probe.peek(&mut probe_byte).await {
-                Ok(0) => return WatchOutcome::Disconnected,
+                Ok(0) => {
+                    pintail_log::log_debug!("wire disconnect watch: the peer closed the socket");
+                    return WatchOutcome::Disconnected;
+                }
                 // Data is genuinely there and untouched; not a disconnect.
                 Ok(_) => return WatchOutcome::Primed(Vec::new()),
                 // Readiness is advisory and a signal can cut a syscall short:
@@ -450,7 +463,16 @@ impl DisconnectWatch for TcpDisconnectWatch {
                         error.kind(),
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) => {}
-                Err(_) => return WatchOutcome::Disconnected,
+                Err(error) => {
+                    // Not at debug: this is the path that would end a live
+                    // connection on something other than the peer leaving,
+                    // so its absence from a log has to mean it did not fire.
+                    pintail_log::log_error!(
+                        "wire disconnect watch: peek failed ({:?}): {error}",
+                        error.kind()
+                    );
+                    return WatchOutcome::Disconnected;
+                }
             }
         }
     }
