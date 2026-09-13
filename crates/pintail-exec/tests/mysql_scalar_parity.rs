@@ -36,6 +36,10 @@ fn evaluate(expression: &str) -> String {
 }
 
 fn evaluate_rows(expression: &str, rows: u64) -> String {
+    evaluate_rows_after_plan(expression, rows, || {})
+}
+
+fn evaluate_rows_after_plan(expression: &str, rows: u64, after_plan: impl FnOnce()) -> String {
     let directory = tempfile::tempdir().expect("tempdir");
     let mut table =
         TableStore::open(directory.path(), schema(), StoreOptions::default()).expect("open");
@@ -84,6 +88,7 @@ fn evaluate_rows(expression: &str, rows: u64) -> String {
         Collation::default(),
     )
     .expect("plan");
+    after_plan();
     let mut execution =
         Execution::start(physical, &provider, 64 * 1024 * 1024, Collation::default())
             .expect("start");
@@ -498,4 +503,30 @@ fn unix_conversions_use_the_session_zone_and_keep_fractional_seconds() {
         ("FROM_UNIXTIME(0)", "1969-12-31 19:00:00"),
         ("UNIX_TIMESTAMP('1969-12-31 19:00:01')", "1"),
     ]);
+}
+
+#[test]
+fn calendar_locale_is_captured_before_execution() {
+    struct ResetLocale;
+    impl Drop for ResetLocale {
+        fn drop(&mut self) {
+            assert!(pintail_exec::set_session_calendar_locale(None));
+        }
+    }
+    let _reset = ResetLocale;
+    for (locale, expected) in [
+        ("fr_FR", "lundi mars lun mar"),
+        ("ru_RU", "Понедельник Марта Пнд Мар"),
+        ("ja_JP", "月曜日 3月 月  3月"),
+    ] {
+        assert!(pintail_exec::set_session_calendar_locale(Some(locale)));
+        let actual = evaluate_rows_after_plan(
+            "DATE_FORMAT(DATE_ADD('2024-03-03', INTERVAL id DAY), '%W %M %a %b')",
+            1,
+            || {
+                assert!(pintail_exec::set_session_calendar_locale(None));
+            },
+        );
+        assert_eq!(actual, expected);
+    }
 }

@@ -3170,10 +3170,16 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::DateFormat => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            Ok(Value::Utf8(mysql_date_format(
-                value,
-                &scalar_string(&values[1])?,
-            )))
+            let format = scalar_string(&values[1])?;
+            Ok(Value::Utf8(if values.len() > 2 {
+                temporal::mysql_date_format_locale(
+                    value,
+                    &format,
+                    expression_calendar_locale(values, 2),
+                )
+            } else {
+                mysql_date_format(value, &format)
+            }))
         }
         ScalarFunction::DateInterval { unit, subtract } => {
             let input = scalar_string(&values[0])?;
@@ -3209,11 +3215,17 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::DayName => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            Ok(Value::Utf8(value.format("%A").to_string()))
+            Ok(Value::Utf8(
+                expression_calendar_locale(values, 1).days
+                    [value.weekday().num_days_from_monday() as usize]
+                    .to_owned(),
+            ))
         }
         ScalarFunction::MonthName => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            Ok(Value::Utf8(value.format("%B").to_string()))
+            Ok(Value::Utf8(
+                expression_calendar_locale(values, 1).months[value.month0() as usize].to_owned(),
+            ))
         }
         ScalarFunction::LastDay => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?.date();
@@ -4039,6 +4051,17 @@ fn numeric_cast_operand<'a>(
     } else {
         std::borrow::Cow::Borrowed(value)
     }
+}
+
+fn expression_calendar_locale(
+    values: &[Value],
+    index: usize,
+) -> &'static crate::calendar_locale::CalendarLocale {
+    let locale = match values.get(index) {
+        Some(Value::UInt64(id)) => usize::try_from(*id).unwrap_or(0),
+        _ => 0,
+    };
+    crate::calendar_locale::locale(locale)
 }
 
 fn scalar_string(value: &Value) -> Result<String, ExecError> {

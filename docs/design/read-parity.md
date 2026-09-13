@@ -8,6 +8,10 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 
 ## Implemented slices
 
+- Calendar-name functions capture `lc_time_names` from the connection. All
+  111 locale names and numeric identifiers select their full and abbreviated
+  labels; worker execution and cached answers retain the chosen locale.
+
 - Empty-search `REPLACE` leaves the input unchanged. String `INSERT` rejects
   positions beyond the byte length and applies character positions within
   that boundary, including the multibyte append case.

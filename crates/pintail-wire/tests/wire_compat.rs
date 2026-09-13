@@ -510,13 +510,46 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET div_precision_increment = 6")
         .await
         .expect("widen division");
-    // Settings whose other values are not implemented are refused, not ignored.
+    connection
+        .query_drop("SET @saved_locale = @@lc_time_names")
+        .await
+        .expect("save locale");
+    for (setting, weekday, month, short_names) in [
+        ("'de_de'", "Montag", "März", "Mo Mär"),
+        ("43", "Понедельник", "Марта", "Пнд Мар"),
+        ("'ja_JP'", "月曜日", "3月", "月  3月"),
+        ("DEFAULT", "Monday", "March", "Mon Mar"),
+    ] {
+        connection
+            .query_drop(format!("SET lc_time_names = {setting}"))
+            .await
+            .expect("select calendar locale");
+        let calendar: Option<(String, String, String)> = connection
+            .query_first("SELECT DAYNAME('2024-03-04'), MONTHNAME('2024-03-04'), DATE_FORMAT('2024-03-04', '%a %b')")
+            .await.expect("localized calendar names");
+        assert_eq!(
+            calendar,
+            Some((weekday.to_owned(), month.to_owned(), short_names.to_owned()))
+        );
+    }
     assert!(
         connection
-            .query_drop("SET lc_time_names = 'de_DE'")
+            .query_drop("SET lc_time_names = 'missing_locale'")
             .await
             .is_err()
     );
+    assert_eq!(
+        connection
+            .query_first::<String, _>("SELECT @@lc_time_names")
+            .await
+            .expect("locale survives a failed SET"),
+        Some("en_US".to_owned())
+    );
+    connection
+        .query_drop("SET lc_time_names = @saved_locale")
+        .await
+        .expect("restore locale");
+    // Settings whose other values are not implemented are refused, not ignored.
     assert!(
         connection
             .query_drop("SET default_week_format = 2")

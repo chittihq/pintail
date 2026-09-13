@@ -424,31 +424,6 @@ fn mysql_calc_week(date: NaiveDate, mode: u32) -> (i32, u32) {
     (year, u32::try_from(days / 7 + 1).unwrap_or(0))
 }
 
-const MONTHS: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
-const WEEKDAYS: [&str; 7] = [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-];
-
 /// `MySQL`'s ordinal suffix for `%D`: 11th/12th/13th are the exceptions to
 /// the last-digit rule.
 const fn ordinal_suffix(day: u32) -> &'static str {
@@ -476,6 +451,14 @@ const fn ordinal_suffix(day: u32) -> &'static str {
 /// Unknown directives copy the bare character, which is `MySQL`'s documented
 /// behaviour — `%q` is `q`, not an error.
 pub(super) fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
+    mysql_date_format_locale(value, format, crate::calendar_locale::locale(0))
+}
+
+pub(super) fn mysql_date_format_locale(
+    value: NaiveDateTime,
+    format: &str,
+    locale: &crate::calendar_locale::CalendarLocale,
+) -> String {
     use std::fmt::Write as _;
 
     let mut output = String::with_capacity(format.len());
@@ -498,11 +481,11 @@ pub(super) fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
         };
         let written = match specifier {
             'a' => {
-                output.push_str(&WEEKDAYS[value.weekday().num_days_from_monday() as usize][..3]);
+                output.push_str(locale.short_days[value.weekday().num_days_from_monday() as usize]);
                 Ok(())
             }
             'b' => {
-                output.push_str(&MONTHS[value.month0() as usize][..3]);
+                output.push_str(locale.short_months[value.month0() as usize]);
                 Ok(())
             }
             'c' => write!(output, "{}", value.month()),
@@ -517,7 +500,7 @@ pub(super) fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
             'k' => write!(output, "{}", value.hour()),
             'l' => write!(output, "{hour12}"),
             'M' => {
-                output.push_str(MONTHS[value.month0() as usize]);
+                output.push_str(locale.months[value.month0() as usize]);
                 Ok(())
             }
             'm' => write!(output, "{:02}", value.month()),
@@ -544,7 +527,7 @@ pub(super) fn mysql_date_format(value: NaiveDateTime, format: &str) -> String {
             'V' => write!(output, "{:02}", mysql_calc_week(value.date(), 2).1),
             'v' => write!(output, "{:02}", mysql_calc_week(value.date(), 3).1),
             'W' => {
-                output.push_str(WEEKDAYS[value.weekday().num_days_from_monday() as usize]);
+                output.push_str(locale.days[value.weekday().num_days_from_monday() as usize]);
                 Ok(())
             }
             'w' => write!(output, "{}", value.weekday().num_days_from_sunday()),

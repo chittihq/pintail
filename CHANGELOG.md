@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Session calendar locales for `DAYNAME`, `MONTHNAME` and `DATE_FORMAT`,
+  including locale-specific abbreviations and isolated cached answers.
+
 - String replacement and insertion boundaries, and binary-preserving
   `LEFT`, `RIGHT`, `REPLACE` and string `INSERT` results.
 - `GROUP_CONCAT` argument-position ordering and numeric DISTINCT ordering.

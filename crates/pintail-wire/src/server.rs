@@ -784,6 +784,7 @@ fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
 #[derive(Clone, Debug)]
 struct Session {
     time_zone: String,
+    calendar_locale: &'static str,
     sql_mode: String,
     charset_client: String,
     charset_connection: String,
@@ -818,6 +819,7 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             time_zone: "SYSTEM".to_owned(),
+            calendar_locale: "en_US",
             sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
                 .to_owned(),
@@ -1277,6 +1279,8 @@ impl Backend {
                     // optimization runs on this thread, so install-and-restore
                     // brackets exactly one statement.
                     let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                    let _ =
+                        pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
                     pintail_sql::set_session_default_collation(Some(session.collation_connection));
                     pintail_sql::set_session_div_precision_increment(Some(
                         session.div_precision_increment,
@@ -1309,6 +1313,7 @@ impl Backend {
                     pintail_sql::set_session_div_precision_increment(None);
                     pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);
+                    let _ = pintail_exec::set_session_calendar_locale(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
                     // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
@@ -1693,12 +1698,16 @@ impl Backend {
                 session.sql_select_limit = (limit < u64::MAX).then_some(limit);
                 Ok(())
             }
-            // These change answers - day and month names, week numbers - and only
-            // their defaults are implemented, so another value is refused rather
-            // than accepted and ignored.
-            "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
-                "Unknown locale: '{value}' (only en_US is supported)"
-            )),
+            "lc_time_names" => {
+                let value = if value.eq_ignore_ascii_case("default") {
+                    "en_US"
+                } else {
+                    &value
+                };
+                session.calendar_locale = pintail_exec::calendar_locale_name(value)
+                    .ok_or_else(|| format!("Unknown locale: '{value}'"))?;
+                Ok(())
+            }
             "default_week_format" if value.trim() != "0" => Err(format!(
                 "Variable 'default_week_format' can't be set to the value of '{value}' (only 0 is supported)"
             )),
@@ -3269,6 +3278,13 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         (
             "@@max_execution_time",
             Value::UInt64(session.max_execution_time_ms),
+        )
+    } else if normalized.contains("@@lc_time_names")
+        || normalized.contains("@@session.lc_time_names")
+    {
+        (
+            "@@lc_time_names",
+            Value::Utf8(session.calendar_locale.to_owned()),
         )
     } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
         (

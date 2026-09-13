@@ -754,6 +754,42 @@ fn fold_arithmetic(
     folded
 }
 
+/// Resolve connection settings once, before expressions move to worker threads.
+fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
+    let locale_arity = match function {
+        ScalarFunction::DayName | ScalarFunction::MonthName => Some(1),
+        ScalarFunction::DateFormat => Some(2),
+        _ => None,
+    };
+    if locale_arity == Some(args.len()) {
+        args.push(BoundExpr {
+            kind: BoundExprKind::Literal(Value::UInt64(u64::from(
+                crate::calendar_locale::session_locale_id(),
+            ))),
+            data_type: Some(DataType::UInt8),
+            nullable: false,
+        });
+    }
+    // Capture the connection's zone in the plan: execution may run
+    // on workers that do not carry the caller's thread-local state.
+    if matches!(
+        function,
+        ScalarFunction::UnixTimestamp | ScalarFunction::FromUnixTime
+    ) && args.len() == 1
+        && let Some(zone) = SESSION_TIME_ZONE.get()
+    {
+        let zone = match zone {
+            SessionZone::Fixed(offset) => offset.to_string(),
+            SessionZone::Named(zone) => zone.name().to_owned(),
+        };
+        args.push(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8(zone)),
+            data_type: Some(DataType::Utf8),
+            nullable: false,
+        });
+    }
+}
+
 fn fold_expr(expr: BoundExpr) -> BoundExpr {
     // Keep exact-decimal arithmetic as a tree. The executor evaluates a
     // chain as one reduced rational so enclosing operations see MySQL's
@@ -827,24 +863,7 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
                 };
             }
             let mut args: Vec<_> = args.into_iter().map(fold_expr).collect();
-            // Capture the connection's zone in the plan: execution may run
-            // on workers that do not carry the caller's thread-local state.
-            if matches!(
-                function,
-                ScalarFunction::UnixTimestamp | ScalarFunction::FromUnixTime
-            ) && args.len() == 1
-                && let Some(zone) = SESSION_TIME_ZONE.get()
-            {
-                let zone = match zone {
-                    SessionZone::Fixed(offset) => offset.to_string(),
-                    SessionZone::Named(zone) => zone.name().to_owned(),
-                };
-                args.push(BoundExpr {
-                    kind: BoundExprKind::Literal(Value::Utf8(zone)),
-                    data_type: Some(DataType::Utf8),
-                    nullable: false,
-                });
-            }
+            capture_scalar_session(function, &mut args);
             BoundExpr {
                 kind: BoundExprKind::Scalar { function, args },
                 data_type: expr.data_type,

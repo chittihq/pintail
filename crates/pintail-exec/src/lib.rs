@@ -1,5 +1,10 @@
 //! Planner, optimizer, and vectorized executor for Pintail.
 
+mod calendar_locale;
+pub use calendar_locale::{
+    calendar_locale_name, session_calendar_locale, set_session_calendar_locale,
+};
+
 mod admission;
 pub use admission::AdmissionCost;
 

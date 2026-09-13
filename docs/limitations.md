@@ -504,9 +504,8 @@ stays readable as a list of things to fix.
   bytes of the value (`BIT(16)` holding all ones reaches a client as
   `0xffff`, not `65535`), so a client that reads the column as a byte string
   sees a different type and a different value on the two engines.
-- `lc_time_names` accepts only `en_US` and `default_week_format` only `0`;
-  other values are refused, so `DATE_FORMAT` names and `WEEK()` without a mode
-  always follow those defaults.
+- `default_week_format` accepts only `0`; other values are refused, so
+  `WEEK()` without an explicit mode always uses mode zero.
 - User variables are assigned only by `SET @name = expr`. An assignment inside
   a query - `SELECT @n := @n + 1`, `SELECT ... INTO @n` - is refused, and a
   variable holds the literal its expression answered, so one assigned from a
