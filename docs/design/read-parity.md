@@ -1,0 +1,78 @@
+# Read compatibility work
+
+The starting local replay contains 23,118 SELECTs: 3,880 compared,
+3,444 exact, 395 row mismatches and 41 name-only mismatches. Another
+4,220 SELECTs could not execute. These are separate measures; fixing an
+execution error can increase the comparison denominator without immediately
+increasing agreement. Replica-mode evidence remains a separate workload.
+
+## Implemented slices
+
+- Empty-search `REPLACE` leaves the input unchanged. String `INSERT` rejects
+  a position past the last character, including an empty input.
+- `LEFT`, `RIGHT`, `REPLACE` and string `INSERT` preserve binary operands and
+  declare binary results. Mixed text/binary operations use the text's UTF-8
+  bytes. Tests exercise literals, column expressions, and direct results.
+- Aggregate-local integer ORDER BY positions resolve against `GROUP_CONCAT`
+  arguments, with invalid positions rejected. DISTINCT without explicit
+  ordering sorts by the original arguments, preserving numeric ordering.
+- Runtime TIME casts interpret short compact digits as a duration rather
+  than a calendar date. Fractional, signed and range-clamped inputs have
+  regression coverage, including a subsequent decimal cast.
+- Unix conversions capture the session time zone in the plan, preserve
+  fractional precision, reject negative epoch inputs, and enforce the epoch
+  range after microsecond rounding. Invalid datetime inputs to
+  `UNIX_TIMESTAMP` return zero at the declared precision.
+
+Each regression uses invented inputs and the parse/bind/plan/execute path.
+Expectations were checked against a dedicated MySQL 8.4 instance. No source
+schema or upstream test file is embedded in these reproductions.
+
+## Evidence and diagnosis
+
+MTR artifacts now live in invocation-specific directories under
+`validate-out/mtr/runs/`. Each directory retains the selected/excluded file
+inventory, replay mode, source revision and dirty status, executable hash,
+report, exact statement identities and diagnostic samples. The source
+revision describes the checkout; the executable hash identifies the binary
+actually used. An override binary is not assumed to have been built from
+that checkout. Samples are bounded; comparisons still use complete rows.
+
+A focused replay of seven failing areas confirmed that existing scalar
+tests do not explain every file-level mismatch. In particular:
+
+| Area | Remaining causes to address |
+|---|---|
+| Character sets | Session result encoding, localized month/day names, expression charset metadata, unsupported introducers and weight strings |
+| Casts | Single-precision floating-point semantics, typed-column temporal coercion, YEAR conversion, zero/partial dates and SQL modes |
+| Temporal functions | Default week mode, duration intervals, partial-date parsing, fractional truncation mode and session timestamp overrides |
+| Aggregates | Binary-width-aware bitwise folds; DISTINCT over multiple concatenated arguments requires tuple identity |
+| Result names | Adjacent literals and preservation of expression-label whitespace |
+| String functions | Search operand collation, FIELD coercion and CONV overflow boundaries |
+
+Several `GROUP_CONCAT` differences have equal ordering keys. Those are not
+evidence of an incorrect ordering between unequal keys. Keep them visible
+in the raw comparison report and classify them explicitly; do not silently
+change comparison rules or remove them to improve the percentage.
+
+## Next implementation boundaries
+
+1. Preserve charset and coercibility metadata through expressions before
+   adding legacy encodings. Decoding to UTF-8 alone cannot implement source
+   byte lengths, HEX, or collation weights correctly. Record the expansion
+   beyond the currently deferred collation matrix in the decisions log.
+2. Carry binary result width through binding before implementing bitwise
+   aggregates: empty and all-NULL groups still require a correctly sized
+   identity. Cover grouped, global, window, merge and spill paths.
+3. Treat single-precision casts as a type/formatting change, not only a
+   numeric rounding operation. Comparison and nested casts must see the
+   narrowed value, while result metadata and rendering preserve its type.
+4. Resolve session-dependent failures with session-aware regressions.
+   Supplying a fixed value to a scalar test does not validate session
+   propagation through the wire server or across execution workers.
+
+For each slice, run touched-crate unit tests and clippy on the build host,
+then commit. Finish the batch with the complete rc profile, retain its
+artifacts, and bank changed ledgers only after reviewing the outcome.
+Neither a focused replay nor an increased agreement percentage is a release
+gate.

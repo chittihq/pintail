@@ -4,6 +4,23 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- String replacement and insertion boundaries, and binary-preserving
+  `LEFT`, `RIGHT`, `REPLACE` and string `INSERT` results.
+- `GROUP_CONCAT` argument-position ordering and numeric DISTINCT ordering.
+- Compact runtime TIME casts and precision clamping when casting TIME
+  columns to DECIMAL.
+- Session time zones and fractional seconds in Unix timestamp conversions,
+  including negative inputs and upper-range rounding.
+
+### Changed
+
+- MTR replay artifacts are retained per invocation with source and binary
+  provenance, statement identities, and bounded diagnostic samples.
+
 ## [0.1.5-rc4] - 2026-09-13
 
 Verification. MySQL's and MariaDB's own regression suites now run as a gate
