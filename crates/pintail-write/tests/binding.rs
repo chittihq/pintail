@@ -267,3 +267,198 @@ fn an_expression_value_is_refused_rather_than_silently_wrong() {
     let error = insert("INSERT INTO notes (id, body) VALUES (1 + 1, 'a')").unwrap_err();
     assert_eq!(error.mysql_code(), 1064);
 }
+
+#[test]
+fn a_character_set_text_is_not_stored_in_is_refused() {
+    for sql in [
+        "CREATE TABLE t (id INT, name VARCHAR(8) CHARACTER SET ucs2)",
+        "CREATE TABLE t (id INT, name VARCHAR(8)) DEFAULT CHARSET=utf16",
+        "CREATE TABLE t (id INT, name VARCHAR(8) COLLATE cp1251_bin)",
+    ] {
+        let error = create(sql).expect_err(sql);
+        assert!(
+            matches!(error, WriteError::Unsupported(_)),
+            "{sql}: {error:?}"
+        );
+        assert!(
+            error.to_string().contains("character set"),
+            "{sql}: {error}"
+        );
+    }
+    for sql in [
+        "CREATE TABLE t (id INT, name VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)",
+        "CREATE TABLE t (id INT, name VARCHAR(8)) DEFAULT CHARSET=latin1",
+        "CREATE TABLE t (id INT, name VARBINARY(8), label CHAR(2) CHARACTER SET ascii)",
+        "CREATE TABLE t (id INT, name VARCHAR(8) COMMENT 'charset ucs2 is described here')",
+    ] {
+        create(sql).unwrap_or_else(|error| panic!("{sql}: {error}"));
+    }
+}
+
+#[test]
+fn a_text_column_takes_the_collation_mysql_would_give_it() {
+    let collation = |sql: &str, column: usize| {
+        create(sql).expect(sql).table.columns[column]
+            .collation
+            .clone()
+    };
+    assert_eq!(
+        collation("CREATE TABLE t (a VARCHAR(4)) charset latin1", 0).as_deref(),
+        Some("latin1_swedish_ci")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4) CHARACTER SET utf8mb3) DEFAULT CHARSET=latin1",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb3_general_ci")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb4_bin")
+    );
+    assert_eq!(
+        collation(
+            "CREATE TABLE t (a VARCHAR(4) COLLATE utf8mb4_general_ci) COLLATE=utf8mb4_bin",
+            0
+        )
+        .as_deref(),
+        Some("utf8mb4_general_ci")
+    );
+    assert_eq!(
+        collation("CREATE TABLE t (a VARCHAR(4))", 0).as_deref(),
+        Some("utf8mb4_0900_ai_ci")
+    );
+}
+
+#[test]
+fn enum_and_set_values_are_stored_as_their_declared_labels() {
+    let plan =
+        create("CREATE TABLE e (id INT PRIMARY KEY, v ENUM('a','b','c'), s SET('a','b','c'))")
+            .expect("binds");
+    assert_eq!(plan.table.columns[1].mysql_column_type, "enum('a','b','c')");
+    let stored = |values: &str| {
+        let statement = parse_statement(&format!("INSERT INTO e VALUES {values}")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1..].to_vec())
+    };
+    let labels = |v: &str, s: &str| vec![Value::Utf8(v.to_owned()), Value::Utf8(s.to_owned())];
+    // Measured against MySQL 8.4: each row reads back as ('b', 'a,c') but the last.
+    assert_eq!(
+        stored("(1, 'B', 'c,a')").expect("binds"),
+        labels("b", "a,c")
+    );
+    assert_eq!(stored("(2, 2, 5)").expect("binds"), labels("b", "a,c"));
+    assert_eq!(stored("(3, '2', '5')").expect("binds"), labels("b", "a,c"));
+    assert_eq!(
+        stored("(4, 'c ', 'A,a,b')").expect("binds"),
+        labels("c", "a,b")
+    );
+    assert_eq!(stored("(5, 'a', '')").expect("binds"), labels("a", ""));
+    for refused in [
+        "(6, 0, NULL)",
+        "(7, 'x', NULL)",
+        "(8, NULL, 'x')",
+        "(9, NULL, 8)",
+    ] {
+        assert!(stored(refused).is_err(), "{refused}");
+    }
+}
+
+#[test]
+fn a_json_value_is_stored_as_mysql_prints_it() {
+    let plan = create("CREATE TABLE j (id INT PRIMARY KEY, d JSON)").expect("binds");
+    let stored = |document: &str| {
+        let statement =
+            parse_statement(&format!("INSERT INTO j VALUES (1, '{document}')")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1].clone())
+    };
+    // Measured against MySQL 8.4.
+    assert_eq!(
+        stored(r#"{"b":1,  "a" : [1,2]}"#).expect("binds"),
+        Value::Utf8(r#"{"a": [1, 2], "b": 1}"#.to_owned())
+    );
+    assert!(stored("{not json").is_err());
+}
+
+#[test]
+fn a_decimal_value_is_stored_at_its_declared_scale() {
+    let plan = create("CREATE TABLE dz (id INT PRIMARY KEY, d DECIMAL(29,10), s DECIMAL(5,2))")
+        .expect("binds");
+    let stored = |values: &str| {
+        let statement =
+            parse_statement(&format!("INSERT INTO dz VALUES {values}")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1..].to_vec())
+    };
+    let decimals = |d: &str, s: &str| vec![Value::Utf8(d.to_owned()), Value::Utf8(s.to_owned())];
+    // Measured against MySQL 8.4.
+    assert_eq!(
+        stored("(1, '01234567890123456789.0123456789', 1.005)").expect("binds"),
+        decimals("1234567890123456789.0123456789", "1.01")
+    );
+    assert_eq!(
+        stored("(2, 1.01234567895, -0.005)").expect("binds"),
+        decimals("1.0123456790", "-0.01")
+    );
+    assert_eq!(
+        stored("(3, '-1.01234567894', 123.4)").expect("binds"),
+        decimals("-1.0123456789", "123.40")
+    );
+    assert!(
+        stored("(4, 1, 1234.5)").is_err(),
+        "out of range for DECIMAL(5,2)"
+    );
+}
+
+#[test]
+fn a_literal_column_default_fills_an_omitted_column() {
+    let plan = create(
+        "CREATE TABLE d (id INT PRIMARY KEY, qty INT NOT NULL DEFAULT '0', \
+         note VARCHAR(8) DEFAULT 'none', delta INT DEFAULT -1, extra INT)",
+    )
+    .expect("binds");
+    let statement = parse_statement("INSERT INTO d (id) VALUES (1)").expect("parses");
+    let rows = bind_insert_from(&statement, &plan.table, 1)
+        .expect("binds")
+        .rows;
+    assert_eq!(
+        rows[0].values()[1..],
+        [
+            Value::Int64(0),
+            Value::Utf8("none".to_owned()),
+            Value::Int64(-1),
+            Value::Null
+        ]
+    );
+    assert!(create("CREATE TABLE d (id INT PRIMARY KEY, qty INT DEFAULT 'many')").is_err());
+    assert!(
+        create("CREATE TABLE d (id INT PRIMARY KEY, at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+            .is_err()
+    );
+}
+
+#[test]
+fn hex_and_boolean_literals_take_their_column_reading() {
+    let plan = create(
+        "CREATE TABLE h (id INT PRIMARY KEY, raw VARBINARY(4), label VARCHAR(4), n INT, flag TINYINT)",
+    )
+    .expect("binds");
+    let statement = parse_statement("INSERT INTO h VALUES (1, X'4142', 0x4142, X'4142', TRUE)")
+        .expect("parses");
+    let rows = bind_insert_from(&statement, &plan.table, 1)
+        .expect("binds")
+        .rows;
+    assert_eq!(
+        rows[0].values()[1..],
+        [
+            Value::Binary(b"AB".to_vec()),
+            Value::Utf8("AB".to_owned()),
+            Value::Int64(16706),
+            Value::Int64(1)
+        ]
+    );
+}

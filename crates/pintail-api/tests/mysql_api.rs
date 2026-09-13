@@ -675,7 +675,7 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
     assert_eq!(rows[0][3], json!("1000-01-01"));
     assert_eq!(rows[0][4], json!("2024-02-29 12:34:56.123456"));
     assert_eq!(rows[0][5], json!("-51:04:05.600000"));
-    assert_eq!(rows[0][6], json!(r#"{"a":1,"b":[true,null]}"#));
+    assert_eq!(rows[0][6], json!(r#"{"a": 1, "b": [true, null]}"#));
     assert_eq!(rows[0][7], json!("café βeta red,blue 🪿"));
     assert_eq!(rows[0][8], json!("βeta"));
     assert_eq!(rows[0][9], json!("red,blue"));
@@ -734,7 +734,7 @@ async fn one_mysql_type_matrix_reaches_http_and_wire() {
             mysql_async::Value::Date(1000, 1, 1, 0, 0, 0, 0),
             mysql_async::Value::Date(2024, 2, 29, 12, 34, 56, 123_456),
             mysql_async::Value::Time(true, 2, 3, 4, 5, 600_000),
-            mysql_async::Value::Bytes(br#"{"a":1,"b":[true,null]}"#.to_vec()),
+            mysql_async::Value::Bytes(br#"{"a": 1, "b": [true, null]}"#.to_vec()),
             mysql_async::Value::Bytes("café βeta red,blue 🪿".as_bytes().to_vec()),
             mysql_async::Value::Bytes("βeta".as_bytes().to_vec()),
             mysql_async::Value::Bytes(b"red,blue".to_vec()),

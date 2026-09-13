@@ -273,7 +273,9 @@ stays readable as a list of things to fix.
   persistent per-segment SMA fold.
 - A missing `FLUSH TABLES WITH READ LOCK` privilege can be allowed explicitly,
   but worker start instants can then differ and the result reports the degraded
-  guarantee.
+  guarantee. The same degraded start applies when a source table stays in use
+  (a `LOCK TABLES` holder or a long query) for the two seconds a copy waits
+  before taking the lock.
 - A source changed between resume attempts can leave a mixed-time snapshot
   until the mandatory post-snapshot CDC catch-up replays the overlap. On
   binlog-disabled sources, polling and reconciliation own that convergence.
@@ -297,6 +299,10 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
+- A source whose table names are case-sensitive can hold two tables whose
+  names differ only in case (`T1` and `t1`). Neither is streamed or queryable:
+  a query naming either is refused as an unknown table, and every other table
+  in the database keeps replicating.
 - The binlog decoder is pinned to a fork. Published `mysql_common` panics
   on a transaction-payload header whose field id or compression type falls
   outside the range it narrows to, and `mysql_async` decodes those events
@@ -307,6 +313,11 @@ stays readable as a list of things to fix.
 
 - The supervisor runs finite catch-up cycles on a five-second cadence, so a
   newly committed event may wait for the next cycle.
+- A negative `TIME(1)` or `TIME(2)` value below -625 hours with a nonzero
+  fraction is captured wrong through the binlog: the pinned decoder wraps the
+  fraction byte, and above -625 hours the damage is recognisable and undone,
+  but below it the wrapped value is another valid negative time. A snapshot or
+  resync copies it correctly.
 - MariaDB GTID text is captured for diagnostics, but `mysql_common` 0.37 does
   not encode MariaDB's GTID dump request, so MariaDB 11 resumes from the
   file/position captured alongside its GTID.
@@ -490,6 +501,14 @@ stays readable as a list of things to fix.
   bytes of the value (`BIT(16)` holding all ones reaches a client as
   `0xffff`, not `65535`), so a client that reads the column as a byte string
   sees a different type and a different value on the two engines.
+- `lc_time_names` accepts only `en_US` and `default_week_format` only `0`;
+  other values are refused, so `DATE_FORMAT` names and `WEEK()` without a mode
+  always follow those defaults.
+- User variables are assigned only by `SET @name = expr`. An assignment inside
+  a query - `SELECT @n := @n + 1`, `SELECT ... INTO @n` - is refused, and a
+  variable holds the literal its expression answered, so one assigned from a
+  DATE or DATETIME reads back as that text rather than as a temporal value.
+  The HTTP query API has no session and does not keep them.
 
 - `caching_sha2_password` serves both the fast-auth exchange and the
   full-authentication fallback (RSA key exchange toward a per-process
@@ -642,6 +661,11 @@ but may be wrong.
   atomicity across statements has no way to get it here. Replicated
   databases still accept all of them: they write nothing, so the no-op
   claims nothing false.
+- A local table's text must be declared in `utf8mb4`, `utf8mb3`, `ascii`,
+  `latin1` or `binary`. A column, table default or collation naming any other
+  character set is refused at `CREATE TABLE`, because values are stored as
+  decoded characters and would answer byte lengths, hex and ordering in the
+  wrong encoding.
 - A keyless local table is append-only: rows live under a generated id,
   the same model the replica uses for a keyless source table, so a
   duplicate row is simply a second row and nothing can address one later.
@@ -649,7 +673,8 @@ but may be wrong.
   indexes are accepted at `CREATE TABLE` and not enforced: a duplicate the
   source would refuse is stored. `AUTO_INCREMENT` is accepted but never
   assigns a value; an `INSERT` that leaves the column out is refused. A
-  column `DEFAULT` other than `NULL` is refused at `CREATE TABLE`.
+  column `DEFAULT` must be `NULL`, a number or a string; an expression default
+  such as `CURRENT_TIMESTAMP` is refused at `CREATE TABLE`.
 - `INSERT` takes literal values only; an expression such as `1 + 1` or
   `NOW()` is refused rather than evaluated.
 - A local table cannot be joined against a replicated one. A query reaches

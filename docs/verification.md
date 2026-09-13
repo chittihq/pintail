@@ -257,3 +257,26 @@ dispatch. Headless Chromium walks the embedded dashboard through
 first-boot operator setup, the add-database wizard against a live MySQL
 source, replication reaching streaming, the SQL console returning typed
 results, and a 390-pixel login render, capturing screenshots on failure.
+
+## Generated gates
+
+Each gate below produces its own cases against an oracle rather than
+replaying cases someone wrote. `docs/design/verification-program.md` explains
+why they exist; `docs/design/bug-atlas.md` maps them to the bug classes they
+cover.
+
+| Gate | Oracle | Where | Widen or replay |
+|---|---|---|---|
+| Upstream suites (`mtr` stage) | a live MySQL 8.4 | `tests/mtr`, rc and stable | `MTR_BANK=1` records the exact statements in `baseline*.json`; `MTR_GATE=1` fails when one stops matching. `MTR_SUITE=mariadb` replays the other suite against the same oracle |
+| Upstream suites through replication | the source the mirror follows | `tests/mtr` with `MTR_MODE=replica` | every statement runs on a binlog-enabled source and each SELECT is compared once the mirror has applied a marker row; a mirror that stops following is written up with the statements since its last marker. `MTR_LOCAL_DIR` replays a directory of reproductions |
+| Change-capture simulation | an in-memory model of the source | `crates/pintail-cdc/src/simulation.rs`, unit stage | `PINTAIL_CDC_SIM_SEEDS`, `PINTAIL_CDC_SIM_SEED_BASE`, `PINTAIL_CDC_SIM_STEPS`, `PINTAIL_CDC_SIM_SEED` |
+| Change-capture matrix | the source server | `tests/e2e/cdc-matrix.ts` | `CDC_MATRIX_LEGS`, `CDC_MATRIX_ROUNDS`, `CDC_MATRIX_SEED`; legs cover MySQL 8.4, 8.0 and 5.7, MariaDB 11.4 and 10.6, GTID and file position, full and minimal metadata, compression and a polling demotion |
+| Disk faults | every acknowledged state of the table | `crates/pintail-store/tests/disk_faults.rs`, unit stage | `PINTAIL_DISK_FAULT_SEEDS`, `PINTAIL_DISK_FAULT_SEED_BASE`, `PINTAIL_DISK_FAULT_SEED` |
+| Kernel differential | row evaluation | `crates/pintail-exec/src/expression/vector/differential.rs`, unit stage | `PINTAIL_KERNEL_DIFF_CASES`, `PINTAIL_KERNEL_DIFF_SEED` |
+
+`bun run scripts/farm.ts` runs these on fresh seeds for as long as a host is
+free: each cycle builds HEAD, advances a seed cursor in
+`validate-out/farm/state.json`, keeps a failing job's log under
+`validate-out/farm/findings/` and records its signature once in
+`findings.jsonl`. `--jobs` picks a subset and `--cycles` bounds the run. Run it
+on a host no gate or benchmark is measuring on.

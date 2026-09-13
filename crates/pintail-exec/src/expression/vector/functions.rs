@@ -197,9 +197,8 @@ pub(super) fn unary_column(
     ColumnVector::new(declared, values).ok()
 }
 
-/// A packed integer or decimal negated by its units. Row evaluation
-/// negates a decimal's text, which spells a negated zero `-0`; units cannot,
-/// so a decimal holding a zero goes row by row.
+/// A packed integer or decimal negated by its units. A decimal holding a
+/// zero goes row by row, where the negated zero keeps its unsigned spelling.
 fn negated(batch: &RecordBatch, input: &Operand<'_>, declared: DataType) -> Option<ColumnVector> {
     let Operand::Column(column) = input else {
         return None;

@@ -1177,7 +1177,7 @@ fn assert_type_values(targets: &[SnapshotTarget]) {
     );
     assert_eq!(
         rows[0].values()[columns["json_value"]],
-        Value::Utf8("{\"a\":1,\"b\":[true,null]}".to_owned())
+        Value::Utf8("{\"a\": 1, \"b\": [true, null]}".to_owned())
     );
     assert_eq!(
         rows[0].values()[columns["latin_value"]],
@@ -1432,4 +1432,68 @@ fn dsn_host(host: &str) -> String {
     } else {
         bare.to_owned()
     }
+}
+
+/// A session holding LOCK TABLES keeps the global read lock from being
+/// granted for as long as it holds them. The copy must not wait that out -
+/// a pending global lock queues every write on the source - so it proceeds
+/// on per-worker snapshots and records the weaker guarantee.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_table_lock_held_elsewhere_does_not_stall_the_copy() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-13T00:00:00Z",
+        )
+        .expect("register database");
+    let source = report
+        .tables
+        .iter()
+        .find(|table| table.name == "resume_rows")
+        .expect("resume table")
+        .clone();
+    let mut holder = pool.get_conn().await.expect("lock holder");
+    holder
+        .query_drop("LOCK TABLES resume_rows READ")
+        .await
+        .expect("hold a table lock");
+
+    let started = std::time::Instant::now();
+    let copied = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        run_snapshot(
+            &pool,
+            &metadata_path,
+            DATABASE_ID,
+            &report,
+            vec![target(&source, &workspace.path().join("resume_rows"))],
+            SnapshotOptions {
+                workers: 1,
+                chunk_rows: 10_000,
+                ..SnapshotOptions::default()
+            },
+        ),
+    )
+    .await
+    .expect("the copy waited on the table lock")
+    .expect("copy beside a table lock");
+    assert!(!copied.globally_consistent);
+    assert!(copied.consistency_warning.is_some());
+    assert_eq!(copied.tables[0].rows, RESUME_ROWS);
+    assert!(started.elapsed() < std::time::Duration::from_secs(30));
+    holder.query_drop("UNLOCK TABLES").await.expect("unlock");
+    drop(holder);
+    pool.disconnect().await.expect("disconnect source pool");
 }

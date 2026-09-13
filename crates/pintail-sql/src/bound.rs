@@ -39,6 +39,26 @@ pub const SUPPORTED_TEXT_COLLATIONS: [&str; 4] = [
 ];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
+/// The supported collation a comparison under `name` follows, if any.
+///
+/// utf8mb3 holds only characters of the basic plane, and over those its
+/// `general_ci`, `unicode_ci` and `bin` collations weigh every character exactly
+/// as their utf8mb4 twins do - so a legacy `utf8` column compares as the
+/// twin rather than being refused.
+#[must_use]
+pub fn comparison_collation(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    let twin = lower
+        .strip_prefix("utf8mb3_")
+        .or_else(|| lower.strip_prefix("utf8_"))
+        .filter(|rest| matches!(*rest, "general_ci" | "unicode_ci" | "bin"))
+        .map(|rest| format!("utf8mb4_{rest}"));
+    let wanted = twin.as_deref().unwrap_or(&lower);
+    SUPPORTED_TEXT_COLLATIONS
+        .into_iter()
+        .find(|supported| *supported == wanted)
+}
+
 /// A table made unambiguous against one catalog snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundTable {
@@ -338,6 +358,46 @@ impl BoundExpr {
             _ => None,
         }
     }
+}
+
+thread_local! {
+    static SESSION_DIV_PRECISION_INCREMENT: std::cell::Cell<u8> =
+        const { std::cell::Cell::new(DEFAULT_DIV_PRECISION_INCREMENT) };
+}
+
+/// `MySQL`'s default `div_precision_increment`: division and `AVG` widen the
+/// dividend's scale by this many fraction digits.
+pub const DEFAULT_DIV_PRECISION_INCREMENT: u8 = 4;
+
+/// Installs the connection's `div_precision_increment` for the current
+/// thread's statement, or restores the default with `None`. `MySQL` accepts
+/// 0 to 30.
+pub fn set_session_div_precision_increment(increment: Option<u8>) {
+    SESSION_DIV_PRECISION_INCREMENT
+        .with(|cell| cell.set(increment.unwrap_or(DEFAULT_DIV_PRECISION_INCREMENT).min(30)));
+}
+
+thread_local! {
+    static SESSION_SELECT_LIMIT: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Installs the connection's `sql_select_limit` for the current thread's
+/// statement, or clears it with `None`: the most rows a top-level SELECT
+/// without its own LIMIT returns.
+pub fn set_session_select_limit(limit: Option<u64>) {
+    SESSION_SELECT_LIMIT.with(|cell| cell.set(limit));
+}
+
+/// The row limit a top-level SELECT without its own LIMIT takes on this thread.
+#[must_use]
+pub fn session_select_limit() -> Option<u64> {
+    SESSION_SELECT_LIMIT.with(std::cell::Cell::get)
+}
+
+/// The fraction digits division and `AVG` add on this thread's statement.
+#[must_use]
+pub fn session_div_precision_increment() -> u8 {
+    SESSION_DIV_PRECISION_INCREMENT.with(std::cell::Cell::get)
 }
 
 /// Installs the connection's default collation for the current thread's
@@ -984,7 +1044,8 @@ pub enum ScalarFunction {
     DeclaredCast {
         /// Requested scalar type.
         target: DataType,
-        /// Maximum character count of an explicit CHAR declaration.
+        /// Maximum character count of an explicit CHAR declaration, or the exact
+        /// byte count of a BINARY one.
         characters: Option<u32>,
     },
     /// Current local date and time.
@@ -1447,9 +1508,7 @@ impl BoundExpr {
         explicit.sort_unstable();
         explicit.dedup();
         if let [only] = explicit.as_slice() {
-            return SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == only);
+            return comparison_collation(only);
         }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
@@ -1460,9 +1519,7 @@ impl BoundExpr {
             // utf8mb4_bin, everything else under the session default - the
             // same ladder result_collation applies.
             [] if self.reads_json_text() => Some(BIN_TEXT_COLLATION),
-            [only] => SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == only),
+            [only] => comparison_collation(only),
             _ => None,
         }
     }

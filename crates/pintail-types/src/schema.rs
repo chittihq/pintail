@@ -55,7 +55,8 @@ pub fn declaration_labels(column_type: &str, kind: &str) -> Option<Vec<String>> 
         }
         labels.push(label);
         match characters.next() {
-            Some(',') => {}
+            // A declaration written by hand may space its list out.
+            Some(',') => while characters.next_if_eq(&' ').is_some() {},
             None => break,
             _ => return None,
         }

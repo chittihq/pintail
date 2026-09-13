@@ -1103,7 +1103,9 @@ fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
         | SqlDataType::Character(Some(sqlparser::ast::CharacterLength::IntegerLength {
             length,
             ..
-        })) => u32::try_from(*length).ok(),
+        }))
+        // BINARY(n) is a byte count, and the cast pads to it.
+        | SqlDataType::Binary(Some(length)) => u32::try_from(*length).ok(),
         _ => None,
     }
 }
@@ -1177,6 +1179,14 @@ pub(super) fn bind_scalar(
     function: ScalarFunction,
     args: Vec<BoundExpr>,
 ) -> Result<BoundExpr, BindError> {
+    let args = if matches!(
+        function,
+        ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
+    ) {
+        extremum_operands(args)
+    } else {
+        args
+    };
     // Exact-decimal math flags resolve here, once the operand types are
     // known, so every construction site stays oblivious.
     let arg0_decimal = matches!(
@@ -1195,6 +1205,12 @@ pub(super) fn bind_scalar(
                 && args
                     .get(1)
                     .is_some_and(|digits| signed_integer_constant(digits).is_some()),
+        },
+        ScalarFunction::Greatest { .. } => ScalarFunction::Greatest {
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
+        },
+        ScalarFunction::Least { .. } => ScalarFunction::Least {
+            decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
         },
         other => other,
     };
@@ -1369,6 +1385,7 @@ pub(super) fn bind_scalar(
             )
         }
         ScalarFunction::Round { decimal: false }
+        | ScalarFunction::Truncate { decimal: false }
         | ScalarFunction::Ceil { decimal: false }
         | ScalarFunction::Floor { decimal: false } => (
             Some(match args[0].data_type.map(DataType::storage_type) {
@@ -1396,8 +1413,7 @@ pub(super) fn bind_scalar(
         | ScalarFunction::Ln
         | ScalarFunction::LogBase
         | ScalarFunction::Log2
-        | ScalarFunction::Log10
-        | ScalarFunction::Truncate { decimal: false } => (
+        | ScalarFunction::Log10 => (
             // MySQL returns NULL outside a function's domain (SQRT of a
             // negative, logs of non-positives), so these stay nullable.
             Some(DataType::Float64),
@@ -1744,6 +1760,59 @@ fn coerce_decimal_branches(
 /// computing with it, so a mix of signed and unsigned integers - which
 /// arithmetic widens to DOUBLE - stays exact here, as `MySQL` keeps it: a
 /// DECIMAL wide enough for either sign of BIGINT.
+/// GREATEST and LEAST compare every argument in one domain, as `MySQL` does:
+/// as dates and times when any argument is a DATE or DATETIME, as strings
+/// when a string meets a number, and as numbers otherwise. Each argument is
+/// cast into that domain, so `GREATEST('11', 5, 2)` is `'5'` and
+/// `LEAST(DATE '2005-05-05', 20010101)` is `2001-01-01`.
+fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let types = args
+        .iter()
+        .filter_map(|argument| argument.data_type)
+        .collect::<Vec<_>>();
+    let fsp = types
+        .iter()
+        .filter_map(|data_type| match data_type {
+            DataType::DateTime64 { fsp } => Some(*fsp),
+            _ => None,
+        })
+        .max();
+    let numeric = |data_type: &DataType| {
+        matches!(
+            data_type.storage_type(),
+            DataType::Int64 | DataType::UInt64 | DataType::Float64 | DataType::Decimal { .. }
+        )
+    };
+    // A TIME mixed with other types follows no single domain in MySQL, so
+    // those arguments keep the comparison they had.
+    let target = if types
+        .iter()
+        .any(|data_type| matches!(data_type, DataType::Time64 { .. }))
+    {
+        return args;
+    } else if let Some(fsp) = fsp {
+        DataType::DateTime64 { fsp }
+    } else if types.contains(&DataType::Date32) {
+        DataType::Date32
+    } else if types.contains(&DataType::Utf8) && types.iter().any(numeric) {
+        DataType::Utf8
+    } else {
+        return args;
+    };
+    args.into_iter()
+        .map(|argument| {
+            if argument
+                .data_type
+                .is_none_or(|data_type| data_type == target)
+            {
+                argument
+            } else {
+                super::cast_to(argument, target)
+            }
+        })
+        .collect()
+}
+
 fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
     let types = args
         .iter()
@@ -1859,7 +1928,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     explicit.dedup();
     match explicit.as_slice() {
         [] => {}
-        [only] if crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&only.as_str()) => {
+        [only] if crate::bound::comparison_collation(only).is_some() => {
             return Ok(());
         }
         _ => {
@@ -1884,9 +1953,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     // about supplementary characters, so the comparison has two defensible
     // answers. MySQL picks one by coercibility; guessing here would produce a
     // wrong answer where refusing produces an error.
-    if collations.len() == 1
-        && crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collations[0].as_str())
-    {
+    if collations.len() == 1 && crate::bound::comparison_collation(&collations[0]).is_some() {
         return Ok(());
     }
     let detail = collations.join(", ");
@@ -1934,8 +2001,14 @@ pub(super) fn wrap_json_scalar(value: &mut BoundExpr) {
     }
 }
 
+/// Binds `left = right` for the comparisons that are written some other way:
+/// `<=>`, a simple `CASE`, a row-constructor `IN`. It must type the pair
+/// exactly as a written `=` does. It once skipped the DECIMAL scale
+/// unification, so those forms compared `0.0000` with `0.00` as different
+/// text on the row path while `=` called them equal.
 pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundExpr, BindError> {
     let (left, right) = super::unify_temporal_operands(left, right);
+    let (left, right) = super::unify_time_operands(left, right);
     let right = super::canonical_literal_operand(&left, right)?;
     let left = super::canonical_literal_operand(&right, left)?;
     let (left, right) = super::text_as_number(left, right);
@@ -1948,6 +2021,13 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
         });
     }
     ensure_supported_text_collation(&[&left, &right])?;
+    if super::is_exact_decimal_comparison(BinaryOp::Equal, &left, &right) {
+        return Ok(super::bind_exact_decimal_comparison(
+            BinaryOp::Equal,
+            left,
+            right,
+        ));
+    }
     Ok(BoundExpr {
         nullable: left.nullable || right.nullable,
         data_type: Some(DataType::Boolean),

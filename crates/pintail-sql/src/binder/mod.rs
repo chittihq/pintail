@@ -113,6 +113,13 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedStatement(statement.to_string()));
         };
         let mut bound = self.bind_query(query, &[])?;
+        // sql_select_limit caps a statement's own result when the statement
+        // sets no LIMIT; subqueries and a written LIMIT are untouched.
+        if bound.limit.is_none()
+            && let Some(count) = crate::bound::session_select_limit()
+        {
+            bound.limit = Some(BoundLimit { offset: 0, count });
+        }
         // Each expression was checked for a single supported collation as it
         // was bound. This resolves the query as a whole, which is the level
         // the executor works at: one comparison rule for the whole plan. A
@@ -2724,6 +2731,12 @@ fn bind_expr_inner(
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
     match expr {
+        Expr::Identifier(identifier)
+            if identifier.quote_style.is_none()
+                && let Some(value) = crate::user_variables::user_variable(&identifier.value) =>
+        {
+            bind_literal(&value)
+        }
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
         Expr::Value(value) => bind_literal(&value.value),
@@ -2993,20 +3006,39 @@ fn bind_expr_inner(
         // DATE '...', TIME '...', TIMESTAMP '...': the literal cast to its type.
         Expr::TypedString(typed) => {
             let inner = Expr::Value(typed.value.clone());
+            // A TIME or TIMESTAMP literal keeps the fraction digits it is
+            // written with: TIMESTAMP '01:02:03.25' has two.
+            let written = match (&typed.data_type, &typed.value.value) {
+                (
+                    sqlparser::ast::DataType::Timestamp(None, zone)
+                    | sqlparser::ast::DataType::Time(None, zone),
+                    SqlValue::SingleQuotedString(text),
+                ) => text
+                    .rsplit_once('.')
+                    .map(|(_, fraction)| fraction.len())
+                    .filter(|digits| (1..=6).contains(digits))
+                    .and_then(|digits| u64::try_from(digits).ok())
+                    .map(|digits| match typed.data_type {
+                        sqlparser::ast::DataType::Timestamp(..) => {
+                            sqlparser::ast::DataType::Timestamp(Some(digits), *zone)
+                        }
+                        _ => sqlparser::ast::DataType::Time(Some(digits), *zone),
+                    }),
+                _ => None,
+            };
             bind_cast(
                 &inner,
-                &typed.data_type,
+                written.as_ref().unwrap_or(&typed.data_type),
                 tables,
                 aggregates,
                 windows,
                 subqueries,
             )
         }
-        // A charset introducer (_latin1 '...') names the literal's encoding;
-        // the fixtures that use one hold ASCII, where every encoding agrees.
-        Expr::Prefixed { value, .. } => {
-            bind_expr_inner(value, tables, aggregates, windows, subqueries)
-        }
+        Expr::Prefixed { prefix, value } => bind_introducer(
+            &prefix.value,
+            bind_expr_inner(value, tables, aggregates, windows, subqueries)?,
+        ),
         Expr::Convert { .. } => bind_convert(expr, tables, aggregates, windows, subqueries),
         Expr::Substring {
             expr,
@@ -3696,7 +3728,7 @@ fn bind_binary(
             | BinaryOperator::Modulo
             | BinaryOperator::MyIntegerDivide
     ) {
-        (time_as_number(left), time_as_number(right))
+        (temporal_as_number(left), temporal_as_number(right))
     } else {
         (left, right)
     };
@@ -4753,7 +4785,7 @@ fn aggregate_result_type(
             let exact = input_type.and_then(exact_numeric_digits);
             if let Some((scale, integer_digits)) = exact {
                 let result_scale = scale
-                    .saturating_add(DIVISION_SCALE_INCREMENT)
+                    .saturating_add(crate::bound::session_div_precision_increment())
                     .min(MAX_DECIMAL_SCALE);
                 Ok((
                     Some(DataType::Decimal {
@@ -5300,8 +5332,6 @@ fn exact_numeric_digits(data_type: DataType) -> Option<(u8, u8)> {
     }
 }
 
-/// `MySQL` `div_precision_increment` default: division and `AVG` widen the
-/// dividend's scale by four fraction digits.
 /// Aggregate output column of a decorrelated scalar-subquery derived table.
 const SCALAR_VALUE_COLUMN: &str = "__scalar_value";
 
@@ -5348,7 +5378,6 @@ fn expression_scope(local: &[BoundTable], outer: &[BoundTable]) -> Vec<BoundTabl
     visible
 }
 
-const DIVISION_SCALE_INCREMENT: u8 = 4;
 /// Pintail v1 decimal bounds (`DataType::is_valid`).
 const MAX_DECIMAL_SCALE: u8 = 30;
 const MAX_DECIMAL_PRECISION: u8 = 65;
@@ -5359,7 +5388,7 @@ fn division_result_type(left: DataType, right: DataType) -> Option<DataType> {
     // MySQL: result scale is dividend scale + increment; the integer part
     // can grow by the divisor's scale (dividing by a small fraction).
     let scale = left_scale
-        .saturating_add(DIVISION_SCALE_INCREMENT)
+        .saturating_add(crate::bound::session_div_precision_increment())
         .min(MAX_DECIMAL_SCALE);
     let precision = left_integer
         .saturating_add(right_scale)
@@ -5412,6 +5441,23 @@ fn arithmetic_type(
                 .min(MAX_DECIMAL_PRECISION),
             scale,
         });
+    }
+    // DIV answers a BIGINT whatever its operands: the quotient is taken in
+    // their own domain and then cut toward zero, so 1.2e19 DIV 2 is exact
+    // and 7.5 DIV 2.5 is 3, not 7 DIV 2.
+    if op == BinaryOp::IntegerDivide
+        && [left, right].iter().any(|operand| {
+            matches!(
+                operand,
+                DataType::Float64
+                    | DataType::Float32
+                    | DataType::Decimal { .. }
+                    | DataType::Utf8
+                    | DataType::Binary
+            )
+        })
+    {
+        return Some(DataType::Int64);
     }
     if op == BinaryOp::Divide
         || left == DataType::Float64
@@ -5603,8 +5649,47 @@ fn unify_temporal_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
 /// Integer digits of a TIME read as a number: 838:59:59 is 8385959.
 const TIME_NUMBER_DIGITS: u8 = 7;
 
+/// Whole digits of a DATETIME read as a number: YYYYMMDDHHMMSS.
+const DATETIME_NUMBER_DIGITS: u8 = 14;
+
 /// A TIME in a numeric context is the number `[-]HHMMSS[.ffffff]` in `MySQL`,
 /// at the value's fractional precision: `TIME + 0` is that number.
+/// An arithmetic operand read as a number: a TIME, DATE or DATETIME is its
+/// digits - HHMMSS, YYYYMMDD and YYYYMMDDHHMMSS[.fraction].
+fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+    // The TIME-valued functions answer text; from integer arguments their
+    // TIME has whole seconds.
+    if let BoundExprKind::Scalar { function, args } = &expr.kind
+        && matches!(
+            function,
+            ScalarFunction::SecToTime
+                | ScalarFunction::AddTime
+                | ScalarFunction::SubTime
+                | ScalarFunction::TimeDiff
+        )
+        && expr.data_type == Some(DataType::Utf8)
+        && args.iter().all(|argument| {
+            matches!(
+                argument.data_type.map(DataType::storage_type),
+                Some(DataType::Int64 | DataType::UInt64)
+            )
+        })
+    {
+        return time_as_number(cast_to(expr, DataType::Time64 { fsp: 0 }));
+    }
+    match expr.data_type {
+        Some(DataType::Date32 | DataType::DateTime64 { fsp: 0 }) => cast_to(expr, DataType::Int64),
+        Some(DataType::DateTime64 { fsp }) => cast_to(
+            expr,
+            DataType::Decimal {
+                precision: DATETIME_NUMBER_DIGITS + fsp,
+                scale: fsp,
+            },
+        ),
+        _ => time_as_number(expr),
+    }
+}
+
 fn time_as_number(expr: BoundExpr) -> BoundExpr {
     match expr.data_type {
         Some(DataType::Time64 { fsp: 0 }) => cast_to(expr, DataType::Int64),
@@ -5800,6 +5885,51 @@ fn exact_numeric_type(data_type: Option<DataType>) -> bool {
                 | DataType::Decimal { .. }
         )
     )
+}
+
+/// A literal behind a character set introducer (`_utf8mb4 '...'`,
+/// `_binary X'00'`). The introducer names how the literal's bytes are
+/// encoded: under a UTF-8 set they are this engine's own text, under
+/// `_binary` they are bytes, and under a single- or multi-byte set such as
+/// `_latin1` or `_koi8r` they spell the same text only while every byte is
+/// ASCII. A wide set (`_ucs2`, `_utf16`, `_utf32`) or a non-ASCII literal
+/// would need transcoding, and reading its bytes as UTF-8 answers different
+/// text, so it is refused.
+fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
+    let charset = prefix
+        .strip_prefix('_')
+        .unwrap_or(prefix)
+        .to_ascii_lowercase();
+    let refuse = || {
+        Err(BindError::UnsupportedExpression(format!(
+            "character set introducer {prefix}"
+        )))
+    };
+    let BoundExprKind::Literal(value) = &literal.kind else {
+        return refuse();
+    };
+    let bytes = match value {
+        Value::Utf8(text) => text.as_bytes(),
+        Value::Binary(bytes) => bytes.as_slice(),
+        Value::Null => return Ok(literal),
+        _ => return refuse(),
+    };
+    let value = match charset.as_str() {
+        "binary" => Value::Binary(bytes.to_vec()),
+        "utf8mb4" | "utf8mb3" | "utf8" => match std::str::from_utf8(bytes) {
+            Ok(text) => Value::Utf8(text.to_owned()),
+            Err(_) => return refuse(),
+        },
+        // A wide set never spells ASCII as ASCII; every other set does.
+        "ucs2" | "utf16" | "utf16le" | "utf32" => return refuse(),
+        _ if bytes.is_ascii() => Value::Utf8(String::from_utf8_lossy(bytes).into_owned()),
+        _ => return refuse(),
+    };
+    Ok(BoundExpr {
+        data_type: value.data_type(),
+        nullable: false,
+        kind: BoundExprKind::Literal(value),
+    })
 }
 
 /// A date or datetime literal in one of the spellings `MySQL` reads:
@@ -6255,18 +6385,34 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
         Expr::CompoundIdentifier(identifiers) => identifiers
             .last()
             .map_or_else(|| expr.to_string(), |identifier| identifier.value.clone()),
+        // A string literal is named by its text, with or without a character
+        // set introducer or the N prefix.
         Expr::Value(value)
             if matches!(
                 value.value,
-                SqlValue::SingleQuotedString(_) | SqlValue::DoubleQuotedString(_)
+                SqlValue::SingleQuotedString(_)
+                    | SqlValue::DoubleQuotedString(_)
+                    | SqlValue::NationalStringLiteral(_)
             ) =>
         {
             match &value.value {
-                SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => {
-                    text.clone()
-                }
+                SqlValue::SingleQuotedString(text)
+                | SqlValue::DoubleQuotedString(text)
+                | SqlValue::NationalStringLiteral(text) => text.clone(),
                 _ => unreachable!("guarded above"),
             }
+        }
+        Expr::Prefixed { value, .. }
+            if matches!(
+                value.as_ref(),
+                Expr::Value(literal)
+                    if matches!(
+                        literal.value,
+                        SqlValue::SingleQuotedString(_) | SqlValue::DoubleQuotedString(_)
+                    )
+            ) =>
+        {
+            projection_name(value, None, clause)
         }
         _ => source
             .and_then(|sql| source_text(sql, expr, clause))
@@ -6926,7 +7072,7 @@ mod tests {
     /// case, spacing and all. A string literal is named by its value.
     #[test]
     fn unaliased_output_columns_are_named_by_their_source_text() {
-        let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined";
+        let sql = "SELECT floor(5.5), round(5.64,1), 'abc', 1 +  1, CONCAT('a', 'b') AS joined, _utf8mb4'12', N'xyz'";
         let catalog = catalog();
         let statement = parse_statement(sql).expect("parse");
         let query = Binder::new(&catalog, Some("analytics"))
@@ -6940,7 +7086,15 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             names,
-            ["floor(5.5)", "round(5.64,1)", "abc", "1 +  1", "joined"]
+            [
+                "floor(5.5)",
+                "round(5.64,1)",
+                "abc",
+                "1 +  1",
+                "joined",
+                "12",
+                "xyz"
+            ]
         );
 
         // Without the text, the parser's rendering stands in.
@@ -8152,7 +8306,7 @@ mod tests {
 fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindError> {
     let mut unsupported = collations
         .iter()
-        .filter(|collation| !crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collation.as_str()));
+        .filter(|collation| crate::bound::comparison_collation(collation).is_none());
     if let Some(collation) = unsupported.next() {
         return Err(BindError::UnsupportedExpression(format!(
             "text collation {collation} is unsupported; supported: {}",
@@ -8161,10 +8315,6 @@ fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindEr
     }
     Ok(collations
         .iter()
-        .find_map(|collation| {
-            crate::bound::SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == collation)
-        })
+        .find_map(|collation| crate::bound::comparison_collation(collation))
         .unwrap_or_else(crate::bound::session_default_collation))
 }

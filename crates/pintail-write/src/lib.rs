@@ -143,6 +143,7 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
         let mut nullable = true;
         let mut character_set = None;
         let mut collation = None;
+        let mut default = None;
         let mut auto_increment = false;
         for option in &column.options {
             match &option.option {
@@ -160,6 +161,12 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
                 ColumnOption::Comment(_) | ColumnOption::Unique(_) | ColumnOption::OnUpdate(_) => {}
                 ColumnOption::Default(Expr::Value(value))
                     if matches!(value.value, SqlValue::Null) => {}
+                // A literal default fills a column an INSERT leaves out, as it does
+                // on the source; an expression default (CURRENT_TIMESTAMP) is
+                // refused below, since nothing here evaluates it per row.
+                ColumnOption::Default(expr) if default_literal(expr).is_some() => {
+                    default = default_literal(expr);
+                }
                 ColumnOption::CharacterSet(name) => character_set = Some(name.to_string()),
                 ColumnOption::Collation(name) => collation = Some(name.to_string()),
                 // AUTO_INCREMENT is accepted in the declaration and recorded the
@@ -182,14 +189,40 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
             }
         }
         let mut declared = declare(ordinal, &column_name, &column.data_type, nullable)?;
-        if character_set.is_some() {
-            declared.character_set = character_set;
-        }
-        if collation.is_some() {
-            declared.collation = collation;
+        // A text column's comparison rules come from what MySQL would give
+        // it, not from the engine default: `CREATE TABLE ... CHARSET latin1`
+        // makes every column latin1_swedish_ci, which pads trailing spaces,
+        // where the engine default does not.
+        if declared.collation.is_some() {
+            let (table_charset, table_collation) = table_text_defaults(create);
+            let resolved = collation
+                .clone()
+                .or_else(|| character_set.as_deref().map(default_collation))
+                .or(table_collation)
+                .or_else(|| table_charset.as_deref().map(default_collation));
+            if let Some(resolved) = resolved {
+                declared.character_set =
+                    Some(resolved.split('_').next().unwrap_or("utf8mb4").to_owned());
+                declared.collation = Some(resolved);
+            }
+        } else {
+            if character_set.is_some() {
+                declared.character_set = character_set;
+            }
+            if collation.is_some() {
+                declared.collation = collation;
+            }
         }
         if auto_increment {
             declared.extra = "auto_increment".to_owned();
+        }
+        if let Some(default) = default {
+            // Checked now, as MySQL checks it at CREATE TABLE, so an INSERT never
+            // meets a default its column cannot hold.
+            typed_value(&default, &declared).map_err(|_| {
+                WriteError::Invalid(format!("Invalid default value for '{column_name}'"))
+            })?;
+            declared.default_value = Some(default);
         }
         columns.push(declared);
     }
@@ -359,10 +392,19 @@ pub fn bind_insert_from(
                 row.len()
             )));
         }
-        // Start every column at NULL, then place the named ones. A column
-        // absent from the list keeps NULL, and the NOT NULL check below
-        // catches the ones that may not.
-        let mut values_by_id = vec![Value::Null; table.columns.len()];
+        // Start every column at its default - NULL unless it declared a
+        // literal one - then place the named ones. A column absent from the list
+        // keeps that, and the NOT NULL check below catches the ones that may not.
+        let mut values_by_id = table
+            .columns
+            .iter()
+            .map(|column| {
+                column
+                    .default_value
+                    .as_deref()
+                    .map_or(Ok(Value::Null), |default| typed_value(default, column))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for (column, expr) in named.iter().zip(row) {
             let position = table
                 .columns
@@ -443,8 +485,87 @@ fn primary_key(
     PrimaryKey::new(parts).map_err(|error| WriteError::Invalid(error.to_string()))
 }
 
+/// A hexadecimal literal (`X'4142'`, `0x4142`): its bytes in a binary column,
+/// the text they spell in a text column, and their big-endian value in an
+/// integer column - the three readings MySQL gives it by context.
+fn hex_literal(digits: &str, column: &SourceColumn) -> Result<Value, WriteError> {
+    let wrong = || {
+        WriteError::Invalid(format!(
+            "Incorrect value X'{digits}' for column '{}'",
+            column.name
+        ))
+    };
+    let padded = if digits.len() % 2 == 1 {
+        format!("0{digits}")
+    } else {
+        digits.to_owned()
+    };
+    let bytes = (0..padded.len())
+        .step_by(2)
+        .map(|start| u8::from_str_radix(&padded[start..start + 2], 16))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| wrong())?;
+    match column.pintail_type.storage_type() {
+        DataType::Binary => Ok(Value::Binary(bytes)),
+        DataType::Utf8 => String::from_utf8(bytes)
+            .map_err(|_| wrong())
+            .and_then(|text| typed_value(&text, column)),
+        DataType::Int64 | DataType::UInt64 if bytes.len() <= 8 => {
+            let number = bytes
+                .iter()
+                .fold(0_u64, |number, byte| number << 8 | u64::from(*byte));
+            typed_value(&number.to_string(), column)
+        }
+        _ => Err(wrong()),
+    }
+}
+
+/// The text of a column default this write path can apply: a number, a
+/// signed number or a string. An expression default is `None`.
+fn default_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Value(ValueWithSpan {
+            value: SqlValue::Number(number, _),
+            ..
+        }) => Some(number.clone()),
+        Expr::Value(ValueWithSpan {
+            value: SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text),
+            ..
+        }) => Some(text.clone()),
+        Expr::UnaryOp {
+            op: sqlparser::ast::UnaryOperator::Minus,
+            expr,
+        } => match expr.as_ref() {
+            Expr::Value(ValueWithSpan {
+                value: SqlValue::Number(number, _),
+                ..
+            }) => Some(format!("-{number}")),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Types one literal against its column.
 fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError> {
+    // A signed number is still a literal: -0.005 parses as negation.
+    if let Expr::UnaryOp { op, expr: operand } = expr
+        && matches!(
+            op,
+            sqlparser::ast::UnaryOperator::Minus | sqlparser::ast::UnaryOperator::Plus
+        )
+        && let Expr::Value(ValueWithSpan {
+            value: SqlValue::Number(number, _),
+            ..
+        }) = operand.as_ref()
+    {
+        let sign = if matches!(op, sqlparser::ast::UnaryOperator::Minus) {
+            "-"
+        } else {
+            ""
+        };
+        return typed_value(&format!("{sign}{number}"), column);
+    }
     let Expr::Value(ValueWithSpan { value, .. }) = expr else {
         // A local INSERT takes literals only: an expression would need the
         // full evaluator, and every function it could call is already
@@ -455,9 +576,11 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
     };
     let text = match value {
         SqlValue::Null => return Ok(Value::Null),
-        SqlValue::Boolean(flag) => return Ok(Value::Boolean(*flag)),
+        // TRUE and FALSE are the numbers 1 and 0 to whatever column takes them.
+        SqlValue::Boolean(flag) => u8::from(*flag).to_string(),
         SqlValue::Number(number, _) => number.clone(),
         SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => text.clone(),
+        SqlValue::HexStringLiteral(digits) => return hex_literal(digits, column),
         other => {
             return Err(WriteError::Unsupported(format!(
                 "value `{other}` is not supported in INSERT"
@@ -508,6 +631,40 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
                 fsp,
             )));
         }
+        // A DECIMAL column stores its value at the declared scale, rounded half
+        // away from zero as MySQL rounds it, in canonical form: 1.005 in a
+        // DECIMAL(5,2) is 1.01, and a leading zero or a longer fraction never
+        // reaches the store, where comparisons read the text.
+        DataType::Decimal { precision, scale } => {
+            let exact = pintail_types::parse_decimal_rounded(text.trim(), scale).or_else(|| {
+                let number = text
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|number| number.is_finite())?;
+                pintail_types::parse_decimal_rounded(
+                    &format!("{number:.*}", usize::from(scale)),
+                    scale,
+                )
+            });
+            let units = exact.ok_or_else(|| wrong("expected a decimal number"))?;
+            let limit = 10_i128
+                .checked_pow(u32::from(precision))
+                .ok_or_else(|| wrong("Out of range value"))?;
+            if units.abs() >= limit {
+                return Err(wrong("Out of range value"));
+            }
+            return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                units, scale,
+            )));
+        }
+        // A JSON column stores the document as MySQL prints it back: keys in
+        // its normalized order and its own spacing, whatever was written.
+        DataType::Json => {
+            let document: serde_json::Value =
+                serde_json::from_str(text).map_err(|_| wrong("Invalid JSON text"))?;
+            return Ok(Value::Utf8(pintail_types::mysql_json_text(&document)));
+        }
         _ => {}
     }
     let value = match column.pintail_type.storage_type() {
@@ -529,6 +686,12 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             Value::UInt64(number)
         }
         DataType::Float64 => Value::float64(text.parse().map_err(|_| wrong("expected a number"))?),
+        DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("enum") => {
+            Value::Utf8(enum_label(text, column).ok_or_else(|| wrong("Data truncated"))?)
+        }
+        DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("set") => {
+            Value::Utf8(set_labels(text, column).ok_or_else(|| wrong("Data truncated"))?)
+        }
         DataType::Utf8 => Value::Utf8(text.to_owned()),
         DataType::Binary => Value::Binary(text.as_bytes().to_vec()),
         other => {
@@ -539,6 +702,57 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         }
     };
     Ok(value)
+}
+
+/// The declared label an ENUM value names: a label matched regardless of
+/// case and trailing spaces, or a one-based index written as a number. The
+/// column stores the label as declared, as a replicated row carries it.
+fn enum_label(text: &str, column: &SourceColumn) -> Option<String> {
+    let labels = pintail_types::declaration_labels(&column.mysql_column_type, "enum")?;
+    let wanted = text.trim_end_matches(' ');
+    if let Some(label) = labels
+        .iter()
+        .find(|label| label.eq_ignore_ascii_case(wanted))
+    {
+        return Some(label.clone());
+    }
+    let index: usize = text.trim().parse().ok()?;
+    labels.get(index.checked_sub(1)?).cloned()
+}
+
+/// The members a SET value names, in declaration order and each once: a
+/// comma-separated list matched regardless of case, or a member bitmask
+/// written as a number.
+fn set_labels(text: &str, column: &SourceColumn) -> Option<String> {
+    let labels = pintail_types::declaration_labels(&column.mysql_column_type, "set")?;
+    let mut mask = 0_u64;
+    if !text.is_empty() {
+        for member in text.split(',') {
+            let wanted = member.trim_end_matches(' ');
+            match labels
+                .iter()
+                .position(|label| label.eq_ignore_ascii_case(wanted))
+            {
+                Some(position) => mask |= 1 << position,
+                None => {
+                    mask = text.trim().parse().ok()?;
+                    if labels.len() < 64 && mask >> labels.len() != 0 {
+                        return None;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    Some(
+        labels
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| mask >> position & 1 == 1)
+            .map(|(_, label)| label.as_str())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// A narrow integer column must refuse a value it cannot hold. The schema
@@ -619,7 +833,27 @@ fn text_collation(bare: &str) -> Option<&'static str> {
 fn mysql_terms(
     data_type: &SqlDataType,
 ) -> Result<(String, String, Option<u8>, Option<u8>), WriteError> {
-    let full = data_type.to_string().to_ascii_lowercase();
+    // ENUM and SET are rendered as the source reports them - labels as
+    // declared, no space after a comma - so their labels can be read back.
+    let quoted = |labels: &mut dyn Iterator<Item = &str>| {
+        labels
+            .map(|label| format!("'{}'", label.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let full = match data_type {
+        SqlDataType::Enum(members, _) => format!(
+            "enum({})",
+            quoted(&mut members.iter().map(|member| match member {
+                sqlparser::ast::EnumMember::Name(name)
+                | sqlparser::ast::EnumMember::NamedValue(name, _) => name.as_str(),
+            }))
+        ),
+        SqlDataType::Set(members) => {
+            format!("set({})", quoted(&mut members.iter().map(String::as_str)))
+        }
+        _ => data_type.to_string().to_ascii_lowercase(),
+    };
     let bare = full
         .split(['(', ' '])
         .next()
@@ -702,7 +936,97 @@ fn reject_unsupported_table_features(create: &CreateTable) -> Result<(), WriteEr
             "A table must have at least one column".to_owned(),
         ));
     }
+    if let Some(charset) = unsupported_character_set(&create.to_string()) {
+        return Err(WriteError::Unsupported(format!(
+            "character set {charset} is not supported on a local table"
+        )));
+    }
     Ok(())
+}
+
+/// The collation MySQL gives a character set when a definition names only
+/// the set.
+fn default_collation(charset: &str) -> String {
+    match charset.to_ascii_lowercase().as_str() {
+        "utf8" | "utf8mb3" => "utf8mb3_general_ci",
+        "latin1" => "latin1_swedish_ci",
+        "ascii" => "ascii_general_ci",
+        "binary" => "binary",
+        _ => "utf8mb4_0900_ai_ci",
+    }
+    .to_owned()
+}
+
+/// The table's default character set and collation, from its options.
+fn table_text_defaults(create: &CreateTable) -> (Option<String>, Option<String>) {
+    let options = create.table_options.to_string().to_ascii_lowercase();
+    let words = options
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut charset = None;
+    let mut collation = None;
+    for (index, word) in words.iter().enumerate() {
+        match *word {
+            "charset" => charset = words.get(index + 1).map(|name| (*name).to_owned()),
+            "character" if words.get(index + 1) == Some(&"set") => {
+                charset = words.get(index + 2).map(|name| (*name).to_owned());
+            }
+            "collate" => collation = words.get(index + 1).map(|name| (*name).to_owned()),
+            _ => {}
+        }
+    }
+    (charset, collation)
+}
+
+/// Character sets whose text is stored here exactly as the source spells it.
+const STORED_CHARACTER_SETS: [&str; 6] =
+    ["utf8mb4", "utf8mb3", "utf8", "ascii", "latin1", "binary"];
+
+/// The first character set a definition names, directly or through a
+/// collation, that text is not stored in.
+///
+/// Values are kept as decoded characters, so a column declared in UTF-16, a
+/// Cyrillic code page or any other set would read back with the byte length,
+/// the hex and the ordering of its UTF-8 form: a plausible, wrong answer to
+/// every query that looks at the encoding. A replicated source already
+/// quarantines such a column; a local table refuses it.
+fn unsupported_character_set(definition: &str) -> Option<String> {
+    // Quoted text - a comment, a default - names nothing.
+    let mut unquoted = String::with_capacity(definition.len());
+    let mut quote = None;
+    for character in definition.chars() {
+        match quote {
+            Some(open) if character == open => quote = None,
+            Some(_) => {}
+            None if matches!(character, '\'' | '"') => quote = Some(character),
+            None => unquoted.push(character),
+        }
+    }
+    let upper = unquoted.to_ascii_uppercase();
+    let words = upper
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut named = Vec::new();
+    for (index, word) in words.iter().enumerate() {
+        match *word {
+            "CHARSET" => named.extend(words.get(index + 1)),
+            "CHARACTER" if words.get(index + 1) == Some(&"SET") => {
+                named.extend(words.get(index + 2))
+            }
+            "COLLATE" => named.extend(
+                words
+                    .get(index + 1)
+                    .and_then(|collation| collation.split('_').next()),
+            ),
+            _ => {}
+        }
+    }
+    named
+        .into_iter()
+        .map(|name| name.to_ascii_lowercase())
+        .find(|name| !STORED_CHARACTER_SETS.contains(&name.as_str()))
 }
 
 fn reject_unsupported_insert_features(insert: &Insert) -> Result<(), WriteError> {

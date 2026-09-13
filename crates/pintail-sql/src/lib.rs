@@ -22,6 +22,9 @@ pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 mod repeatable;
 pub use repeatable::is_repeatable_statement;
 
+mod user_variables;
+pub use user_variables::{UserVariables, user_variable_assignments, with_user_variables};
+
 pub use bound::set_session_database_name;
 pub use sqlparser::ast::Statement;
 
@@ -30,10 +33,13 @@ pub use bound::{
     AggregateFunction, BinaryOp, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind,
     BoundFrameBound, BoundFrameOffset, BoundFrom, BoundJoin, BoundJoinKind, BoundLimit,
     BoundOrderKey, BoundProjection, BoundQuery, BoundRecursive, BoundSetOpKind, BoundTable,
-    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_TEXT_COLLATION, DatePart,
-    IntervalUnit, JSON_TEXT_COLLATION, MembershipError, MembershipLookup, PreparedMembership,
-    SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp, WindowFunction, session_default_collation,
-    session_timestamp_zone, set_session_default_collation, set_session_timestamp_zone,
+    BoundWindow, BoundWindowFrame, BoundWindowOrderKey, DEFAULT_DIV_PRECISION_INCREMENT,
+    DEFAULT_TEXT_COLLATION, DatePart, IntervalUnit, JSON_TEXT_COLLATION, MembershipError,
+    MembershipLookup, PreparedMembership, SUPPORTED_TEXT_COLLATIONS, ScalarFunction, UnaryOp,
+    WindowFunction, comparison_collation, session_default_collation,
+    session_div_precision_increment, session_select_limit, session_timestamp_zone,
+    set_session_default_collation, set_session_div_precision_increment, set_session_select_limit,
+    set_session_timestamp_zone,
 };
 pub use hints::max_execution_time_hint;
 pub use metadata::{

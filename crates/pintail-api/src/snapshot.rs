@@ -790,6 +790,12 @@ pub(crate) fn open_tracked_store(
                     // The store's own refusal to re-read a segment under a
                     // changed column type.
                     || message.contains("changed physical type")
+                    // A source table that gained or lost its key, or was
+                    // replaced by one with other columns, under the same
+                    // name: the store's layout cannot read the new shape at
+                    // all, and a recopy was the only way forward.
+                    || message.contains("key mode cannot change")
+                    || message.contains("is absent from schema version")
                     // Every in-place refusal the probe makes, under one
                     // marker: adoptable here because the branch below deletes
                     // the store before rebuilding it.
@@ -902,24 +908,19 @@ fn open_store_with_history(
         StoreOptions::default(),
     )
     .map_err(display)?;
-    store
-        .evolve_schema(
-            adopted
-                .table_schema_with_version(version)
-                .map_err(display)?,
-        )
-        .map_err(display)?;
-    let columns_json = serde_json::to_string(&adopted.columns).map_err(display)?;
-    metadata
-        .record_schema_history(
-            database_id,
-            &source.name,
-            version,
-            None,
-            &columns_json,
-            &Utc::now().to_rfc3339(),
-        )
-        .map_err(display)?;
+    pintail_cdc::evolve_tracked_schema(
+        metadata,
+        database_id,
+        &source.name,
+        &mut store,
+        &adopted.columns,
+        adopted
+            .table_schema_with_version(version)
+            .map_err(display)?,
+        None,
+    )
+    .map_err(display)?
+    .map_err(display)?;
     source.columns = adopted.columns;
     Ok(store)
 }

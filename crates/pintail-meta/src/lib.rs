@@ -1529,6 +1529,28 @@ impl MetaStore {
             .context("failed to commit schema-history update")
     }
 
+    /// Removes one schema generation that storage refused after it was
+    /// recorded, so the history never names a generation no store took.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the history row cannot be deleted.
+    pub fn forget_schema_version(
+        &mut self,
+        database_id: &str,
+        table_name: &str,
+        version: u32,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM schema_history \
+                 WHERE db_id = ?1 AND table_name = ?2 AND version = ?3",
+                (database_id, table_name, i64::from(version)),
+            )
+            .context("failed to forget a refused schema generation")?;
+        Ok(())
+    }
+
     /// Returns a table's persisted schema generations in version order.
     ///
     /// # Errors
@@ -1593,6 +1615,76 @@ impl MetaStore {
             )
             .with_context(|| format!("failed to mark {database_id}.{table_name} orphaned"))?;
         Ok(())
+    }
+
+    /// Retires a table's previous generation because the source created a new
+    /// table under the same name. Every row naming the old generation -
+    /// schema history, copy chunks, polling state, dead letters and the
+    /// snapshot fence - is removed, and the table row starts over at schema
+    /// version 1 with no copy recorded, so the new table's snapshot and
+    /// history are the only ones any reader finds. With `orphaned_only`, only
+    /// a dropped table's retained row qualifies. Returns the row's stored
+    /// name when one was reset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control-plane transaction cannot commit.
+    pub fn supersede_table_generation(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        orphaned_only: bool,
+    ) -> Result<Option<String>> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin superseding a table generation")?;
+        let name: Option<String> = transaction
+            .query_row(
+                "SELECT name FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE \
+                   AND (?3 = 0 OR orphaned_at IS NOT NULL)",
+                (database_id, table_name, orphaned_only),
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to look up an orphaned table")?;
+        let Some(name) = name else {
+            return Ok(None);
+        };
+        for table in [
+            "schema_history",
+            "snapshot_chunks",
+            "poll_states",
+            "poll_chunk_states",
+            "dlq",
+        ] {
+            transaction
+                .execute(
+                    &format!(
+                        "DELETE FROM {table} WHERE db_id = ?1 AND table_name = ?2 COLLATE NOCASE"
+                    ),
+                    (database_id, &name),
+                )
+                .with_context(|| format!("failed to clear {table} rows of {database_id}.{name}"))?;
+        }
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key = ?1 COLLATE NOCASE",
+                [format!("cdc_snapshot_fence:{database_id}:{name}")],
+            )
+            .context("failed to clear the snapshot fence of an orphaned table")?;
+        transaction
+            .execute(
+                "UPDATE tables SET orphaned_at = NULL, last_error = NULL, copy_complete = 0, \
+                   rows_synced = 0, schema_version = 1 \
+                 WHERE db_id = ?1 AND name = ?2",
+                (database_id, &name),
+            )
+            .context("failed to reset an orphaned table row")?;
+        transaction
+            .commit()
+            .context("failed to commit superseding an orphaned table")?;
+        Ok(Some(name))
     }
 
     /// Clears prior snapshot progress and prepares a fresh source handoff.

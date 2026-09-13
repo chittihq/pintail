@@ -9,10 +9,15 @@ mod ddl;
 mod decoder;
 mod event;
 pub use event::{TRANSACTION_PAYLOAD_EVENT, check_transaction_payload_header};
+
+const ROTATE_EVENT: u8 = 0x04;
+const FORMAT_DESCRIPTION_EVENT: u8 = 0x0f;
 mod gtid;
+#[cfg(test)]
+mod simulation;
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, hash_map::DefaultHasher},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque, hash_map::DefaultHasher},
     fs::File,
     hash::{Hash as _, Hasher as _},
     io::{Seek as _, Write as _},
@@ -38,7 +43,7 @@ use pintail_snapshot::{
     SnapshotError, SnapshotOptions, SnapshotPosition, SnapshotTarget, run_snapshot,
 };
 use pintail_store::{StoreError, StoreOptions, TableStore};
-use pintail_types::{KeyMode, SchemaError, StoredRow};
+use pintail_types::{KeyMode, SchemaError, StoredRow, Value};
 use serde_json::json;
 use thiserror::Error;
 
@@ -478,6 +483,13 @@ async fn run_cdc_inner(
             Err(error) => return Err(error),
         };
         let mut stream_error = None;
+        // MariaDB writes end_log_pos 0 on every event inside a transaction -
+        // table maps and row events included - so those events take the last
+        // real position read, which is the transaction's own GTID event. The
+        // raw zero made every transaction's row versions identical: rows of a
+        // keyless table, keyed by version, overwrote one another, and a row
+        // event compared against a snapshot fence always fell below it.
+        let mut logged_position = position.pos;
         while let Some(event) = stream.next().await {
             let event = match event {
                 Ok(event) => {
@@ -490,8 +502,14 @@ async fn run_cdc_inner(
                     break;
                 }
             };
-            let event_position = u64::from(event.header().log_pos());
             let event_type = event.header().event_type_raw();
+            let logged = u64::from(event.header().log_pos());
+            // The connection preamble's rotate and format description describe
+            // the file, not the stream's progress.
+            if logged > 0 && !matches!(event_type, ROTATE_EVENT | FORMAT_DESCRIPTION_EVENT) {
+                logged_position = logged;
+            }
+            let event_position = if logged > 0 { logged } else { logged_position };
             let Some(data) = self::event::decode_event(&event)? else {
                 continue;
             };
@@ -704,7 +722,13 @@ async fn run_cdc_inner(
                 EventData::QueryEvent(query) => {
                     let statement = query.query().into_owned();
                     let normalized = statement.trim().to_ascii_uppercase();
-                    if normalized == "BEGIN" {
+                    // MariaDB replaces each event a replica cannot read - the
+                    // statement annotation before every row event, among
+                    // others - with a query event holding only a comment,
+                    // inside the transaction. It is not a statement, and
+                    // treating it as one committed the open transaction
+                    // statement by statement.
+                    if normalized == "BEGIN" || normalized.starts_with('#') {
                         continue;
                     }
                     if normalized == "ROLLBACK" {
@@ -1007,19 +1031,15 @@ async fn resnapshot_targets(
                 .map_err(CdcError::Ddl)?;
             if fresh.columns != target.source.columns {
                 let version = next_schema_version(target.store.schema().version())?;
-                target
-                    .store
-                    .evolve_schema(fresh.table_schema_with_version(version)?)?;
-                let columns_json = serde_json::to_string(&fresh.columns)
-                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
-                metadata.record_schema_history(
+                evolve_tracked_schema(
+                    &mut metadata,
                     database_id,
                     &target.source.name,
-                    version,
+                    &mut target.store,
+                    &fresh.columns,
+                    fresh.table_schema_with_version(version)?,
                     None,
-                    &columns_json,
-                    &Utc::now().to_rfc3339(),
-                )?;
+                )??;
             }
             target.source = fresh;
         }
@@ -1096,7 +1116,11 @@ async fn apply_ddl_actions(
     actions: Vec<DdlAction>,
 ) -> Result<(), CdcError> {
     let refreshed = probe_source(pool, &report.database).await?;
-    for action in actions {
+    // A queue rather than a plain loop: renaming an untracked table into the
+    // schema is handled as the creation of its new name, which runs after the
+    // rename in the same statement's order.
+    let mut queue = VecDeque::from(actions);
+    while let Some(action) = queue.pop_front() {
         match action {
             DdlAction::Alter {
                 table,
@@ -1117,65 +1141,25 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 };
-                let source =
-                    match pintail_probe::stabilize_source_table(&targets[index].source, source) {
-                        Ok(source) => source,
-                        Err(reason) => {
-                            quarantine_schema_change(
-                                metadata,
-                                database_id,
-                                &targets[index],
-                                index,
-                                blocked_targets,
-                                &format!("{statement}; {reason}"),
-                                None,
-                            )?;
-                            continue;
-                        }
-                    };
-                if let Some(reason) = virtual_column_joined(&targets[index].source, &source) {
-                    quarantine_schema_change(
-                        metadata,
-                        database_id,
-                        &targets[index],
-                        index,
-                        blocked_targets,
-                        &format!("{statement}; {reason}"),
-                        Some(&source),
-                    )?;
-                    continue;
-                }
-                let version = next_schema_version(targets[index].store.schema().version())?;
-                let schema = source.table_schema_with_version(version)?;
-                if let Err(error) = targets[index].store.evolve_schema(schema) {
-                    quarantine_schema_change(
-                        metadata,
-                        database_id,
-                        &targets[index],
-                        index,
-                        blocked_targets,
-                        &format!("{statement}; {error}"),
-                        Some(&source),
-                    )?;
-                    continue;
-                }
-                let columns_json = serde_json::to_string(&source.columns)
-                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
-                metadata.record_schema_history(
+                apply_column_change(
+                    metadata,
                     database_id,
-                    &table,
-                    version,
-                    Some(statement),
-                    &columns_json,
-                    &Utc::now().to_rfc3339(),
+                    targets,
+                    index,
+                    blocked_targets,
+                    statement,
+                    source,
                 )?;
-                targets[index].source = source;
             }
             DdlAction::Alter {
                 table,
                 kind: AlterKind::RenameTable { new_name },
             } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
+                    // The old name was never mirrored - typically a table
+                    // created and filled under a staging name and swapped in
+                    // - so the new name is a table this schema has not seen.
+                    queue.push_front(DdlAction::Create { table: new_name });
                     continue;
                 };
                 if target_indexes.contains_key(&new_name.to_ascii_lowercase()) {
@@ -1189,6 +1173,25 @@ async fn apply_ddl_actions(
                         None,
                     )?;
                     continue;
+                }
+                // A dropped table still holding the new name gives it up, as
+                // it does to a CREATE; the renamed table then takes its row.
+                if let Some(root) = targets[index]
+                    .store
+                    .directory()
+                    .parent()
+                    .map(Path::to_path_buf)
+                    && let Some(orphan) = supersede_generation(
+                        metadata,
+                        database_id,
+                        &root,
+                        targets,
+                        target_indexes,
+                        &new_name,
+                        true,
+                    )?
+                {
+                    metadata.remove_local_table(database_id, &orphan)?;
                 }
                 // Metadata first, then the directory: a crash between the
                 // two leaves a row whose directory is missing, which the
@@ -1285,7 +1288,16 @@ async fn apply_ddl_actions(
                 };
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
-                if let Err(error) = targets[index].store.evolve_schema(schema) {
+                let name = targets[index].source.name.clone();
+                if let Err(error) = evolve_tracked_schema(
+                    metadata,
+                    database_id,
+                    &name,
+                    &mut targets[index].store,
+                    &source.columns,
+                    schema,
+                    Some(statement),
+                )? {
                     quarantine_schema_change(
                         metadata,
                         database_id,
@@ -1297,16 +1309,6 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 }
-                let columns_json = serde_json::to_string(&source.columns)
-                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
-                metadata.record_schema_history(
-                    database_id,
-                    &table,
-                    version,
-                    Some(statement),
-                    &columns_json,
-                    &Utc::now().to_rfc3339(),
-                )?;
                 targets[index].source = source;
             }
             DdlAction::Alter {
@@ -1349,7 +1351,16 @@ async fn apply_ddl_actions(
                     };
                 let version = next_schema_version(targets[index].store.schema().version())?;
                 let schema = source.table_schema_with_version(version)?;
-                if let Err(error) = targets[index].store.evolve_schema(schema) {
+                let name = targets[index].source.name.clone();
+                if let Err(error) = evolve_tracked_schema(
+                    metadata,
+                    database_id,
+                    &name,
+                    &mut targets[index].store,
+                    &source.columns,
+                    schema,
+                    Some(statement),
+                )? {
                     quarantine_schema_change(
                         metadata,
                         database_id,
@@ -1361,16 +1372,6 @@ async fn apply_ddl_actions(
                     )?;
                     continue;
                 }
-                let columns_json = serde_json::to_string(&source.columns)
-                    .map_err(|error| CdcError::Ddl(error.to_string()))?;
-                metadata.record_schema_history(
-                    database_id,
-                    &table,
-                    version,
-                    Some(statement),
-                    &columns_json,
-                    &Utc::now().to_rfc3339(),
-                )?;
                 targets[index].source = source;
             }
             DdlAction::Alter {
@@ -1441,11 +1442,7 @@ async fn apply_ddl_actions(
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
                     continue;
                 };
-                let version = next_schema_version(targets[index].store.schema().version())?;
-                let schema = targets[index].source.table_schema_with_version(version)?;
-                targets[index].store.evolve_schema(schema)?;
-                targets[index].store.reset_for_resnapshot()?;
-                record_target_schema(metadata, database_id, &targets[index], version, statement)?;
+                truncate_target(metadata, database_id, &mut targets[index], statement)?;
             }
             DdlAction::Drop { table } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
@@ -1460,6 +1457,11 @@ async fn apply_ddl_actions(
                     &Utc::now().to_rfc3339(),
                 )?;
                 blocked_targets.insert(index);
+                // The retained rows stay readable, but the name no longer
+                // belongs to them: a CREATE or RENAME that reuses it later in
+                // this run is a different table.
+                target_indexes.remove(&table.to_ascii_lowercase());
+                snapshot_fences.remove(&index);
             }
             DdlAction::Create { table } => {
                 if !options.auto_include_new_tables
@@ -1468,10 +1470,16 @@ async fn apply_ddl_actions(
                 {
                     continue;
                 }
+                // The probe reads the source as it is now, not as it was at
+                // this event. A table created and then dropped or renamed
+                // before this cycle replayed its CREATE is absent, and there
+                // is nothing to mirror under this name: its row events are
+                // for an untracked table, and a later rename reaches this arm
+                // again under the name that does exist. Failing here instead
+                // left the checkpoint before the CREATE, so every cycle
+                // replayed it and failed the same way.
                 let Some(source) = find_source_table(&refreshed, &table).cloned() else {
-                    return Err(CdcError::Ddl(format!(
-                        "created table {table} was absent from the refreshed source probe"
-                    )));
+                    continue;
                 };
                 let root = options
                     .new_table_root
@@ -1487,9 +1495,44 @@ async fn apply_ddl_actions(
                             "auto-including a table requires a target storage root".to_owned(),
                         )
                     })?;
+                supersede_generation(
+                    metadata,
+                    database_id,
+                    &root,
+                    targets,
+                    target_indexes,
+                    &table,
+                    true,
+                )?;
                 let directory = new_table_directory(&root, &table);
-                let store =
-                    TableStore::open(directory, source.table_schema()?, StoreOptions::default())?;
+                let store = match TableStore::open(
+                    &directory,
+                    source.table_schema()?,
+                    StoreOptions::default(),
+                ) {
+                    Ok(store) => store,
+                    // Files under the name that cannot take the new table's
+                    // shape belong to a generation nothing marked as dropped
+                    // - a table dropped while it was being recopied, whose
+                    // DROP no stream saw. The CREATE is proof they are stale.
+                    Err(error) if superseded_layout(&error) => {
+                        supersede_generation(
+                            metadata,
+                            database_id,
+                            &root,
+                            targets,
+                            target_indexes,
+                            &table,
+                            false,
+                        )?;
+                        TableStore::open(
+                            directory,
+                            source.table_schema()?,
+                            StoreOptions::default(),
+                        )?
+                    }
+                    Err(error) => return Err(error.into()),
+                };
                 let snapshot_target = SnapshotTarget::new(source.clone(), store)?;
                 let snapshot = run_snapshot(
                     pool,
@@ -1621,6 +1664,139 @@ fn quarantine_schema_change(
     Ok(())
 }
 
+/// Evolves a tracked table's storage to `schema`, recording the generation in
+/// its schema history first.
+///
+/// The order is the crash contract. A tracked table reopens with its latest
+/// recorded schema; an open with a schema newer than the store's manifest
+/// upgrades in place, and one older than the manifest cannot open at all.
+/// Recording first means a death between the two steps leaves the history one
+/// generation ahead, which the next open rolls forward. The other order left
+/// storage a generation ahead of any schema that says how to read it, and the
+/// table could not be opened again. A store that refuses the schema takes the
+/// record back, so the history never names a generation no store took.
+///
+/// The outer error is metadata failing; the inner one is the store refusing
+/// the schema, which callers quarantine.
+///
+/// # Errors
+///
+/// Returns an error when the history cannot be written or taken back.
+pub fn evolve_tracked_schema(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    table_name: &str,
+    store: &mut TableStore,
+    columns: &[pintail_probe::SourceColumn],
+    schema: pintail_types::TableSchema,
+    statement: Option<&str>,
+) -> Result<Result<(), StoreError>, CdcError> {
+    let version = schema.version();
+    let columns_json =
+        serde_json::to_string(columns).map_err(|error| CdcError::Ddl(error.to_string()))?;
+    metadata.record_schema_history(
+        database_id,
+        table_name,
+        version,
+        statement,
+        &columns_json,
+        &Utc::now().to_rfc3339(),
+    )?;
+    recovery_point("cdc.ddl.after_history")?;
+    if let Err(error) = store.evolve_schema(schema) {
+        metadata.forget_schema_version(database_id, table_name, version)?;
+        return Ok(Err(error));
+    }
+    recovery_point("cdc.ddl.after_evolve")?;
+    Ok(Ok(()))
+}
+
+/// Adopts a column-level schema change for one tracked table, given the
+/// table as the source now declares it. A shape the tracked table cannot
+/// take without a copy quarantines the table instead.
+fn apply_column_change(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    targets: &mut [CdcTarget],
+    index: usize,
+    blocked_targets: &mut BTreeSet<usize>,
+    statement: &str,
+    source: SourceTable,
+) -> Result<(), CdcError> {
+    let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
+        Ok(source) => source,
+        Err(reason) => {
+            return quarantine_schema_change(
+                metadata,
+                database_id,
+                &targets[index],
+                index,
+                blocked_targets,
+                &format!("{statement}; {reason}"),
+                None,
+            );
+        }
+    };
+    if let Some(reason) = virtual_column_joined(&targets[index].source, &source) {
+        return quarantine_schema_change(
+            metadata,
+            database_id,
+            &targets[index],
+            index,
+            blocked_targets,
+            &format!("{statement}; {reason}"),
+            Some(&source),
+        );
+    }
+    let version = next_schema_version(targets[index].store.schema().version())?;
+    let schema = source.table_schema_with_version(version)?;
+    let name = targets[index].source.name.clone();
+    if let Err(error) = evolve_tracked_schema(
+        metadata,
+        database_id,
+        &name,
+        &mut targets[index].store,
+        &source.columns,
+        schema,
+        Some(statement),
+    )? {
+        return quarantine_schema_change(
+            metadata,
+            database_id,
+            &targets[index],
+            index,
+            blocked_targets,
+            &format!("{statement}; {error}"),
+            Some(&source),
+        );
+    }
+    targets[index].source = source;
+    Ok(())
+}
+
+/// Empties a tracked table for a TRUNCATE: a new schema generation with the
+/// same columns, then a reset of its storage.
+fn truncate_target(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    target: &mut CdcTarget,
+    statement: &str,
+) -> Result<(), CdcError> {
+    let version = next_schema_version(target.store.schema().version())?;
+    let schema = target.source.table_schema_with_version(version)?;
+    evolve_tracked_schema(
+        metadata,
+        database_id,
+        &target.source.name,
+        &mut target.store,
+        &target.source.columns,
+        schema,
+        Some(statement),
+    )??;
+    target.store.reset_for_resnapshot()?;
+    Ok(())
+}
+
 fn record_target_schema(
     metadata: &mut MetaStore,
     database_id: &str,
@@ -1645,6 +1821,72 @@ fn next_schema_version(version: u32) -> Result<u32, CdcError> {
     version
         .checked_add(1)
         .ok_or_else(|| CdcError::Ddl("table schema version exceeds UInt32".to_owned()))
+}
+
+/// Makes room for a source table under a dropped table's name.
+///
+/// Dropped tables keep serving their last rows until the name is reused.
+/// Every identity in the mirror - the table row, its schema history, its
+/// fence and its directory - is keyed by the name, so a new table under it
+/// was either skipped in favour of the old rows, which then answered queries
+/// as if they were the new table, or opened over the old generation's files
+/// and refused, which stopped the whole database. The orphan's metadata and
+/// files are removed first; a store still open from a drop earlier in this
+/// run is moved aside before its files go, so no handle outlives its
+/// directory under the reused name. With `orphaned_only` unset the files go
+/// whether or not a row marks them dropped. Returns the table row's stored
+/// name when one was reset.
+fn supersede_generation(
+    metadata: &MetaStore,
+    database_id: &str,
+    root: &Path,
+    targets: &mut [CdcTarget],
+    target_indexes: &BTreeMap<String, usize>,
+    table: &str,
+    orphaned_only: bool,
+) -> Result<Option<String>, CdcError> {
+    let reset = metadata.supersede_table_generation(database_id, table, orphaned_only)?;
+    if orphaned_only && reset.is_none() {
+        return Ok(None);
+    }
+    let directory = new_table_directory(root, reset.as_deref().unwrap_or(table));
+    let tracked = target_indexes.values().copied().collect::<BTreeSet<_>>();
+    let canonical = std::fs::canonicalize(&directory).ok();
+    for (index, target) in targets.iter_mut().enumerate() {
+        if tracked.contains(&index) || Some(target.store.directory()) != canonical.as_deref() {
+            continue;
+        }
+        let retired = root.join(format!(
+            ".superseded-{}-{}",
+            index,
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        target.store.rename_directory(&retired)?;
+        std::fs::remove_dir_all(&retired).map_err(|source| StoreError::Io {
+            action: "remove a superseded table directory".to_owned(),
+            source,
+        })?;
+        pintail_store::publish_changes_under(&retired);
+    }
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory).map_err(|source| StoreError::Io {
+            action: "remove a superseded table directory".to_owned(),
+            source,
+        })?;
+    }
+    pintail_store::publish_changes_under(&directory);
+    Ok(reset)
+}
+
+/// Whether a store refused to open because its files were written for a
+/// different table shape, rather than because they are damaged.
+fn superseded_layout(error: &StoreError) -> bool {
+    matches!(
+        error,
+        StoreError::SchemaMismatch { .. }
+            | StoreError::SchemaFingerprintMismatch { .. }
+            | StoreError::IncompatibleSchema(_)
+    )
 }
 
 fn new_table_directory(root: &Path, table: &str) -> PathBuf {
@@ -1974,27 +2216,23 @@ async fn adopt_drifted_schema(
     let schema = source
         .table_schema_with_version(version)
         .map_err(|error| error.to_string())?;
-    target
-        .store
-        .evolve_schema(schema)
-        .map_err(|error| error.to_string())?;
-    let columns_json = serde_json::to_string(&source.columns).map_err(|error| error.to_string())?;
     // The history has no statement to quote - that is the whole point of this
     // path - so it records how the change was learned instead.
     let statement = format!(
         "-- schema drift adopted from source probe ({} columns)",
         source.columns.len()
     );
-    metadata
-        .record_schema_history(
-            database_id,
-            &source.name,
-            version,
-            Some(&statement),
-            &columns_json,
-            &Utc::now().to_rfc3339(),
-        )
-        .map_err(|error| error.to_string())?;
+    evolve_tracked_schema(
+        metadata,
+        database_id,
+        &source.name,
+        &mut target.store,
+        &source.columns,
+        schema,
+        Some(&statement),
+    )
+    .map_err(|error| error.to_string())?
+    .map_err(|error| error.to_string())?;
     target.source = source;
     Ok(())
 }
@@ -2108,9 +2346,44 @@ fn decode_row_pair(
     pending: &mut PendingTransaction,
     maximum_bytes: usize,
 ) -> Result<(), CdcError> {
+    // A keyless table refuses before decoding: the refusal must not depend on
+    // whether the image happens to decode.
+    if before.is_some() && source.key.mode == KeyMode::AppendRowId {
+        return Err(keyless_change_error(source, after.is_some()));
+    }
+    let before = before
+        .map(|row| decode_row(source, row, alignment, before_present))
+        .transpose()?;
+    let after = after
+        .map(|row| decode_row(source, row, alignment, after_present))
+        .transpose()?;
+    stage_row_change(
+        source,
+        target_index,
+        (before, after),
+        position,
+        event_position,
+        pending,
+        maximum_bytes,
+    )
+}
+
+/// Turns one decoded row change into versioned store mutations on the open
+/// transaction: an insert is a live row, a delete a tombstone at the old key,
+/// and an update that moves the key a tombstone followed by the new row at
+/// the next ordinal. Versions come from the stream position alone, so
+/// replaying the same events stages the same mutations.
+fn stage_row_change(
+    source: &SourceTable,
+    target_index: usize,
+    (before, after): (Option<Vec<Value>>, Option<Vec<Value>>),
+    position: &StreamPosition,
+    event_position: u64,
+    pending: &mut PendingTransaction,
+    maximum_bytes: usize,
+) -> Result<(), CdcError> {
     match (before, after) {
-        (None, Some(after)) => {
-            let values = decode_row(source, after, alignment, after_present)?;
+        (None, Some(values)) => {
             let version = position.version(event_position, pending.ordinal)?;
             let key = insert_key(source, &values, version)?;
             push_mutations(
@@ -2123,14 +2396,10 @@ fn decode_row_pair(
                 position.ordinal_budget(),
             )
         }
-        (Some(before), None) => {
+        (Some(values), None) => {
             if source.key.mode == KeyMode::AppendRowId {
-                return Err(CdcError::Decode(format!(
-                    "{} DELETE has no stable source key and requires resnapshot",
-                    source.name
-                )));
+                return Err(keyless_change_error(source, false));
             }
-            let values = decode_row(source, before, alignment, before_present)?;
             let key = physical_key(source, &values)?;
             push_mutations(
                 pending,
@@ -2147,15 +2416,10 @@ fn decode_row_pair(
                 position.ordinal_budget(),
             )
         }
-        (Some(before), Some(after)) => {
+        (Some(before_values), Some(after_values)) => {
             if source.key.mode == KeyMode::AppendRowId {
-                return Err(CdcError::Decode(format!(
-                    "{} UPDATE has no stable source key and requires resnapshot",
-                    source.name
-                )));
+                return Err(keyless_change_error(source, true));
             }
-            let before_values = decode_row(source, before, alignment, before_present)?;
-            let after_values = decode_row(source, after, alignment, after_present)?;
             let before_key = physical_key(source, &before_values)?;
             let after_key = physical_key(source, &after_values)?;
             let mut mutations = Vec::with_capacity(2);
@@ -2191,6 +2455,14 @@ fn decode_row_pair(
             "row event contains neither before nor after image".to_owned(),
         )),
     }
+}
+
+fn keyless_change_error(source: &SourceTable, update: bool) -> CdcError {
+    CdcError::Decode(format!(
+        "{} {} has no stable source key and requires resnapshot",
+        source.name,
+        if update { "UPDATE" } else { "DELETE" }
+    ))
 }
 
 fn push_mutations(
@@ -2249,19 +2521,11 @@ fn commit_pending(
         targets[target_index].store.ingest_cdc(rows)?;
         touched.push(target_index);
     }
-    pintail_failpoint::hit("cdc.after_ingest").map_err(|source| StoreError::Io {
-        action: "recovery failpoint".to_owned(),
-        source,
-    })?;
+    recovery_point("cdc.after_ingest")?;
     for (index, target_index) in touched.iter().enumerate() {
         targets[*target_index].store.checkpoint()?;
         if index == 0 && touched.len() > 1 {
-            pintail_failpoint::hit("cdc.after_first_table_sync").map_err(|source| {
-                StoreError::Io {
-                    action: "recovery failpoint".to_owned(),
-                    source,
-                }
-            })?;
+            recovery_point("cdc.after_first_table_sync")?;
         }
     }
     position.commit_gtid()?;
@@ -2276,22 +2540,30 @@ fn commit_pending(
         binlog_file: Some(checkpoint.binlog_file),
         binlog_pos: Some(checkpoint.binlog_pos),
     };
-    pintail_failpoint::hit("cdc.before_checkpoint_commit").map_err(|source| StoreError::Io {
-        action: "recovery failpoint".to_owned(),
-        source,
-    })?;
+    recovery_point("cdc.before_checkpoint_commit")?;
     metadata.commit_cdc_checkpoint(
         database_id,
         &checkpoint_record,
         &touched_names,
         &Utc::now().to_rfc3339(),
     )?;
-    pintail_failpoint::hit("cdc.after_checkpoint_commit").map_err(|source| StoreError::Io {
+    recovery_point("cdc.after_checkpoint_commit")?;
+    *pending = PendingTransaction::default();
+    Ok(mutation_count)
+}
+
+/// A crash-consistency boundary on the apply path. In a build with
+/// failpoints it is the failpoint of the same name; the in-process
+/// simulation arms one site at a time to stop the apply there, as a process
+/// death at that instant would.
+fn recovery_point(site: &'static str) -> Result<(), CdcError> {
+    pintail_failpoint::hit(site).map_err(|source| StoreError::Io {
         action: "recovery failpoint".to_owned(),
         source,
     })?;
-    *pending = PendingTransaction::default();
-    Ok(mutation_count)
+    #[cfg(test)]
+    simulation::crash_if_armed(site)?;
+    Ok(())
 }
 
 fn emit_progress(

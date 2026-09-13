@@ -470,6 +470,108 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("sql mode probe");
     assert_eq!(mode.as_deref(), Some("STRICT_TRANS_TABLES"));
+    // User variables hold what their expression answered, typed as written:
+    // a decimal stays exact, and a later assignment reads an earlier one.
+    connection
+        .query_drop("SET @price = 1.50, @label := 'x''y', @twice = @price * 2")
+        .await
+        .expect("user variable assignment");
+    let variables: Option<(String, String, String, Option<String>)> = connection
+        .query_first("SELECT @price, @LABEL, @twice, @unset")
+        .await
+        .expect("user variable read");
+    assert_eq!(
+        variables,
+        Some(("1.50".to_owned(), "x'y".to_owned(), "3.00".to_owned(), None))
+    );
+    let named = connection
+        .query_iter("SELECT @price")
+        .await
+        .expect("user variable projection");
+    assert_eq!(
+        named
+            .columns_ref()
+            .first()
+            .map(|column| column.name_str().into_owned()),
+        Some("@price".to_owned())
+    );
+    named.drop_result().await.expect("drain");
+    // div_precision_increment widens division and AVG, and a setting saved
+    // in a user variable can be put back.
+    connection
+        .query_drop("SET @saved = @@div_precision_increment")
+        .await
+        .expect("save the increment");
+    connection
+        .query_drop("SET @compact=@@div_precision_increment")
+        .await
+        .expect("save the increment without spaces");
+    connection
+        .query_drop("SET div_precision_increment = 6")
+        .await
+        .expect("widen division");
+    // Settings whose other values are not implemented are refused, not ignored.
+    assert!(
+        connection
+            .query_drop("SET lc_time_names = 'de_DE'")
+            .await
+            .is_err()
+    );
+    assert!(
+        connection
+            .query_drop("SET default_week_format = 2")
+            .await
+            .is_err()
+    );
+    // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
+    // setMaxRows asks; a written LIMIT is its own.
+    connection
+        .query_drop("SET SQL_SELECT_LIMIT = 1")
+        .await
+        .expect("cap SELECT results");
+    let capped: Vec<u64> = connection
+        .query("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3")
+        .await
+        .expect("capped select");
+    assert_eq!(capped.len(), 1);
+    let written: Vec<u64> = connection
+        .query("SELECT 1 UNION ALL SELECT 2 LIMIT 2")
+        .await
+        .expect("written limit");
+    assert_eq!(written.len(), 2);
+    connection
+        .query_drop("SET SQL_SELECT_LIMIT = DEFAULT")
+        .await
+        .expect("remove the cap");
+    // A cap saved in a user variable and set back leaves no cap.
+    connection
+        .query_drop("set @save_limit= @@sql_select_limit")
+        .await
+        .expect("save the cap");
+    connection
+        .query_drop("SET sql_select_limit=0")
+        .await
+        .expect("no rows");
+    let none: Vec<u64> = connection.query("SELECT 1").await.expect("capped at zero");
+    assert!(none.is_empty());
+    connection
+        .query_drop("SET @@sql_select_limit= @save_limit")
+        .await
+        .expect("restore the cap");
+    let restored_rows: Vec<u64> = connection.query("SELECT 1").await.expect("uncapped");
+    assert_eq!(restored_rows.len(), 1);
+    connection
+        .query_drop("SET lc_time_names = 'en_US'")
+        .await
+        .expect("the default locale");
+    let widened: Option<String> = connection.query_first("SELECT 1/3").await.expect("1/3");
+    assert_eq!(widened.as_deref(), Some("0.333333"));
+    connection
+        .query_drop("SET @@div_precision_increment=@compact")
+        .await
+        .expect("restore the increment");
+    let restored: Option<String> = connection.query_first("SELECT 1/3").await.expect("1/3");
+    assert_eq!(restored.as_deref(), Some("0.3333"));
     connection
         .query_drop("SET SESSION group_concat_max_len = 5")
         .await

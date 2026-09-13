@@ -791,6 +791,13 @@ struct Session {
     condition_count: u64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
+    /// Fraction digits division and `AVG` add to the dividend's scale.
+    div_precision_increment: u8,
+    /// `sql_select_limit`: the most rows a SELECT without its own LIMIT returns.
+    sql_select_limit: Option<u64>,
+    /// `SET @name = expr` values, each the literal its expression evaluated
+    /// to, read by every later statement on this connection.
+    user_variables: pintail_sql::UserVariables,
 }
 
 impl Default for Session {
@@ -810,6 +817,9 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             condition_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
+            div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
+            sql_select_limit: None,
+            user_variables: pintail_sql::UserVariables::default(),
         }
     }
 }
@@ -1254,20 +1264,27 @@ impl Backend {
                     // brackets exactly one statement.
                     let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
                     pintail_sql::set_session_default_collation(Some(session.collation_connection));
+                    pintail_sql::set_session_div_precision_increment(Some(
+                        session.div_precision_increment,
+                    ));
+                    pintail_sql::set_session_select_limit(session.sql_select_limit);
                     pintail_exec::set_session_group_concat_max_len(Some(
                         session.group_concat_max_len,
                     ));
                     pintail_exec::set_session_cte_max_recursion_depth(Some(
                         session.cte_max_recursion_depth,
                     ));
-                    let answer = engine.execute_answer(
-                        &database_id,
-                        &sql,
-                        max_result_rows(),
-                        deadline,
-                        sink.as_mut()
-                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
-                    );
+                    let answer =
+                        pintail_sql::with_user_variables(session.user_variables.clone(), || {
+                            engine.execute_answer(
+                                &database_id,
+                                &sql,
+                                max_result_rows(),
+                                deadline,
+                                sink.as_mut()
+                                    .map(|sink| sink as &mut dyn crate::engine::RowSink),
+                            )
+                        });
                     let warnings = (
                         pintail_exec::take_session_group_concat_warnings(),
                         pintail_exec::take_session_division_warnings(),
@@ -1275,6 +1292,8 @@ impl Backend {
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
+                    pintail_sql::set_session_div_precision_increment(None);
+                    pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
@@ -1441,6 +1460,63 @@ impl Backend {
         unsupported_transaction_guarantee(sql)
     }
 
+    /// The user variables a `SET` statement assigns, when it assigns nothing
+    /// else. `:=` is `MySQL`'s other spelling of the assignment.
+    fn user_variable_assignments(&self, sql: &str) -> Option<Vec<(String, String)>> {
+        if !normalized_command(sql).starts_with("set @") {
+            return None;
+        }
+        let mode = self
+            .session
+            .lock()
+            .ok()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .unwrap_or_default();
+        pintail_sql::with_parse_mode(mode, || {
+            let assignments = |sql: &str| {
+                pintail_sql::parse_statement(sql)
+                    .ok()
+                    .and_then(|statement| pintail_sql::user_variable_assignments(&statement))
+            };
+            assignments(sql)
+                .or_else(|| assignments(&sql.replace(":=", "=")))
+                .map(|pairs| {
+                    pairs
+                        .into_iter()
+                        .map(|(name, expression)| (name, expression.to_string()))
+                        .collect()
+                })
+                .or_else(|| single_user_variable_assignment(sql))
+        })
+    }
+
+    /// Evaluates each assignment in order - a later one reads an earlier one -
+    /// and records the value it answered.
+    async fn assign_user_variables(
+        &self,
+        assignments: Vec<(String, String)>,
+    ) -> Result<(), QueryError> {
+        for (name, expression) in assignments {
+            let output = Backend::execute(self, &format!("SELECT {expression}")).await?;
+            let data_type = output.fields.first().and_then(|field| field.data_type);
+            let value = output
+                .rows
+                .into_values()
+                .into_iter()
+                .next()
+                .and_then(|row| row.into_iter().next())
+                .unwrap_or(Value::Null);
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|error| QueryError::Internal(error.to_string()))?;
+            let mut variables = (*session.user_variables).clone();
+            variables.insert(name, user_variable_literal(value, data_type));
+            session.user_variables = std::sync::Arc::new(variables);
+        }
+        Ok(())
+    }
+
     /// Applies one `SET`/`SET NAMES` session command, or reports why it
     /// cannot be honored.
     // One arm per session command; splitting hides the correspondence.
@@ -1485,8 +1561,31 @@ impl Backend {
             .trim()
             .trim_matches(['\'', '"'])
             .to_owned();
+        // A user variable on the right is the value it holds, so a setting saved
+        // with SET @saved = @@name can be put back.
+        let value = match value
+            .strip_prefix('@')
+            .filter(|name| !name.starts_with('@'))
+        {
+            Some(variable) => match session.user_variables.get(&variable.to_ascii_lowercase()) {
+                Some(
+                    sqlparser::ast::Value::Number(text, _)
+                    | sqlparser::ast::Value::SingleQuotedString(text),
+                ) => text.clone(),
+                _ => String::new(),
+            },
+            None => value,
+        };
         match name {
             "time_zone" => {
+                // The global zone, or DEFAULT, is the zone a new session starts in.
+                let value = if value.eq_ignore_ascii_case("@@global.time_zone")
+                    || value.eq_ignore_ascii_case("default")
+                {
+                    self.fresh_session().time_zone
+                } else {
+                    value
+                };
                 if pintail_exec::set_session_time_zone(Some(&value)) {
                     let _ = pintail_exec::set_session_time_zone(None);
                     session.time_zone = value;
@@ -1533,6 +1632,17 @@ impl Backend {
                 session.group_concat_max_len = limit.max(4);
                 Ok(())
             }
+            "div_precision_increment" => {
+                let increment = value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|increment| *increment <= 30)
+                    .ok_or_else(|| {
+                        format!("Variable 'div_precision_increment' can't be set to the value of '{value}'")
+                    })?;
+                session.div_precision_increment = increment;
+                Ok(())
+            }
             "cte_max_recursion_depth" => {
                 let limit = value
                     .parse::<u64>()
@@ -1556,11 +1666,96 @@ impl Backend {
                 session.max_execution_time_ms = limit;
                 Ok(())
             }
+            // BI drivers set this to cap what a statement returns (a JDBC
+            // setMaxRows); DEFAULT, or the largest value, removes the cap.
+            "sql_select_limit" => {
+                if value.eq_ignore_ascii_case("default") {
+                    session.sql_select_limit = None;
+                    return Ok(());
+                }
+                let limit = value.trim().parse::<u64>().map_err(|_| {
+                    format!("Variable 'sql_select_limit' can't be set to the value of '{value}'")
+                })?;
+                session.sql_select_limit = (limit < u64::MAX).then_some(limit);
+                Ok(())
+            }
+            // These change answers - day and month names, week numbers - and only
+            // their defaults are implemented, so another value is refused rather
+            // than accepted and ignored.
+            "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
+                "Unknown locale: '{value}' (only en_US is supported)"
+            )),
+            "default_week_format" if value.trim() != "0" => Err(format!(
+                "Variable 'default_week_format' can't be set to the value of '{value}' (only 0 is supported)"
+            )),
             // Everything else keeps the accepted-no-op compatibility
             // behavior (isolation levels, probes, and autocommit on a
             // replicated database - a local one refuses it before reaching
             // here, see `unsupported_transaction_guarantee`).
             _ => Ok(()),
+        }
+    }
+}
+
+/// `SET @name = expression` read from its text, for an assignment the parser
+/// does not take as one - `SET @saved=@@div_precision_increment` among them.
+/// One assignment only; the expression is checked when it is evaluated.
+fn single_user_variable_assignment(sql: &str) -> Option<Vec<(String, String)>> {
+    let body = sql.trim().trim_end_matches(';').trim();
+    let rest = body
+        .get(..3)
+        .filter(|head| head.eq_ignore_ascii_case("set"))
+        .map(|_| body[3..].trim_start())?;
+    let rest = rest
+        .strip_prefix('@')
+        .filter(|rest| !rest.starts_with('@'))?;
+    let name_end = rest
+        .find(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '$' | '.'))
+        })
+        .unwrap_or(rest.len());
+    let (name, rest) = rest.split_at(name_end);
+    let rest = rest.trim_start();
+    let expression = rest
+        .strip_prefix(":=")
+        .or_else(|| rest.strip_prefix('='))?
+        .trim();
+    (!name.is_empty() && !expression.is_empty())
+        .then(|| vec![(name.to_ascii_lowercase(), expression.to_owned())])
+}
+
+/// The literal a user variable keeps for a value: a query reading it binds
+/// as if this had been written in its place, so a DECIMAL stays exact and a
+/// double stays a double.
+fn user_variable_literal(value: Value, data_type: Option<DataType>) -> sqlparser::ast::Value {
+    use sqlparser::ast::Value as Literal;
+    match value {
+        Value::Null => Literal::Null,
+        Value::Boolean(flag) => Literal::Number(u8::from(flag).to_string(), false),
+        Value::Int64(number) => Literal::Number(number.to_string(), false),
+        Value::UInt64(number) => Literal::Number(number.to_string(), false),
+        Value::Float64(number) => {
+            let text = number.mysql_text();
+            Literal::Number(
+                if text.contains(['e', 'E']) {
+                    text
+                } else {
+                    format!("{text}e0")
+                },
+                false,
+            )
+        }
+        Value::DecimalAverage(average) => Literal::Number(average.label, false),
+        Value::Utf8(text) if matches!(data_type, Some(DataType::Decimal { .. })) => {
+            Literal::Number(text, false)
+        }
+        Value::Utf8(text) | Value::Enum { label: text, .. } => Literal::SingleQuotedString(text),
+        Value::Binary(bytes) => {
+            Literal::HexStringLiteral(bytes.iter().fold(String::new(), |mut hex, byte| {
+                use std::fmt::Write as _;
+                let _ = write!(hex, "{byte:02X}");
+                hex
+            }))
         }
     }
 }
@@ -1741,6 +1936,12 @@ impl Handler for Backend {
                 "statement is not valid UTF-8".to_owned(),
             );
         };
+        if let Some(assignments) = self.user_variable_assignments(sql) {
+            return match self.assign_user_variables(assignments).await {
+                Ok(()) => Response::Ok(OkPacket::default(), String::new()),
+                Err(error) => Response::Error(error_kind(&error), error.to_string()),
+            };
+        }
         if is_session_command(sql) {
             if let Some(rejection) = self.transaction_guarantee_rejection(sql) {
                 return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
@@ -3035,6 +3236,16 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         )
     } else if normalized.contains("@@warning_count") {
         ("@@warning_count", Value::UInt64(session.condition_count))
+    } else if normalized.contains("@@sql_select_limit") {
+        (
+            "@@sql_select_limit",
+            Value::UInt64(session.sql_select_limit.unwrap_or(u64::MAX)),
+        )
+    } else if normalized.contains("@@div_precision_increment") {
+        (
+            "@@div_precision_increment",
+            Value::UInt64(u64::from(session.div_precision_increment)),
+        )
     } else if normalized.contains("@@cte_max_recursion_depth") {
         (
             "@@cte_max_recursion_depth",

@@ -1803,10 +1803,21 @@ fn build_catalog(replica: &LoadedReplica) -> Result<CatalogSnapshot, QueryError>
         .iter()
         .map(|table| (table.name.to_ascii_lowercase(), table.rows_synced))
         .collect::<BTreeMap<_, _>>();
+    // A source with case-sensitive table names can hold `T1` and `t1`, which
+    // names here cannot tell apart. Both stay out of the catalog: a query
+    // naming either is refused as an unknown table rather than answered from
+    // the other, and every other table in the database stays queryable.
+    let mut spellings = BTreeMap::<String, usize>::new();
+    for target in &replica.targets {
+        *spellings
+            .entry(target.source.name.to_ascii_lowercase())
+            .or_default() += 1;
+    }
     let entries = replica
         .targets
         .iter()
         .enumerate()
+        .filter(|(_, target)| spellings[&target.source.name.to_ascii_lowercase()] == 1)
         .map(|(index, target)| {
             let id = table_id(index)?;
             let rows = row_counts

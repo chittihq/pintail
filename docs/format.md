@@ -114,13 +114,15 @@ Publication writes and synchronizes `.manifest.ptm.tmp`, atomically renames
 it to `manifest.ptm`, then synchronizes the table directory. A snapshot holds
 an `Arc` to one immutable decoded generation.
 
-## Segment (`PTSEG`, version 3)
+## Segment (`PTSEG`, version 4)
 
 Readers accept all published segment versions. Version 1 stores the original
 text carriers and always-compressed blocks. Version 2 adds fixed-width native
 units for eligible decimal and temporal columns. Version 3 adds raw block
 payloads when LZ4 cannot save at least 5%; the other framing and all prior
-compression tags remain readable.
+compression tags remain readable. Version 4 adds a footer digest over the
+header and every column descriptor, the only bytes no block or footer
+checksum covered.
 
 ### Header
 
@@ -204,6 +206,7 @@ u32 column_offset_count | repeated u64 column_offset
 u32 sparse_key_count |
     repeated (u64 row_ordinal, composite_key key)
 bytes primary_key_bloom_filter
+u64 descriptor_digest       # version 4 and later
 u64 xxh3(footer bytes above)
 u64 footer_start_offset
 ```
@@ -212,6 +215,12 @@ The primary-key bloom filter is 2,048 bits. Pintail xxh3-hashes the physical
 key bytes, takes the value shifted right by 0, 21, and 42 bits, and reduces
 each result modulo 2,048.
 The sparse key index records the first key of each target-sized block.
+`descriptor_digest` is `xxh3` of the header bytes after the magic followed by
+each column chunk's leading `u32 column_id`, `u8 logical_type` and
+`u32 block_count`, in column order. Those fields size a read's buffers and
+decide which schema column a chunk fills, so a reader recomputes the digest
+from the file at each column offset before trusting them, and holds the
+header's row count to the manifest's.
 Readers locate the footer from the final eight bytes and verify its checksum
 before accepting the segment. Every visited block verifies the checksum of
 its complete payload—including null bits, codec metadata, compressed values,

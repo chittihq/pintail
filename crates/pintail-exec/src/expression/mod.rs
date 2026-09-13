@@ -3,8 +3,8 @@ mod vector;
 
 pub(crate) use temporal::shift_temporal_value;
 use temporal::{
-    TO_DAYS_EPOCH_OFFSET, apply_interval, chrono_parse_format, convert_tz, date_part,
-    mysql_date_format, mysql_yearweek, parse_mysql_datetime, timestamp_diff,
+    TO_DAYS_EPOCH_OFFSET, apply_interval, chrono_parse_format, convert_tz, mysql_date_format,
+    mysql_yearweek, parse_mysql_datetime, timestamp_diff,
 };
 
 use std::{cmp::Ordering, sync::Arc};
@@ -2195,10 +2195,10 @@ fn evaluate_eager_scalar_inner(
                 .concat(),
         )),
         ScalarFunction::Substring => {
-            let start = mysql_i64(&values[1])?;
+            let start = saturating_argument(&values[1])?;
             let length = values
                 .get(2)
-                .map(mysql_i64)
+                .map(saturating_argument)
                 .transpose()?
                 .unwrap_or(i64::MAX);
             // A binary string counts bytes, not characters.
@@ -2359,7 +2359,7 @@ fn evaluate_eager_scalar_inner(
                 .replace(&scalar_string(&values[1])?, &scalar_string(&values[2])?),
         )),
         ScalarFunction::Left => {
-            let count = mysql_i64(&values[1])?.max(0);
+            let count = saturating_argument(&values[1])?.max(0);
             let count = usize::try_from(count).unwrap_or(usize::MAX);
             Ok(Value::Utf8(
                 scalar_string(&values[0])?.chars().take(count).collect(),
@@ -2367,7 +2367,8 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Right => {
             let value = scalar_string(&values[0])?;
-            let count = usize::try_from(mysql_i64(&values[1])?.max(0)).unwrap_or(usize::MAX);
+            let count =
+                usize::try_from(saturating_argument(&values[1])?.max(0)).unwrap_or(usize::MAX);
             let skip = value.chars().count().saturating_sub(count);
             Ok(Value::Utf8(value.chars().skip(skip).collect()))
         }
@@ -2377,7 +2378,11 @@ fn evaluate_eager_scalar_inner(
             let binary = binary_operand(&values[0..2]);
             let needle = fold_unless_binary(&scalar_string(&values[0])?, binary);
             let haystack = fold_unless_binary(&scalar_string(&values[1])?, binary);
-            let start = values.get(2).map(mysql_i64).transpose()?.unwrap_or(1);
+            let start = values
+                .get(2)
+                .map(saturating_argument)
+                .transpose()?
+                .unwrap_or(1);
             Ok(Value::UInt64(locate(&needle, &haystack, start)))
         }
         ScalarFunction::Like { negated, escape } => {
@@ -2433,6 +2438,11 @@ fn evaluate_eager_scalar_inner(
                 && let Some((offset, _)) = text.char_indices().nth(characters as usize)
             {
                 text.truncate(offset);
+            }
+            // BINARY(n) holds exactly n bytes: a shorter value is padded with
+            // zero bytes and a longer one cut.
+            if let (Some(bytes), Value::Binary(data)) = (characters, &mut value) {
+                data.resize(bytes as usize, 0);
             }
             Ok(value)
         }
@@ -2508,6 +2518,32 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::float64(value.log(base)))
         }
         ScalarFunction::Truncate { decimal } => {
+            // An integer keeps its type, and cutting digits left of the point
+            // is exact: a double cannot hold every 64-bit integer.
+            let integer = match values[0] {
+                Value::Int64(value) => Some(i128::from(value)),
+                Value::UInt64(value) => Some(i128::from(value)),
+                _ => None,
+            };
+            if let Some(input) = integer {
+                let digits = mysql_decimals(&values[1])?;
+                let truncated = if digits < 0 {
+                    u32::try_from(digits.unsigned_abs())
+                        .ok()
+                        .and_then(|power| 10_i128.checked_pow(power))
+                        .map_or(0, |factor| input / factor * factor)
+                } else {
+                    input
+                };
+                return match values[0] {
+                    Value::UInt64(_) => u64::try_from(truncated)
+                        .map(Value::UInt64)
+                        .map_err(|_| ExecError::NumericOverflow),
+                    _ => i64::try_from(truncated)
+                        .map(Value::Int64)
+                        .map_err(|_| ExecError::NumericOverflow),
+                };
+            }
             if decimal && let Value::Utf8(text) = &values[0] {
                 let digits = mysql_decimals(&values[1])?;
                 let input_scale = i64::try_from(
@@ -2619,8 +2655,8 @@ fn evaluate_eager_scalar_inner(
             // string returns it unchanged; a length past the end, or a
             // negative one, replaces the rest of the string.
             let text = scalar_string(&values[0])?;
-            let position = mysql_i64(&values[1])?;
-            let length = mysql_i64(&values[2])?;
+            let position = saturating_argument(&values[1])?;
+            let length = saturating_argument(&values[2])?;
             let replacement = scalar_string(&values[3])?;
             let characters: Vec<char> = text.chars().collect();
             let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
@@ -3065,13 +3101,34 @@ fn evaluate_eager_scalar_inner(
                 .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M"));
             match time_only {
                 Ok(_) => Ok(Value::Utf8(trimmed.to_owned())),
-                Err(_) => Ok(Value::Null),
+                // A duration past a day, or a negative one, is still a TIME.
+                Err(_) => Ok(parse_temporal_micros(trimmed)
+                    .filter(|parsed| !parsed.datetime)
+                    .map_or(Value::Null, |parsed| {
+                        Value::Utf8(render_time_micros(parsed.micros, parsed.fsp))
+                    })),
             }
         }
         ScalarFunction::DatePart(part) => {
-            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            // An integer argument is a packed date (YYYYMMDD) or, for the
+            // time-of-day parts, a packed time (HHMMSS). A YEAR also arrives as
+            // an integer and is not packed.
+            let integer = matches!(
+                argument_types.first().copied().flatten(),
+                None | Some(
+                    DataType::Int8
+                        | DataType::Int16
+                        | DataType::Int32
+                        | DataType::Int64
+                        | DataType::UInt8
+                        | DataType::UInt16
+                        | DataType::UInt32
+                        | DataType::UInt64
+                )
+            );
             Ok(Value::Int64(
-                i64::try_from(date_part(value, part)).map_err(|_| ExecError::NumericOverflow)?,
+                i64::try_from(temporal::date_part_of(&values[0], integer, part)?)
+                    .map_err(|_| ExecError::NumericOverflow)?,
             ))
         }
         ScalarFunction::DateFormat => {
@@ -3178,7 +3235,8 @@ fn evaluate_eager_scalar_inner(
                 .and_then(|part| part.split('.').next())
                 .and_then(|part| part.parse::<i64>().ok())
                 .unwrap_or(0);
-            let total = hours * 3600 + minutes * 60 + seconds;
+            // The text is a TIME first, clamped to 838:59:59.
+            let total = (hours * 3600 + minutes * 60 + seconds).min(838 * 3600 + 59 * 60 + 59);
             Ok(Value::Int64(if negative { -total } else { total }))
         }
         ScalarFunction::AddTime | ScalarFunction::SubTime => {
@@ -3254,6 +3312,12 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::MakeDate => {
             let year = mysql_i64(&values[0])?;
+            // A year below 100 takes the nearest century, as a two-digit year does.
+            let year = match year {
+                0..=69 => year + 2000,
+                70..=99 => year + 1900,
+                _ => year,
+            };
             let day_of_year = mysql_i64(&values[1])?;
             if day_of_year < 1 {
                 return Ok(Value::Null);
@@ -3262,9 +3326,13 @@ fn evaluate_eager_scalar_inner(
                 return Ok(Value::Null);
             };
             let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1);
-            let date = start.and_then(|start| {
-                start.checked_add_signed(chrono::Duration::days(day_of_year - 1))
-            });
+            // A date past year 9999 is NULL, as in MySQL.
+            let date = start
+                .and_then(|start| {
+                    chrono::Duration::try_days(day_of_year - 1)
+                        .and_then(|days| start.checked_add_signed(days))
+                })
+                .filter(|date| date.year() <= 9999);
             Ok(date.map_or(Value::Null, |date| {
                 Value::Utf8(date.format("%Y-%m-%d").to_string())
             }))
@@ -3819,7 +3887,42 @@ fn time_as_number(value: &Value) -> Value {
     Value::Utf8(format!("{sign}{number}.{:06}", magnitude % 1_000_000))
 }
 
-/// The operand a numeric cast reads: a TIME argument as its number.
+/// A DATE or DATETIME read as a number is its digits, YYYYMMDD or
+/// YYYYMMDDHHMMSS[.fraction]; an integer target rounds the fraction.
+fn date_as_number(value: &Value, target: DataType) -> Option<Value> {
+    let Value::Utf8(text) = value else {
+        return None;
+    };
+    let bytes = text.as_bytes();
+    if bytes.len() < 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return None;
+    }
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    let digits = whole
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(char::from)
+        .collect::<String>();
+    if !matches!(digits.len(), 8 | 14) {
+        return None;
+    }
+    if matches!(target, DataType::Int64 | DataType::UInt64) {
+        let number = digits.parse::<i64>().ok()?;
+        let round_up = fraction
+            .as_bytes()
+            .first()
+            .is_some_and(|digit| *digit >= b'5');
+        return Some(Value::Int64(number + i64::from(round_up)));
+    }
+    Some(Value::Utf8(if fraction.is_empty() {
+        digits
+    } else {
+        format!("{digits}.{fraction}")
+    }))
+}
+
+/// The operand a numeric cast reads: a TIME, DATE or DATETIME argument as
+/// its number.
 fn numeric_cast_operand<'a>(
     value: &'a Value,
     argument_types: &[Option<DataType>],
@@ -3839,6 +3942,14 @@ fn numeric_cast_operand<'a>(
             return std::borrow::Cow::Owned(Value::Int64(number));
         }
         std::borrow::Cow::Owned(time_as_number(value))
+    } else if numeric
+        && matches!(
+            argument_types.first(),
+            Some(Some(DataType::Date32 | DataType::DateTime64 { .. }))
+        )
+        && let Some(number) = date_as_number(value, target)
+    {
+        std::borrow::Cow::Owned(number)
     } else {
         std::borrow::Cow::Borrowed(value)
     }
@@ -4100,6 +4211,9 @@ struct TemporalMicros {
     fsp: u8,
 }
 
+/// The largest TIME, 838:59:59, in microseconds.
+const MAX_TIME_MICROS: i128 = (838 * 3600 + 59 * 60 + 59) * 1_000_000;
+
 fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
     let text = text.trim();
     let fraction_digits = |text: &str| -> u8 {
@@ -4107,7 +4221,10 @@ fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
             u8::try_from(fraction.len().min(6)).unwrap_or(6)
         })
     };
-    if let Ok(datetime) = parse_mysql_datetime(text) {
+    // Digits alone are a packed TIME here (HHMMSS), not a packed date.
+    if !text.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(datetime) = parse_mysql_datetime(text)
+    {
         return Some(TemporalMicros {
             micros: i128::from(datetime.and_utc().timestamp_micros()),
             datetime: true,
@@ -4151,6 +4268,8 @@ fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
         .checked_add(hours.checked_mul(3_600)?)?
         .checked_add(minutes * 60 + seconds)?;
     let total = i128::from(seconds_total) * 1_000_000 + i128::from(micro_fraction);
+    // Text read as a TIME is clamped to the type's range, as MySQL clamps it.
+    let total = total.min(MAX_TIME_MICROS);
     Some(TemporalMicros {
         micros: if negative { -total } else { total },
         datetime: false,
@@ -5009,45 +5128,7 @@ fn decimal_integer_bound(text: &str, ceiling: bool) -> Result<Value, ExecError> 
     Ok(Value::Int64(integer))
 }
 
-/// Renders a JSON value the way `MySQL` prints JSON columns: `", "`
-/// between members, `": "` after object keys, and object keys ordered by
-/// length then bytes (the binary-JSON normalization order).
-pub(crate) fn mysql_json_text(value: &serde_json::Value) -> String {
-    fn write(value: &serde_json::Value, output: &mut String) {
-        match value {
-            serde_json::Value::Array(items) => {
-                output.push('[');
-                for (index, item) in items.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
-                    }
-                    write(item, output);
-                }
-                output.push(']');
-            }
-            serde_json::Value::Object(members) => {
-                let mut keys: Vec<&String> = members.keys().collect();
-                keys.sort_by(|left, right| {
-                    left.len().cmp(&right.len()).then_with(|| left.cmp(right))
-                });
-                output.push('{');
-                for (index, key) in keys.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
-                    }
-                    output.push_str(&serde_json::Value::String((*key).clone()).to_string());
-                    output.push_str(": ");
-                    write(&members[*key], output);
-                }
-                output.push('}');
-            }
-            other => output.push_str(&other.to_string()),
-        }
-    }
-    let mut output = String::new();
-    write(value, &mut output);
-    output
-}
+pub(crate) use pintail_types::mysql_json_text;
 
 /// Maps a SQL value to the JSON value `MySQL` would store for it inside
 /// `JSON_OBJECT`/`JSON_ARRAY`: NULL becomes JSON null, numbers stay
@@ -6187,6 +6268,10 @@ pub(crate) fn evaluate_unary(
         // of carrying decimals as text.
         UnaryOp::Minus if matches!(data_type, Some(DataType::Decimal { .. })) => {
             let text = scalar_string(value)?;
+            // A negated zero stays unsigned: `MySQL` prints -0.00 as 0.00.
+            if text.bytes().all(|byte| matches!(byte, b'0' | b'.' | b'-')) {
+                return Ok(Value::Utf8(text.trim_start_matches('-').to_owned()));
+            }
             let negated = match text.strip_prefix('-') {
                 Some(positive) => positive.to_owned(),
                 None => format!("-{text}"),
@@ -6379,6 +6464,49 @@ pub(crate) fn compare_utf8_mysql(left: &str, right: &str, collation: Collation) 
     crate::execution::compare_collated_text(left, right, collation)
 }
 
+/// `DIV` of operands that are not both integers: exact over decimal text,
+/// through a double otherwise, and cut toward zero either way.
+fn integer_quotient(left: &Value, right: &Value) -> Result<Value, ExecError> {
+    let decimal = |value: &Value| -> Option<(String, u8)> {
+        let text = match value {
+            Value::Int64(number) => number.to_string(),
+            Value::UInt64(number) => number.to_string(),
+            Value::Utf8(text) => text.clone(),
+            Value::DecimalAverage(average) => average.label.clone(),
+            _ => return None,
+        };
+        let scale = text
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        Some((text, u8::try_from(scale).ok()?))
+    };
+    if let (Some((left_text, left_scale)), Some((right_text, right_scale))) =
+        (decimal(left), decimal(right))
+    {
+        let scale = left_scale.max(right_scale);
+        if let (Some(dividend), Some(divisor)) = (
+            pintail_types::parse_decimal_rounded(&left_text, scale),
+            pintail_types::parse_decimal_rounded(&right_text, scale),
+        ) {
+            if divisor == 0 {
+                return Ok(divided_by_zero());
+            }
+            return i64::try_from(dividend / divisor)
+                .map(Value::Int64)
+                .map_err(|_| ExecError::NumericOverflow);
+        }
+    }
+    let divisor = mysql_f64(right)?;
+    if divisor == 0.0 {
+        return Ok(divided_by_zero());
+    }
+    let quotient = (mysql_f64(left)? / divisor).trunc();
+    format!("{quotient:.0}")
+        .parse()
+        .map(Value::Int64)
+        .map_err(|_| ExecError::NumericOverflow)
+}
+
 // One arm per storage domain; splitting hides the correspondence.
 #[allow(clippy::too_many_lines)]
 fn evaluate_arithmetic(
@@ -6389,6 +6517,17 @@ fn evaluate_arithmetic(
 ) -> Result<Value, ExecError> {
     if matches!(left, Value::Null) || matches!(right, Value::Null) {
         return Ok(Value::Null);
+    }
+    if op == BinaryOp::IntegerDivide
+        && data_type == Some(DataType::Int64)
+        && [left, right].iter().any(|operand| {
+            matches!(
+                operand,
+                Value::Float64(_) | Value::Utf8(_) | Value::Binary(_) | Value::DecimalAverage(_)
+            )
+        })
+    {
+        return integer_quotient(left, right);
     }
     if let Some(DataType::Decimal { scale: target, .. }) = data_type {
         match op {
@@ -6570,7 +6709,14 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
 /// every such value behaves like an extreme one, so it is clamped to a
 /// range the callers' arithmetic cannot overflow on.
 fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
-    let saturated = match value {
+    Ok(saturating_argument(value)?.clamp(-100, 100))
+}
+
+/// An integer argument read the way `MySQL` reads a count or a position: a
+/// value past the signed 64-bit range saturates rather than failing, so
+/// `LEFT(s, 18446744073709551616)` is the whole string.
+fn saturating_argument(value: &Value) -> Result<i64, ExecError> {
+    Ok(match value {
         Value::UInt64(unsigned) => i64::try_from(*unsigned).unwrap_or(i64::MAX),
         Value::Float64(number) => saturating_i64(number.get()),
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
@@ -6581,8 +6727,7 @@ fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
             saturating_i64(parse_mysql_number(text))
         }
         other => mysql_i64(other)?,
-    };
-    Ok(saturated.clamp(-100, 100))
+    })
 }
 
 fn saturating_i64(number: f64) -> i64 {
@@ -6600,7 +6745,10 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
         Value::UInt64(value) => i64::try_from(*value).map_err(|_| ExecError::NumericOverflow),
         Value::Float64(value) => float_to_i64(value.get()),
         Value::Enum { index, .. } => Ok(i64::try_from(*index).unwrap_or(i64::MAX)),
-        Value::Utf8(value) => float_to_i64(parse_mysql_number(value)),
+        Value::Utf8(value) => exact_integer_prefix(value).map_or_else(
+            || float_to_i64(parse_mysql_number(value)),
+            |number| i64::try_from(number).map_err(|_| ExecError::NumericOverflow),
+        ),
         Value::DecimalAverage(average) => {
             let value = &average.label;
             float_to_i64(parse_mysql_number(value))
@@ -6620,7 +6768,9 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         Value::UInt64(value) => Ok(*value),
         Value::Float64(value) => float_to_u64(value.get()),
         Value::Enum { index, .. } => Ok(*index),
-        Value::Utf8(value) => float_to_u64(parse_mysql_number(value)),
+        Value::Utf8(value) => exact_integer_prefix(value)
+            .and_then(|number| u64::try_from(number).ok())
+            .map_or_else(|| float_to_u64(parse_mysql_number(value)), Ok),
         Value::DecimalAverage(average) => {
             let value = &average.label;
             float_to_u64(parse_mysql_number(value))
@@ -6631,6 +6781,33 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
         }
         Value::Null => Err(ExecError::InvalidExpressionType),
     }
+}
+
+/// The integer a text's leading digits spell, read exactly rather than
+/// through a double, which cannot hold every 64-bit integer. A fraction is
+/// cut; text with an exponent, or no leading digits, is left to the
+/// floating-point reading.
+fn exact_integer_prefix(text: &str) -> Option<i128> {
+    let text = text.trim_start();
+    let (negative, rest) = match text.as_bytes().first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    let mut tail = rest[digits..].bytes();
+    let mut next = tail.next();
+    if next == Some(b'.') {
+        next = tail.find(|byte| !byte.is_ascii_digit());
+    }
+    if matches!(next, Some(b'e' | b'E')) {
+        return None;
+    }
+    let magnitude = rest[..digits].parse::<i128>().ok()?;
+    Some(if negative { -magnitude } else { magnitude })
 }
 
 fn float_to_i64(value: f64) -> Result<i64, ExecError> {
@@ -7006,7 +7183,8 @@ mod tests {
     use pintail_sql::{BinaryOp, DatePart, ScalarFunction};
     use pintail_types::{DataType, Value};
 
-    use super::{CompiledExpr, compare_mysql, date_part, mysql_date_format, parse_mysql_number};
+    use super::temporal::date_part;
+    use super::{CompiledExpr, compare_mysql, mysql_date_format, parse_mysql_number};
 
     /// The directives that used to be forwarded to chrono, where the same
     /// letters mean something else. Every expectation here is `MySQL` 8.4

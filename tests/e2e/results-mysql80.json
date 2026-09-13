@@ -18893,7 +18893,7 @@
     "phase": "activity-history",
     "check": "activity-history:the history is in the control plane pintail reads",
     "status": "PASS",
-    "detail": "150038 sync_runs rows for db_93493edb02303f3feae0508eb9c5e434"
+    "detail": "150030 sync_runs rows for db_962368f56829d338b6272dd60de9ba19"
   },
   {
     "phase": "activity-history",
@@ -18905,7 +18905,7 @@
     "phase": "activity-history",
     "check": "activity-history:scoped feed stays fast over a large history",
     "status": "PASS",
-    "detail": "p50 1ms p95 2ms over 150000 rows"
+    "detail": "p50 1ms p95 1ms over 150000 rows"
   },
   {
     "phase": "activity-history",
@@ -18917,7 +18917,7 @@
     "phase": "activity-history",
     "check": "activity-history:25 concurrent feed reads do not pile up",
     "status": "PASS",
-    "detail": "p50 26ms p99 29ms"
+    "detail": "p50 26ms p99 30ms"
   },
   {
     "phase": "activity-history",
@@ -20182,13 +20182,13 @@
     "phase": "poll-storm",
     "check": "poll-storm:health never stalls",
     "status": "PASS",
-    "detail": "health p99 1ms"
+    "detail": "health p99 0ms"
   },
   {
     "phase": "poll-storm",
     "check": "poll-storm:replication keeps pace under the storm",
     "status": "PASS",
-    "detail": "orders replica 4866 vs source 4866"
+    "detail": "orders replica 7014 vs source 7014"
   },
   {
     "phase": "poll-storm",
@@ -25313,8 +25313,7 @@
   {
     "phase": "drop-table-recreate",
     "check": "recreate:a table recreated under the same name replicates as a new table",
-    "status": "WARN",
-    "detail": "the source has 2 rows and the replica 4: the orphaned store is reused instead of being resnapshotted, because the CREATE handler skips any name it already tracks"
+    "status": "PASS"
   },
   {
     "phase": "drop-table-recreate",
@@ -26586,7 +26585,7 @@
     "phase": "drop-table-polling",
     "check": "polling:one dropped table does not stop the other tables",
     "status": "WARN",
-    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_93493edb02303f3feae0508eb9c5e434\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-13T11:06:42.893920090+00:00\",\"updated_at\":\"2026-09-13T11:13:16.331669485+00:00\"},\"tables\":30,\"rows\":8779}"
+    "detail": "the whole poll cycle aborts on the first table that fails, so every other table stops replicating too: {\"database\":{\"restored_backup_created_at\":null,\"data_age_seconds\":null,\"id\":\"db_962368f56829d338b6272dd60de9ba19\",\"name\":\"e2e_db\",\"mode\":\"polling\",\"effective_mode\":\"polling\",\"state\":\"error\",\"include_tables\":[],\"exclude_tables\":[],\"poll_interval_seconds\":5,\"reconcile_interval_seconds\":600,\"keyless_policy\":\"quarantine\",\"created_at\":\"2026-09-13T12:36:34.638077409+00:00\",\"updated_at\":\"2026-09-13T12:40:41.729999949+00:00\"},\"tables\":30,\"rows\":10927}"
   },
   {
     "phase": "drop-table-polling",
@@ -30412,19 +30411,19 @@
     "phase": "memory-pressure",
     "check": "memory-pressure:wire queries are not starved by the HTTP surface",
     "status": "PASS",
-    "detail": "wire p50 277ms p99 1024ms over 240 queries"
+    "detail": "wire p50 266ms p99 1252ms over 240 queries"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:health never stalls",
     "status": "PASS",
-    "detail": "health p99 13ms over 10 samples"
+    "detail": "health p99 16ms over 10 samples"
   },
   {
     "phase": "memory-pressure",
     "check": "memory-pressure:the process stays inside its ceiling",
     "status": "PASS",
-    "detail": "peak RSS 139MB with a 256MB budget"
+    "detail": "peak RSS 126MB with a 256MB budget"
   },
   {
     "phase": "memory-pressure",
@@ -31706,13 +31705,13 @@
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation converges the replica on the source",
     "status": "PASS",
-    "detail": "child 1800000 vs source 1800000 after 6.4s"
+    "detail": "child 1800000 vs source 1800000 after 4.4s"
   },
   {
     "phase": "reconcile-memory",
     "check": "reconcile-memory:reconciliation is bounded in memory",
     "status": "PASS",
-    "detail": "RSS 59MB before, peak 247MB during (margin 768MB)"
+    "detail": "RSS 61MB before, peak 218MB during (margin 768MB)"
   },
   {
     "phase": "reconcile-memory",
