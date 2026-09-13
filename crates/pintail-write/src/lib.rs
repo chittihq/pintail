@@ -463,6 +463,24 @@ fn primary_key(
 
 /// Types one literal against its column.
 fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError> {
+    // A signed number is still a literal: -0.005 parses as negation.
+    if let Expr::UnaryOp { op, expr: operand } = expr
+        && matches!(
+            op,
+            sqlparser::ast::UnaryOperator::Minus | sqlparser::ast::UnaryOperator::Plus
+        )
+        && let Expr::Value(ValueWithSpan {
+            value: SqlValue::Number(number, _),
+            ..
+        }) = operand.as_ref()
+    {
+        let sign = if matches!(op, sqlparser::ast::UnaryOperator::Minus) {
+            "-"
+        } else {
+            ""
+        };
+        return typed_value(&format!("{sign}{number}"), column);
+    }
     let Expr::Value(ValueWithSpan { value, .. }) = expr else {
         // A local INSERT takes literals only: an expression would need the
         // full evaluator, and every function it could call is already
@@ -524,6 +542,33 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             return Ok(Value::Utf8(pintail_types::format_time_micros(
                 pintail_types::round_micros_to_fsp(micros, fsp),
                 fsp,
+            )));
+        }
+        // A DECIMAL column stores its value at the declared scale, rounded half
+        // away from zero as MySQL rounds it, in canonical form: 1.005 in a
+        // DECIMAL(5,2) is 1.01, and a leading zero or a longer fraction never
+        // reaches the store, where comparisons read the text.
+        DataType::Decimal { precision, scale } => {
+            let exact = pintail_types::parse_decimal_rounded(text.trim(), scale).or_else(|| {
+                let number = text
+                    .trim()
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|number| number.is_finite())?;
+                pintail_types::parse_decimal_rounded(
+                    &format!("{number:.*}", usize::from(scale)),
+                    scale,
+                )
+            });
+            let units = exact.ok_or_else(|| wrong("expected a decimal number"))?;
+            let limit = 10_i128
+                .checked_pow(u32::from(precision))
+                .ok_or_else(|| wrong("Out of range value"))?;
+            if units.abs() >= limit {
+                return Err(wrong("Out of range value"));
+            }
+            return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                units, scale,
             )));
         }
         // A JSON column stores the document as MySQL prints it back: keys in

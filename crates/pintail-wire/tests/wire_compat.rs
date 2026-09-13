@@ -519,6 +519,12 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .await
             .is_err()
     );
+    assert!(
+        connection
+            .query_drop("SET SQL_SELECT_LIMIT = 1")
+            .await
+            .is_err()
+    );
     connection
         .query_drop("SET lc_time_names = 'en_US'")
         .await

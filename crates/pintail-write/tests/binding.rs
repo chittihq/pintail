@@ -384,3 +384,32 @@ fn a_json_value_is_stored_as_mysql_prints_it() {
     );
     assert!(stored("{not json").is_err());
 }
+
+#[test]
+fn a_decimal_value_is_stored_at_its_declared_scale() {
+    let plan = create("CREATE TABLE dz (id INT PRIMARY KEY, d DECIMAL(29,10), s DECIMAL(5,2))")
+        .expect("binds");
+    let stored = |values: &str| {
+        let statement =
+            parse_statement(&format!("INSERT INTO dz VALUES {values}")).expect("parses");
+        bind_insert_from(&statement, &plan.table, 1).map(|plan| plan.rows[0].values()[1..].to_vec())
+    };
+    let decimals = |d: &str, s: &str| vec![Value::Utf8(d.to_owned()), Value::Utf8(s.to_owned())];
+    // Measured against MySQL 8.4.
+    assert_eq!(
+        stored("(1, '01234567890123456789.0123456789', 1.005)").expect("binds"),
+        decimals("1234567890123456789.0123456789", "1.01")
+    );
+    assert_eq!(
+        stored("(2, 1.01234567895, -0.005)").expect("binds"),
+        decimals("1.0123456790", "-0.01")
+    );
+    assert_eq!(
+        stored("(3, '-1.01234567894', 123.4)").expect("binds"),
+        decimals("-1.0123456789", "123.40")
+    );
+    assert!(
+        stored("(4, 1, 1234.5)").is_err(),
+        "out of range for DECIMAL(5,2)"
+    );
+}

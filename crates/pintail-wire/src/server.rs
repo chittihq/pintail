@@ -1582,9 +1582,18 @@ impl Backend {
                 session.max_execution_time_ms = limit;
                 Ok(())
             }
-            // These change answers - day and month names, week numbers - and only
+            // These change answers - row counts, day and month names, week
+            // numbers - and only
             // their defaults are implemented, so another value is refused rather
             // than accepted and ignored.
+            "sql_select_limit"
+                if !(value.eq_ignore_ascii_case("default")
+                    || value.trim() == "18446744073709551615") =>
+            {
+                Err(format!(
+                    "Variable 'sql_select_limit' can't be set to the value of '{value}' (only DEFAULT is supported)"
+                ))
+            }
             "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
                 "Unknown locale: '{value}' (only en_US is supported)"
             )),
