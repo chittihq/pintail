@@ -1125,6 +1125,11 @@ async function startPintail(binary: string) {
 function publish(results: FileResult[], mysqlVersion: string) {
   const total = (kind: Kind) => results.reduce((sum, r) => sum + r.counts[kind], 0)
   const compared = total('exact') + total('mismatch') + total('name-mismatch')
+  // Every SELECT that was replayed but never compared: Pintail could not run
+  // it, its tables had been changed by a statement a local database cannot
+  // follow, MySQL itself refused it, or it reads the clock or the session.
+  const notCompared =
+    total('pintail-error') + total('tainted') + total('mysql-error') + total('volatile')
   const queries = compared + total('pintail-error') + total('tainted')
   const classes: Record<string, number> = {}
   for (const r of results) for (const [cls, n] of Object.entries(r.errorClasses)) classes[cls] = (classes[cls] ?? 0) + n
@@ -1134,8 +1139,14 @@ function publish(results: FileResult[], mysqlVersion: string) {
     '',
     `Measured ${new Date().toISOString()}: \`${SUITE.dir.join('/')}\` from ${SUITE.repo} at \`${REF.slice(0, 12)}\`, oracle MySQL ${mysqlVersion}, ${results.length} files.`,
     '',
+    // The percentage is of COMPARED statements, and the buckets that never
+    // reached a comparison are larger than the shortfall. Both numbers go in
+    // the bolded sentence, because that sentence is what gets quoted and
+    // "88% of MySQL's suite" is a different and untrue claim.
     `**${total('exact').toLocaleString()} of ${compared.toLocaleString()} compared SELECTs match MySQL byte-for-byte** ` +
-      `(${compared ? ((100 * total('exact')) / compared).toFixed(1) : '0'}%). ` +
+      `(${compared ? ((100 * total('exact')) / compared).toFixed(1) : '0'}%), ` +
+      `**out of ${(compared + notCompared).toLocaleString()} SELECTs replayed** - ` +
+      `${notCompared.toLocaleString()} never reached a comparison, so this is a share of what could be compared and not of the suite. ` +
       `${total('mismatch').toLocaleString()} differ in rows, ${total('name-mismatch').toLocaleString()} in column names only. ` +
       `${total('pintail-error').toLocaleString()} SELECTs Pintail could not run, ${total('tainted').toLocaleString()} were not compared because their tables were changed by statements a local database cannot follow, ` +
       `${total('mysql-error').toLocaleString()} failed on MySQL itself, ${total('volatile').toLocaleString()} depend on the clock, session or server and were not compared. ` +
