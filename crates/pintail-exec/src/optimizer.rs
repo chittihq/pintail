@@ -826,11 +826,27 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
                     nullable: false,
                 };
             }
+            let mut args: Vec<_> = args.into_iter().map(fold_expr).collect();
+            // Capture the connection's zone in the plan: execution may run
+            // on workers that do not carry the caller's thread-local state.
+            if matches!(
+                function,
+                ScalarFunction::UnixTimestamp | ScalarFunction::FromUnixTime
+            ) && args.len() == 1
+                && let Some(zone) = SESSION_TIME_ZONE.get()
+            {
+                let zone = match zone {
+                    SessionZone::Fixed(offset) => offset.to_string(),
+                    SessionZone::Named(zone) => zone.name().to_owned(),
+                };
+                args.push(BoundExpr {
+                    kind: BoundExprKind::Literal(Value::Utf8(zone)),
+                    data_type: Some(DataType::Utf8),
+                    nullable: false,
+                });
+            }
             BoundExpr {
-                kind: BoundExprKind::Scalar {
-                    function,
-                    args: args.into_iter().map(fold_expr).collect(),
-                },
+                kind: BoundExprKind::Scalar { function, args },
                 data_type: expr.data_type,
                 nullable: expr.nullable,
             }

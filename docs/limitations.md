@@ -157,6 +157,9 @@ stays readable as a list of things to fix.
   are not implemented. `EXTRACT(MICROSECOND ...)` and its microsecond composite
   qualifiers remain unsupported.
 
+- Unix timestamp conversions round excess fractional digits to microseconds;
+  `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.
+
 - The all-zero `DATE`/`DATETIME` (`0000-00-00`) is preserved as a value, as
   MySQL does: it is returned by a `SELECT`, does not match `IS NULL`, and is
   counted by `COUNT(column)`. Genuinely invalid values such as February 31st

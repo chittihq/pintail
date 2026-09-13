@@ -416,3 +416,44 @@ fn time_and_makedate_follow_the_type_ranges() {
         ("MAKEDATE(9999, 366)", "NULL"),
     ]);
 }
+
+#[test]
+fn unix_conversions_use_the_session_zone_and_keep_fractional_seconds() {
+    struct ResetZone;
+    impl Drop for ResetZone {
+        fn drop(&mut self) {
+            assert!(pintail_exec::set_session_time_zone(None));
+        }
+    }
+    let _reset = ResetZone;
+    assert!(pintail_exec::set_session_time_zone(Some("+02:00")));
+    assert_answers(&[
+        ("FROM_UNIXTIME(0)", "1970-01-01 02:00:00"),
+        ("FROM_UNIXTIME(id)", "1970-01-01 02:00:01"),
+        ("FROM_UNIXTIME(1.25)", "1970-01-01 02:00:01.25"),
+        ("FROM_UNIXTIME(id + 0.25)", "1970-01-01 02:00:01.25"),
+        ("FROM_UNIXTIME(-0.000001)", "NULL"),
+        ("FROM_UNIXTIME(-0.0000001)", "NULL"),
+        ("FROM_UNIXTIME('1.25')", "1970-01-01 02:00:01.250000"),
+        ("FROM_UNIXTIME(0.0000005)", "1970-01-01 02:00:00.000001"),
+        (
+            "FROM_UNIXTIME(32536771199.999999)",
+            "3001-01-19 01:59:59.999999",
+        ),
+        ("FROM_UNIXTIME(32536771199.9999999)", "NULL"),
+        ("UNIX_TIMESTAMP('1970-01-01 02:00:01')", "1"),
+        (
+            "UNIX_TIMESTAMP(CONCAT('1970-01-01 02:00:0', id))",
+            "1.000000",
+        ),
+        ("UNIX_TIMESTAMP('1970-01-01 02:00:01.25')", "1.25"),
+        ("UNIX_TIMESTAMP('invalid')", "0.000000"),
+    ]);
+    assert!(pintail_exec::set_session_time_zone(Some(
+        "America/New_York"
+    )));
+    assert_answers(&[
+        ("FROM_UNIXTIME(0)", "1969-12-31 19:00:00"),
+        ("UNIX_TIMESTAMP('1969-12-31 19:00:01')", "1"),
+    ]);
+}

@@ -3714,37 +3714,85 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::UnixTimestamp => {
-            let timestamp = if values.is_empty() {
-                Utc::now().timestamp()
+            let zone = values.get(1).map(scalar_string).transpose()?;
+            let micros = if values.is_empty() {
+                Some(Utc::now().timestamp_micros())
             } else {
-                let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-                Local
-                    .from_local_datetime(&value)
-                    .single()
-                    .ok_or(ExecError::InvalidDateTime)?
-                    .timestamp()
-            };
-            // MySQL 8.0.28 raised the ceiling to 3001-01-18 23:59:59 UTC; past
-            // it UNIX_TIMESTAMP is 0 and FROM_UNIXTIME is NULL.
-            Ok(Value::UInt64(
-                u64::try_from(timestamp)
+                parse_mysql_datetime(&scalar_string(&values[0])?)
                     .ok()
-                    .filter(|seconds| *seconds <= UNIX_TIMESTAMP_MAX)
-                    .unwrap_or(0),
-            ))
+                    .and_then(|value| {
+                        if let Some(zone) = &zone {
+                            let utc = convert_tz(
+                                &value.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+                                zone,
+                                "+00:00",
+                            )?;
+                            Some(
+                                parse_mysql_datetime(&utc)
+                                    .ok()?
+                                    .and_utc()
+                                    .timestamp_micros(),
+                            )
+                        } else {
+                            Local
+                                .from_local_datetime(&value)
+                                .earliest()
+                                .map(|value| value.timestamp_micros())
+                        }
+                    })
+            };
+            let micros = micros
+                .filter(|micros| (0..=UNIX_TIMESTAMP_MAX_MICROS).contains(micros))
+                .unwrap_or(0);
+            // Invalid inputs return zero; NULL was handled before dispatch.
+            Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+                i128::from(micros),
+                6,
+            )))
         }
         ScalarFunction::FromUnixTime => {
-            let timestamp = mysql_i64(&values[0])?;
-            if timestamp < 0
-                || u64::try_from(timestamp).is_ok_and(|seconds| seconds > UNIX_TIMESTAMP_MAX)
-            {
+            let operand = numeric_cast_operand(
+                &values[0],
+                argument_types,
+                DataType::Decimal {
+                    precision: 20,
+                    scale: 6,
+                },
+            );
+            let numeric = mysql_f64(&operand)?;
+            if !numeric.is_finite() || numeric < 0.0 {
                 return Ok(Value::Null);
             }
-            let value = Local
-                .timestamp_opt(timestamp, 0)
-                .single()
+            let text = scalar_string(&operand)?;
+            let micros = pintail_types::parse_decimal_rounded(&text, 6)
+                .or_else(|| pintail_types::parse_decimal_scaled(&format!("{numeric:.6}"), 6));
+            let Some(micros) = micros
+                .and_then(|micros| i64::try_from(micros).ok())
+                .filter(|micros| (0..=UNIX_TIMESTAMP_MAX_MICROS).contains(micros))
+            else {
+                return Ok(Value::Null);
+            };
+            let utc = chrono::DateTime::from_timestamp_micros(micros)
                 .ok_or(ExecError::InvalidDateTime)?;
-            Ok(Value::Utf8(value.format("%Y-%m-%d %H:%M:%S").to_string()))
+            let fsp = match data_type {
+                Some(DataType::DateTime64 { fsp }) => fsp,
+                _ => 0,
+            };
+            let value = if let Some(zone) = values.get(1) {
+                convert_tz(
+                    &format_with_fraction(utc.naive_utc(), fsp, "%Y-%m-%d %H:%M:%S"),
+                    "+00:00",
+                    &scalar_string(zone)?,
+                )
+                .ok_or(ExecError::InvalidDateTime)?
+            } else {
+                format_with_fraction(
+                    utc.with_timezone(&Local).naive_local(),
+                    fsp,
+                    "%Y-%m-%d %H:%M:%S",
+                )
+            };
+            Ok(Value::Utf8(value))
         }
         ScalarFunction::If | ScalarFunction::Coalesce | ScalarFunction::NullIf => {
             Err(ExecError::InvalidExpressionType)
@@ -3761,7 +3809,8 @@ fn evaluate_eager_scalar_inner(
 
 /// The last second `MySQL`'s `UNIX_TIMESTAMP` and `FROM_UNIXTIME` accept:
 /// 3001-01-18 23:59:59 UTC.
-const UNIX_TIMESTAMP_MAX: u64 = 32_536_771_199;
+const UNIX_TIMESTAMP_MAX: i64 = 32_536_771_199;
+const UNIX_TIMESTAMP_MAX_MICROS: i64 = UNIX_TIMESTAMP_MAX * 1_000_000 + 999_999;
 
 fn hex_lower(bytes: &[u8]) -> String {
     let mut hex = String::with_capacity(bytes.len() * 2);

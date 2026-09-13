@@ -36,6 +36,26 @@ fn signed_integer_constant(expression: &BoundExpr) -> Option<i64> {
     }
 }
 
+fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
+    match argument.data_type {
+        Some(DataType::Decimal { scale, .. }) => scale.min(6),
+        Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
+        Some(DataType::Utf8) => {
+            if parses_datetime
+                && let BoundExprKind::Literal(Value::Utf8(text)) = &argument.kind
+                && super::TemporalLiteral::parse(text).is_some()
+            {
+                return text.rsplit_once('.').map_or(0, |(_, fraction)| {
+                    u8::try_from(fraction.len().min(6)).unwrap_or(6)
+                });
+            }
+            6
+        }
+        Some(DataType::Float64 | DataType::Binary) => 6,
+        _ => 0,
+    }
+}
+
 /// A top-level `function(...) OVER (...)` projection item.
 #[allow(clippy::too_many_lines)]
 pub(super) fn bind_window_function(
@@ -1613,8 +1633,8 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::FromUnixTime => (
-            Some(DataType::DateTime64 { fsp: 0 }),
-            args.iter().any(|argument| argument.nullable),
+            Some(DataType::DateTime64 { fsp: unix_argument_precision(&args[0], false) }),
+            true,
         ),
         // DATE_FORMAT is a string in MySQL too; only the arithmetic
         // functions carry a temporal type, and theirs depends on the
@@ -1651,10 +1671,11 @@ pub(super) fn bind_scalar(
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::UnixTimestamp => (
-            Some(DataType::UInt64),
-            args.iter().any(|argument| argument.nullable),
-        ),
+        ScalarFunction::UnixTimestamp => {
+            let scale = args.first().map_or(0, |argument| unix_argument_precision(argument, true));
+            (Some(if scale == 0 { DataType::UInt64 } else { DataType::Decimal { precision: 20, scale } }),
+                args.iter().any(|argument| argument.nullable))
+        }
         ScalarFunction::DateDiff => (
             Some(DataType::Int64),
             args.iter().any(|argument| argument.nullable),
