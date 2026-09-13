@@ -663,6 +663,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
     textConnection({ host: '127.0.0.1', port: pintailWirePort, user: schema, password: key.secret, database: schema }),
   )
   const epochs = new Epochs()
+  let inTransaction = false
 
   const run = async (connection: Side, sql: string): Promise<Answer> => {
     const [rows, fields] = await connection.query<mysql.RowDataPacket[][]>({ sql, rowsAsArray: true, timeout: QUERY_TIMEOUT_MS })
@@ -672,6 +673,11 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   try {
     for (const statement of statements) {
       const sql = statement.sql
+      // A local database has no transactions: a row written inside one stays
+      // written when MySQL rolls it back, so its table stops being comparable.
+      const head = firstWords(sql)
+      if (/^(begin|start transaction|xa start)/.test(head) || /^set (session )?autocommit\s*=\s*(0|off)/.test(head)) inTransaction = true
+      if ((/^(commit|rollback)\b/.test(head) && !/^rollback to/.test(head)) || /^set (session )?autocommit\s*=\s*(1|on)/.test(head)) inTransaction = false
       if (statement.expectError) {
         counts.skipped += 1
         continue
@@ -772,7 +778,8 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
       }
       if (isSimpleInsert(sql)) {
         const target = mutatedTables(sql)[0]
-        if (target && epochs.touchesTainted(target)) {
+        if (target && (epochs.touchesTainted(target) || inTransaction)) {
+          if (inTransaction) epochs.taint(target)
           await my.query(epochs.rewrite(sql)).catch(() => {})
           counts['unsupported-setup'] += 1
           continue
