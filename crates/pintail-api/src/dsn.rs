@@ -50,17 +50,31 @@ const CLIENT_ONLY_PARAMETERS: &[&str] = &[
 /// Returns the underlying parse failure, with the ignored parameters named so
 /// the caller can say what it dropped.
 pub(crate) fn source_opts(dsn: &str) -> Result<Opts, String> {
-    match Opts::from_url(dsn) {
-        Ok(opts) => Ok(opts),
+    let opts = match Opts::from_url(dsn) {
+        Ok(opts) => opts,
         Err(error) => {
             let (stripped, dropped) = strip_client_parameters(dsn);
             if dropped.is_empty() {
                 return Err(error.to_string());
             }
-            Opts::from_url(&stripped).map_err(|error| error.to_string())
+            Opts::from_url(&stripped).map_err(|error| error.to_string())?
         }
+    };
+    // A binlog event is bounded by the source's replication packet limit, not
+    // its client one: a large row event arrives bigger than the
+    // max_allowed_packet a connection otherwise adopts from the server, and the
+    // stream failed on it. Read up to the largest packet the protocol allows,
+    // as a replica does, unless the DSN names its own limit.
+    if opts.max_allowed_packet().is_some() {
+        return Ok(opts);
     }
+    Ok(mysql_async::OptsBuilder::from_opts(opts)
+        .max_allowed_packet(Some(MAX_PACKET_BYTES))
+        .into())
 }
+
+/// The largest packet the `MySQL` protocol carries, 1 GiB.
+const MAX_PACKET_BYTES: usize = 1 << 30;
 
 /// Returns the DSN without its client-only parameters, and the names removed.
 fn strip_client_parameters(dsn: &str) -> (String, Vec<String>) {
@@ -88,6 +102,15 @@ fn strip_client_parameters(dsn: &str) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::{source_opts, strip_client_parameters};
+
+    #[test]
+    fn a_source_connection_reads_packets_as_large_as_a_replica_does() {
+        let opts = source_opts("mysql://app:secret@127.0.0.1:3306/app").expect("parses");
+        assert_eq!(opts.max_allowed_packet(), Some(1 << 30));
+        let named = source_opts("mysql://app:secret@127.0.0.1:3306/app?max_allowed_packet=4194304")
+            .expect("parses");
+        assert_eq!(named.max_allowed_packet(), Some(4_194_304));
+    }
 
     /// The connection string Chitti LMS holds in their application.
     const REPORTED: &str =
