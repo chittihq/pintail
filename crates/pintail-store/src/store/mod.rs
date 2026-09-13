@@ -518,6 +518,13 @@ impl TableStore {
                 changed = true;
                 wal.truncate_to(offset)?;
             }
+            // The dropped records are gone from the log, so their sequences
+            // must be free again. Keeping the highest sequence ever written
+            // leaves a gap the next write starts after, and a gap at the
+            // very start of the log is indistinguishable from rows that were
+            // flushed and whose manifest was lost: the table then refuses
+            // every open (`refuse_a_lost_manifest`).
+            recovery.last_sequence = committed.map_or(0, |commit| commit.sequence);
             if let Some(commit) = committed {
                 commit_version = commit_version.max(commit.version);
             }

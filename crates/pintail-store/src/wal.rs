@@ -41,6 +41,11 @@ pub(crate) struct Recovery {
 pub(crate) struct WalCommit {
     /// Batches (by count, in order) covered by this commit.
     pub(crate) batches: usize,
+    /// This record's own sequence — the highest in the committed prefix,
+    /// since a commit record closes it. A recovery that drops the
+    /// uncommitted tail resumes numbering from here, not from the highest
+    /// sequence the log ever held.
+    pub(crate) sequence: u64,
     /// The committed transaction version.
     pub(crate) version: u64,
     /// File offset one past the commit record, for truncating
@@ -477,6 +482,7 @@ fn recover(file: &mut File, truncate_torn_tail: bool) -> Result<Recovery, StoreE
             valid_length = position;
             last_commit = Some(WalCommit {
                 batches: batches.len(),
+                sequence,
                 version,
                 end_offset: valid_length as u64,
             });

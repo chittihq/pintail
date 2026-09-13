@@ -111,6 +111,82 @@ fn a_torn_tail_after_a_commit_keeps_the_committed_prefix() {
     assert_eq!(reopened.commit_version(), 1);
 }
 
+/// Removes the log's last record and returns its payload. The layout is
+/// the WAL's own: a six-byte header, then a little-endian `u32` length,
+/// that many payload bytes, and an eight-byte checksum, repeated.
+fn strip_the_last_record(path: &std::path::Path) -> Vec<u8> {
+    const HEADER: usize = 6;
+    const CHECKSUM: usize = 8;
+    let bytes = std::fs::read(path).expect("read wal");
+    let mut position = HEADER;
+    let mut last = None;
+    while position < bytes.len() {
+        let start = position;
+        let length = u32::from_le_bytes(
+            bytes[position..position + size_of::<u32>()]
+                .try_into()
+                .expect("length"),
+        ) as usize;
+        position += size_of::<u32>();
+        last = Some((start, bytes[position..position + length].to_vec()));
+        position += length + CHECKSUM;
+    }
+    let (start, payload) = last.expect("the log holds at least one record");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .expect("open wal")
+        .set_len(start as u64)
+        .expect("truncate");
+    payload
+}
+
+/// A crash between the first commit's row batch and its commit record used
+/// to strand the table for good: recovery dropped the batch but kept its
+/// sequence, so the next write started at 2, and a reopen before any flush
+/// saw a log starting after sequence 1 with no manifest - the signature of
+/// flushed rows whose manifest was lost. Every open from then on refused.
+#[test]
+fn a_crash_before_the_first_commit_record_leaves_the_table_openable() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    {
+        let mut table =
+            TableStore::open(directory.path(), schema(), transactional()).expect("open");
+        table.commit(vec![row(1, "ada")]).expect("commit");
+    }
+    let payload = strip_the_last_record(&directory.path().join("table.wal"));
+    // Confirm what was removed really is the commit record - sequence,
+    // the reserved table id marking a commit, and the version - so a
+    // layout change fails here instead of quietly cutting a row batch and
+    // leaving this test passing on a log it never reproduced.
+    assert_eq!(payload.len(), 3 * size_of::<u64>(), "commit record payload");
+    assert_eq!(
+        u64::from_le_bytes(payload[8..16].try_into().expect("table id")),
+        u64::MAX,
+        "the removed record must be the commit marker"
+    );
+
+    {
+        let mut table = TableStore::open(directory.path(), schema(), transactional())
+            .expect("reopen after the crash");
+        assert!(
+            table.snapshot().scan().expect("scan").is_empty(),
+            "a batch whose commit record never landed is not visible"
+        );
+        assert_eq!(
+            table.commit(vec![row(2, "grace")]).expect("commit again"),
+            1,
+            "the lost transaction consumed no version"
+        );
+    }
+
+    let reopened = TableStore::open(directory.path(), schema(), transactional())
+        .expect("the table stays openable: the lost batch consumed no sequence either");
+    let rows = reopened.snapshot().scan().expect("scan");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].values()[1], Value::Utf8("grace".to_owned()));
+}
+
 #[test]
 fn commit_versions_survive_flush_and_restart() {
     let directory = tempfile::tempdir().expect("tempdir");
