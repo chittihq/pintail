@@ -2647,10 +2647,10 @@ fn evaluate_eager_scalar_inner(
                         .ok_or(ExecError::NumericOverflow)?;
                     units = units / zero_factor * zero_factor;
                 }
-                return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
-                    units,
-                    render_scale,
-                )));
+                return cast_scalar(
+                    &Value::Utf8(pintail_types::format_decimal_scaled(units, render_scale)),
+                    data_type,
+                );
             }
             let value = mysql_f64(&values[0])?;
             let digits = mysql_i64(&values[1])?.clamp(-30, 30);
@@ -3067,7 +3067,7 @@ fn evaluate_eager_scalar_inner(
                     let Some(factor) = 10_i128.checked_pow(zeroed + u32::from(input_scale)) else {
                         // The rounding quantum is larger than any DECIMAL(38)
                         // magnitude, so the exact result is necessarily zero.
-                        return Ok(Value::Utf8("0".to_owned()));
+                        return cast_scalar(&Value::Utf8("0".to_owned()), data_type);
                     };
                     let half = factor / 2;
                     let magnitude = raw_units
@@ -3087,10 +3087,10 @@ fn evaluate_eager_scalar_inner(
                     pintail_types::parse_decimal_rounded(text, render_scale)
                         .ok_or(ExecError::NumericOverflow)?
                 };
-                return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
-                    units,
-                    render_scale,
-                )));
+                return cast_scalar(
+                    &Value::Utf8(pintail_types::format_decimal_scaled(units, render_scale)),
+                    data_type,
+                );
             }
             let value = mysql_f64(&values[0])?;
             let decimals = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);

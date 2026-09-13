@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Decimal `ROUND` and `TRUNCATE` retain exact arithmetic and the input
+  scale when their precision argument is computed at runtime.
+
 - Mixed binary/text `IF`, `CASE` and `COALESCE` branches retain byte
   comparison semantics and the selected text branch’s encoding.
 

@@ -752,3 +752,22 @@ fn conditional_binary_branches_keep_bytes_and_comparison_domain() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn dynamic_decimal_rounding_retains_declared_scale() {
+    for (expression, expected) in [
+        ("ROUND(1.2345, id)", "1.2000"),
+        ("ROUND(1.2345, id - 1)", "1.0000"),
+        ("ROUND(15.2345, -CAST(id AS SIGNED))", "20.0000"),
+        ("TRUNCATE(1.2345, id)", "1.2000"),
+        ("TRUNCATE(15.2345, -CAST(id AS SIGNED))", "10.0000"),
+        ("ROUND(1.2345, 1)", "1.2"),
+        ("TRUNCATE(1.2345, 1)", "1.2"),
+        (
+            "ROUND(LEAST(15, -4939092, 0.2704), STDDEV('a'))",
+            "-4939092.0000",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

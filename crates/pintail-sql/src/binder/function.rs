@@ -385,13 +385,7 @@ pub(super) fn bind_scalar_function(
         "IFNULL" if args.len() == 2 => ScalarFunction::Coalesce,
         "COALESCE" if !args.is_empty() => ScalarFunction::Coalesce,
         "NULLIF" if args.len() == 2 => ScalarFunction::NullIf,
-        "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round {
-            // Exact only when the digit count is knowable at bind time.
-            decimal: matches!(args[0].data_type, Some(DataType::Decimal { .. }))
-                && args
-                    .get(1)
-                    .is_none_or(|digits| signed_integer_constant(digits).is_some()),
-        },
+        "ROUND" if matches!(args.len(), 1 | 2) => ScalarFunction::Round { decimal: false },
         "CEIL" | "CEILING" if args.len() == 1 => ScalarFunction::Ceil { decimal: false },
         "FLOOR" if args.len() == 1 => ScalarFunction::Floor { decimal: false },
         "ABS" if args.len() == 1 => ScalarFunction::Abs {
@@ -1288,11 +1282,11 @@ pub(super) fn bind_scalar(
         ScalarFunction::Floor { .. } => ScalarFunction::Floor {
             decimal: arg0_decimal,
         },
+        ScalarFunction::Round { .. } => ScalarFunction::Round {
+            decimal: arg0_decimal,
+        },
         ScalarFunction::Truncate { .. } => ScalarFunction::Truncate {
-            decimal: arg0_decimal
-                && args
-                    .get(1)
-                    .is_some_and(|digits| signed_integer_constant(digits).is_some()),
+            decimal: arg0_decimal,
         },
         ScalarFunction::Greatest { .. } => ScalarFunction::Greatest {
             decimal: matches!(extremum_result_type(&args)?, Some(DataType::Decimal { .. })),
@@ -1434,10 +1428,10 @@ pub(super) fn bind_scalar(
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("ROUND".to_owned()));
             };
-            let digits = args
-                .get(1)
-                .and_then(signed_integer_constant)
-                .unwrap_or_default();
+            let digits = args.get(1).map_or(0, |argument| {
+                signed_integer_constant(argument).unwrap_or(i64::from(scale))
+            });
+            // Dynamic precision retains the input scale in the result type.
             // MySQL keeps min(input scale, digit count) fraction digits and
             // one extra integer digit for the carry.
             let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
@@ -1463,10 +1457,7 @@ pub(super) fn bind_scalar(
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));
             };
-            let digits = args
-                .get(1)
-                .and_then(signed_integer_constant)
-                .ok_or_else(|| BindError::UnsupportedExpression("TRUNCATE".to_owned()))?;
+            let digits = args.get(1).and_then(signed_integer_constant).unwrap_or(i64::from(scale));
             let result_scale = u8::try_from(digits.clamp(0, i64::from(scale))).unwrap_or(scale);
             (
                 Some(DataType::Decimal {
