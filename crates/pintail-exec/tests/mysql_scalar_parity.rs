@@ -339,3 +339,29 @@ fn time_and_makedate_follow_the_type_ranges() {
         ("MAKEDATE(9999, 366)", "NULL"),
     ]);
 }
+
+#[test]
+fn binary_string_functions_preserve_bytes_and_result_types() {
+    for bytes in ["X'FF0080'", "IF(id = 1, X'FF0080', NULL)"] {
+        assert_answers(&[
+            (&format!("HEX(LEFT({bytes}, 2))"), "FF00"),
+            (&format!("HEX(RIGHT({bytes}, 2))"), "0080"),
+            (&format!("HEX(REPLACE({bytes}, X'FF', X'FE'))"), "FE0080"),
+            (&format!("HEX(REPLACE({bytes}, X'', X'FE'))"), "FF0080"),
+            (&format!("HEX(INSERT({bytes}, 2, 1, X'FE'))"), "FFFE80"),
+            (&format!("HEX(INSERT({bytes}, 4, 0, X'FE'))"), "FF0080"),
+        ]);
+    }
+    assert_answers(&[
+        ("LEFT(X'FF0080', 2)", "Binary([255, 0])"),
+        ("RIGHT(X'FF0080', 2)", "Binary([0, 128])"),
+        ("REPLACE(X'FF0080', X'FF', X'FE')", "Binary([254, 0, 128])"),
+        ("INSERT(X'FF0080', 2, 1, X'FE')", "Binary([255, 254, 128])"),
+        ("HEX(INSERT('é猫', 2, 1, X'FF'))", "C3FFE78CAB"),
+        ("HEX(REPLACE('é猫', '猫', X'FF'))", "C3A9FF"),
+        ("HEX(LEFT(X'FF0080', 0))", ""),
+        ("HEX(RIGHT(X'FF0080', 8))", "FF0080"),
+        ("HEX(REPLACE(X'FF', NULL, X'80'))", "NULL"),
+    ]);
+}
+

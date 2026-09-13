@@ -2355,26 +2355,42 @@ fn evaluate_eager_scalar_inner(
                 .map_err(|_| ExecError::NumericOverflow)?,
         })),
         ScalarFunction::Replace => {
-            let text = scalar_string(&values[0])?;
-            let search = scalar_string(&values[1])?;
-            let replacement = scalar_string(&values[2])?;
-            Ok(Value::Utf8(if search.is_empty() {
+            let binary = values.iter().any(|value| matches!(value, Value::Binary(_)));
+            let string: fn(&Value) -> Result<String, ExecError> =
+                if binary { byte_text } else { scalar_string };
+            let text = string(&values[0])?;
+            let search = string(&values[1])?;
+            let replacement = string(&values[2])?;
+            let result = if search.is_empty() {
                 text
             } else {
                 text.replace(&search, &replacement)
-            }))
+            };
+            Ok(if binary {
+                Value::Binary(chars_as_bytes(&result))
+            } else {
+                Value::Utf8(result)
+            })
         }
         ScalarFunction::Left => {
             let count = saturating_argument(&values[1])?.max(0);
             let count = usize::try_from(count).unwrap_or(usize::MAX);
+            if let Value::Binary(bytes) = &values[0] {
+                return Ok(Value::Binary(bytes[..count.min(bytes.len())].to_vec()));
+            }
             Ok(Value::Utf8(
                 scalar_string(&values[0])?.chars().take(count).collect(),
             ))
         }
         ScalarFunction::Right => {
-            let value = scalar_string(&values[0])?;
             let count =
                 usize::try_from(saturating_argument(&values[1])?.max(0)).unwrap_or(usize::MAX);
+            if let Value::Binary(bytes) = &values[0] {
+                return Ok(Value::Binary(
+                    bytes[bytes.len().saturating_sub(count)..].to_vec(),
+                ));
+            }
+            let value = scalar_string(&values[0])?;
             let skip = value.chars().count().saturating_sub(count);
             Ok(Value::Utf8(value.chars().skip(skip).collect()))
         }
@@ -2660,14 +2676,25 @@ fn evaluate_eager_scalar_inner(
             // Positions count characters from one. A position outside the
             // string returns it unchanged; a length past the end, or a
             // negative one, replaces the rest of the string.
-            let text = scalar_string(&values[0])?;
+            let binary =
+                matches!(values[0], Value::Binary(_)) || matches!(values[3], Value::Binary(_));
+            let string: fn(&Value) -> Result<String, ExecError> =
+                if binary { byte_text } else { scalar_string };
+            let result_value = |text: String| {
+                if binary {
+                    Value::Binary(chars_as_bytes(&text))
+                } else {
+                    Value::Utf8(text)
+                }
+            };
+            let text = string(&values[0])?;
             let position = saturating_argument(&values[1])?;
             let length = saturating_argument(&values[2])?;
-            let replacement = scalar_string(&values[3])?;
+            let replacement = string(&values[3])?;
             let characters: Vec<char> = text.chars().collect();
             let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
             if position < 1 || position > total {
-                return Ok(Value::Utf8(text));
+                return Ok(result_value(text));
             }
             let start = position - 1;
             let end = if length < 0 {
@@ -2682,7 +2709,7 @@ fn evaluate_eager_scalar_inner(
             let mut result: String = characters[..start].iter().collect();
             result.push_str(&replacement);
             result.extend(&characters[end..]);
-            Ok(Value::Utf8(result))
+            Ok(result_value(result))
         }
         ScalarFunction::Space => {
             let count = mysql_i64(&values[0])?;

@@ -1279,7 +1279,7 @@ pub(super) fn bind_scalar(
         }
         // Over a binary string these work in bytes and return bytes; declared
         // as text, the output column refused a value that is not UTF-8.
-        ScalarFunction::Substring | ScalarFunction::Trim
+        ScalarFunction::Substring | ScalarFunction::Trim | ScalarFunction::Left | ScalarFunction::Right
             if args.first().and_then(|argument| argument.data_type) == Some(DataType::Binary) =>
         {
             (
@@ -1296,6 +1296,16 @@ pub(super) fn bind_scalar(
                 Some(DataType::Binary),
                 args.iter().any(|argument| argument.nullable),
             )
+        }
+        ScalarFunction::Replace
+            if args.iter().any(|argument| argument.data_type == Some(DataType::Binary)) =>
+        {
+            (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
+        }
+        ScalarFunction::Insert
+            if [0, 3].iter().any(|position| args[*position].data_type == Some(DataType::Binary)) =>
+        {
+            (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }
         ScalarFunction::ConcatWs
             if args
