@@ -119,7 +119,30 @@ async fn acquire_global_read_lock(
     Ok(locked)
 }
 
-/// Seconds a snapshot waits for the global read lock:
+/// Opens one worker's snapshot transaction with a bounded lock wait.
+///
+/// A table another session holds under LOCK TABLES ... WRITE cannot be read
+/// until it is released, and a new table is copied while change capture
+/// waits for it: an unbounded wait froze the stream for as long as the lock
+/// was held. Bounded, the copy of that table fails, is flagged, and is taken
+/// again later, while the stream goes on. The pool resets the setting when
+/// the connection returns.
+async fn start_copy_transaction(
+    pool: &Pool,
+    options: TxOpts,
+) -> Result<Transaction<'static>, mysql_async::Error> {
+    let mut transaction = pool.start_transaction(options).await?;
+    transaction
+        .query_drop(format!(
+            "SET SESSION lock_wait_timeout = {}",
+            global_lock_wait_seconds()
+        ))
+        .await?;
+    Ok(transaction)
+}
+
+/// Seconds a snapshot waits for a lock another session holds - the global
+/// read lock, or a table it copies:
 /// `PINTAIL_SNAPSHOT_LOCK_WAIT_SECS`, clamped to [1, 3600], or 5.
 fn global_lock_wait_seconds() -> u64 {
     std::env::var("PINTAIL_SNAPSHOT_LOCK_WAIT_SECS")
@@ -476,7 +499,7 @@ async fn run_snapshot_inner(
             .with_consistent_snapshot(true)
             .with_isolation_level(IsolationLevel::RepeatableRead)
             .with_readonly(true);
-        match pool.start_transaction(transaction_options).await {
+        match start_copy_transaction(pool, transaction_options).await {
             Ok(transaction) => transactions.push(transaction),
             Err(error) => {
                 if globally_consistent {
