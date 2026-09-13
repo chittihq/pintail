@@ -1639,16 +1639,9 @@ impl MetaStore {
             .connection
             .unchecked_transaction()
             .context("failed to begin superseding a table generation")?;
-        let name: Option<String> = transaction
-            .query_row(
-                "SELECT name FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE \
-                   AND (?3 = 0 OR orphaned_at IS NOT NULL)",
-                (database_id, table_name, orphaned_only),
-                |row| row.get(0),
-            )
-            .optional()
-            .context("failed to look up an orphaned table")?;
-        let Some(name) = name else {
+        let Some(name) =
+            Self::superseded_name(&transaction, database_id, table_name, orphaned_only)?
+        else {
             return Ok(None);
         };
         for table in [
@@ -1685,6 +1678,43 @@ impl MetaStore {
             .commit()
             .context("failed to commit superseding an orphaned table")?;
         Ok(Some(name))
+    }
+
+    /// The stored name of the generation [`Self::supersede_table_generation`]
+    /// would retire, without retiring it.
+    ///
+    /// The caller removes the old generation's files before committing the
+    /// metadata, and the files live under this name, so it has to be known
+    /// first. Reading it separately is safe: change capture is the only
+    /// writer of these rows while a run is replaying.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control plane cannot be read.
+    pub fn superseded_table_name(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        orphaned_only: bool,
+    ) -> Result<Option<String>> {
+        Self::superseded_name(&self.connection, database_id, table_name, orphaned_only)
+    }
+
+    fn superseded_name(
+        connection: &rusqlite::Connection,
+        database_id: &str,
+        table_name: &str,
+        orphaned_only: bool,
+    ) -> Result<Option<String>> {
+        connection
+            .query_row(
+                "SELECT name FROM tables WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE \
+                   AND (?3 = 0 OR orphaned_at IS NOT NULL)",
+                (database_id, table_name, orphaned_only),
+                |row| row.get(0),
+            )
+            .optional()
+            .context("failed to look up an orphaned table")
     }
 
     /// Clears prior snapshot progress and prepares a fresh source handoff.

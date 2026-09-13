@@ -1836,6 +1836,15 @@ fn next_schema_version(version: u32) -> Result<u32, CdcError> {
 /// directory under the reused name. With `orphaned_only` unset the files go
 /// whether or not a row marks them dropped. Returns the table row's stored
 /// name when one was reset.
+///
+/// The files go first and the metadata commit last, and that order is the
+/// crash contract. Committed first, a crash in between leaves a table row
+/// that is live again beside the old generation's files: the next cycle
+/// opens them against the new table's shape, is refused, and change capture
+/// stops for every table in the database, with nothing to retry it. This
+/// way a crash leaves the row still marked dropped and the files gone - the
+/// retained rows of an already-dropped table, which the replayed CREATE
+/// supersedes again on the next pass.
 fn supersede_generation(
     metadata: &MetaStore,
     database_id: &str,
@@ -1845,11 +1854,11 @@ fn supersede_generation(
     table: &str,
     orphaned_only: bool,
 ) -> Result<Option<String>, CdcError> {
-    let reset = metadata.supersede_table_generation(database_id, table, orphaned_only)?;
-    if orphaned_only && reset.is_none() {
+    let stored_name = metadata.superseded_table_name(database_id, table, orphaned_only)?;
+    if orphaned_only && stored_name.is_none() {
         return Ok(None);
     }
-    let directory = new_table_directory(root, reset.as_deref().unwrap_or(table));
+    let directory = new_table_directory(root, stored_name.as_deref().unwrap_or(table));
     let tracked = target_indexes.values().copied().collect::<BTreeSet<_>>();
     let canonical = std::fs::canonicalize(&directory).ok();
     for (index, target) in targets.iter_mut().enumerate() {
@@ -1875,6 +1884,12 @@ fn supersede_generation(
         })?;
     }
     pintail_store::publish_changes_under(&directory);
+    // The removals have to outlive a power loss, not only a process crash,
+    // or the metadata commit below can be the only half that survives.
+    if root.exists() {
+        pintail_store::sync_directory(root)?;
+    }
+    let reset = metadata.supersede_table_generation(database_id, table, orphaned_only)?;
     Ok(reset)
 }
 
@@ -1994,9 +2009,17 @@ fn validate_configuration(
     targets: &[CdcTarget],
     options: &CdcOptions,
 ) -> Result<(), CdcError> {
-    if targets.is_empty() {
+    // A run with no targets still has work: the CREATE events that adopt new
+    // tables. Refusing it is what strands a database whose tracked tables
+    // were all dropped and re-created - the dropped rows are retained rather
+    // than streamed, so there is nothing to open, and without a run nothing
+    // ever reads the CREATEs that would supersede them. The retained rows
+    // would be served as the live table for good.
+    if targets.is_empty() && !(options.auto_include_new_tables && options.new_table_root.is_some())
+    {
         return Err(CdcError::InvalidConfiguration(
-            "CDC requires at least one target".to_owned(),
+            "CDC requires at least one target, or a root under which to adopt new tables"
+                .to_owned(),
         ));
     }
     if options.max_transaction_bytes == 0 {
@@ -2918,6 +2941,133 @@ mod tests {
     use pintail_probe::{SourceColumn, SourceFlavor, SourceKey, SourceTable};
     use pintail_store::{StoreOptions, TableStore};
     use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
+
+    /// A source that can stream, with no tables of its own.
+    fn streamable_source() -> pintail_probe::ProbeReport {
+        serde_json::from_str(
+            r#"{
+                "database": "app",
+                "server": {
+                    "version": "8.4.0",
+                    "version_comment": "MySQL Community Server",
+                    "flavor": "mysql"
+                },
+                "variables": {},
+                "grants": [],
+                "capabilities": {
+                    "log_bin": true,
+                    "row_binlog": true,
+                    "full_row_image": true,
+                    "full_row_metadata": true,
+                    "replication_grants": true,
+                    "global_read_lock": true,
+                    "gtid_available": true,
+                    "recommended_mode": "cdc",
+                    "reasons": []
+                },
+                "tables": [],
+                "warnings": []
+            }"#,
+        )
+        .expect("probe report")
+    }
+
+    /// Every tracked table dropped and re-created leaves nothing to open:
+    /// dropped tables are retained for reading, not streamed. Refusing that
+    /// run stranded the database, because the CREATE events that supersede
+    /// the retained rows are only ever read by a run.
+    #[test]
+    fn a_run_with_no_targets_is_allowed_when_it_can_adopt_new_tables() {
+        use super::validate_configuration;
+        let report = streamable_source();
+        let adopting = CdcOptions {
+            auto_include_new_tables: true,
+            new_table_root: Some(std::path::PathBuf::from("/tables")),
+            ..CdcOptions::default()
+        };
+        validate_configuration(&report, &[], &adopting).expect("a run that can adopt is allowed");
+
+        // Without a root there is nowhere to put an adopted table, so an
+        // empty run really has nothing to do and stays a configuration error.
+        let barren = CdcOptions {
+            auto_include_new_tables: true,
+            new_table_root: None,
+            ..CdcOptions::default()
+        };
+        assert!(validate_configuration(&report, &[], &barren).is_err());
+        let excluded = CdcOptions {
+            auto_include_new_tables: false,
+            new_table_root: Some(std::path::PathBuf::from("/tables")),
+            ..CdcOptions::default()
+        };
+        assert!(validate_configuration(&report, &[], &excluded).is_err());
+    }
+
+    /// Superseding a generation removes the old files first and commits the
+    /// metadata last. Committed first, a crash in between leaves a live
+    /// table row beside the old generation's files, and every later cycle
+    /// is refused when it opens them - change capture stops for the whole
+    /// database. Proven here by failing the removal: the row must still be
+    /// marked dropped.
+    #[cfg(unix)]
+    #[test]
+    fn a_supersession_that_cannot_remove_the_old_files_commits_nothing() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let root = workspace.path().join("tables");
+        let old = super::new_table_directory(&root, "events");
+        std::fs::create_dir_all(&old).expect("old generation");
+        std::fs::write(old.join("table.wal"), b"old").expect("old file");
+        std::fs::create_dir_all(root.join(".probe")).expect("probe");
+
+        let metadata_path = workspace.path().join("meta.db");
+        let metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("source", "app", b"unused", "2026-09-14T00:00:00Z")
+            .expect("database");
+        metadata
+            .upsert_snapshot_table("source", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("table");
+        metadata
+            .mark_table_orphaned(
+                "source",
+                "events",
+                "DROP TABLE events",
+                "2026-09-14T00:00:01Z",
+            )
+            .expect("orphan");
+
+        let mut permissions = std::fs::metadata(&root).expect("root").permissions();
+        let original = permissions.mode();
+        permissions.set_mode(0o555);
+        std::fs::set_permissions(&root, permissions).expect("seal the root");
+        // A privileged runner ignores the seal, and then this proves nothing.
+        let sealed = std::fs::remove_dir_all(root.join(".probe")).is_err();
+
+        let outcome = super::supersede_generation(
+            &metadata,
+            "source",
+            &root,
+            &mut [],
+            &std::collections::BTreeMap::new(),
+            "events",
+            true,
+        );
+
+        let mut restored = std::fs::metadata(&root).expect("root").permissions();
+        restored.set_mode(original);
+        std::fs::set_permissions(&root, restored).expect("unseal the root");
+        if !sealed {
+            return;
+        }
+
+        assert!(outcome.is_err(), "the removal must fail under the seal");
+        let records = metadata.tables("source").expect("tables");
+        assert!(
+            records[0].orphaned_at.is_some(),
+            "the table stays dropped until its old files are gone"
+        );
+    }
 
     #[test]
     fn file_position_versions_are_ordered_and_deterministic() {

@@ -21,6 +21,7 @@ pub use error::StoreError;
 pub use publication::{publish_changes_under, published_generation, retain_writer_locks};
 pub use segment::{
     BoundDomain, ColumnBounds, ColumnSma, NativeUnits, SegmentSmas, SmaExtremes, SmaSum,
+    sync_directory,
 };
 pub use store::GroupedFoldSpan;
 pub use store::{
