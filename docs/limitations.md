@@ -299,6 +299,10 @@ stays readable as a list of things to fix.
 
 ## CDC engine
 
+- A source whose table names are case-sensitive can hold two tables whose
+  names differ only in case (`T1` and `t1`). Neither is streamed or queryable:
+  a query naming either is refused as an unknown table, and every other table
+  in the database keeps replicating.
 - The binlog decoder is pinned to a fork. Published `mysql_common` panics
   on a transaction-payload header whose field id or compression type falls
   outside the range it narrows to, and `mysql_async` decodes those events

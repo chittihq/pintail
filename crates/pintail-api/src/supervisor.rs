@@ -668,10 +668,22 @@ fn open_targets(
         .filter(|table| table.orphaned_at.is_none())
         .map(|table| table.name.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
+    // Two source tables whose names differ only in case cannot be told apart
+    // by change capture, which matches names regardless of case. Streaming
+    // either would stop the stream for every table, so neither is streamed.
+    let mut spellings = std::collections::BTreeMap::<String, usize>::new();
+    for source in &report.tables {
+        *spellings
+            .entry(source.name.to_ascii_lowercase())
+            .or_default() += 1;
+    }
     report
         .tables
         .iter()
-        .filter(|source| tracked.contains(&source.name.to_ascii_lowercase()))
+        .filter(|source| {
+            let name = source.name.to_ascii_lowercase();
+            tracked.contains(&name) && spellings[&name] == 1
+        })
         .cloned()
         .map(|source| {
             let directory = table_directory(root, &source.name);
