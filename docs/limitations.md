@@ -124,8 +124,12 @@ stays readable as a list of things to fix.
   query. Their conservative memory bound and generated replacement output are
   charged to the per-query ceiling; dynamic patterns are deliberately uncached
   so no program can outlive the row that requested it.
-- Byte-level transcoding among character sets other than UTF-8 and binary is
-  unsupported and rejects explicitly.
+- SQL conversion does not implement legacy single-byte or multibyte encodings
+  beyond Unicode encodings. Wide encodings are not accepted as client/result
+  wire encodings or local table declarations. Ill-formed wide text can be
+  inspected by byte functions directly behind an introducer, but character
+  operations reject when it has no valid Unicode representation. Mixed-set
+  coercibility and byte-based `GROUP_CONCAT` truncation remain incomplete.
 - Explicit `COLLATE` accepts the four replicated profiles
   (`utf8mb4_0900_ai_ci`, `utf8mb4_general_ci`, `utf8mb4_unicode_ci`,
   `utf8mb4_bin`) and maps the

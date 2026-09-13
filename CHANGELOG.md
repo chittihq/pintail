@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- UCS-2, UTF-16 and UTF-32 expression encoding for introducers, `CONVERT`,
+  connection-generated strings and byte-reading functions, with encoding
+  captured in query plans and isolated cached answers.
+
 - Unaliased result labels preserve regular-expression source text, omit
   trailing comments, retain `IGNORE_SPACE` whitespace, and honor the
   255-byte name limit. Prefixed adjacent strings concatenate correctly.

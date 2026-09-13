@@ -118,3 +118,15 @@ then commit. Finish the batch with the complete rc profile, retain its
 artifacts, and bank changed ledgers only after reviewing the outcome.
 Neither a focused replay nor an increased agreement percentage is a release
 gate.
+
+### Unicode encoding boundary
+
+Expressions retain their SQL encoding independently of the Unicode value
+carrier. Introducers decode explicitly; byte consumers encode explicitly,
+with direct byte preservation for an introduced literal. String functions,
+conditional branches and aggregate outputs retain encoding identity. The
+connection encoding is captured during binding and participates in the
+shared-query key. UCS-2, UTF-16 (both byte orders) and UTF-32 have explicit
+codecs; this does not enable wide client/result wire encodings or wide local
+column declarations. Full coercibility and encoded aggregate truncation
+remain separate work.

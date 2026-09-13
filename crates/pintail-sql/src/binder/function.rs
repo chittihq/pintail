@@ -1083,6 +1083,31 @@ pub(super) fn bind_convert(
     if *is_try || *target_before_value || !styles.is_empty() {
         return Err(BindError::UnsupportedExpression(conversion.to_string()));
     }
+    if let (None, Some(charset)) = (data_type, charset)
+        && let Some(encoding) = pintail_types::CharacterSet::from_name(&charset.to_string())
+    {
+        let argument = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+        return if argument.data_type == Some(DataType::Binary) {
+            Ok(crate::text_charset::wrap(
+                argument,
+                ScalarFunction::DecodeText(encoding),
+                DataType::Utf8,
+            ))
+        } else {
+            let cast = crate::text_charset::wrap(
+                argument,
+                ScalarFunction::Cast(DataType::Utf8),
+                DataType::Utf8,
+            );
+            // Always retain an explicit conversion, including conversion back
+            // to UTF-8 from a differently encoded expression.
+            Ok(crate::text_charset::wrap(
+                cast,
+                ScalarFunction::TextCharset(encoding),
+                DataType::Utf8,
+            ))
+        };
+    }
     let target = match (data_type, charset) {
         (Some(data_type), _) => cast_data_type(data_type)
             .ok_or_else(|| BindError::InvalidScalarFunction(format!("CONVERT TO {data_type}")))?,
@@ -1278,6 +1303,8 @@ pub(super) fn bind_scalar(
         ));
     }
     let (data_type, nullable) = match function {
+        ScalarFunction::EncodedOrd(_) => (Some(DataType::UInt64), args[0].nullable),
+
         // A session-zone reading keeps its column's type and nullability.
         ScalarFunction::SessionTimestamp => (
             args.first().and_then(|argument| argument.data_type),
@@ -1327,7 +1354,7 @@ pub(super) fn bind_scalar(
         {
             (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }
-        ScalarFunction::ConcatWs
+        ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
             if args
                 .iter()
                 .any(|argument| argument.data_type == Some(DataType::Binary)) =>
@@ -1453,7 +1480,7 @@ pub(super) fn bind_scalar(
             extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::ConcatWs
+        ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
@@ -1480,7 +1507,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
-        ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.
@@ -1681,13 +1708,19 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
     };
+    let charset = crate::text_charset::scalar_charset(function, &args);
     let mut args = args;
     coerce_decimal_branches(function, data_type, &mut args);
-    Ok(BoundExpr {
-        kind: BoundExprKind::Scalar { function, args },
-        data_type,
-        nullable,
-    })
+    let mut function = function;
+    crate::text_charset::byte_arguments(&mut function, &mut args);
+    Ok(crate::text_charset::annotate(
+        BoundExpr {
+            kind: BoundExprKind::Scalar { function, args },
+            data_type,
+            nullable,
+        },
+        charset,
+    ))
 }
 
 /// Whether a `STR_TO_DATE` format string carries any of the given specifier

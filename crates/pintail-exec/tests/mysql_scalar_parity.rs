@@ -364,10 +364,12 @@ fn a_character_set_introducer_decides_what_the_literal_bytes_mean() {
         ("IF(_binary 'a' = 'A', 1, 0)", "0"),
         ("IF('a' = 'A', 1, 0)", "1"),
         ("_latin1 'abc'", "abc"),
+        ("_ucs2 X'0420'", "Р"),
+        ("_utf16 'ab'", "慢"),
         ("HEX(_binary 'ab')", "6162"),
     ]);
     // Reading these bytes as UTF-8 would answer different text.
-    for refused in ["_ucs2 X'0420'", "_utf16 'ab'", "_latin1 'caf\u{e9}'"] {
+    for refused in ["_ucs2 X'D800'", "_utf16 X'D800'", "_latin1 'caf\u{e9}'"] {
         assert!(scalar(refused).starts_with("error"), "{refused}");
     }
 }
@@ -554,4 +556,43 @@ fn prefixed_adjacent_strings_form_one_value() {
         ("_utf8mb4 'first' 'second'", "firstsecond"),
         ("CONCAT(_utf8mb4 'a' 'b', 'c')", "abc"),
     ]);
+}
+
+#[test]
+fn wide_character_sets_preserve_character_and_byte_operations() {
+    for (expression, expected) in [
+        ("HEX(_ucs2 X'004100E9')", "004100E9"),
+        ("HEX(LOWER(_ucs2 X'004100C9'))", "006100E9"),
+        ("LENGTH(_utf16 X'D83DDE00')", "4"),
+        ("CHAR_LENGTH(_utf16 X'D83DDE00')", "1"),
+        ("HEX(CONVERT('é' USING utf16le))", "E900"),
+        ("HEX(_utf32 X'01')", "00000001"),
+        ("HEX(_ucs2 X'D800')", "D800"),
+        ("ORD(_ucs2 X'0041')", "65"),
+        ("ASCII(_ucs2 X'0041')", "0"),
+        (
+            "SHA1(_ucs2 X'0061')",
+            "3106600e0327ca77371f2526df794ed84322585c",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
+
+#[test]
+fn connection_encoding_is_captured_in_generated_and_aggregate_text() {
+    for (expression, expected) in [
+        ("HEX(CONCAT(id))", "0031"),
+        ("HEX(GROUP_CONCAT(id, 7))", "00310037"),
+        ("HEX(CAST('é' AS BINARY))", "00E9"),
+        ("HEX(CASE WHEN id=1 THEN 'é' ELSE 'x' END)", "00E9"),
+        ("HEX(CONVERT(_utf16 X'D83DDE00' USING utf8mb4))", "F09F9880"),
+        ("HEX(SUBSTRING(CONCAT(id, 'é'), 2))", "00E9"),
+    ] {
+        pintail_sql::set_session_character_set(Some(pintail_types::CharacterSet::Ucs2));
+        let answer = evaluate_rows_after_plan(expression, 1, || {
+            pintail_sql::set_session_character_set(None);
+        });
+        assert_eq!(answer, expected, "{expression}");
+    }
 }

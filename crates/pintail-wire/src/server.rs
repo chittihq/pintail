@@ -1285,6 +1285,9 @@ impl Backend {
                     ));
                     let _ =
                         pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
+                    pintail_sql::set_session_character_set(pintail_types::CharacterSet::from_name(
+                        &session.charset_connection,
+                    ));
                     pintail_sql::set_session_default_collation(Some(session.collation_connection));
                     pintail_sql::set_session_div_precision_increment(Some(
                         session.div_precision_increment,
@@ -1314,6 +1317,7 @@ impl Backend {
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
+                    pintail_sql::set_session_character_set(None);
                     pintail_sql::set_session_div_precision_increment(None);
                     pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);
@@ -1627,6 +1631,13 @@ impl Backend {
             | "character_set_connection"
             | "character_set_results") => {
                 let charset = value.to_ascii_lowercase();
+                if name == "character_set_connection"
+                    && let Some(encoding) = pintail_types::CharacterSet::from_name(&charset)
+                {
+                    session.charset_connection = charset;
+                    session.collation_connection = encoding.default_collation();
+                    return Ok(());
+                }
                 if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary")
                     || (name == "character_set_results" && charset == "null")
                 {

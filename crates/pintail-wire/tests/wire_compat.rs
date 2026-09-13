@@ -594,6 +594,21 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET sql_mode = @saved_names_mode")
         .await
         .expect("restore name mode");
+    for (charset, encoded) in [("ucs2", "0037"), ("utf8mb4", "37"), ("utf32", "00000037")] {
+        connection
+            .query_drop(format!("SET character_set_connection = '{charset}'"))
+            .await
+            .expect("set connection encoding");
+        let answer: Option<(String, String)> = connection
+            .query_first("SELECT HEX(CONCAT(7)), HEX(CAST(7 AS CHAR))")
+            .await
+            .expect("encoded generated text");
+        assert_eq!(answer, Some((encoded.to_owned(), encoded.to_owned())));
+    }
+    connection
+        .query_drop("SET character_set_connection = 'utf8mb4'")
+        .await
+        .expect("restore connection encoding");
     // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
     // setMaxRows asks; a written LIMIT is its own.
     connection

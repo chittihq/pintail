@@ -1443,6 +1443,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
+                    ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
@@ -1576,6 +1577,7 @@ impl CompiledExpr {
                     | ScalarFunction::FindInSet
                     | ScalarFunction::Ascii
                     | ScalarFunction::Ord
+                    | ScalarFunction::EncodedOrd(_)
                     | ScalarFunction::Field
                     | ScalarFunction::ToDays
                     | ScalarFunction::YearWeek
@@ -1640,6 +1642,7 @@ impl CompiledExpr {
                 };
                 let first = bound(0);
                 match function {
+                    ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
                         .map(|argument| argument.string_value_upper_bound(batch, row))
@@ -1763,6 +1766,7 @@ impl CompiledExpr {
                     | ScalarFunction::FindInSet
                     | ScalarFunction::Ascii
                     | ScalarFunction::Ord
+                    | ScalarFunction::EncodedOrd(_)
                     | ScalarFunction::Field
                     | ScalarFunction::ToDays
                     | ScalarFunction::YearWeek
@@ -2225,6 +2229,35 @@ fn evaluate_eager_scalar_inner(
             } else {
                 text.to_uppercase()
             }))
+        }
+        ScalarFunction::TextCharset(charset) => {
+            let text = scalar_string(&values[0])?;
+            charset
+                .decode(&charset.encode(&text))
+                .map(Value::Utf8)
+                .ok_or(ExecError::InvalidExpressionType)
+        }
+        ScalarFunction::DecodeText(charset) => {
+            let Value::Binary(bytes) = &values[0] else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            charset
+                .decode(bytes)
+                .map(Value::Utf8)
+                .ok_or(ExecError::InvalidExpressionType)
+        }
+        ScalarFunction::EncodeText(charset) => {
+            Ok(Value::Binary(charset.encode(&scalar_string(&values[0])?)))
+        }
+        ScalarFunction::EncodedOrd(charset) => {
+            let text = scalar_string(&values[0])?;
+            let bytes = text
+                .chars()
+                .next()
+                .map_or_else(Vec::new, |first| charset.encode(&first.to_string()));
+            Ok(Value::UInt64(bytes.iter().fold(0_u64, |total, byte| {
+                total.wrapping_mul(256).wrapping_add(u64::from(*byte))
+            })))
         }
         ScalarFunction::Collate { .. } | ScalarFunction::PackedDateParts { .. } => {
             Ok(values[0].clone())
@@ -2757,12 +2790,10 @@ fn evaluate_eager_scalar_inner(
                 .map_or(0, |index| index as u64 + 1);
             Ok(Value::UInt64(if list.is_empty() { 0 } else { position }))
         }
-        ScalarFunction::Ascii => Ok(Value::UInt64(
-            scalar_string(&values[0])?
-                .bytes()
-                .next()
-                .map_or(0, u64::from),
-        )),
+        ScalarFunction::Ascii => Ok(Value::UInt64(match &values[0] {
+            Value::Binary(bytes) => bytes.first().copied().map_or(0, u64::from),
+            value => scalar_string(value)?.bytes().next().map_or(0, u64::from),
+        })),
         ScalarFunction::Ord => {
             let text = scalar_string(&values[0])?;
             let Some(first) = text.chars().next() else {
@@ -2946,10 +2977,13 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::Utf8(format_grouped(units, scale)))
         }
         ScalarFunction::ToBase64 => {
-            let text = scalar_string(&values[0])?;
+            let bytes = match &values[0] {
+                Value::Binary(bytes) => bytes.clone(),
+                value => scalar_string(value)?.into_bytes(),
+            };
             // MySQL breaks the encoding every 76 characters, so a 58-byte
             // subject encodes to 81 characters rather than 80.
-            let encoded = base64_encode(text.as_bytes());
+            let encoded = base64_encode(&bytes);
             let mut wrapped = String::with_capacity(encoded.len() + encoded.len() / 76);
             for (index, chunk) in encoded.as_bytes().chunks(76).enumerate() {
                 if index > 0 {

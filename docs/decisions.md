@@ -1732,3 +1732,16 @@ would mislead it: a `sql_mode` that would change which rows come back, a
 character set Pintail does not serve, an isolation level a read-only replica
 cannot honour. The test is not how hard the variable is to support. It is
 whether the client chose it, or its driver did.
+
+### SQL character encoding is independent of the Unicode value carrier
+
+Read parity requires byte-observing functions to see a string's declared
+encoding. Keep the storage and execution carrier as Unicode and capture
+encoding in bound expression operations: decode introduced bytes, normalize
+text to its repertoire, and encode at byte consumers. A direct byte consumer
+of an introduced literal can preserve ill-formed bytes without inventing a
+Unicode value. Query sharing includes connection encoding.
+
+This extends the read layer to explicit Unicode encoding conversions without
+claiming the deferred full collation/coercibility matrix, changing storage
+formats, or enabling unimplemented client and result protocol encodings.

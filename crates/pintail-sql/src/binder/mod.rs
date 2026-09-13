@@ -3037,7 +3037,10 @@ fn bind_expr_inner(
         }
         Expr::Prefixed { prefix, value } => bind_introducer(
             &prefix.value,
-            bind_expr_inner(value, tables, aggregates, windows, subqueries)?,
+            match value.as_ref() {
+                Expr::Value(value) => bind_literal_raw(&value.value)?,
+                _ => bind_expr_inner(value, tables, aggregates, windows, subqueries)?,
+            },
         ),
         Expr::Convert { .. } => bind_convert(expr, tables, aggregates, windows, subqueries),
         Expr::Substring {
@@ -3359,6 +3362,13 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
 }
 
 fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
+    Ok(crate::text_charset::annotate(
+        bind_literal_raw(value)?,
+        crate::session_character_set(),
+    ))
+}
+
+fn bind_literal_raw(value: &SqlValue) -> Result<BoundExpr, BindError> {
     let (value, declared) = match value {
         SqlValue::Null => (Value::Null, None),
         SqlValue::Boolean(value) => (Value::Boolean(*value), None),
@@ -4746,6 +4756,13 @@ fn bind_aggregate(
         ensure_supported_text_collation(&[expression])?;
     }
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
+    let charset = expr
+        .as_ref()
+        .filter(|expr| expr.data_type == Some(DataType::Utf8))
+        .map_or_else(
+            crate::session_character_set,
+            crate::text_charset::character_set,
+        );
     let aggregate = BoundAggregate {
         declared: true,
         function: aggregate_function,
@@ -4767,11 +4784,14 @@ fn bind_aggregate(
             aggregate_list.push(aggregate);
             index
         });
-    Ok(BoundExpr {
-        kind: BoundExprKind::Aggregate(index),
-        data_type,
-        nullable,
-    })
+    Ok(crate::text_charset::annotate(
+        BoundExpr {
+            kind: BoundExprKind::Aggregate(index),
+            data_type,
+            nullable,
+        },
+        charset,
+    ))
 }
 
 fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
@@ -5918,14 +5938,7 @@ fn exact_numeric_type(data_type: Option<DataType>) -> bool {
     )
 }
 
-/// A literal behind a character set introducer (`_utf8mb4 '...'`,
-/// `_binary X'00'`). The introducer names how the literal's bytes are
-/// encoded: under a UTF-8 set they are this engine's own text, under
-/// `_binary` they are bytes, and under a single- or multi-byte set such as
-/// `_latin1` or `_koi8r` they spell the same text only while every byte is
-/// ASCII. A wide set (`_ucs2`, `_utf16`, `_utf32`) or a non-ASCII literal
-/// would need transcoding, and reading its bytes as UTF-8 answers different
-/// text, so it is refused.
+/// An introducer labels literal bytes; it does not transcode connection text.
 fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
     let charset = prefix
         .strip_prefix('_')
@@ -5945,6 +5958,33 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
         Value::Null => return Ok(literal),
         _ => return refuse(),
     };
+    if let Some(encoding) = pintail_types::CharacterSet::from_name(&charset) {
+        if encoding.minimum_width() == 1 {
+            let Some(text) = encoding.decode(bytes) else {
+                return refuse();
+            };
+            return Ok(crate::text_charset::annotate(
+                BoundExpr {
+                    data_type: Some(DataType::Utf8),
+                    nullable: false,
+                    kind: BoundExprKind::Literal(Value::Utf8(text)),
+                },
+                encoding,
+            ));
+        }
+        let width = encoding.minimum_width();
+        let mut padded = vec![0; (width - bytes.len() % width) % width];
+        padded.extend_from_slice(bytes);
+        return Ok(crate::text_charset::wrap(
+            BoundExpr {
+                data_type: Some(DataType::Binary),
+                nullable: false,
+                kind: BoundExprKind::Literal(Value::Binary(padded)),
+            },
+            ScalarFunction::DecodeText(encoding),
+            DataType::Utf8,
+        ));
+    }
     let value = match charset.as_str() {
         "binary" => Value::Binary(bytes.to_vec()),
         "utf8mb4" | "utf8mb3" | "utf8" => match std::str::from_utf8(bytes) {
@@ -7878,11 +7918,13 @@ mod tests {
 
     #[test]
     fn convert_using_rejects_charsets_it_cannot_transcode() {
-        for charset in ["utf8", "utf8mb3", "utf8mb4", "binary"] {
+        for charset in [
+            "utf8", "utf8mb3", "utf8mb4", "binary", "ucs2", "utf16", "utf16le", "utf32",
+        ] {
             bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events"))
                 .unwrap_or_else(|error| panic!("{charset} should bind: {error:?}"));
         }
-        for charset in ["latin1", "ascii", "utf16"] {
+        for charset in ["latin1", "ascii", "koi8r"] {
             assert!(matches!(
                 bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events")),
                 Err(BindError::InvalidScalarFunction(_))

@@ -503,6 +503,13 @@ impl BoundExpr {
         if let [only] = explicit.as_slice() {
             return Some(only.clone());
         }
+        if let BoundExprKind::Scalar {
+            function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
+            ..
+        } = &self.kind
+        {
+            return Some(charset.default_collation().to_owned());
+        }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
         collations.sort_unstable();
@@ -787,7 +794,15 @@ pub enum ScalarFunction {
         /// Strip from the end.
         trailing: bool,
     },
-    /// UTF-8 byte length.
+    /// Normalize Unicode into a SQL character set and retain its identity.
+    TextCharset(pintail_types::CharacterSet),
+    /// Read encoded bytes as Unicode, retaining the original character set.
+    DecodeText(pintail_types::CharacterSet),
+    /// Materialize SQL text bytes at a byte-observing boundary.
+    EncodeText(pintail_types::CharacterSet),
+    /// Leading logical character encoded in its SQL character set.
+    EncodedOrd(pintail_types::CharacterSet),
+    /// Encoded byte length.
     Length,
     /// Unicode scalar-value count.
     CharLength,
