@@ -4,6 +4,72 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5-rc4] - 2026-09-13
+
+Verification. MySQL's and MariaDB's own regression suites now run as a gate
+stage, and most of this release is what replaying them found. Seventy-nine
+commits since rc3.
+
+### Added
+
+- MySQL's `mysql-test` suite, and MariaDB's, replayed statement by statement
+  against Pintail and a live MySQL 8.4 as the new `mtr` gate stage - 633
+  files, 23,118 SELECTs, compared byte for byte. The suites are fetched from
+  upstream at a pinned commit rather than vendored, so no upstream test file
+  enters this repository. A second mode replays the same statements through
+  change capture: every `INSERT`, `UPDATE` and `ALTER` runs on a
+  binlog-enabled source and each SELECT is compared once the mirror catches
+  up, which turns MySQL's own suite into a replication test.
+- A bug atlas drawn from the fix history of MySQL, MariaDB and ClickHouse,
+  ranked by bug class, and generated gates named per class.
+- A seeded simulation of change capture checked against a reference model,
+  a live matrix across MySQL 8.4/8.0/5.7 and MariaDB 11.4/10.6, disk-fault
+  injection for the store, and randomized checks of the vectorized kernels
+  against row-by-row evaluation.
+- Session variables a client sets on connect: `sql_select_limit`,
+  `div_precision_increment`, user variables, and `SET time_zone` back to the
+  global zone. Local tables accept hexadecimal literals, `TRUE`/`FALSE`, and
+  a column's literal default.
+- Observability: `PINTAIL_QUERY_TRACE_JSON` writes the per-statement phases
+  as a Chrome trace for `ui.perfetto.dev`; a `console` feature serves the
+  tokio task view for `tokio-console`; and every wire connection now records
+  why it closed.
+
+### Fixed
+
+- Wrong answers the replay found: temporals read as numbers, dates written
+  packed or punctuated and two-digit years, exact integer casts, `TRUNCATE`
+  and `DIV` on large integers, `BINARY(n)`, `GREATEST`/`LEAST` across mixed
+  types, text beyond the `TIME` range, character-set introducers such as
+  `_ucs2 X'0420'`, legacy utf8 comparison, a negated `DECIMAL` zero printed
+  with a sign, and `<=>`, simple `CASE` and row `IN` typed as `=` types them.
+- Local tables stored `ENUM`, `SET`, `JSON` and `DECIMAL` values as written
+  rather than as MySQL stores them, and gave text the wrong collation.
+- Change capture no longer freezes: a copy and a row count each bound their
+  wait for a table another session has locked, the global read lock no longer
+  stalls the source, a binlog packet larger than `max_allowed_packet` is
+  read, and two source tables whose names differ only in case no longer stop
+  the database replicating.
+- The store checksums its segment header and column descriptors, and refuses
+  a table whose manifest is lost after a flush.
+- A join frees its build table when its probe is exhausted rather than when
+  the query is dropped, so an aggregate or sort above it is not charged for a
+  hash table nobody can read.
+- The wire idle deadline applies to waiting for a command, not to running
+  one, so a long query is no longer disconnected without an error packet.
+
+### Changed
+
+- The `rc` profile runs twelve stages and takes about forty minutes; `mtr` is
+  twenty of that. A release candidate claims correctness, and this is the
+  stage most likely to find a regression, because nobody here wrote it.
+- The differential oracle is 1,907 cases, with ten multi-table join
+  topologies added - three- and four-table chains, a bushy join, an outer
+  join above an inner one, and the `RIGHT JOIN` after an inner join whose
+  `ON` carries a subquery.
+- Segment format version 4 adds a descriptor digest. Readers accept every
+  published version.
+
 ## [0.1.5-rc3] - 2026-09-13
 
 The columnar execution program, and the schema-migration decisions that go
