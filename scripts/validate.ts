@@ -953,6 +953,9 @@ async function main() {
   const ARTIFACT_PREFIXES = [
     'tests/e2e/results',
     'tests/sqllogic/results-oracle.json',
+    // The suite replay reports every run; its gate reads the baseline, which
+    // only a bank run rewrites.
+    'tests/mtr/results',
     'benchmark/results.',
     // Re-measured whenever the benchmark's fingerprint or its host changes,
     // and banked with the rest of the bench evidence. Its absence here
