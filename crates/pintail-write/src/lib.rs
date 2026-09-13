@@ -505,17 +505,38 @@ fn hex_literal(digits: &str, column: &SourceColumn) -> Result<Value, WriteError>
         .map(|start| u8::from_str_radix(&padded[start..start + 2], 16))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| wrong())?;
+    // A DECIMAL is carried as canonical text, so its storage type is Utf8 -
+    // but the column is a number, and MySQL reads a hex literal in a
+    // numeric column as its big-endian value. Reading it as text instead
+    // stored X'31' as 1, the digit its byte spells, rather than 49.
+    let numeric = matches!(
+        column.pintail_type,
+        DataType::Decimal { .. }
+            | DataType::Float32
+            | DataType::Float64
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+    );
+    if numeric {
+        if bytes.len() > 8 {
+            return Err(wrong());
+        }
+        let number = bytes
+            .iter()
+            .fold(0_u64, |number, byte| number << 8 | u64::from(*byte));
+        return typed_value(&number.to_string(), column);
+    }
     match column.pintail_type.storage_type() {
         DataType::Binary => Ok(Value::Binary(bytes)),
         DataType::Utf8 => String::from_utf8(bytes)
             .map_err(|_| wrong())
             .and_then(|text| typed_value(&text, column)),
-        DataType::Int64 | DataType::UInt64 if bytes.len() <= 8 => {
-            let number = bytes
-                .iter()
-                .fold(0_u64, |number, byte| number << 8 | u64::from(*byte));
-            typed_value(&number.to_string(), column)
-        }
         _ => Err(wrong()),
     }
 }
@@ -596,6 +617,55 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
 /// an `Int64` and a `DECIMAL` stores its exact text, exactly as a
 /// replicated row of the same column does, so a locally written row and a
 /// mirrored one are indistinguishable to every reader below this point.
+/// Rewrites `1.5e3` as `1500` and `15e-2` as `0.15`, moving the decimal
+/// point through the digits instead of through a double. Returns `None`
+/// when the text is not a number in exponent form, or when the exponent is
+/// too large to write out.
+fn expand_exponent(text: &str) -> Option<String> {
+    /// Beyond this the written-out form is longer than any DECIMAL can
+    /// hold, and the caller refuses it as out of range either way.
+    const MAX_SHIFT: i32 = 128;
+    let marker = text.find(['e', 'E'])?;
+    let (mantissa, exponent) = text.split_at(marker);
+    let exponent = exponent[1..].parse::<i32>().ok()?;
+    if exponent.abs() > MAX_SHIFT {
+        return None;
+    }
+    let (sign, digits) = match mantissa.as_bytes().first()? {
+        b'-' => ("-", &mantissa[1..]),
+        b'+' => ("", &mantissa[1..]),
+        _ => ("", mantissa),
+    };
+    let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
+    if whole.is_empty() && fraction.is_empty() {
+        return None;
+    }
+    if !whole
+        .bytes()
+        .chain(fraction.bytes())
+        .all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut all = format!("{whole}{fraction}");
+    // Where the point sits in `all` once the exponent has moved it.
+    let mut point = i32::try_from(whole.len()).ok()? + exponent;
+    while point > i32::try_from(all.len()).ok()? {
+        all.push('0');
+    }
+    while point <= 0 {
+        all.insert(0, '0');
+        point += 1;
+    }
+    let split = usize::try_from(point).ok()?;
+    let (whole, fraction) = all.split_at(split);
+    Some(if fraction.is_empty() {
+        format!("{sign}{whole}")
+    } else {
+        format!("{sign}{whole}.{fraction}")
+    })
+}
+
 fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
     let wrong = |reason: &str| {
         WriteError::Invalid(format!(
@@ -636,17 +706,26 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         // DECIMAL(5,2) is 1.01, and a leading zero or a longer fraction never
         // reaches the store, where comparisons read the text.
         DataType::Decimal { precision, scale } => {
-            let exact = pintail_types::parse_decimal_rounded(text.trim(), scale).or_else(|| {
-                let number = text
-                    .trim()
-                    .parse::<f64>()
-                    .ok()
-                    .filter(|number| number.is_finite())?;
-                pintail_types::parse_decimal_rounded(
-                    &format!("{number:.*}", usize::from(scale)),
-                    scale,
-                )
-            });
+            let exact = pintail_types::parse_decimal_rounded(text.trim(), scale)
+                .or_else(|| {
+                    // Exponent form is exact in MySQL up to the declared
+                    // precision. Rewriting the digits keeps it exact here
+                    // too; the double below cannot, and quietly rounded
+                    // values a DECIMAL is wide enough to hold.
+                    let expanded = expand_exponent(text.trim())?;
+                    pintail_types::parse_decimal_rounded(&expanded, scale)
+                })
+                .or_else(|| {
+                    let number = text
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|number| number.is_finite())?;
+                    pintail_types::parse_decimal_rounded(
+                        &format!("{number:.*}", usize::from(scale)),
+                        scale,
+                    )
+                });
             let units = exact.ok_or_else(|| wrong("expected a decimal number"))?;
             let limit = 10_i128
                 .checked_pow(u32::from(precision))

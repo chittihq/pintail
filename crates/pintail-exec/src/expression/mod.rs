@@ -3086,7 +3086,11 @@ fn evaluate_eager_scalar_inner(
             // The time of a datetime, or a bare time kept as it was written;
             // fractional seconds survive when present.
             let text = scalar_string(&values[0])?;
-            if let Ok(value) = parse_mysql_datetime(&text) {
+            // Digits alone are a packed TIME (HHMMSS), not a packed date -
+            // TIME('101112') is 10:11:12, not that date's midnight.
+            if !text.trim().bytes().all(|byte| byte.is_ascii_digit())
+                && let Ok(value) = parse_mysql_datetime(&text)
+            {
                 let time = value.time();
                 let rendered = if time.nanosecond() == 0 {
                     time.format("%H:%M:%S").to_string()
@@ -4094,7 +4098,13 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
 /// rounded before the documented +/-838:59:59 clamp.
 fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
     let text = text.trim();
-    if let Ok(datetime) = parse_mysql_datetime(text) {
+    // Digits alone are a packed TIME here (HHMMSS), not a packed date:
+    // CAST('101112' AS TIME) is 10:11:12, and reading it as 2010-11-12
+    // returns that date's midnight instead. The same guard stands in
+    // `parse_temporal_micros`.
+    if !text.bytes().all(|byte| byte.is_ascii_digit())
+        && let Ok(datetime) = parse_mysql_datetime(text)
+    {
         let fraction = format!("{:06}", datetime.and_utc().timestamp_subsec_micros());
         return format_mysql_time(
             false,
@@ -6467,6 +6477,22 @@ pub(crate) fn compare_utf8_mysql(left: &str, right: &str, collation: Collation) 
 /// `DIV` of operands that are not both integers: exact over decimal text,
 /// through a double otherwise, and cut toward zero either way.
 fn integer_quotient(left: &Value, right: &Value) -> Result<Value, ExecError> {
+    // DIV is unsigned when either operand is, the same rule the integer
+    // arms follow. Forcing the quotient into an i64 made a whole half of
+    // the unsigned range an overflow error where MySQL answers - the top
+    // of BIGINT UNSIGNED divided by anything is still in range.
+    let unsigned = matches!(left, Value::UInt64(_)) || matches!(right, Value::UInt64(_));
+    let quotient = |value: i128| -> Result<Value, ExecError> {
+        if unsigned {
+            u64::try_from(value)
+                .map(Value::UInt64)
+                .map_err(|_| ExecError::NumericOverflow)
+        } else {
+            i64::try_from(value)
+                .map(Value::Int64)
+                .map_err(|_| ExecError::NumericOverflow)
+        }
+    };
     let decimal = |value: &Value| -> Option<(String, u8)> {
         let text = match value {
             Value::Int64(number) => number.to_string(),
@@ -6491,20 +6517,19 @@ fn integer_quotient(left: &Value, right: &Value) -> Result<Value, ExecError> {
             if divisor == 0 {
                 return Ok(divided_by_zero());
             }
-            return i64::try_from(dividend / divisor)
-                .map(Value::Int64)
-                .map_err(|_| ExecError::NumericOverflow);
+            return quotient(dividend / divisor);
         }
     }
     let divisor = mysql_f64(right)?;
     if divisor == 0.0 {
         return Ok(divided_by_zero());
     }
-    let quotient = (mysql_f64(left)? / divisor).trunc();
-    format!("{quotient:.0}")
-        .parse()
-        .map(Value::Int64)
-        .map_err(|_| ExecError::NumericOverflow)
+    let truncated = (mysql_f64(left)? / divisor).trunc();
+    quotient(
+        format!("{truncated:.0}")
+            .parse()
+            .map_err(|_| ExecError::NumericOverflow)?,
+    )
 }
 
 // One arm per storage domain; splitting hides the correspondence.
@@ -6519,7 +6544,7 @@ fn evaluate_arithmetic(
         return Ok(Value::Null);
     }
     if op == BinaryOp::IntegerDivide
-        && data_type == Some(DataType::Int64)
+        && matches!(data_type, Some(DataType::Int64 | DataType::UInt64))
         && [left, right].iter().any(|operand| {
             matches!(
                 operand,

@@ -248,3 +248,59 @@ fn statements_a_local_database_does_not_accept_are_refused() {
         assert!(run(&fixture, sql).is_err(), "must refuse: {sql}");
     }
 }
+
+/// A hex literal in a numeric column is its big-endian value, not the text
+/// its bytes spell: X'31' is 49 everywhere, and a DECIMAL is a numeric
+/// column even though its storage carries canonical text.
+#[test]
+fn a_hex_literal_in_a_numeric_column_is_its_value() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE amounts (id BIGINT UNSIGNED NOT NULL, whole BIGINT NOT NULL, \
+         exact DECIMAL(10,2) NOT NULL, label VARCHAR(8) NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO amounts (id, whole, exact, label) VALUES (1, X'31', X'31', X'31')",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "amounts"),
+        vec![vec![
+            Value::UInt64(1),
+            Value::Int64(49),
+            Value::Utf8("49.00".to_owned()),
+            // A text column reads the same literal as the characters its
+            // bytes spell, which is the other half of MySQL's rule.
+            Value::Utf8("1".to_owned()),
+        ]]
+    );
+}
+
+/// Exponent form reaches a DECIMAL exactly. Routed through a double it
+/// rounded at the seventeenth digit, inside the range a DECIMAL(30,0) holds.
+#[test]
+fn an_exponent_form_decimal_keeps_every_digit() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE wide (id BIGINT UNSIGNED NOT NULL, big DECIMAL(30,0) NOT NULL, \
+         small DECIMAL(10,4) NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO wide (id, big, small) VALUES (1, 12345678901234567890e3, 15e-2)",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "wide"),
+        vec![vec![
+            Value::UInt64(1),
+            Value::Utf8("12345678901234567890000".to_owned()),
+            Value::Utf8("0.1500".to_owned()),
+        ]]
+    );
+}

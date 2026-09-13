@@ -2473,6 +2473,7 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST('12:34:56.7896' AS TIME(3)), \
              CAST('-12:34:56.123456' AS TIME(6)), \
              CAST('1 02:03:04' AS TIME), CAST('1112' AS TIME), \
+             CAST('101112' AS TIME), TIME('101112'), \
              CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
              CAST('850:00:00' AS TIME)",
         ),
@@ -2925,7 +2926,9 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "hand-written arithmetic",
-            "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2",
+            "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2, \
+             CAST(18446744073709551615 AS UNSIGNED) DIV 1.0, \
+             CAST(18446744073709551615 AS UNSIGNED) DIV 2.5",
         ),
         ordered(
             "hand-written aggregate empty input",
