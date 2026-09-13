@@ -143,6 +143,7 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
         let mut nullable = true;
         let mut character_set = None;
         let mut collation = None;
+        let mut default = None;
         let mut auto_increment = false;
         for option in &column.options {
             match &option.option {
@@ -160,6 +161,12 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
                 ColumnOption::Comment(_) | ColumnOption::Unique(_) | ColumnOption::OnUpdate(_) => {}
                 ColumnOption::Default(Expr::Value(value))
                     if matches!(value.value, SqlValue::Null) => {}
+                // A literal default fills a column an INSERT leaves out, as it does
+                // on the source; an expression default (CURRENT_TIMESTAMP) is
+                // refused below, since nothing here evaluates it per row.
+                ColumnOption::Default(expr) if default_literal(expr).is_some() => {
+                    default = default_literal(expr);
+                }
                 ColumnOption::CharacterSet(name) => character_set = Some(name.to_string()),
                 ColumnOption::Collation(name) => collation = Some(name.to_string()),
                 // AUTO_INCREMENT is accepted in the declaration and recorded the
@@ -208,6 +215,14 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
         }
         if auto_increment {
             declared.extra = "auto_increment".to_owned();
+        }
+        if let Some(default) = default {
+            // Checked now, as MySQL checks it at CREATE TABLE, so an INSERT never
+            // meets a default its column cannot hold.
+            typed_value(&default, &declared).map_err(|_| {
+                WriteError::Invalid(format!("Invalid default value for '{column_name}'"))
+            })?;
+            declared.default_value = Some(default);
         }
         columns.push(declared);
     }
@@ -377,10 +392,19 @@ pub fn bind_insert_from(
                 row.len()
             )));
         }
-        // Start every column at NULL, then place the named ones. A column
-        // absent from the list keeps NULL, and the NOT NULL check below
-        // catches the ones that may not.
-        let mut values_by_id = vec![Value::Null; table.columns.len()];
+        // Start every column at its default - NULL unless it declared a
+        // literal one - then place the named ones. A column absent from the list
+        // keeps that, and the NOT NULL check below catches the ones that may not.
+        let mut values_by_id = table
+            .columns
+            .iter()
+            .map(|column| {
+                column
+                    .default_value
+                    .as_deref()
+                    .map_or(Ok(Value::Null), |default| typed_value(default, column))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         for (column, expr) in named.iter().zip(row) {
             let position = table
                 .columns
@@ -459,6 +483,32 @@ fn primary_key(
         });
     }
     PrimaryKey::new(parts).map_err(|error| WriteError::Invalid(error.to_string()))
+}
+
+/// The text of a column default this write path can apply: a number, a
+/// signed number or a string. An expression default is `None`.
+fn default_literal(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Value(ValueWithSpan {
+            value: SqlValue::Number(number, _),
+            ..
+        }) => Some(number.clone()),
+        Expr::Value(ValueWithSpan {
+            value: SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text),
+            ..
+        }) => Some(text.clone()),
+        Expr::UnaryOp {
+            op: sqlparser::ast::UnaryOperator::Minus,
+            expr,
+        } => match expr.as_ref() {
+            Expr::Value(ValueWithSpan {
+                value: SqlValue::Number(number, _),
+                ..
+            }) => Some(format!("-{number}")),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Types one literal against its column.

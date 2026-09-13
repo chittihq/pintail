@@ -413,3 +413,30 @@ fn a_decimal_value_is_stored_at_its_declared_scale() {
         "out of range for DECIMAL(5,2)"
     );
 }
+
+#[test]
+fn a_literal_column_default_fills_an_omitted_column() {
+    let plan = create(
+        "CREATE TABLE d (id INT PRIMARY KEY, qty INT NOT NULL DEFAULT '0', \
+         note VARCHAR(8) DEFAULT 'none', delta INT DEFAULT -1, extra INT)",
+    )
+    .expect("binds");
+    let statement = parse_statement("INSERT INTO d (id) VALUES (1)").expect("parses");
+    let rows = bind_insert_from(&statement, &plan.table, 1)
+        .expect("binds")
+        .rows;
+    assert_eq!(
+        rows[0].values()[1..],
+        [
+            Value::Int64(0),
+            Value::Utf8("none".to_owned()),
+            Value::Int64(-1),
+            Value::Null
+        ]
+    );
+    assert!(create("CREATE TABLE d (id INT PRIMARY KEY, qty INT DEFAULT 'many')").is_err());
+    assert!(
+        create("CREATE TABLE d (id INT PRIMARY KEY, at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+            .is_err()
+    );
+}
