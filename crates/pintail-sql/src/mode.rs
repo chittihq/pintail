@@ -14,6 +14,8 @@ pub struct ParseMode {
     pub no_backslash_escapes: bool,
     /// Subtraction is signed even over unsigned operands.
     pub no_unsigned_subtraction: bool,
+    /// Function-name lexing consumes whitespace after identifier tokens.
+    pub ignore_space: bool,
 }
 
 impl ParseMode {
@@ -30,6 +32,7 @@ impl ParseMode {
             pipes_as_concat: has("PIPES_AS_CONCAT"),
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
             no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
+            ignore_space: has("IGNORE_SPACE"),
         }
     }
 }

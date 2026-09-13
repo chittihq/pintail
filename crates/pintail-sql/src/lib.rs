@@ -110,6 +110,7 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
             }
         }
     }
+    combine_prefixed_strings(&mut tokens, dialect.1);
     interval::rewrite(&mut tokens);
     let mut statements = Parser::new(&dialect)
         .with_tokens_with_locations(tokens)
@@ -127,6 +128,57 @@ pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
         debug_assert!(flow.is_continue());
     }
     Ok(statements)
+}
+
+/// An introducer qualifies the entire adjacent-string sequence. Combining its
+/// tokens prevents the next string from being parsed as an implicit alias.
+fn combine_prefixed_strings(
+    tokens: &mut Vec<sqlparser::tokenizer::TokenWithSpan>,
+    mode: ParseMode,
+) {
+    use sqlparser::tokenizer::Token;
+    let string = |token: &Token| match token {
+        Token::SingleQuotedString(text) => Some(text.clone()),
+        Token::DoubleQuotedString(text) if !mode.ansi_quotes => Some(text.clone()),
+        _ => None,
+    };
+    let mut at = 0;
+    while at < tokens.len() {
+        if !matches!(&tokens[at].token, Token::Word(word) if word.quote_style.is_none() && word.value.starts_with('_'))
+        {
+            at += 1;
+            continue;
+        }
+        let Some(first) = (at + 1..tokens.len())
+            .find(|&index| !matches!(tokens[index].token, Token::Whitespace(_)))
+        else {
+            break;
+        };
+        let Some(mut text) = string(&tokens[first].token) else {
+            at = first;
+            continue;
+        };
+        let mut last = first;
+        while let Some(next) = (last + 1..tokens.len())
+            .find(|&index| !matches!(tokens[index].token, Token::Whitespace(_)))
+        {
+            let Some(part) = string(&tokens[next].token) else {
+                break;
+            };
+            text.push_str(&part);
+            last = next;
+        }
+        if last > first {
+            tokens[first].span = tokens[first].span.union(&tokens[last].span);
+            tokens[first].token = if matches!(tokens[first].token, Token::DoubleQuotedString(_)) {
+                Token::DoubleQuotedString(text)
+            } else {
+                Token::SingleQuotedString(text)
+            };
+            tokens.drain(first + 1..=last);
+        }
+        at = first + 1;
+    }
 }
 
 /// Repairs sqlparser's `MySQL` `DIV` misparse. The dialect parses the right

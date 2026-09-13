@@ -8,6 +8,11 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 
 ## Implemented slices
 
+- Result labels keep the first adjacent literal, preserve regular-expression
+  spelling, remove trailing comments, and truncate at a UTF-8 boundary within
+  255 bytes. `IGNORE_SPACE`, including its handshake capability, controls
+  trailing identifier whitespace. Prefixed strings concatenate as values.
+
 - `default_week_format` is captured in plans and cache keys. All eight
   modes apply to `WEEK` and `EXTRACT(WEEK ...)`; explicit modes and
   `YEARWEEK` keep their own behavior.

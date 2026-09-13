@@ -675,7 +675,6 @@ where
 const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     // Parsing.
     "HIGH_NOT_PRECEDENCE",
-    "IGNORE_SPACE",
     // Evaluation.
     "REAL_AS_FLOAT",
     // Would ask ingestion to keep values it normalizes to NULL.
@@ -1915,6 +1914,12 @@ impl Handler for Backend {
             _ => None,
         };
         if let Ok(mut session) = self.session.lock() {
+            if response
+                .capabilities
+                .contains(CapabilityFlags::CLIENT_IGNORE_SPACE)
+            {
+                session.sql_mode.push_str(",IGNORE_SPACE");
+            }
             if let Some(collation) = collation {
                 session.collation_connection = collation;
             }

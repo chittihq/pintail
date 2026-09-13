@@ -23,6 +23,7 @@ use crate::types::{Column, ErrorKind, StatusFlags};
 pub fn server_capabilities() -> CapabilityFlags {
     CapabilityFlags::CLIENT_LONG_PASSWORD
         | CapabilityFlags::CLIENT_LONG_FLAG
+        | CapabilityFlags::CLIENT_IGNORE_SPACE
         | CapabilityFlags::CLIENT_PROTOCOL_41
         | CapabilityFlags::CLIENT_SECURE_CONNECTION
         | CapabilityFlags::CLIENT_CONNECT_WITH_DB

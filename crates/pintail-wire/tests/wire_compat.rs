@@ -570,12 +570,30 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         let weeks: Option<(u64, u64, u64, u64)> = connection
             .query_first("SELECT WEEK('2021-01-01'), EXTRACT(WEEK FROM '2021-01-01'), WEEK('2021-01-01', 0), YEARWEEK('2021-01-01')")
             .await.expect("session week mode");
-        assert_eq!(weeks, Some((week, week, 0, 202052)));
+        assert_eq!(weeks, Some((week, week, 0, 202_052)));
     }
     connection
         .query_drop("SET default_week_format = @saved_week")
         .await
         .expect("restore week mode");
+    connection
+        .query_drop("SET @saved_names_mode = @@sql_mode")
+        .await
+        .expect("save name mode");
+    connection
+        .query_drop("SET sql_mode = 'IGNORE_SPACE'")
+        .await
+        .expect("enable whitespace lexing");
+    let named = connection
+        .query_iter("SELECT NULL IS NULL   FROM DUAL")
+        .await
+        .expect("named expression");
+    assert_eq!(named.columns_ref()[0].name_str(), "NULL IS NULL   ");
+    named.drop_result().await.expect("drain names");
+    connection
+        .query_drop("SET sql_mode = @saved_names_mode")
+        .await
+        .expect("restore name mode");
     // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
     // setMaxRows asks; a written LIMIT is its own.
     connection

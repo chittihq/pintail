@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Unaliased result labels preserve regular-expression source text, omit
+  trailing comments, retain `IGNORE_SPACE` whitespace, and honor the
+  255-byte name limit. Prefixed adjacent strings concatenate correctly.
+
 - Session default week modes in `WEEK` and `EXTRACT(WEEK ...)`, with
   explicit modes and `YEARWEEK` retaining their independent behavior.
 

@@ -25,6 +25,8 @@ impl CapabilityFlags {
     pub const CLIENT_LONG_FLAG: Self = Self(0x0000_0004);
     /// Client sends a default schema in the handshake.
     pub const CLIENT_CONNECT_WITH_DB: Self = Self(0x0000_0008);
+    /// Function-name parsing ignores whitespace following identifiers.
+    pub const CLIENT_IGNORE_SPACE: Self = Self(0x0000_0100);
     /// Client understands the 4.1 protocol. Required.
     pub const CLIENT_PROTOCOL_41: Self = Self(0x0000_0200);
     /// Client requests a TLS upgrade before sending credentials.

@@ -547,3 +547,11 @@ fn default_week_mode_is_captured_before_execution() {
         });
     assert_eq!(actual, "53");
 }
+
+#[test]
+fn prefixed_adjacent_strings_form_one_value() {
+    assert_answers(&[
+        ("_utf8mb4 'first' 'second'", "firstsecond"),
+        ("CONCAT(_utf8mb4 'a' 'b', 'c')", "abc"),
+    ]);
+}

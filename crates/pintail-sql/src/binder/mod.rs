@@ -6411,7 +6411,7 @@ fn unsigned_literal(expr: &Expr) -> Result<u64, BindError> {
 /// the user typed it - `floor(5.5)` stays lowercase, `round(5.64,1)` keeps
 /// its spacing. Without the statement text the parser's rendering stands in.
 fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> String {
-    match expr {
+    let mut name = match expr {
         Expr::Identifier(identifier) => identifier.value.clone(),
         Expr::CompoundIdentifier(identifiers) => identifiers
             .last()
@@ -6429,7 +6429,9 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
             match &value.value {
                 SqlValue::SingleQuotedString(text)
                 | SqlValue::DoubleQuotedString(text)
-                | SqlValue::NationalStringLiteral(text) => text.clone(),
+                | SqlValue::NationalStringLiteral(text) => source
+                    .and_then(|sql| first_literal_name(sql, expr))
+                    .unwrap_or_else(|| text.clone()),
                 _ => unreachable!("guarded above"),
             }
         }
@@ -6443,12 +6445,58 @@ fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> S
                     )
             ) =>
         {
-            projection_name(value, None, clause)
+            projection_name(value, source, clause)
         }
+        Expr::UnaryOp {
+            op: UnaryOperator::Plus,
+            expr: value,
+        } if matches!(value.as_ref(), Expr::Value(literal) if matches!(literal.value, SqlValue::Number(..))) => {
+            value.to_string()
+        }
+        Expr::Value(_) => source
+            .and_then(|sql| source_text(sql, expr, clause))
+            .map_or_else(|| expr.to_string(), |text| text.trim_end().to_owned()),
         _ => source
             .and_then(|sql| source_text(sql, expr, clause))
             .unwrap_or_else(|| expr.to_string()),
+    };
+    let mut length = name.len().min(255);
+    while !name.is_char_boundary(length) {
+        length -= 1;
     }
+    name.truncate(length);
+    name
+}
+
+/// Adjacent string literals concatenate their values but keep the first label.
+fn first_literal_name(sql: &str, expr: &Expr) -> Option<String> {
+    use sqlparser::tokenizer::Token;
+    let text = |token: &Token| match token {
+        Token::SingleQuotedString(text)
+        | Token::DoubleQuotedString(text)
+        | Token::NationalStringLiteral(text) => Some(text.clone()),
+        _ => None,
+    };
+    let span = expr.span();
+    let start = (span.start.line, span.start.column);
+    let end = (span.end.line, span.end.column);
+    let tokens = source_tokens(sql)?;
+    let mut first = tokens.iter().position(|token| {
+        let at = (token.span.start.line, token.span.start.column);
+        at >= start && at <= end && text(&token.token).is_some()
+    })?;
+    // A prefixed concatenation's span can start at its last string token.
+    // Walk the contiguous literal sequence back to the label-bearing token.
+    while let Some(previous) = tokens[..first]
+        .iter()
+        .rposition(|token| !matches!(token.token, Token::Whitespace(_)))
+    {
+        if text(&tokens[previous].token).is_none() {
+            break;
+        }
+        first = previous;
+    }
+    text(&tokens[first].token)
 }
 
 /// Which list an expression sits in, and so which tokens bound it.
@@ -6505,32 +6553,88 @@ impl SourceClause {
     }
 }
 
+type LocatedTokens = std::rc::Rc<Vec<sqlparser::tokenizer::TokenWithSpan>>;
+
+struct SourceTokens {
+    sql: String,
+    mode: crate::ParseMode,
+    tokens: LocatedTokens,
+}
+
 std::thread_local! {
     /// The statement last tokenized for projection names, with its tokens:
     /// every unnamed projection of one statement reads the same ones, and
     /// tokenizing the whole statement again for each was a cost per column.
-    static SOURCE_TOKENS: std::cell::RefCell<
-        Option<(String, std::rc::Rc<Vec<sqlparser::tokenizer::TokenWithSpan>>)>,
-    > = const { std::cell::RefCell::new(None) };
+    static SOURCE_TOKENS: std::cell::RefCell<Option<SourceTokens>> = const { std::cell::RefCell::new(None) };
 }
 
 /// `sql`'s tokens, tokenized once per statement text.
-fn source_tokens(sql: &str) -> Option<std::rc::Rc<Vec<sqlparser::tokenizer::TokenWithSpan>>> {
+fn source_tokens(sql: &str) -> Option<LocatedTokens> {
     SOURCE_TOKENS.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some((text, tokens)) = cache.as_ref()
-            && text == sql
+        let mode = crate::session_parse_mode();
+        if let Some(cached) = cache.as_ref()
+            && cached.sql == sql
+            && cached.mode == mode
         {
-            return Some(std::rc::Rc::clone(tokens));
+            return Some(std::rc::Rc::clone(&cached.tokens));
         }
         let tokens = std::rc::Rc::new(
-            sqlparser::tokenizer::Tokenizer::new(&sqlparser::dialect::MySqlDialect {}, sql)
-                .tokenize_with_location()
-                .ok()?,
+            sqlparser::tokenizer::Tokenizer::new(
+                &crate::PintailDialect(sqlparser::dialect::MySqlDialect {}, mode),
+                sql,
+            )
+            .tokenize_with_location()
+            .ok()?,
         );
-        *cache = Some((sql.to_owned(), std::rc::Rc::clone(&tokens)));
+        *cache = Some(SourceTokens {
+            sql: sql.to_owned(),
+            mode,
+            tokens: std::rc::Rc::clone(&tokens),
+        });
         Some(tokens)
     })
+}
+
+fn source_offset(
+    sql: &str,
+    offsets: &[usize],
+    location: sqlparser::tokenizer::Location,
+) -> Option<usize> {
+    let line = offsets.get(usize::try_from(location.line).ok()?.checked_sub(1)?)?;
+    let column = usize::try_from(location.column).ok()?.checked_sub(1)?;
+    let mut chars = sql[*line..].char_indices();
+    Some(
+        *line
+            + chars
+                .nth(column)
+                .map_or(sql.len() - *line, |(index, _)| index),
+    )
+}
+
+fn source_label_end(
+    sql: &str,
+    last: &sqlparser::tokenizer::TokenWithSpan,
+    boundary: usize,
+    clause: SourceClause,
+    offsets: &[usize],
+) -> Option<usize> {
+    use sqlparser::tokenizer::Token;
+    let token_end = source_offset(sql, offsets, last.span.end)?;
+    let keep_space = matches!(clause, SourceClause::Projection)
+        && crate::session_parse_mode().ignore_space
+        && matches!(&last.token, Token::Word(word) if word.quote_style.is_none());
+    let end = if keep_space {
+        token_end
+            + sql[token_end..boundary]
+                .chars()
+                .take_while(|character| character.is_whitespace())
+                .map(char::len_utf8)
+                .sum::<usize>()
+    } else {
+        token_end
+    };
+    Some(end)
 }
 
 /// The exact text of `expr` inside `sql`: the item that contains the
@@ -6541,23 +6645,18 @@ fn source_tokens(sql: &str) -> Option<std::rc::Rc<Vec<sqlparser::tokenizer::Toke
 fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     use sqlparser::tokenizer::Token;
 
-    let start = expr.span().start;
+    // Regular-expression nodes have no outer span; their left operand locates
+    // the same select-list item without regenerating its text.
+    let start = match expr {
+        Expr::RLike { expr, .. } => expr.span().start,
+        _ => expr.span().start,
+    };
     if start.line == 0 {
         return None;
     }
     let tokens = source_tokens(sql)?;
     let offsets = line_offsets(sql);
-    let offset_of = |location: sqlparser::tokenizer::Location| -> Option<usize> {
-        let line = offsets.get(usize::try_from(location.line).ok()?.checked_sub(1)?)?;
-        let column = usize::try_from(location.column).ok()?.checked_sub(1)?;
-        let mut chars = sql[*line..].char_indices();
-        Some(
-            *line
-                + chars
-                    .nth(column)
-                    .map_or(sql.len() - *line, |(index, _)| index),
-        )
-    };
+    let offset_of = |location| source_offset(sql, &offsets, location);
     let mut at = tokens.iter().position(|token| {
         (token.span.start.line, token.span.start.column) >= (start.line, start.column)
     })?;
@@ -6615,6 +6714,7 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     let mut skipped = 0u32;
     let mut closed = 0u32;
     let mut end = sql.len();
+    let mut last = None;
     for token in &tokens[at..] {
         let boundary = match &token.token {
             Token::LParen => {
@@ -6636,16 +6736,20 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
             Token::Word(word) => {
                 skipped == 0 && closed == depth && clause.closes(&word.value.to_ascii_uppercase())
             }
-            Token::EOF => true,
+            Token::EOF | Token::SemiColon => true,
             _ => false,
         };
         if boundary {
             end = offset_of(token.span.start)?;
             break;
         }
+        if !matches!(token.token, Token::Whitespace(_)) {
+            last = Some(token);
+        }
     }
+    let end = source_label_end(sql, last?, end, clause, &offsets)?;
     let begin = offset_of(tokens[first].span.start)?;
-    (begin < end).then(|| sql[begin..end].trim().to_owned())
+    (begin < end).then(|| sql[begin..end].to_owned())
 }
 
 /// Byte offset of the first character of every line.
@@ -7133,6 +7237,64 @@ mod tests {
             .bind(&statement)
             .expect("binds");
         assert_eq!(query.projection[0].name, "FLOOR(5.5)");
+    }
+
+    #[test]
+    fn unaliased_names_preserve_literal_boundaries_and_discard_trailing_comments() {
+        let catalog = catalog();
+        for (sql, names) in [
+            (
+                "SELECT 'left' 'right', _utf8mb4 'first' 'second', +00042, 1 /* tail */",
+                vec!["left", "first", "00042", "1"],
+            ),
+            ("SELECT 'a'  regexp 'A'", vec!["'a'  regexp 'A'"]),
+            ("SELECT 1 # tail", vec!["1"]),
+        ] {
+            let statement = parse_statement(sql).expect("parse");
+            let query = Binder::new(&catalog, Some("analytics"))
+                .with_source(sql)
+                .bind(&statement)
+                .expect("bind");
+            assert_eq!(
+                query
+                    .projection
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect::<Vec<_>>(),
+                names
+            );
+        }
+        let text = "é".repeat(200);
+        let sql = format!("SELECT '{text}'");
+        let statement = parse_statement(&sql).expect("parse");
+        let query = Binder::new(&catalog, Some("analytics"))
+            .with_source(&sql)
+            .bind(&statement)
+            .expect("bind");
+        assert_eq!(query.projection[0].name, "é".repeat(127));
+    }
+
+    #[test]
+    fn expression_labels_follow_ignore_space_without_changing_literal_labels() {
+        let catalog = catalog();
+        for (mode, expected) in [("", "NULL IS NULL"), ("IGNORE_SPACE", "NULL IS NULL   ")] {
+            crate::with_parse_mode(crate::ParseMode::from_sql_mode(mode), || {
+                let sql = "SELECT NULL IS NULL   FROM DUAL";
+                let statement = parse_statement(sql).expect("parse");
+                let query = Binder::new(&catalog, Some("analytics"))
+                    .with_source(sql)
+                    .bind(&statement)
+                    .expect("bind");
+                assert_eq!(query.projection[0].name, expected);
+                let sql = "SELECT NULL /* comment */ FROM DUAL";
+                let statement = parse_statement(sql).expect("parse");
+                let query = Binder::new(&catalog, Some("analytics"))
+                    .with_source(sql)
+                    .bind(&statement)
+                    .expect("bind");
+                assert_eq!(query.projection[0].name, "NULL");
+            });
+        }
     }
 
     /// A schema on `MySQL` 5.x's default is now queryable, not just readable.
