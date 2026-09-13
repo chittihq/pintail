@@ -6666,6 +6666,7 @@ fn source_offset(
 fn source_label_end(
     sql: &str,
     last: &sqlparser::tokenizer::TokenWithSpan,
+    previous: Option<&sqlparser::tokenizer::TokenWithSpan>,
     boundary: usize,
     clause: SourceClause,
     offsets: &[usize],
@@ -6674,6 +6675,9 @@ fn source_label_end(
     let token_end = source_offset(sql, offsets, last.span.end)?;
     let keep_space = matches!(clause, SourceClause::Projection)
         && crate::session_parse_mode().ignore_space
+        // Qualified names use identifier lexing after the period, which
+        // does not consume function-name lookahead whitespace.
+        && !previous.is_some_and(|token| matches!(token.token, Token::Period))
         && matches!(&last.token, Token::Word(word) if word.quote_style.is_none());
     let end = if keep_space {
         token_end
@@ -6766,6 +6770,7 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     let mut closed = 0u32;
     let mut end = sql.len();
     let mut last = None;
+    let mut previous = None;
     for token in &tokens[at..] {
         let boundary = match &token.token {
             Token::LParen => {
@@ -6795,10 +6800,11 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
             break;
         }
         if !matches!(token.token, Token::Whitespace(_)) {
+            previous = last;
             last = Some(token);
         }
     }
-    let end = source_label_end(sql, last?, end, clause, &offsets)?;
+    let end = source_label_end(sql, last?, previous, end, clause, &offsets)?;
     let begin = offset_of(tokens[first].span.start)?;
     (begin < end).then(|| sql[begin..end].to_owned())
 }
@@ -7346,6 +7352,27 @@ mod tests {
                 assert_eq!(query.projection[0].name, "NULL");
             });
         }
+    }
+
+    #[test]
+    fn qualified_identifier_labels_stop_before_trailing_space() {
+        let catalog = catalog();
+        crate::with_parse_mode(crate::ParseMode::from_sql_mode("IGNORE_SPACE"), || {
+            let sql = "SELECT t.v<=>t.v   , v<=>v   , - v   , - t.v   FROM (SELECT 1 v) t";
+            let statement = parse_statement(sql).expect("parse");
+            let query = Binder::new(&catalog, Some("analytics"))
+                .with_source(sql)
+                .bind(&statement)
+                .expect("bind");
+            assert_eq!(
+                query
+                    .projection
+                    .iter()
+                    .map(|item| item.name.as_str())
+                    .collect::<Vec<_>>(),
+                ["t.v<=>t.v", "v<=>v   ", "- v   ", "- t.v"]
+            );
+        });
     }
 
     /// A schema on `MySQL` 5.x's default is now queryable, not just readable.

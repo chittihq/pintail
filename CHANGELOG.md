@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Qualified identifier result labels stop at the identifier under
+  `IGNORE_SPACE`, preserving the distinct unqualified-label behavior.
+
 - Decimal `ROUND` and `TRUNCATE` retain exact arithmetic and the input
   scale when their precision argument is computed at runtime.
 
