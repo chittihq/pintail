@@ -41,16 +41,19 @@
 ///           MTR_GATE=1 PINTAIL_MTR_BINARY=../../target/release/pintail bun run run.ts
 
 import { createServer } from 'node:net'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
 
 const repository = resolve(import.meta.dir, '..', '..')
 const nonce = Date.now().toString(36)
 const mysqlName = `pintail-mtr-mysql-${process.pid}-${nonce}`
 const cacheDir = join(import.meta.dir, '.cache')
-const diffsDir = join(import.meta.dir, 'diffs')
+const runDir = join(repository, 'validate-out', 'mtr', 'runs', `${nonce}-${process.pid}`)
+const diffsDir = join(runDir, 'diffs')
+let provenance: { sourceCommit: string | null; sourceDirty: boolean | null; binarySha256: string } | undefined
 
 /// Which regression suite to replay. The oracle is MySQL 8.4 for both: Pintail
 /// answers as MySQL does, and MariaDB's suite contributes query shapes, not a
@@ -149,6 +152,13 @@ let pintailHttpPort = 0
 let pintailWirePort = 0
 let pintailUrl = ''
 let token = ''
+
+// Comparison uses complete rows; only the diagnostic sample is bounded.
+function diffSample(rows: string[]): string {
+  return rows.map((row) => row.length > 4096
+    ? `${row.slice(0, 4096)}… [${row.length} characters total]`
+    : row).join(' ‖ ')
+}
 
 function log(message: string) {
   console.log(`[mtr] ${message}`)
@@ -729,7 +739,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
           counts['pintail-error'] += 1
           const cls = errorClass(String(error))
           errorClasses[cls] = (errorClasses[cls] ?? 0) + 1
-          errorLines.push(`## line ${statement.line}: ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
+          errorLines.push(`## line ${statement.line} (${id}): ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
           continue
         }
         const ordered = hasOuterOrderBy(sql) && !statement.sorted
@@ -742,14 +752,14 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
           exactIds.push(id)
         } else if (rowsMatch) {
           counts['name-mismatch'] += 1
-          diffLines.push(`## line ${statement.line}: column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
+          diffLines.push(`## line ${statement.line} (${id}): column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
         } else {
           counts.mismatch += 1
           const firstDiff = want.findIndex((line, index) => line !== got[index])
           diffLines.push(
-            `## line ${statement.line}\n\n\`\`\`sql\n${sql}\n\`\`\`\n${want.length} vs ${got.length} rows, ${ordered ? 'ordered' : 'unordered'} compare\n` +
-              `mysql:   ${want.slice(Math.max(0, firstDiff), firstDiff + 3).join(' ‖ ') || '(no rows)'}\n` +
-              `pintail: ${got.slice(Math.max(0, firstDiff), firstDiff + 3).join(' ‖ ') || '(no rows)'}\n`,
+            `## line ${statement.line} (${id})\n\n\`\`\`sql\n${sql}\n\`\`\`\n${want.length} vs ${got.length} rows, ${ordered ? 'ordered' : 'unordered'} compare\n` +
+              `mysql:   ${diffSample(want.slice(Math.max(0, firstDiff), firstDiff + 3)) || '(no rows)'}\n` +
+              `pintail: ${diffSample(got.slice(Math.max(0, firstDiff), firstDiff + 3)) || '(no rows)'}\n`,
           )
         }
         continue
@@ -832,10 +842,14 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   if (diffLines.length) {
     mkdirSync(diffsDir, { recursive: true })
     writeFileSync(join(diffsDir, `${name}.md`), `# ${name}.test\n\n${diffLines.join('\n')}`)
+  } else {
+    rmSync(join(diffsDir, `${name}.md`), { force: true })
   }
   if (errorLines.length) {
     mkdirSync(diffsDir, { recursive: true })
     writeFileSync(join(diffsDir, `${name}-errors.md`), `# ${name}.test: statements Pintail could not run\n\n${errorLines.join('\n')}`)
+  } else {
+    rmSync(join(diffsDir, `${name}-errors.md`), { force: true })
   }
   return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort() }
 }
@@ -1023,7 +1037,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
           counts['pintail-error'] += 1
           const cls = errorClass(String(error))
           bump(cls)
-          errorLines.push(`## line ${statement.line}: ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
+          errorLines.push(`## line ${statement.line} (${id}): ${cls}\n\n\`\`\`sql\n${sql}\n\`\`\`\n`)
           continue
         }
         const ordered = hasOuterOrderBy(sql) && !statement.sorted
@@ -1036,14 +1050,14 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
           exactIds.push(id)
         } else if (rowsMatch) {
           counts['name-mismatch'] += 1
-          diffLines.push(`## line ${statement.line}: column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
+          diffLines.push(`## line ${statement.line} (${id}): column names\n\n\`\`\`sql\n${sql}\n\`\`\`\nmysql:   ${expected.names.join(' | ')}\npintail: ${actual.names.join(' | ')}\n`)
         } else {
           counts.mismatch += 1
           const firstDiff = want.findIndex((line, index) => line !== got[index])
           diffLines.push(
-            `## line ${statement.line}\n\n\`\`\`sql\n${sql}\n\`\`\`\n${want.length} vs ${got.length} rows, ${ordered ? 'ordered' : 'unordered'} compare\n` +
-              `mysql:   ${want.slice(Math.max(0, firstDiff), firstDiff + 3).join(' ‖ ') || '(no rows)'}\n` +
-              `pintail: ${got.slice(Math.max(0, firstDiff), firstDiff + 3).join(' ‖ ') || '(no rows)'}\n`,
+            `## line ${statement.line} (${id})\n\n\`\`\`sql\n${sql}\n\`\`\`\n${want.length} vs ${got.length} rows, ${ordered ? 'ordered' : 'unordered'} compare\n` +
+              `mysql:   ${diffSample(want.slice(Math.max(0, firstDiff), firstDiff + 3)) || '(no rows)'}\n` +
+              `pintail: ${diffSample(got.slice(Math.max(0, firstDiff), firstDiff + 3)) || '(no rows)'}\n`,
           )
         }
         continue
@@ -1076,10 +1090,14 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
   if (diffLines.length) {
     mkdirSync(diffsDir, { recursive: true })
     writeFileSync(join(diffsDir, `${name}${suffix}.md`), `# ${name}.test (${MODE})\n\n${diffLines.join('\n')}`)
+  } else {
+    rmSync(join(diffsDir, `${name}${suffix}.md`), { force: true })
   }
   if (errorLines.length) {
     mkdirSync(diffsDir, { recursive: true })
     writeFileSync(join(diffsDir, `${name}${suffix}-errors.md`), `# ${name}.test (${MODE}): statements Pintail could not run\n\n${errorLines.join('\n')}`)
+  } else {
+    rmSync(join(diffsDir, `${name}${suffix}-errors.md`), { force: true })
   }
   return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort() }
 }
@@ -1129,7 +1147,8 @@ function publish(results: FileResult[], mysqlVersion: string) {
   // it, its tables had been changed by a statement a local database cannot
   // follow, MySQL itself refused it, or it reads the clock or the session.
   const notCompared =
-    total('pintail-error') + total('tainted') + total('mysql-error') + total('volatile')
+    total('pintail-error') + total('tainted') + total('mysql-error') + total('volatile') +
+    total('replica-lag') + total('replica-unsettled')
   const queries = compared + total('pintail-error') + total('tainted')
   const classes: Record<string, number> = {}
   for (const r of results) for (const [cls, n] of Object.entries(r.errorClasses)) classes[cls] = (classes[cls] ?? 0) + n
@@ -1138,6 +1157,8 @@ function publish(results: FileResult[], mysqlVersion: string) {
     `# ${SUITE_NAME === 'mysql' ? "MySQL's" : "MariaDB's"} regression suite against Pintail`,
     '',
     `Measured ${new Date().toISOString()}: \`${SUITE.dir.join('/')}\` from ${SUITE.repo} at \`${REF.slice(0, 12)}\`, oracle MySQL ${mysqlVersion}, ${results.length} files.`,
+    '',
+    `Replay mode: ${MODE}. Source commit: ${provenance?.sourceCommit ?? 'unavailable'}; source dirty: ${provenance?.sourceDirty ?? 'unknown'}. Binary SHA-256: ${provenance?.binarySha256 ?? 'unavailable'}.`,
     '',
     // The percentage is of COMPARED statements, and the buckets that never
     // reached a comparison are larger than the shortfall. Both numbers go in
@@ -1150,6 +1171,7 @@ function publish(results: FileResult[], mysqlVersion: string) {
       `${total('mismatch').toLocaleString()} differ in rows, ${total('name-mismatch').toLocaleString()} in column names only. ` +
       `${total('pintail-error').toLocaleString()} SELECTs Pintail could not run, ${total('tainted').toLocaleString()} were not compared because their tables were changed by statements a local database cannot follow, ` +
       `${total('mysql-error').toLocaleString()} failed on MySQL itself, ${total('volatile').toLocaleString()} depend on the clock, session or server and were not compared. ` +
+      `${total('replica-lag').toLocaleString()} waited past the replication deadline, ${total('replica-unsettled').toLocaleString()} read unsettled replica tables. ` +
       `Fixtures: ${total('setup').toLocaleString()} accepted, ${total('setup-rejected').toLocaleString()} rejected by Pintail, ${total('unsupported-setup').toLocaleString()} outside the replayed subset.`,
     '',
     'Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.',
@@ -1168,7 +1190,7 @@ function publish(results: FileResult[], mysqlVersion: string) {
           `## Mirror stalls`,
           '',
           stalls.length
-            ? `The mirror stopped following the source in ${stalls.length} files, and each stopped comparing at that point: ${stalls.map((f) => `\`${f}\``).join(', ')}. Reproductions are in \`tests/mtr/diffs/*-stall.md\`.`
+            ? `The mirror stopped following the source in ${stalls.length} files, and each stopped comparing at that point: ${stalls.map((f) => `\`${f}\``).join(', ')}. Reproductions are in \`${relative(repository, diffsDir)}/*-stall.md\`.`
             : 'None: the mirror followed the source through every file.',
           '',
         ]
@@ -1179,18 +1201,20 @@ function publish(results: FileResult[], mysqlVersion: string) {
     '|---:|---|',
     ...topClasses.map(([cls, n]) => `| ${n} | ${cls.replace(/\|/g, '\\|')} |`),
     '',
-    `Per-file diffs for mismatches are written to \`tests/mtr/diffs/\` (not committed).`,
+    `Per-file diffs for mismatches are written to \`${relative(repository, diffsDir)}/\` (not committed).`,
     '',
   ]
   writeFileSync(join(import.meta.dir, `results${suffix}.md`), lines.join('\n'))
+  writeFileSync(join(runDir, 'results.md'), lines.join('\n'))
   writeFileSync(
     join(import.meta.dir, `results${suffix}.json`),
     JSON.stringify(
-      { suite: SUITE_NAME, repo: SUITE.repo, ref: REF, mysqlVersion, measuredAt: new Date().toISOString(), totals: { exact: total('exact'), compared, queries }, results: results.map(({ exact: _, ...r }) => r) },
+      { suite: SUITE_NAME, mode: MODE, repo: SUITE.repo, ref: REF, mysqlVersion, provenance, artifacts: relative(repository, runDir), measuredAt: new Date().toISOString(), totals: { exact: total('exact'), compared, queries, replayed: compared + notCompared, notCompared }, results: results.map(({ exact: _, ...r }) => r) },
       null,
       2,
     ) + '\n',
   )
+  writeFileSync(join(runDir, 'results.json'), readFileSync(join(import.meta.dir, `results${suffix}.json`)))
 }
 
 interface Baseline {
@@ -1274,6 +1298,22 @@ async function main() {
   const mysqlVersion = String((version as unknown as string[])[0])
 
   const binary = await buildPintail()
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(binary)) hash.update(chunk)
+  let sourceCommit: string | null = null
+  let sourceDirty: boolean | null = null
+  try {
+    sourceCommit = (await command(['git', 'rev-parse', 'HEAD'], { quiet: true })).stdout.trim()
+    sourceDirty = Boolean((await command(['git', 'status', '--porcelain'], { quiet: true })).stdout.trim())
+  } catch {
+    log('source provenance unavailable: this checkout has no readable Git metadata')
+  }
+  provenance = { sourceCommit, sourceDirty, binarySha256: hash.digest('hex') }
+  mkdirSync(runDir, { recursive: true })
+  writeFileSync(join(runDir, 'run.json'), JSON.stringify({
+    suite: SUITE_NAME, mode: MODE, ref: REF, mysqlVersion, provenance,
+    selected, excluded: all.filter((name) => !selected.includes(name)),
+  }, null, 2) + '\n')
   pintailDataDir = mkdtempSync(join(tmpdir(), 'pintail-mtr-'))
   pintailHttpPort = await freePort()
   pintailWirePort = await freePort()
@@ -1283,7 +1323,8 @@ async function main() {
     await api<{ token: string }>('/api/auth/setup', { method: 'POST', auth: false, body: { email: 'mtr@pintail.local', password: 'mtr-gate-password' } })
   ).token
 
-  rmSync(diffsDir, { recursive: true, force: true })
+  // Each invocation owns its artifacts; another suite must not erase them.
+  mkdirSync(diffsDir, { recursive: true })
   const results: FileResult[] = []
   for (const name of selected) {
     let text: string
@@ -1324,6 +1365,7 @@ async function main() {
     join(repository, 'validate-out', 'mtr', `exact${suffix}.json`),
     JSON.stringify({ suite: SUITE_NAME, ref: REF, oracle: mysqlVersion, files: Object.fromEntries(results.map((r) => [r.file, r.exact])) }) + '\n',
   )
+  writeFileSync(join(runDir, 'exact.json'), readFileSync(join(repository, 'validate-out', 'mtr', `exact${suffix}.json`)))
   if (BANK) bank(results, mysqlVersion)
   if (baseline) {
     const ran = new Set(results.map((r) => r.file))
@@ -1333,7 +1375,7 @@ async function main() {
     for (const file of missing) log(`GATE: ${file} holds banked statements and did not run`)
     for (const entry of lost) log(`GATE: lost ${entry}`)
     if (missing.length || lost.length) {
-      log(`MTR-GATE-FAIL: ${lost.length} of ${banked} banked statements regressed, ${missing.length} files missing (diffs in tests/mtr/diffs/)`)
+      log(`MTR-GATE-FAIL: ${lost.length} of ${banked} banked statements regressed, ${missing.length} files missing (diffs in ${relative(repository, diffsDir)}/)`)
       process.exitCode = 1
     } else {
       log(`MTR-GATE-PASS: all ${banked} banked statements exact; ${exact - banked} newly exact${exact > banked ? ' - bank them with MTR_BANK=1' : ''}`)
