@@ -63,6 +63,71 @@ impl Default for SnapshotOptions {
     }
 }
 
+/// Takes the global read lock the copy's start position is captured under,
+/// or says why it was not taken.
+///
+/// The lock flushes every open table. While any session holds a table -
+/// LOCK TABLES, as a dump without a consistent snapshot takes for its whole
+/// run, or a long query - the flush cannot finish: a pending lock queues
+/// every write on the source behind it, and even once it gives up, the
+/// tables it marked stay marked, so every later read of them (the copy's
+/// own included) waits until that session lets go. So the lock is only
+/// attempted once no table is in use, and then with a bounded wait.
+async fn acquire_global_read_lock(
+    coordinator: &mut mysql_async::Conn,
+) -> Result<Result<(), String>, SnapshotError> {
+    let mut in_use = Vec::new();
+    for attempt in 0..10 {
+        let rows: Vec<Row> = coordinator
+            .query("SHOW OPEN TABLES WHERE In_use > 0")
+            .await?;
+        in_use = rows
+            .iter()
+            .map(|row| {
+                format!(
+                    "{}.{}",
+                    row.get::<String, _>(0).unwrap_or_default(),
+                    row.get::<String, _>(1).unwrap_or_default()
+                )
+            })
+            .collect();
+        if in_use.is_empty() {
+            break;
+        }
+        if attempt < 9 {
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+    }
+    if !in_use.is_empty() {
+        return Ok(Err(format!("tables in use: {}", in_use.join(", "))));
+    }
+    coordinator
+        .query_drop(format!(
+            "SET SESSION lock_wait_timeout = {}",
+            global_lock_wait_seconds()
+        ))
+        .await?;
+    let locked = coordinator
+        .query_drop("FLUSH TABLES WITH READ LOCK")
+        .await
+        .map_err(|error| error.to_string());
+    // The bound was for the global lock alone; the connection goes back to
+    // the pool with the server's own lock wait.
+    coordinator
+        .query_drop("SET SESSION lock_wait_timeout = DEFAULT")
+        .await?;
+    Ok(locked)
+}
+
+/// Seconds a snapshot waits for the global read lock:
+/// `PINTAIL_SNAPSHOT_LOCK_WAIT_SECS`, clamped to [1, 3600], or 5.
+fn global_lock_wait_seconds() -> u64 {
+    std::env::var("PINTAIL_SNAPSHOT_LOCK_WAIT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(5, |seconds| seconds.clamp(1, 3600))
+}
+
 /// Source position captured while writes were briefly locked.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -203,6 +268,10 @@ pub enum SnapshotError {
     /// Invalid worker/chunk/schema configuration.
     #[error("invalid snapshot configuration: {0}")]
     InvalidConfiguration(String),
+    /// The global read lock a consistent start needs could not be taken, and
+    /// the options do not allow a copy without it.
+    #[error("global read lock unavailable: {0}")]
+    GlobalLockUnavailable(String),
     /// `MySQL` protocol or query failure.
     #[error("MySQL snapshot failed: {0}")]
     Mysql(#[from] mysql_async::Error),
@@ -366,18 +435,19 @@ async fn run_snapshot_inner(
     }
 
     let mut coordinator = pool.get_conn().await?;
-    let (globally_consistent, consistency_warning) = match coordinator
-        .query_drop("FLUSH TABLES WITH READ LOCK")
-        .await
+    let (globally_consistent, consistency_warning) = match acquire_global_read_lock(
+        &mut coordinator,
+    )
+    .await?
     {
         Ok(()) => (true, None),
-        Err(error) if options.allow_degraded_lock => (
+        Err(reason) if options.allow_degraded_lock => (
             false,
             Some(format!(
-                "global read lock unavailable; worker snapshots may have different start times: {error}"
+                "global read lock unavailable; worker snapshots may have different start times: {reason}"
             )),
         ),
-        Err(error) => return Err(SnapshotError::Mysql(error)),
+        Err(reason) => return Err(SnapshotError::GlobalLockUnavailable(reason)),
     };
     let captured_position = match capture_position(&mut coordinator, report.server.flavor).await {
         Ok(position) => position,
