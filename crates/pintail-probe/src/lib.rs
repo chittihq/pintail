@@ -371,6 +371,12 @@ const KILL_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
 /// reported anyway before counting existed.
 const COUNT_TOTAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Seconds a count waits for a table lock another session holds. The server's
+/// execution bound does not cover that wait, and a probe runs while change
+/// capture waits on it: without this, one session holding LOCK TABLES ...
+/// WRITE held the stream until the client-side deadline fired.
+const COUNT_LOCK_WAIT_SECS: u64 = 2;
+
 /// Counts one table exactly, abandoning the attempt at [`COUNT_BUDGET`].
 ///
 /// `COUNT(*)` on `InnoDB` is a full index scan - there is no stored row count -
@@ -400,11 +406,15 @@ async fn count_rows_within_budget(
     );
     let sql = match flavor {
         SourceFlavor::Mysql => {
-            format!("SELECT /*+ MAX_EXECUTION_TIME({budget_ms}) */ COUNT(*) FROM {target}")
+            format!(
+                "SELECT /*+ MAX_EXECUTION_TIME({budget_ms}) SET_VAR(lock_wait_timeout={COUNT_LOCK_WAIT_SECS}) */ COUNT(*) FROM {target}"
+            )
         }
         SourceFlavor::MariaDb => {
             let seconds = COUNT_BUDGET.as_secs();
-            format!("SET STATEMENT max_statement_time={seconds} FOR SELECT COUNT(*) FROM {target}")
+            format!(
+                "SET STATEMENT max_statement_time={seconds}, lock_wait_timeout={COUNT_LOCK_WAIT_SECS} FOR SELECT COUNT(*) FROM {target}"
+            )
         }
     };
     // A little past the server's own bound, so the server wins the race in the
