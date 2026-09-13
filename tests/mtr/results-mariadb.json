@@ -3,11 +3,11 @@
   "repo": "MariaDB/server",
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
-  "measuredAt": "2026-09-13T01:28:51.938Z",
+  "measuredAt": "2026-09-13T04:02:33.895Z",
   "totals": {
-    "exact": 6645,
-    "compared": 7792,
-    "queries": 24102
+    "exact": 6803,
+    "compared": 7935,
+    "queries": 23732
   },
   "results": [
     {
@@ -79,23 +79,23 @@
       "file": "alias",
       "statements": 130,
       "counts": {
-        "exact": 22,
+        "exact": 17,
         "mismatch": 0,
-        "name-mismatch": 3,
+        "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 2,
-        "setup": 23,
-        "setup-rejected": 2,
-        "unsupported-setup": 29,
+        "setup": 26,
+        "setup-rejected": 1,
+        "unsupported-setup": 27,
         "session": 2,
         "skipped": 47,
-        "volatile": 0,
+        "volatile": 8,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
+        "DDL: Error: Invalid default value for _": 1
       }
     },
     {
@@ -129,8 +129,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 9,
-        "setup": 19,
-        "setup-rejected": 4,
+        "setup": 21,
+        "setup-rejected": 2,
         "unsupported-setup": 11,
         "session": 1,
         "skipped": 9,
@@ -139,7 +139,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
         "INSERT: Error: Column _ cannot be null": 2
       }
     },
@@ -308,9 +307,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 7,
+        "setup": 8,
         "setup-rejected": 1,
-        "unsupported-setup": 6,
+        "unsupported-setup": 5,
         "session": 0,
         "skipped": 2,
         "volatile": 0,
@@ -318,7 +317,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1
       }
     },
     {
@@ -504,8 +503,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 17,
-        "setup-rejected": 1,
+        "setup": 18,
+        "setup-rejected": 0,
         "unsupported-setup": 9,
         "session": 0,
         "skipped": 25,
@@ -513,9 +512,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "analyze_stmt_prefetch_count",
@@ -632,9 +629,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 33,
-        "setup": 79,
+        "setup": 80,
         "setup-rejected": 19,
-        "unsupported-setup": 95,
+        "unsupported-setup": 94,
         "session": 8,
         "skipped": 24,
         "volatile": 15,
@@ -642,10 +639,10 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: Column _ cannot be null": 9,
+        "INSERT: Error: Column _ cannot be null": 10,
         "DDL: Error: PRIMARY KEY over the expression _ is not supported": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 4,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "DDL: Error: column option DEFAULT current_timestamp is not supported on a local table": 2
       }
     },
@@ -695,26 +692,24 @@
       "file": "bigint",
       "statements": 148,
       "counts": {
-        "exact": 42,
+        "exact": 45,
         "mismatch": 1,
         "name-mismatch": 4,
         "pintail-error": 7,
         "mysql-error": 0,
-        "tainted": 22,
-        "setup": 48,
-        "setup-rejected": 7,
+        "tainted": 18,
+        "setup": 51,
+        "setup-rejected": 4,
         "unsupported-setup": 10,
         "session": 2,
         "skipped": 5,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "INSERT: Error: Column _ cannot be null": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "DDL: Error: column _: invalid MySQL metadata: decimal column quantity is missing precision": 1,
         "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 2,
         "Error: BIGINT value is out of range in _": 5,
@@ -730,19 +725,18 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 1,
-        "tainted": 31,
-        "setup": 23,
-        "setup-rejected": 4,
+        "tainted": 29,
+        "setup": 24,
+        "setup-rejected": 3,
         "unsupported-setup": 11,
         "session": 0,
         "skipped": 3,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 3,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 3
       }
     },
     {
@@ -755,8 +749,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 6,
-        "setup-rejected": 2,
+        "setup": 7,
+        "setup-rejected": 1,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
@@ -765,7 +759,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 2
+        "INSERT: Error: value _ is not supported in INSERT": 1
       }
     },
     {
@@ -837,24 +831,24 @@
       "file": "brackets",
       "statements": 856,
       "counts": {
-        "exact": 198,
-        "mismatch": 15,
+        "exact": 157,
+        "mismatch": 5,
         "name-mismatch": 0,
-        "pintail-error": 8,
-        "mysql-error": 80,
-        "tainted": 152,
+        "pintail-error": 6,
+        "mysql-error": 47,
+        "tainted": 139,
         "setup": 87,
         "setup-rejected": 9,
         "unsupported-setup": 222,
         "session": 0,
         "skipped": 84,
-        "volatile": 1,
+        "volatile": 100,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: sql parser error: Expected: joined table, found: ) at Line: _, Column: _": 4,
-        "Error: sql parser error: Expected: ), found: union at Line: _, Column: _": 4,
+        "Error: sql parser error: Expected: ), found: union at Line: _, Column: _": 2,
         "DDL: Error: sql parser error: Expected: a data type name, found: * at Line: _, Column: _": 1,
         "DDL: Error: sql parser error: Expected: column name or constraint definition, found: ( at Line:": 2,
         "DDL: Error: CREATE TABLE ... AS SELECT is not supported on a local table": 3,
@@ -907,15 +901,15 @@
       "file": "case",
       "statements": 171,
       "counts": {
-        "exact": 56,
+        "exact": 57,
         "mismatch": 3,
         "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 0,
-        "tainted": 7,
-        "setup": 44,
-        "setup-rejected": 4,
-        "unsupported-setup": 14,
+        "tainted": 6,
+        "setup": 47,
+        "setup-rejected": 2,
+        "unsupported-setup": 13,
         "session": 2,
         "skipped": 36,
         "volatile": 0,
@@ -924,10 +918,8 @@
       },
       "errorClasses": {
         "Error: query engine failed: bound expression has an invalid physical type": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "DDL: Error: character set ucs2 is not supported on a local table": 1,
         "Error: unsupported expression: text collation binary is unsupported; supported: utf8mb4_09": 4,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1
       }
     },
@@ -935,7 +927,7 @@
       "file": "cast",
       "statements": 366,
       "counts": {
-        "exact": 112,
+        "exact": 111,
         "mismatch": 22,
         "name-mismatch": 0,
         "pintail-error": 26,
@@ -946,7 +938,7 @@
         "unsupported-setup": 35,
         "session": 24,
         "skipped": 58,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -1334,7 +1326,7 @@
       },
       "errorClasses": {
         "Error: unsupported expression: STRCMP(a, _)": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1
@@ -1544,9 +1536,9 @@
         "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 76,
-        "setup": 236,
-        "setup-rejected": 14,
-        "unsupported-setup": 193,
+        "setup": 241,
+        "setup-rejected": 10,
+        "unsupported-setup": 192,
         "session": 20,
         "skipped": 237,
         "volatile": 9,
@@ -1555,13 +1547,13 @@
       },
       "errorClasses": {
         "DDL: Error: column option DEFAULT now() is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
         "INSERT: Error: sql parser error: Expected: identifier, found: _ at Line: _, Column: _": 1,
         "Error: sql parser error: Expected: end of statement, found: . at Line: _, Column: _": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT -_ is not supported on a local table": 2,
         "DDL: Error: column option DEFAULT false is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT true is not supported on a local table": 1,
+        "DDL: Error: Invalid default value for _": 1,
         "DDL: Error: sql parser error: Expected: end of statement, found: replace at Line: _, Column: _": 1,
         "DDL: Error: CREATE TABLE ... AS SELECT is not supported on a local table": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: visible at Line:": 1
@@ -1598,8 +1590,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 2,
-        "setup-rejected": 1,
+        "setup": 3,
+        "setup-rejected": 0,
         "unsupported-setup": 1,
         "session": 0,
         "skipped": 2,
@@ -1607,9 +1599,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "create_delayed",
@@ -2092,8 +2082,8 @@
         "pintail-error": 1,
         "mysql-error": 1,
         "tainted": 4,
-        "setup": 18,
-        "setup-rejected": 1,
+        "setup": 19,
+        "setup-rejected": 0,
         "unsupported-setup": 12,
         "session": 0,
         "skipped": 73,
@@ -2102,8 +2092,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: duplicate relation t": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
+        "Error: duplicate relation t": 1
       }
     },
     {
@@ -2131,18 +2120,18 @@
       "file": "cte_recursive",
       "statements": 488,
       "counts": {
-        "exact": 34,
+        "exact": 37,
         "mismatch": 4,
         "name-mismatch": 0,
         "pintail-error": 24,
         "mysql-error": 29,
-        "tainted": 21,
-        "setup": 175,
-        "setup-rejected": 3,
+        "tainted": 17,
+        "setup": 176,
+        "setup-rejected": 2,
         "unsupported-setup": 43,
         "session": 35,
         "skipped": 118,
-        "volatile": 2,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2155,7 +2144,6 @@
         "Error: sql parser error: Expected: ), found: int at Line: _, Column: _": 1,
         "Error: duplicate relation x": 5,
         "Error: duplicate relation x__1": 6,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unknown table mtr_cte_recursive.r": 2
       }
     },
@@ -2212,13 +2200,13 @@
         "name-mismatch": 0,
         "pintail-error": 121,
         "mysql-error": 22,
-        "tainted": 50,
-        "setup": 56,
-        "setup-rejected": 4,
+        "tainted": 48,
+        "setup": 57,
+        "setup-rejected": 3,
         "unsupported-setup": 115,
         "session": 36,
         "skipped": 23,
-        "volatile": 14,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2229,7 +2217,6 @@
         "Error: unsupported expression: strcmp(_, _)": 10,
         "DDL: Error: character set big5 is not supported on a local table": 3,
         "Error: invalid scalar function CONVERT USING unsupported character set ucs2": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: unsupported expression: weight_string(_)": 6,
         "Error: sql parser error: Expected: ), found: as at Line: _, Column: _": 22,
         "Error: unsupported expression: weight_string(_, _, _, X_)": 36,
@@ -2521,13 +2508,13 @@
         "name-mismatch": 0,
         "pintail-error": 34,
         "mysql-error": 17,
-        "tainted": 50,
+        "tainted": 48,
         "setup": 240,
         "setup-rejected": 16,
         "unsupported-setup": 251,
         "session": 7,
         "skipped": 198,
-        "volatile": 9,
+        "volatile": 11,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2743,13 +2730,13 @@
         "name-mismatch": 0,
         "pintail-error": 4,
         "mysql-error": 4,
-        "tainted": 27,
+        "tainted": 25,
         "setup": 36,
         "setup-rejected": 3,
         "unsupported-setup": 105,
         "session": 29,
         "skipped": 8,
-        "volatile": 10,
+        "volatile": 12,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2764,14 +2751,14 @@
       "file": "ctype_filename",
       "statements": 100,
       "counts": {
-        "exact": 3,
+        "exact": 9,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 2,
-        "tainted": 7,
-        "setup": 39,
-        "setup-rejected": 7,
+        "tainted": 1,
+        "setup": 45,
+        "setup-rejected": 1,
         "unsupported-setup": 10,
         "session": 15,
         "skipped": 15,
@@ -2780,7 +2767,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 6,
         "DDL: Error: sql parser error: Could not parse _ as u64: invalid digit found in string at Line: ": 1
       }
     },
@@ -2814,13 +2800,13 @@
         "name-mismatch": 0,
         "pintail-error": 110,
         "mysql-error": 22,
-        "tainted": 45,
+        "tainted": 43,
         "setup": 52,
         "setup-rejected": 1,
         "unsupported-setup": 108,
         "session": 34,
         "skipped": 23,
-        "volatile": 14,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2846,13 +2832,13 @@
         "name-mismatch": 0,
         "pintail-error": 227,
         "mysql-error": 22,
-        "tainted": 45,
+        "tainted": 43,
         "setup": 53,
         "setup-rejected": 3,
         "unsupported-setup": 113,
         "session": 34,
         "skipped": 24,
-        "volatile": 14,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -2924,9 +2910,9 @@
         "pintail-error": 51,
         "mysql-error": 21,
         "tainted": 50,
-        "setup": 263,
+        "setup": 279,
         "setup-rejected": 13,
-        "unsupported-setup": 302,
+        "unsupported-setup": 286,
         "session": 29,
         "skipped": 203,
         "volatile": 17,
@@ -2934,7 +2920,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 1,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "Error: unsupported expression: COLLATE latin1_general_cs is unsupported; supported: utf8mb": 1,
         "Error: sql parser error: Expected: end of statement, found: like at Line: _, Column: _": 1,
         "Error: unsupported expression: COLLATION(_)": 1,
@@ -2987,15 +2973,15 @@
       "file": "ctype_latin1_de",
       "statements": 242,
       "counts": {
-        "exact": 3,
+        "exact": 4,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 78,
         "mysql-error": 11,
-        "tainted": 45,
-        "setup": 28,
-        "setup-rejected": 4,
-        "unsupported-setup": 51,
+        "tainted": 44,
+        "setup": 33,
+        "setup-rejected": 1,
+        "unsupported-setup": 49,
         "session": 4,
         "skipped": 12,
         "volatile": 6,
@@ -3005,9 +2991,8 @@
       "errorClasses": {
         "Error: unsupported expression: strcmp(_, _)": 9,
         "Error: sql parser error: Expected: end of statement, found: a at Line: _, Column: _": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "Error: unsupported expression: text collation latin1_german2_ci is unsupported; supported:": 4,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "Error: unsupported expression: weight_string(_)": 12,
         "Error: sql parser error: Expected: ), found: as at Line: _, Column: _": 14,
         "Error: unsupported expression: weight_string(_, _, _, X_)": 18,
@@ -3231,8 +3216,8 @@
         "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 28,
-        "setup": 31,
-        "setup-rejected": 6,
+        "setup": 32,
+        "setup-rejected": 5,
         "unsupported-setup": 15,
         "session": 37,
         "skipped": 31,
@@ -3242,7 +3227,6 @@
       },
       "errorClasses": {
         "DDL: Error: character set cp1250 is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "DDL: Error: character set koi8r is not supported on a local table": 1,
         "DDL: Error: character set cp1251 is not supported on a local table": 3,
         "Error: unsupported expression: text collation latin1_swedish_ci is unsupported; supported:": 1
@@ -3257,13 +3241,13 @@
         "name-mismatch": 2,
         "pintail-error": 112,
         "mysql-error": 24,
-        "tainted": 54,
+        "tainted": 52,
         "setup": 51,
         "setup-rejected": 4,
         "unsupported-setup": 120,
         "session": 25,
         "skipped": 20,
-        "volatile": 15,
+        "volatile": 17,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -3396,15 +3380,15 @@
       "file": "ctype_ucs",
       "statements": 1515,
       "counts": {
-        "exact": 54,
+        "exact": 55,
         "mismatch": 129,
         "name-mismatch": 0,
         "pintail-error": 88,
         "mysql-error": 22,
-        "tainted": 128,
-        "setup": 316,
-        "setup-rejected": 47,
-        "unsupported-setup": 403,
+        "tainted": 127,
+        "setup": 320,
+        "setup-rejected": 44,
+        "unsupported-setup": 402,
         "session": 62,
         "skipped": 246,
         "volatile": 20,
@@ -3419,7 +3403,6 @@
         "Error: sql parser error: Expected: ), found: character at Line: _, Column: _": 1,
         "Error: invalid scalar function CONVERT USING unsupported character set ucs2": 1,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "Error: sql parser error: Expected: ), found: UNICODE at Line: _, Column: _": 4,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: unicode at Line:": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 2,
@@ -3497,14 +3480,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 2,
+        "mysql-error": 1,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 1,
         "session": 0,
         "skipped": 2,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -3539,14 +3522,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 2,
+        "mysql-error": 1,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 1,
         "session": 0,
         "skipped": 2,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -3561,13 +3544,13 @@
         "name-mismatch": 0,
         "pintail-error": 242,
         "mysql-error": 24,
-        "tainted": 113,
+        "tainted": 111,
         "setup": 80,
         "setup-rejected": 10,
         "unsupported-setup": 1172,
         "session": 42,
         "skipped": 26,
-        "volatile": 14,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -3577,7 +3560,7 @@
         "Error: unsupported expression: character set introducer _ujis": 5,
         "Error: operator := does not accept None and Some(Utf8)": 4,
         "Error: invalid scalar function CONVERT USING unsupported character set ujis": 5,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "DDL: Error: character set collate is not supported on a local table": 2,
         "Error: invalid scalar function CONVERT USING unsupported character set ucs2": 2,
         "Error: unsupported expression: weight_string(_)": 6,
@@ -3598,9 +3581,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 4,
-        "setup": 6,
-        "setup-rejected": 4,
-        "unsupported-setup": 1158,
+        "setup": 18,
+        "setup-rejected": 3,
+        "unsupported-setup": 1147,
         "session": 0,
         "skipped": 0,
         "volatile": 0,
@@ -3608,7 +3591,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "DDL: Error: character set ujis is not supported on a local table": 3
       }
     },
@@ -3867,8 +3849,8 @@
         "pintail-error": 99,
         "mysql-error": 11,
         "tainted": 142,
-        "setup": 171,
-        "setup-rejected": 10,
+        "setup": 172,
+        "setup-rejected": 9,
         "unsupported-setup": 373,
         "session": 66,
         "skipped": 52,
@@ -3880,7 +3862,6 @@
         "DDL: Error: character set utf32 is not supported on a local table": 8,
         "Error: sql parser error: Expected: end of statement, found: like at Line: _, Column: _": 1,
         "Error: unsupported expression: COLLATION(_)": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: unsupported expression: weight_string(_)": 8,
         "Error: sql parser error: Expected: ), found: as at Line: _, Column: _": 15,
         "Error: unsupported expression: weight_string(_, _, _, X_)": 18,
@@ -3893,15 +3874,15 @@
       "file": "ctype_utf8",
       "statements": 1845,
       "counts": {
-        "exact": 245,
-        "mismatch": 13,
-        "name-mismatch": 8,
-        "pintail-error": 79,
+        "exact": 256,
+        "mismatch": 15,
+        "name-mismatch": 7,
+        "pintail-error": 80,
         "mysql-error": 29,
-        "tainted": 133,
-        "setup": 538,
-        "setup-rejected": 35,
-        "unsupported-setup": 378,
+        "tainted": 120,
+        "setup": 561,
+        "setup-rejected": 24,
+        "unsupported-setup": 366,
         "session": 67,
         "skipped": 302,
         "volatile": 18,
@@ -3914,17 +3895,16 @@
         "Error: unsupported expression: character set introducer _koi8r": 3,
         "Error: unsupported expression: STRCMP(a, _)": 1,
         "Error: operator := does not accept None and Some(Utf8)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 7,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 9,
         "DDL: Error: character set koi8r is not supported on a local table": 1,
         "Error: unsupported expression: octet_length(s1)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 11,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 1,
         "Error: unsupported expression: soundex(a)": 3,
         "Error: unsupported expression: soundex(_utf8 X_)": 4,
         "Error: unsupported expression: CHARSET(_)": 1,
         "Error: unsupported expression: text collation utf8_lithuanian_ci is unsupported; supported": 2,
         "Error: unsupported expression: text collation utf8_czech_ci is unsupported; supported: utf": 4,
-        "INSERT: Error: value _ is not supported in INSERT": 3,
+        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
@@ -3935,6 +3915,7 @@
         "Error: UNION ALL column _ has types Some(Int32) and Some(Utf8)": 1,
         "Error: unsupported expression: BINARY(name)": 1,
         "Error: numeric expression overflow": 2,
+        "Error: unsupported expression: COLLATE utf8_sinhala_ci is unsupported; supported: utf8mb4_": 1,
         "Error: unsupported expression: text collation utf8_sinhala_ci is unsupported; supported: u": 2,
         "Error: unsupported expression: charset(concat(_ + _))": 1,
         "Error: unsupported expression: bit_count(_)": 1,
@@ -4001,14 +3982,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 2,
+        "mysql-error": 1,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 2,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4022,14 +4003,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 2,
+        "mysql-error": 1,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 2,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4039,18 +4020,18 @@
       "file": "ctype_utf8mb4",
       "statements": 1460,
       "counts": {
-        "exact": 121,
-        "mismatch": 9,
+        "exact": 137,
+        "mismatch": 11,
         "name-mismatch": 7,
-        "pintail-error": 152,
+        "pintail-error": 158,
         "mysql-error": 36,
-        "tainted": 187,
-        "setup": 385,
-        "setup-rejected": 30,
-        "unsupported-setup": 262,
+        "tainted": 161,
+        "setup": 420,
+        "setup-rejected": 11,
+        "unsupported-setup": 246,
         "session": 88,
         "skipped": 159,
-        "volatile": 24,
+        "volatile": 26,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4060,17 +4041,16 @@
         "Error: unsupported expression: character set introducer _koi8r": 3,
         "Error: unsupported expression: STRCMP(a, _)": 1,
         "Error: operator := does not accept None and Some(Utf8)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 7,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 8,
         "DDL: Error: character set koi8r is not supported on a local table": 1,
         "Error: unsupported expression: octet_length(s1)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 10,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 1,
         "Error: unsupported expression: soundex(a)": 3,
         "Error: unsupported expression: soundex(_utf8mb4 X_)": 4,
         "Error: unsupported expression: CHARSET(_)": 1,
         "Error: unsupported expression: text collation utf8mb4_lithuanian_ci is unsupported; suppor": 2,
         "Error: unsupported expression: text collation utf8mb4_czech_ci is unsupported; supported: ": 4,
-        "INSERT: Error: value _ is not supported in INSERT": 11,
+        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
@@ -4079,7 +4059,10 @@
         "Error: UNION ALL column _ has types Some(Int64) and Some(Utf8)": 1,
         "Error: UNION ALL column _ has types Some(Utf8) and Some(Int32)": 1,
         "Error: UNION ALL column _ has types Some(Int32) and Some(Utf8)": 1,
+        "Error: unsupported expression: COLLATE utf8mb4_sinhala_ci is unsupported; supported: utf8m": 1,
         "Error: unsupported expression: CHARSET(CONCAT(_utf8mb4 _, _utf8 _))": 1,
+        "Error: unsupported expression: comparing text across collations utf8mb3_general_ci, utf8mb": 4,
+        "Error: unsupported expression: octet_length(subject)": 1,
         "Error: operator := does not accept None and Some(Int64)": 1,
         "Error: numeric expression overflow": 9,
         "Error: unsupported expression: weight_string(_)": 6,
@@ -4121,14 +4104,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 4,
+        "mysql-error": 2,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4163,14 +4146,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 4,
+        "mysql-error": 2,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4207,14 +4190,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 4,
+        "mysql-error": 2,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4291,14 +4274,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 4,
+        "mysql-error": 2,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4312,14 +4295,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 4,
+        "mysql-error": 2,
         "tainted": 0,
         "setup": 0,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 1,
         "skipped": 4,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4493,15 +4476,15 @@
       "file": "default",
       "statements": 1310,
       "counts": {
-        "exact": 0,
+        "exact": 2,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 199,
-        "setup": 237,
-        "setup-rejected": 57,
-        "unsupported-setup": 435,
+        "tainted": 197,
+        "setup": 255,
+        "setup-rejected": 47,
+        "unsupported-setup": 427,
         "session": 35,
         "skipped": 340,
         "volatile": 6,
@@ -4511,16 +4494,17 @@
       "errorClasses": {
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 2,
         "INSERT: Error: Column _ cannot be null": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 18,
-        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 3,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 4,
+        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 4,
         "DDL: Error: column option DEFAULT (_ - ---_) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (((_))) is not supported on a local table": 1,
+        "DDL: Error: Invalid default value for _": 1,
         "DDL: Error: column option DEFAULT X_ is not supported on a local table": 2,
         "DDL: Error: column option DEFAULT (a) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (DEFAULT(b)) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT (DEFAULT(a)) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT (_ + _) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT (_ + _) is not supported on a local table": 2,
         "DDL: Error: column option DEFAULT (a DIV b) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (-a) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (a + b) is not supported on a local table": 1,
@@ -4543,6 +4527,8 @@
         "DDL: Error: column option DEFAULT (a NOT IN (_, _)) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (a BETWEEN _ AND _) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (a NOT BETWEEN _ AND _) is not supported on a local table": 1,
+        "DDL: Error: column option DEFAULT (rand() * _ + _) is not supported on a local table": 1,
+        "DDL: Error: column option CHECK (a > _) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (a + _) is not supported on a local table": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1
       }
@@ -4555,14 +4541,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 1,
-        "tainted": 14,
+        "mysql-error": 0,
+        "tainted": 7,
         "setup": 5,
         "setup-rejected": 1,
         "unsupported-setup": 28,
         "session": 9,
         "skipped": 13,
-        "volatile": 0,
+        "volatile": 8,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4645,9 +4631,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 18,
-        "setup": 89,
-        "setup-rejected": 6,
-        "unsupported-setup": 67,
+        "setup": 94,
+        "setup-rejected": 3,
+        "unsupported-setup": 65,
         "session": 10,
         "skipped": 81,
         "volatile": 2,
@@ -4655,7 +4641,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "INSERT: Error: Duplicate entry _ for key _": 1
@@ -4692,19 +4677,16 @@
         "pintail-error": 0,
         "mysql-error": 2,
         "tainted": 0,
-        "setup": 87,
-        "setup-rejected": 5,
-        "unsupported-setup": 291,
+        "setup": 327,
+        "setup-rejected": 0,
+        "unsupported-setup": 56,
         "session": 17,
         "skipped": 43,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "delete_use_source",
@@ -4796,7 +4778,7 @@
       "file": "derived",
       "statements": 40,
       "counts": {
-        "exact": 15,
+        "exact": 14,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
@@ -4807,7 +4789,7 @@
         "unsupported-setup": 0,
         "session": 2,
         "skipped": 11,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -4817,24 +4799,22 @@
       "file": "derived_cond_pushdown",
       "statements": 811,
       "counts": {
-        "exact": 23,
+        "exact": 22,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 3,
-        "mysql-error": 1,
+        "mysql-error": 0,
         "tainted": 41,
-        "setup": 378,
-        "setup-rejected": 6,
-        "unsupported-setup": 159,
+        "setup": 385,
+        "setup-rejected": 1,
+        "unsupported-setup": 157,
         "session": 25,
         "skipped": 173,
-        "volatile": 2,
+        "volatile": 4,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: charset at Line:": 1,
         "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 2,
         "Error: unsupported expression: default(c3)": 1
@@ -4865,26 +4845,28 @@
       "file": "derived_view",
       "statements": 1111,
       "counts": {
-        "exact": 39,
-        "mismatch": 11,
+        "exact": 36,
+        "mismatch": 10,
         "name-mismatch": 0,
-        "pintail-error": 4,
+        "pintail-error": 8,
         "mysql-error": 8,
-        "tainted": 86,
-        "setup": 399,
-        "setup-rejected": 5,
-        "unsupported-setup": 120,
+        "tainted": 82,
+        "setup": 404,
+        "setup-rejected": 2,
+        "unsupported-setup": 118,
         "session": 83,
         "skipped": 353,
-        "volatile": 3,
+        "volatile": 7,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _": 3,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM (t2__18 AS s2 JOIN (t3__13 AS": 1,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM t2__18 AS s2, t5__1, (t3__13 ": 1,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM ((t2__18 AS s2 LEFT JOIN (t3_": 1,
         "Error: unsupported expression: (t2__19.a, t1__23.b)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: unsupported expression: comparing text across collations utf8mb3_general_ci, utf8mb": 1,
         "INSERT: Error: Column _ cannot be null": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1
       }
@@ -4956,26 +4938,24 @@
       "file": "distinct",
       "statements": 417,
       "counts": {
-        "exact": 39,
+        "exact": 54,
         "mismatch": 9,
         "name-mismatch": 0,
         "pintail-error": 2,
-        "mysql-error": 4,
-        "tainted": 52,
-        "setup": 149,
-        "setup-rejected": 14,
-        "unsupported-setup": 90,
+        "mysql-error": 7,
+        "tainted": 26,
+        "setup": 184,
+        "setup-rejected": 3,
+        "unsupported-setup": 66,
         "session": 10,
         "skipped": 46,
-        "volatile": 2,
+        "volatile": 10,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 10,
         "Error: unsupported expression: text collation latin1_swedish_ci is unsupported; supported:": 2,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a date": 1,
         "DDL: Error: character set gbk is not supported on a local table": 1
       }
@@ -5093,10 +5073,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 385,
-        "tainted": 44,
-        "setup": 26,
-        "setup-rejected": 1,
+        "mysql-error": 386,
+        "tainted": 43,
+        "setup": 27,
+        "setup-rejected": 0,
         "unsupported-setup": 46,
         "session": 12,
         "skipped": 63,
@@ -5104,9 +5084,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "empty_string_literal",
@@ -5142,7 +5120,7 @@
       "file": "empty_table",
       "statements": 31,
       "counts": {
-        "exact": 6,
+        "exact": 5,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 2,
@@ -5153,7 +5131,7 @@
         "unsupported-setup": 1,
         "session": 4,
         "skipped": 5,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -5392,18 +5370,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 1,
-        "setup": 77,
-        "setup-rejected": 1,
-        "unsupported-setup": 21,
+        "setup": 79,
+        "setup-rejected": 0,
+        "unsupported-setup": 20,
         "session": 13,
         "skipped": 70,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "explain_json_format_partitions",
@@ -5744,14 +5720,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 13,
-        "tainted": 15,
+        "mysql-error": 12,
+        "tainted": 14,
         "setup": 64,
         "setup-rejected": 3,
         "unsupported-setup": 28,
         "session": 4,
         "skipped": 19,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -5797,24 +5773,24 @@
       "file": "func_concat",
       "statements": 115,
       "counts": {
-        "exact": 10,
+        "exact": 9,
         "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 2,
-        "mysql-error": 5,
-        "tainted": 29,
-        "setup": 27,
-        "setup-rejected": 12,
-        "unsupported-setup": 14,
+        "pintail-error": 3,
+        "mysql-error": 2,
+        "tainted": 28,
+        "setup": 31,
+        "setup-rejected": 10,
+        "unsupported-setup": 12,
         "session": 5,
         "skipped": 9,
-        "volatile": 1,
+        "volatile": 5,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: query engine failed: bound expression has an invalid physical type": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
+        "Error: unsupported expression: comparing text across collations latin1_swedish_ci, utf8mb3": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 10
       }
     },
@@ -5826,10 +5802,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 23,
-        "tainted": 12,
-        "setup": 16,
-        "setup-rejected": 4,
+        "mysql-error": 24,
+        "tainted": 11,
+        "setup": 17,
+        "setup-rejected": 3,
         "unsupported-setup": 10,
         "session": 6,
         "skipped": 13,
@@ -5838,7 +5814,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1
       }
@@ -5853,9 +5829,9 @@
         "pintail-error": 7,
         "mysql-error": 0,
         "tainted": 7,
-        "setup": 10,
+        "setup": 11,
         "setup-rejected": 2,
-        "unsupported-setup": 32,
+        "unsupported-setup": 31,
         "session": 2,
         "skipped": 9,
         "volatile": 2,
@@ -5863,7 +5839,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported expression: INTERVAL _ WEEK": 1,
         "Error: unsupported expression: adddate(_, _)": 1,
@@ -5879,12 +5855,12 @@
         "exact": 0,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 0,
+        "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 23,
-        "setup": 18,
-        "setup-rejected": 10,
-        "unsupported-setup": 24,
+        "tainted": 21,
+        "setup": 20,
+        "setup-rejected": 9,
+        "unsupported-setup": 23,
         "session": 1,
         "skipped": 9,
         "volatile": 3,
@@ -5892,7 +5868,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: unsupported expression: default(str)": 2,
         "DDL: Error: column option DEFAULT (IF(false, UNIX_TIMESTAMP(), _)) is not supported on a local ": 4,
         "DDL: Error: column option DEFAULT (IF(false, UNIX_TIMESTAMP() % _, DATE _)) is not supported on": 1,
         "DDL: Error: column option DEFAULT (IF(false, UNIX_TIMESTAMP() % _, TIME _)) is not supported on": 1,
@@ -5949,8 +5925,8 @@
       "file": "func_extract",
       "statements": 149,
       "counts": {
-        "exact": 46,
-        "mismatch": 36,
+        "exact": 47,
+        "mismatch": 35,
         "name-mismatch": 0,
         "pintail-error": 11,
         "mysql-error": 4,
@@ -6020,15 +5996,15 @@
         "exact": 47,
         "mismatch": 8,
         "name-mismatch": 0,
-        "pintail-error": 22,
+        "pintail-error": 20,
         "mysql-error": 4,
         "tainted": 27,
-        "setup": 104,
-        "setup-rejected": 11,
+        "setup": 107,
+        "setup-rejected": 8,
         "unsupported-setup": 10,
         "session": 10,
         "skipped": 12,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -6039,7 +6015,6 @@
         "Error: unsupported aggregate: group_concat(DISTINCT c ORDER BY c SEPARATOR _)": 1,
         "Error: unsupported aggregate: group_concat(DISTINCT c ORDER BY c DESC SEPARATOR _)": 1,
         "Error: unsupported aggregate: group_concat(a SEPARATOR _)": 3,
-        "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 2,
         "Error: unsupported expression: mid(group_concat(c ORDER BY a), _, _)": 4,
         "Error: column t1__10.c is neither grouped nor aggregated": 2,
         "INSERT: Error: only literal values are supported in INSERT, got _": 4,
@@ -6047,7 +6022,6 @@
         "DDL: Error: character set cp850 is not supported on a local table": 1,
         "Error: unknown column x": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "Error: UNION ALL column _ has types Some(Utf8) and Some(Int64)": 1,
         "Error: sql parser error: Expected: end of statement, found: with at Line: _, Column: _": 2,
         "DDL: Error: sql parser error: Expected: (, found: a at Line: _, Column: _": 1,
@@ -6079,15 +6053,15 @@
       "file": "func_hybrid_type",
       "statements": 628,
       "counts": {
-        "exact": 39,
-        "mismatch": 9,
+        "exact": 55,
+        "mismatch": 14,
         "name-mismatch": 0,
         "pintail-error": 13,
         "mysql-error": 1,
-        "tainted": 36,
-        "setup": 248,
-        "setup-rejected": 12,
-        "unsupported-setup": 76,
+        "tainted": 15,
+        "setup": 260,
+        "setup-rejected": 1,
+        "unsupported-setup": 75,
         "session": 51,
         "skipped": 133,
         "volatile": 10,
@@ -6095,8 +6069,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 8,
-        "INSERT: Error: value _ is not supported in INSERT": 3,
         "Error: unsupported expression: CURRENT_TIME": 1,
         "Error: unsupported expression: text collation latin1_swedish_ci is unsupported; supported:": 3,
         "Error: operator := does not accept None and Some(Binary)": 1,
@@ -6110,7 +6082,7 @@
       "file": "func_if",
       "statements": 66,
       "counts": {
-        "exact": 19,
+        "exact": 18,
         "mismatch": 2,
         "name-mismatch": 0,
         "pintail-error": 6,
@@ -6121,7 +6093,7 @@
         "unsupported-setup": 0,
         "session": 2,
         "skipped": 2,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -6134,14 +6106,14 @@
       "file": "func_in",
       "statements": 427,
       "counts": {
-        "exact": 84,
-        "mismatch": 4,
+        "exact": 86,
+        "mismatch": 5,
         "name-mismatch": 1,
-        "pintail-error": 14,
-        "mysql-error": 5,
-        "tainted": 20,
-        "setup": 131,
-        "setup-rejected": 4,
+        "pintail-error": 19,
+        "mysql-error": 6,
+        "tainted": 11,
+        "setup": 134,
+        "setup-rejected": 1,
         "unsupported-setup": 27,
         "session": 6,
         "skipped": 131,
@@ -6156,12 +6128,11 @@
         "Error: operator := does not accept Some(Int64) and Some(Int64)": 1,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM t3__1 JOIN t1__15 ON t3__1.a ": 1,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN (SELECT SUM(t4__1.a) FROM t4__1 WHER": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 2,
+        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 5,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
         "Error: numeric expression overflow": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 2,
         "Error: unsupported expression: name_const(_, NULL)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: sql parser error: Expected: ), found: , at Line: _, Column: _": 2
       }
     },
@@ -6214,18 +6185,18 @@
       "file": "func_json",
       "statements": 1422,
       "counts": {
-        "exact": 305,
-        "mismatch": 13,
+        "exact": 306,
+        "mismatch": 16,
         "name-mismatch": 0,
         "pintail-error": 315,
-        "mysql-error": 186,
-        "tainted": 66,
-        "setup": 96,
-        "setup-rejected": 5,
+        "mysql-error": 180,
+        "tainted": 62,
+        "setup": 97,
+        "setup-rejected": 4,
         "unsupported-setup": 60,
         "session": 308,
         "skipped": 67,
-        "volatile": 1,
+        "volatile": 7,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -6251,7 +6222,6 @@
         "Error: unsupported expression: CHARSET(JSON_OBJECT())": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "Error: numeric expression overflow": 2,
-        "INSERT: Error: row does not match table schema: column a requires Utf8, received Boolean": 1,
         "Error: unsupported expression: JSON_ARRAY_APPEND(JSON_ARRAY(l1, l2, l3, l4), _, _)": 1,
         "Error: unsupported table expression: JSON_TABLE(@data, _ COLUMNS(data TEXT PATH _)) AS t__": 1,
         "Error: unsupported expression: JSON_ARRAY_APPEND(@json__1, _, _)": 3,
@@ -6388,15 +6358,15 @@
       "file": "func_math",
       "statements": 1158,
       "counts": {
-        "exact": 179,
-        "mismatch": 6,
+        "exact": 194,
+        "mismatch": 8,
         "name-mismatch": 0,
-        "pintail-error": 60,
-        "mysql-error": 24,
-        "tainted": 189,
-        "setup": 194,
-        "setup-rejected": 15,
-        "unsupported-setup": 255,
+        "pintail-error": 62,
+        "mysql-error": 25,
+        "tainted": 169,
+        "setup": 204,
+        "setup-rejected": 8,
+        "unsupported-setup": 252,
         "session": 27,
         "skipped": 197,
         "volatile": 12,
@@ -6415,8 +6385,7 @@
         "Error: unsupported expression: ACOS(_._ * _._)": 2,
         "Error: unsupported expression: ASIN(_._ + _._)": 1,
         "Error: unsupported expression: ASIN(_._ - _._)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 9,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 4,
         "Error: numeric expression overflow": 4,
         "Error: sql parser error: Expected: end of statement, found: - at Line: _, Column: _": 9,
         "Error: unsupported expression: COT(_ / _)": 1,
@@ -6426,7 +6395,7 @@
         "Error: unsupported expression: BIT_LENGTH(_)": 1,
         "Error: unsupported expression: LTRIM(_)": 1,
         "Error: unsupported expression: RTRIM(_)": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 2,
+        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: unsupported expression: ST_GeomFromText(_)": 1,
         "Error: operator = does not accept Some(Json) and Some(Utf8)": 1,
         "Error: unsupported expression: crc32_func(_)": 1,
@@ -6434,7 +6403,7 @@
         "Error: unknown column UTC_TIME": 1,
         "DDL: Error: column option DEFAULT NOW() is not supported on a local table": 2,
         "Error: unsupported expression: ExtractValue(_, _)": 1,
-        "Error: query engine failed: bound expression has an invalid physical type": 16,
+        "Error: query engine failed: bound expression has an invalid physical type": 18,
         "Error: unsupported expression: NAME_CONST(_, X_)": 1
       }
     },
@@ -6442,24 +6411,24 @@
       "file": "func_misc",
       "statements": 489,
       "counts": {
-        "exact": 30,
+        "exact": 31,
         "mismatch": 3,
         "name-mismatch": 0,
-        "pintail-error": 180,
+        "pintail-error": 176,
         "mysql-error": 4,
-        "tainted": 11,
-        "setup": 67,
-        "setup-rejected": 4,
+        "tainted": 10,
+        "setup": 68,
+        "setup-rejected": 3,
         "unsupported-setup": 33,
         "session": 9,
         "skipped": 58,
-        "volatile": 90,
+        "volatile": 94,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: unsupported expression: mid(a + _, _, _)": 2,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: unsupported expression: export_set(_, _latin1 _, _utf8 _, _, _)": 1,
         "Error: unsupported expression: NAME_CONST(_, NULL)": 1,
         "Error: unsupported expression: NAME_CONST(_, _)": 7,
@@ -6469,7 +6438,6 @@
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
         "Error: unsupported expression: mid(@my_uuid, _, _)": 1,
         "Error: unsupported expression: _binary _ COLLATE _": 1,
-        "Error: UNION ALL column _ has types Some(Utf8) and Some(Int64)": 4,
         "Error: unsupported expression: NAME_CONST(_, -(_))": 2,
         "Error: unsupported expression: INET6_ATON(NULL)": 1,
         "Error: unsupported expression: INET6_ATON(_)": 125,
@@ -6614,8 +6582,8 @@
       "file": "func_sapdb",
       "statements": 88,
       "counts": {
-        "exact": 36,
-        "mismatch": 13,
+        "exact": 45,
+        "mismatch": 4,
         "name-mismatch": 0,
         "pintail-error": 28,
         "mysql-error": 0,
@@ -6684,10 +6652,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 80,
-        "tainted": 11,
-        "setup": 21,
-        "setup-rejected": 5,
+        "mysql-error": 82,
+        "tainted": 9,
+        "setup": 23,
+        "setup-rejected": 3,
         "unsupported-setup": 12,
         "session": 12,
         "skipped": 20,
@@ -6696,7 +6664,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 4,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "DDL: Error: character set first_param is not supported on a local table": 1
       }
     },
@@ -6704,18 +6672,18 @@
       "file": "func_str",
       "statements": 955,
       "counts": {
-        "exact": 341,
+        "exact": 346,
         "mismatch": 7,
         "name-mismatch": 9,
-        "pintail-error": 161,
+        "pintail-error": 160,
         "mysql-error": 64,
-        "tainted": 26,
-        "setup": 168,
-        "setup-rejected": 9,
-        "unsupported-setup": 38,
+        "tainted": 20,
+        "setup": 183,
+        "setup-rejected": 3,
+        "unsupported-setup": 29,
         "session": 18,
         "skipped": 101,
-        "volatile": 13,
+        "volatile": 15,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -6744,7 +6712,6 @@
         "Error: unsupported expression: POSITION((_ IN (_, _, _)) IN _)": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
         "Error: unsupported expression: AES_DECRYPT(tmp, _)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
         "Error: unsupported expression: quote(a)": 1,
         "Error: unsupported expression: ltrim(concat(_, _))": 1,
         "Error: unsupported expression: quote(TRIM(concat(_, _)))": 1,
@@ -6789,7 +6756,7 @@
         "Error: unsupported expression: charset(t2__1.a)": 1,
         "Error: unsupported expression: coercibility(t2__1.a)": 1,
         "Error: unsupported expression: load_file(_)": 2,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: operator := does not accept None and Some(Utf8)": 1,
         "Error: unsupported expression: rtrim(_)": 1,
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
@@ -6801,7 +6768,6 @@
         "Error: unknown column DATE": 1,
         "Error: unsupported expression: LOAD_FILE(a)": 1,
         "Error: unsupported expression: make_set(i, _, _)": 1,
-        "Error: unsupported expression: EXPORT_SET(_, b, b, b, b)": 1,
         "Error: unsupported expression: format(_._, _, NULL)": 1,
         "Error: unsupported expression: format(_._, _, _)": 9,
         "Error: unsupported expression: format(_._, _, fmt)": 2,
@@ -6812,23 +6778,22 @@
         "Error: unsupported expression: FORMAT(12333e-_, _, _)": 1,
         "Error: unknown column 0b111111111111111111111111111111111111111111111111111": 1,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 1,
-        "Error: unsupported expression: EXPORT_SET(_, _, _, REPEAT(_, _))": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1
+        "Error: unsupported expression: EXPORT_SET(_, _, _, REPEAT(_, _))": 1
       }
     },
     {
       "file": "func_test",
       "statements": 128,
       "counts": {
-        "exact": 51,
+        "exact": 52,
         "mismatch": 0,
         "name-mismatch": 4,
         "pintail-error": 21,
         "mysql-error": 0,
-        "tainted": 5,
-        "setup": 14,
-        "setup-rejected": 2,
-        "unsupported-setup": 12,
+        "tainted": 4,
+        "setup": 16,
+        "setup-rejected": 1,
+        "unsupported-setup": 11,
         "session": 1,
         "skipped": 18,
         "volatile": 0,
@@ -6846,23 +6811,22 @@
         "Error: unsupported expression: strcmp(_koi8r _ COLLATE koi8r_bin, _koi8r _)": 1,
         "Error: sql parser error: Expected: ), found: mod at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: end of statement, found: null at Line: _, Column: _": 3,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1
       }
     },
     {
       "file": "func_time",
       "statements": 1047,
       "counts": {
-        "exact": 317,
-        "mismatch": 124,
+        "exact": 318,
+        "mismatch": 123,
         "name-mismatch": 0,
-        "pintail-error": 95,
+        "pintail-error": 96,
         "mysql-error": 19,
-        "tainted": 39,
-        "setup": 211,
-        "setup-rejected": 8,
-        "unsupported-setup": 51,
+        "tainted": 38,
+        "setup": 217,
+        "setup-rejected": 4,
+        "unsupported-setup": 49,
         "session": 74,
         "skipped": 75,
         "volatile": 34,
@@ -6872,7 +6836,7 @@
       "errorClasses": {
         "Error: unsupported expression: period_add(_, -_)": 1,
         "Error: unsupported expression: from_unixtime(unix_timestamp(_), _)": 1,
-        "Error: numeric expression overflow": 2,
+        "Error: numeric expression overflow": 3,
         "Error: query engine failed: invalid MySQL date/time value": 3,
         "Error: unsupported expression: yearweek(_, _)": 7,
         "Error: unsupported expression: time_format(_, _)": 5,
@@ -6893,8 +6857,7 @@
         "Error: unsupported expression: timestampdiff(SQL_TSI_SECOND, _, _)": 1,
         "Error: unsupported expression: TIMESTAMPDIFF(week, _, _)": 6,
         "Error: unsupported expression: timestamp(f3)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: unsupported expression: STR_TO_DATE format _": 1,
         "Error: unsupported expression: TIME_FORMAT(SEC_TO_TIME(a), _)": 1,
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 2,
@@ -7025,15 +6988,15 @@
       "file": "function_defaults",
       "statements": 41,
       "counts": {
-        "exact": 0,
+        "exact": 3,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 8,
-        "setup": 10,
-        "setup-rejected": 5,
-        "unsupported-setup": 13,
+        "tainted": 5,
+        "setup": 16,
+        "setup-rejected": 2,
+        "unsupported-setup": 10,
         "session": 4,
         "skipped": 1,
         "volatile": 0,
@@ -7042,8 +7005,7 @@
       },
       "errorClasses": {
         "DDL: Error: column option AS (t) VIRTUAL is not supported on a local table": 1,
-        "DDL: Error: column option AS (i) is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
+        "DDL: Error: column option AS (i) is not supported on a local table": 1
       }
     },
     {
@@ -7227,41 +7189,37 @@
       "file": "group_by",
       "statements": 902,
       "counts": {
-        "exact": 96,
-        "mismatch": 3,
+        "exact": 97,
+        "mismatch": 4,
         "name-mismatch": 6,
-        "pintail-error": 35,
-        "mysql-error": 15,
-        "tainted": 87,
-        "setup": 322,
-        "setup-rejected": 18,
-        "unsupported-setup": 99,
+        "pintail-error": 29,
+        "mysql-error": 22,
+        "tainted": 62,
+        "setup": 352,
+        "setup-rejected": 8,
+        "unsupported-setup": 79,
         "session": 49,
         "skipped": 160,
-        "volatile": 12,
+        "volatile": 34,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 11,
-        "INSERT: Error: Column _ cannot be null": 2,
+        "Error: unsupported query clause: SELECT HIGH_PRIORITY cid, CONCAT(firstname, _, surname), ": 1,
+        "INSERT: Error: Column _ cannot be null": 4,
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 2,
         "Error: unsupported expression: MAKE_SET(MAX(b), _, _, _, _, _, _, _, _)": 1,
         "Error: sql parser error: Expected: end of statement, found: ( at Line: _, Column: _": 1,
         "DDL: Error: PRIMARY KEY over the expression _ is not supported": 1,
         "Error: unsupported query clause: SELECT SQL_BUFFER_RESULT max(f1) IS NULL FROM t1__31": 1,
         "Error: unsupported query clause: SELECT SQL_BUFFER_RESULT max(f1) + _ FROM t1__31": 1,
-        "Error: column t1_outer.a is neither grouped nor aggregated": 2,
-        "Error: query engine failed: physical input is missing t1_outer.a": 2,
-        "Error: column t1_outer.b is neither grouped nor aggregated": 2,
         "Error: unsupported expression: ROW(b, b)": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "Error: column t1__43.d is neither grouped nor aggregated": 1,
         "Error: unknown column c": 4,
         "Error: unknown column t1__46.a": 4,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: invalid use of group function: AVG(t1__51.b)": 1,
-        "Error: unsupported query clause: SELECT SQL_BIG_RESULT tbl1.col1 AS field1, tbl2.col1 AS f": 1,
         "Error: unknown column f1": 1,
         "Error: unknown column f3": 2,
         "Error: invalid use of group function: max(b)": 1,
@@ -7269,7 +7227,7 @@
         "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: invalid ORDER BY expression test IS NULL": 1,
         "Error: column t1__75.a is neither grouped nor aggregated": 2,
-        "Error: invalid use of group function: SUM(t1_outer.a)": 1
+        "Error: column t1__83.a is neither grouped nor aggregated": 1
       }
     },
     {
@@ -7319,14 +7277,14 @@
       "statements": 526,
       "counts": {
         "exact": 17,
-        "mismatch": 0,
+        "mismatch": 3,
         "name-mismatch": 1,
         "pintail-error": 6,
         "mysql-error": 0,
-        "tainted": 166,
-        "setup": 58,
-        "setup-rejected": 6,
-        "unsupported-setup": 45,
+        "tainted": 163,
+        "setup": 70,
+        "setup-rejected": 0,
+        "unsupported-setup": 39,
         "session": 6,
         "skipped": 221,
         "volatile": 0,
@@ -7334,11 +7292,9 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
         "Error: sql parser error: Expected: ), found: , at Line: _, Column: _": 2,
         "Error: unsupported table expression: (t5__1 NATURAL JOIN t6__1)": 2,
         "Error: unsupported table expression: ((t3__2 NATURAL JOIN t4__2) JOIN (t5__1 NATURAL JOIN ": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported query clause: SELECT DISTINCT SQL_BIG_RESULT (a) FROM t1__9": 1
       }
     },
@@ -7367,23 +7323,22 @@
       "file": "having",
       "statements": 355,
       "counts": {
-        "exact": 63,
+        "exact": 67,
         "mismatch": 1,
         "name-mismatch": 0,
         "pintail-error": 11,
         "mysql-error": 3,
-        "tainted": 20,
-        "setup": 182,
-        "setup-rejected": 8,
-        "unsupported-setup": 21,
+        "tainted": 15,
+        "setup": 194,
+        "setup-rejected": 2,
+        "unsupported-setup": 15,
         "session": 13,
         "skipped": 32,
-        "volatile": 1,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 6,
         "Error: unsupported expression: (_, _)": 5,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
         "Error: unsupported table expression: t1__31 FORCE INDEX (t)": 1,
@@ -7596,14 +7551,14 @@
       "file": "index_intersect",
       "statements": 158,
       "counts": {
-        "exact": 2,
+        "exact": 3,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 65,
-        "setup": 11,
-        "setup-rejected": 3,
+        "tainted": 64,
+        "setup": 14,
+        "setup-rejected": 0,
         "unsupported-setup": 31,
         "session": 12,
         "skipped": 34,
@@ -7611,9 +7566,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "information_schema",
@@ -7948,9 +7901,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 6,
-        "setup": 19,
+        "setup": 20,
         "setup-rejected": 5,
-        "unsupported-setup": 26,
+        "unsupported-setup": 25,
         "session": 4,
         "skipped": 6,
         "volatile": 9,
@@ -7961,7 +7914,7 @@
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "INSERT: Error: Duplicate entry _ for key _": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "INSERT: Error: Column _ cannot be null": 1
       }
     },
     {
@@ -8037,9 +7990,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 35,
-        "setup": 88,
-        "setup-rejected": 10,
-        "unsupported-setup": 78,
+        "setup": 96,
+        "setup-rejected": 6,
+        "unsupported-setup": 74,
         "session": 7,
         "skipped": 34,
         "volatile": 1,
@@ -8048,7 +8001,9 @@
       },
       "errorClasses": {
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 7,
+        "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
+        "INSERT: Error: Column _ cannot be null": 1,
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "DDL: Error: CREATE TABLE ... AS SELECT is not supported on a local table": 1
       }
     },
@@ -8056,15 +8011,15 @@
       "file": "insert_update",
       "statements": 199,
       "counts": {
-        "exact": 10,
+        "exact": 14,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 35,
-        "setup": 51,
-        "setup-rejected": 6,
-        "unsupported-setup": 68,
+        "tainted": 31,
+        "setup": 56,
+        "setup-rejected": 4,
+        "unsupported-setup": 65,
         "session": 8,
         "skipped": 14,
         "volatile": 7,
@@ -8072,7 +8027,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT current_timestamp is not supported on a local table": 1
       }
@@ -8170,9 +8125,8 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option INVISIBLE is not supported on a local table": 16,
+        "DDL: Error: column option INVISIBLE is not supported on a local table": 17,
         "DDL: Error: sql parser error: Expected: ), found: mod at Line: _, Column: _": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (b + _) is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT (a) is not supported on a local table": 1
       }
@@ -8265,24 +8219,22 @@
       "file": "join",
       "statements": 681,
       "counts": {
-        "exact": 69,
+        "exact": 75,
         "mismatch": 10,
         "name-mismatch": 1,
         "pintail-error": 22,
         "mysql-error": 1,
-        "tainted": 45,
-        "setup": 306,
-        "setup-rejected": 10,
-        "unsupported-setup": 96,
+        "tainted": 37,
+        "setup": 325,
+        "setup-rejected": 1,
+        "unsupported-setup": 86,
         "session": 11,
         "skipped": 107,
-        "volatile": 3,
+        "volatile": 5,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 8,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: ambiguous ORDER BY output i": 2,
         "Error: unsupported table expression: (t1__14 NATURAL JOIN t2__13)": 2,
         "Error: unsupported join operator: Right(Natural)": 1,
@@ -8307,15 +8259,15 @@
       "file": "join_cache",
       "statements": 1410,
       "counts": {
-        "exact": 62,
-        "mismatch": 2,
+        "exact": 67,
+        "mismatch": 4,
         "name-mismatch": 0,
-        "pintail-error": 15,
+        "pintail-error": 21,
         "mysql-error": 7,
-        "tainted": 101,
-        "setup": 431,
-        "setup-rejected": 34,
-        "unsupported-setup": 234,
+        "tainted": 88,
+        "setup": 473,
+        "setup-rejected": 6,
+        "unsupported-setup": 220,
         "session": 289,
         "skipped": 232,
         "volatile": 3,
@@ -8323,18 +8275,20 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 26,
+        "DDL: Error: column option DEFAULT now() is not supported on a local table": 1,
         "Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _": 1,
-        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
+        "Error: unsupported query clause: SELECT STRAIGHT_JOIN t1__14.id1, t1__14.num3, t3__7.text1": 1,
         "Error: sql parser error: Expected: end of statement, found: ON at Line: _, Column: _": 3,
         "Error: invalid ORDER BY expression t2__18.v": 1,
         "Error: unsupported table expression: t1__24 s FORCE INDEX (idx)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 5,
+        "Error: unsupported expression: text collation latin1_bin is unsupported; supported: utf8mb": 5,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 2,
         "Error: unsupported table expression: (t2__36 JOIN t3__18 ON t2__36.c2 = t3__18.a3)": 3,
         "Error: unsupported table expression: (t2__39 JOIN t3__21 ON t2__39.a2 = t3__21.a3)": 2,
         "Error: unsupported expression: (t1__48.b, t2__48.b)": 2,
-        "Error: operator := does not accept Some(Int64) and Some(Int64)": 2
+        "Error: operator := does not accept Some(Int64) and Some(Int64)": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1
       }
     },
     {
@@ -8407,11 +8361,11 @@
         "exact": 0,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 0,
+        "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 4,
-        "setup": 9,
-        "setup-rejected": 3,
+        "tainted": 3,
+        "setup": 12,
+        "setup-rejected": 0,
         "unsupported-setup": 13,
         "session": 8,
         "skipped": 4,
@@ -8420,7 +8374,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3
+        "Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _": 1
       }
     },
     {
@@ -8538,15 +8492,15 @@
       "file": "key",
       "statements": 256,
       "counts": {
-        "exact": 7,
+        "exact": 15,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 28,
-        "setup": 84,
-        "setup-rejected": 12,
-        "unsupported-setup": 60,
+        "tainted": 20,
+        "setup": 98,
+        "setup-rejected": 8,
+        "unsupported-setup": 50,
         "session": 1,
         "skipped": 63,
         "volatile": 1,
@@ -8554,11 +8508,10 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
         "INSERT: Error: Column _ cannot be null": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: binary at Line: ": 1,
+        "DDL: Error: PRIMARY KEY over the expression _ is not supported": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1
       }
@@ -8739,23 +8692,22 @@
       "file": "limit",
       "statements": 70,
       "counts": {
-        "exact": 6,
+        "exact": 2,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 12,
-        "setup": 15,
-        "setup-rejected": 3,
+        "setup": 16,
+        "setup-rejected": 2,
         "unsupported-setup": 15,
         "session": 4,
         "skipped": 13,
-        "volatile": 2,
+        "volatile": 6,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1
       }
@@ -8768,14 +8720,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 1,
-        "mysql-error": 63,
+        "mysql-error": 59,
         "tainted": 14,
         "setup": 76,
         "setup-rejected": 2,
         "unsupported-setup": 27,
         "session": 3,
         "skipped": 71,
-        "volatile": 0,
+        "volatile": 4,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -8816,8 +8768,8 @@
         "pintail-error": 1,
         "mysql-error": 1,
         "tainted": 46,
-        "setup": 75,
-        "setup-rejected": 3,
+        "setup": 76,
+        "setup-rejected": 2,
         "unsupported-setup": 86,
         "session": 26,
         "skipped": 17,
@@ -8827,7 +8779,6 @@
       },
       "errorClasses": {
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT current_timestamp is not supported on a local table": 1,
         "Error: unsupported expression: load_file(X_)": 1
       }
@@ -9065,13 +9016,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 18,
+        "tainted": 15,
         "setup": 4,
         "setup-rejected": 0,
         "unsupported-setup": 51,
         "session": 0,
         "skipped": 20,
-        "volatile": 0,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -9188,18 +9139,18 @@
       "file": "lowercase_table",
       "statements": 84,
       "counts": {
-        "exact": 2,
+        "exact": 1,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 13,
+        "mysql-error": 11,
         "tainted": 1,
         "setup": 19,
         "setup-rejected": 0,
         "unsupported-setup": 15,
         "session": 6,
         "skipped": 28,
-        "volatile": 0,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -9427,18 +9378,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 3,
-        "setup-rejected": 2,
-        "unsupported-setup": 2,
+        "setup": 7,
+        "setup-rejected": 0,
+        "unsupported-setup": 0,
         "session": 5,
         "skipped": 8,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "mdev-31636",
@@ -9809,24 +9758,24 @@
       "file": "metadata",
       "statements": 104,
       "counts": {
-        "exact": 22,
+        "exact": 16,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 9,
         "mysql-error": 0,
-        "tainted": 19,
-        "setup": 25,
-        "setup-rejected": 3,
-        "unsupported-setup": 12,
+        "tainted": 14,
+        "setup": 27,
+        "setup-rejected": 2,
+        "unsupported-setup": 11,
         "session": 4,
         "skipped": 5,
-        "volatile": 5,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: query engine failed: row _ has type UInt64; vector requires Int64": 1,
         "DDL: Error: sql parser error: Expected: a string, found: _ at Line: _, Column: _": 1,
         "Error: unsupported expression: STRCMP(_, _)": 1,
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
@@ -9835,7 +9784,6 @@
         "Error: unsupported expression: MICROSECOND(_)": 1,
         "Error: unsupported expression: BIT_LENGTH(_)": 1,
         "Error: operator ~ does not accept Some(Int64)": 1,
-        "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 1,
         "Error: operator := does not accept None and Some(Int64)": 1
       }
     },
@@ -9843,15 +9791,15 @@
       "file": "mrr_icp_extra",
       "statements": 58,
       "counts": {
-        "exact": 3,
+        "exact": 4,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 1,
-        "setup": 27,
-        "setup-rejected": 1,
-        "unsupported-setup": 2,
+        "tainted": 0,
+        "setup": 29,
+        "setup-rejected": 0,
+        "unsupported-setup": 1,
         "session": 5,
         "skipped": 18,
         "volatile": 0,
@@ -9859,7 +9807,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "Error: unsupported table expression: t1__5 FORCE INDEX (a)": 1
       }
     },
@@ -10001,8 +9948,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 9,
-        "setup-rejected": 1,
+        "setup": 10,
+        "setup-rejected": 0,
         "unsupported-setup": 12,
         "session": 0,
         "skipped": 6,
@@ -10010,9 +9957,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "mysql",
@@ -10085,14 +10030,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 16,
+        "mysql-error": 0,
         "tainted": 0,
         "setup": 16,
         "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 16,
-        "volatile": 0,
+        "volatile": 16,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -10509,13 +10454,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 133,
+        "tainted": 113,
         "setup": 15,
         "setup-rejected": 2,
         "unsupported-setup": 1246,
         "session": 7,
         "skipped": 43,
-        "volatile": 0,
+        "volatile": 20,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -10617,8 +10562,8 @@
         "pintail-error": 2,
         "mysql-error": 3,
         "tainted": 7,
-        "setup": 119,
-        "setup-rejected": 4,
+        "setup": 121,
+        "setup-rejected": 2,
         "unsupported-setup": 63,
         "session": 12,
         "skipped": 84,
@@ -10628,7 +10573,6 @@
       },
       "errorClasses": {
         "Error: unsupported expression: strcmp(_, NULL)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported expression: CHARSET(NULLIF(a, _utf8 _ COLLATE utf8_bin))": 1
@@ -10659,24 +10603,22 @@
       "file": "null_key",
       "statements": 164,
       "counts": {
-        "exact": 18,
+        "exact": 15,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 26,
-        "setup": 38,
-        "setup-rejected": 2,
-        "unsupported-setup": 37,
+        "tainted": 20,
+        "setup": 42,
+        "setup-rejected": 0,
+        "unsupported-setup": 35,
         "session": 0,
         "skipped": 42,
-        "volatile": 1,
+        "volatile": 10,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "odbc",
@@ -10709,7 +10651,7 @@
         "exact": 7,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 75,
+        "pintail-error": 71,
         "mysql-error": 2,
         "tainted": 4,
         "setup": 101,
@@ -10717,15 +10659,15 @@
         "unsupported-setup": 8,
         "session": 3,
         "skipped": 19,
-        "volatile": 3,
+        "volatile": 7,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: sql parser error: Expected: end of statement, found: with at Line: _, Column: _": 21,
+        "Error: sql parser error: Expected: end of statement, found: with at Line: _, Column: _": 19,
         "Error: sql parser error: Expected: joined table, found: , at Line: _, Column: _": 5,
         "Error: sql parser error: Expected: ), found: with at Line: _, Column: _": 1,
-        "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 48
+        "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 46
       }
     },
     {
@@ -10802,23 +10744,22 @@
       "counts": {
         "exact": 14,
         "mismatch": 0,
-        "name-mismatch": 1,
+        "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 4,
         "tainted": 7,
-        "setup": 192,
-        "setup-rejected": 6,
-        "unsupported-setup": 81,
+        "setup": 194,
+        "setup-rejected": 5,
+        "unsupported-setup": 80,
         "session": 96,
         "skipped": 89,
-        "volatile": 85,
+        "volatile": 86,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: unsupported expression: f1(a)": 1,
         "Error: unsupported expression: f2(a)": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 1,
         "Error: unsupported table expression: t1__29 FORCE INDEX (kp1)": 1,
         "Error: unsupported expression: (a, b)": 1,
@@ -10915,14 +10856,14 @@
       "file": "opt_tvc",
       "statements": 74,
       "counts": {
-        "exact": 4,
+        "exact": 6,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 2,
-        "setup": 28,
-        "setup-rejected": 2,
+        "tainted": 0,
+        "setup": 30,
+        "setup-rejected": 0,
         "unsupported-setup": 18,
         "session": 9,
         "skipped": 11,
@@ -10930,9 +10871,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "optimizer_costs",
@@ -10980,27 +10919,27 @@
       "file": "order_by",
       "statements": 680,
       "counts": {
-        "exact": 19,
+        "exact": 20,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 4,
         "mysql-error": 3,
-        "tainted": 113,
-        "setup": 173,
-        "setup-rejected": 10,
-        "unsupported-setup": 179,
+        "tainted": 110,
+        "setup": 199,
+        "setup-rejected": 4,
+        "unsupported-setup": 159,
         "session": 68,
         "skipped": 102,
-        "volatile": 9,
+        "volatile": 11,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 8,
         "Error: invalid ORDER BY expression _ - i": 1,
         "Error: invalid ORDER BY expression mod(i, _)": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "Error: operator := does not accept None and Some(Int64)": 1,
+        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 2,
         "Error: invalid ORDER BY expression (SELECT two LIMIT _ OFFSET _)": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: charset at Line:": 1
       }
@@ -11009,7 +10948,7 @@
       "file": "order_by-mdev-10122",
       "statements": 31,
       "counts": {
-        "exact": 20,
+        "exact": 14,
         "mismatch": 8,
         "name-mismatch": 0,
         "pintail-error": 0,
@@ -11020,7 +10959,7 @@
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
-        "volatile": 0,
+        "volatile": 6,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -11036,8 +10975,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 16,
-        "setup-rejected": 1,
+        "setup": 17,
+        "setup-rejected": 0,
         "unsupported-setup": 9,
         "session": 29,
         "skipped": 11,
@@ -11045,9 +10984,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "order_by_optimizer",
@@ -11145,8 +11082,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 1,
-        "setup-rejected": 1,
+        "setup": 2,
+        "setup-rejected": 0,
         "unsupported-setup": 1,
         "session": 0,
         "skipped": 1,
@@ -11154,9 +11091,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "outfile",
@@ -11254,15 +11189,15 @@
         "exact": 12,
         "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 61,
-        "mysql-error": 41,
+        "pintail-error": 49,
+        "mysql-error": 31,
         "tainted": 7,
         "setup": 209,
         "setup-rejected": 2,
         "unsupported-setup": 34,
         "session": 26,
         "skipped": 371,
-        "volatile": 4,
+        "volatile": 26,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -11287,9 +11222,9 @@
         "Error: unsupported query clause: SELECT _ FROM t1__6 UNION SELECT _ FROM DUAL WHERE _ GROU": 1,
         "Error: unsupported query clause: SELECT _ FROM t1__6 FOR UPDATE": 1,
         "Error: unsupported query clause: SELECT _ FROM t1__6 UNION SELECT _ FROM t1__6 ORDER BY _ ": 1,
-        "Error: sql parser error: Expected: ), found: WITH at Line: _, Column: _": 20,
-        "Error: sql parser error: Expected: joined table, found: * at Line: _, Column: _": 5,
-        "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 3,
+        "Error: sql parser error: Expected: ), found: WITH at Line: _, Column: _": 10,
+        "Error: sql parser error: Expected: joined table, found: * at Line: _, Column: _": 4,
+        "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 2,
         "Error: sql parser error: recursion limit exceeded": 1,
         "DDL: Error: column option AS (_ IN (_ NOT BETWEEN _ AND _)) is not supported on a local table": 1,
         "Error: unsupported query clause: (SELECT * FROM t1__23) FOR UPDATE": 1,
@@ -11368,13 +11303,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 133,
+        "tainted": 113,
         "setup": 15,
         "setup-rejected": 2,
         "unsupported-setup": 1246,
         "session": 9,
         "skipped": 43,
-        "volatile": 0,
+        "volatile": 20,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -11600,31 +11535,33 @@
       "file": "range",
       "statements": 828,
       "counts": {
-        "exact": 67,
+        "exact": 100,
         "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 17,
+        "pintail-error": 26,
         "mysql-error": 3,
-        "tainted": 110,
-        "setup": 282,
-        "setup-rejected": 22,
-        "unsupported-setup": 159,
+        "tainted": 67,
+        "setup": 312,
+        "setup-rejected": 8,
+        "unsupported-setup": 143,
         "session": 25,
         "skipped": 142,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 10,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
-        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 3,
-        "INSERT: Error: value _ is not supported in INSERT": 2,
-        "Error: unsupported expression: text collation latin1_bin is unsupported; supported: utf8mb": 1,
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 4,
+        "Error: unsupported expression: text collation latin1_bin is unsupported; supported: utf8mb": 3,
+        "Error: unsupported expression: text collation latin1_german2_ci is unsupported; supported:": 1,
         "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__35 WHERE f1 < _": 2,
         "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__35 WHERE f1 < _._": 1,
         "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__35 WHERE f1 < -_": 1,
         "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__35 WHERE f1 > -_": 1,
+        "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__36 WHERE f1 < _": 2,
+        "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__36 WHERE f1 < _._": 1,
+        "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__36 WHERE f1 > -_": 2,
+        "Error: unsupported query clause: SELECT SQL_NO_CACHE COUNT(*) FROM t1__36 WHERE f1 > -_._": 1,
         "Error: unsupported table expression: t1__42 FORCE INDEX (PRIMARY)": 1,
         "INSERT: Error: Column _ cannot be null": 3,
         "Error: unsupported table expression: t1__46 FORCE INDEX (primary)": 2,
@@ -11688,9 +11625,9 @@
         "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 25,
-        "setup-rejected": 1,
-        "unsupported-setup": 2,
+        "setup": 27,
+        "setup-rejected": 0,
+        "unsupported-setup": 1,
         "session": 29,
         "skipped": 10,
         "volatile": 1,
@@ -11698,8 +11635,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported table expression: r__1 IGNORE INDEX (t)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "Error: unsupported table expression: r__1 IGNORE INDEX (t)": 1
       }
     },
     {
@@ -11842,18 +11778,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 1,
-        "setup": 5,
-        "setup-rejected": 2,
-        "unsupported-setup": 9,
+        "setup": 8,
+        "setup-rejected": 0,
+        "unsupported-setup": 8,
         "session": 0,
         "skipped": 4,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "replace_returning",
@@ -11949,9 +11883,9 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 9,
-        "setup": 18,
-        "setup-rejected": 9,
-        "unsupported-setup": 94,
+        "setup": 30,
+        "setup-rejected": 8,
+        "unsupported-setup": 83,
         "session": 0,
         "skipped": 0,
         "volatile": 0,
@@ -11960,8 +11894,7 @@
       },
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected an integer": 4,
-        "INSERT: Error: Incorrect value _ for column _: expected a non-negative integer": 4,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "INSERT: Error: Incorrect value _ for column _: expected a non-negative integer": 4
       }
     },
     {
@@ -12059,19 +11992,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 1,
-        "setup": 61,
-        "setup-rejected": 4,
-        "unsupported-setup": 248,
+        "setup": 300,
+        "setup-rejected": 0,
+        "unsupported-setup": 13,
         "session": 4,
         "skipped": 7,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "rownum",
@@ -12082,13 +12012,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 6,
-        "tainted": 85,
+        "tainted": 82,
         "setup": 70,
         "setup-rejected": 0,
         "unsupported-setup": 45,
         "session": 6,
         "skipped": 105,
-        "volatile": 0,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -12103,13 +12033,13 @@
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 6,
+        "tainted": 5,
         "setup": 6,
         "setup-rejected": 0,
         "unsupported-setup": 6,
         "session": 5,
         "skipped": 38,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -12239,8 +12169,8 @@
         "pintail-error": 0,
         "mysql-error": 2,
         "tainted": 1,
-        "setup": 4,
-        "setup-rejected": 1,
+        "setup": 5,
+        "setup-rejected": 0,
         "unsupported-setup": 13,
         "session": 9,
         "skipped": 12,
@@ -12248,9 +12178,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "select",
@@ -12282,20 +12210,19 @@
         "name-mismatch": 0,
         "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 7,
-        "setup": 6,
-        "setup-rejected": 3,
+        "tainted": 3,
+        "setup": 8,
+        "setup-rejected": 1,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 1,
-        "volatile": 9,
+        "volatile": 13,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
-        "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS a FROM t1__2 WHERE a IN (_, _,": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
+        "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS a FROM t1__2 WHERE a IN (_, _,": 2
       }
     },
     {
@@ -12373,9 +12300,9 @@
         "pintail-error": 4,
         "mysql-error": 0,
         "tainted": 12,
-        "setup": 230,
-        "setup-rejected": 8,
-        "unsupported-setup": 355,
+        "setup": 472,
+        "setup-rejected": 1,
+        "unsupported-setup": 120,
         "session": 190,
         "skipped": 122,
         "volatile": 4,
@@ -12383,9 +12310,8 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 5,
         "Error: unsupported expression: (_, _)": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported expression: f1()": 2,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN pk FROM t1__37 JOIN t2__21 ON a = pk": 1
       }
@@ -12464,13 +12390,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 30,
+        "tainted": 29,
         "setup": 34,
         "setup-rejected": 0,
         "unsupported-setup": 50,
         "session": 2,
         "skipped": 9,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -12546,7 +12472,7 @@
       "file": "show",
       "statements": 55,
       "counts": {
-        "exact": 5,
+        "exact": 3,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 2,
@@ -12557,7 +12483,7 @@
         "unsupported-setup": 4,
         "session": 0,
         "skipped": 24,
-        "volatile": 2,
+        "volatile": 4,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -12638,8 +12564,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 4,
-        "setup": 65,
-        "setup-rejected": 2,
+        "setup": 66,
+        "setup-rejected": 1,
         "unsupported-setup": 102,
         "session": 24,
         "skipped": 288,
@@ -12648,7 +12574,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "DDL: Error: sql parser error: Expected: Token::SingleQuotedString, found: _": 1
       }
     },
@@ -12834,8 +12759,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 14,
-        "setup": 18,
-        "setup-rejected": 2,
+        "setup": 19,
+        "setup-rejected": 1,
         "unsupported-setup": 23,
         "session": 2,
         "skipped": 19,
@@ -12844,7 +12769,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1
       }
     },
@@ -13005,8 +12929,8 @@
         "pintail-error": 18,
         "mysql-error": 1,
         "tainted": 9,
-        "setup": 26,
-        "setup-rejected": 8,
+        "setup": 29,
+        "setup-rejected": 5,
         "unsupported-setup": 32,
         "session": 46,
         "skipped": 91,
@@ -13016,8 +12940,6 @@
       },
       "errorClasses": {
         "DDL: Error: character set latin2 is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT ._ is not supported on a local table": 2,
-        "DDL: Error: column option DEFAULT _._ is not supported on a local table": 1,
         "DDL: Error: column option DEFAULT current_timestamp is not supported on a local table": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 3,
         "Error: unsupported expression: test_function(@to_var1)": 2,
@@ -13083,19 +13005,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 11,
-        "setup": 82,
-        "setup-rejected": 4,
-        "unsupported-setup": 624,
+        "setup": 321,
+        "setup-rejected": 0,
+        "unsupported-setup": 389,
         "session": 73,
         "skipped": 67,
         "volatile": 43,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "stat_tables-enospc",
@@ -13128,19 +13047,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 61,
-        "setup-rejected": 4,
-        "unsupported-setup": 239,
+        "setup": 300,
+        "setup-rejected": 0,
+        "unsupported-setup": 4,
         "session": 15,
         "skipped": 10,
         "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "stat_tables_missing",
@@ -13259,8 +13175,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 15,
-        "setup": 31,
-        "setup-rejected": 8,
+        "setup": 37,
+        "setup-rejected": 2,
         "unsupported-setup": 165,
         "session": 70,
         "skipped": 81,
@@ -13270,7 +13186,6 @@
       },
       "errorClasses": {
         "INSERT: Error: value _ is not supported in INSERT": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 6,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1
       }
     },
@@ -13305,8 +13220,8 @@
         "pintail-error": 4,
         "mysql-error": 0,
         "tainted": 15,
-        "setup": 74,
-        "setup-rejected": 12,
+        "setup": 78,
+        "setup-rejected": 8,
         "unsupported-setup": 79,
         "session": 37,
         "skipped": 154,
@@ -13315,8 +13230,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
-        "INSERT: Error: value _ is not supported in INSERT": 2,
+        "INSERT: Error: Incorrect value X_ for column _": 1,
         "DDL: Error: character set cp1251 is not supported on a local table": 1,
         "DDL: Error: character set cp1257 is not supported on a local table": 1,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
@@ -13395,28 +13309,29 @@
       "file": "strict",
       "statements": 602,
       "counts": {
-        "exact": 9,
-        "mismatch": 1,
+        "exact": 10,
+        "mismatch": 2,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 20,
-        "setup": 88,
-        "setup-rejected": 21,
-        "unsupported-setup": 141,
+        "tainted": 15,
+        "setup": 101,
+        "setup-rejected": 17,
+        "unsupported-setup": 132,
         "session": 16,
         "skipped": 304,
-        "volatile": 2,
+        "volatile": 5,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected a date": 3,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 13,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 5,
+        "INSERT: Error: Incorrect value _ for column _: expected an integer": 5,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
-        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1
+        "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
+        "DDL: Error: Invalid default value for _": 1
       }
     },
     {
@@ -13533,7 +13448,7 @@
         "exact": 4,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 4,
+        "pintail-error": 3,
         "mysql-error": 0,
         "tainted": 3,
         "setup": 53,
@@ -13541,7 +13456,7 @@
         "unsupported-setup": 56,
         "session": 15,
         "skipped": 11,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -13549,8 +13464,7 @@
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 4,
         "Error: unsupported expression: (_, _)": 1,
         "Error: operator := does not accept None and Some(Int64)": 2,
-        "DDL: Error: character set engine is not supported on a local table": 3,
-        "Error: invalid use of group function: max(q11 + q12 + q13 + q14 + q15 + q16 + q17 + q18 + ": 1
+        "DDL: Error: character set engine is not supported on a local table": 3
       }
     },
     {
@@ -13599,18 +13513,18 @@
       "file": "subselect4",
       "statements": 1013,
       "counts": {
-        "exact": 62,
-        "mismatch": 2,
+        "exact": 60,
+        "mismatch": 1,
         "name-mismatch": 0,
         "pintail-error": 43,
         "mysql-error": 53,
-        "tainted": 32,
-        "setup": 408,
-        "setup-rejected": 6,
-        "unsupported-setup": 111,
+        "tainted": 30,
+        "setup": 415,
+        "setup-rejected": 2,
+        "unsupported-setup": 108,
         "session": 63,
         "skipped": 232,
-        "volatile": 1,
+        "volatile": 6,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -13618,12 +13532,12 @@
         "Error: unsupported expression: (a, b)": 8,
         "Error: unsupported expression: (c, d)": 2,
         "Error: unsupported expression: (e, f)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 4,
+        "Error: unsupported expression: default(a)": 1,
         "Error: unsupported expression: (NULL, _)": 6,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
         "Error: unsupported expression: (f10, f10)": 2,
         "Error: unsupported expression: (_, _)": 6,
-        "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 5,
+        "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 4,
         "Error: unsupported expression: (alias2.f1, alias2.f2)": 2,
         "Error: unsupported expression: (f1b, f2b)": 2,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN (SELECT f2 FROM t1__27 WHERE (f2) IN": 1,
@@ -13643,13 +13557,13 @@
         "name-mismatch": 0,
         "pintail-error": 26,
         "mysql-error": 8,
-        "tainted": 12,
+        "tainted": 11,
         "setup": 646,
         "setup-rejected": 1,
         "unsupported-setup": 37,
         "session": 56,
         "skipped": 168,
-        "volatile": 2,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -13698,24 +13612,23 @@
       "file": "subselect_exists2in",
       "statements": 341,
       "counts": {
-        "exact": 12,
+        "exact": 11,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 1,
         "tainted": 18,
-        "setup": 150,
-        "setup-rejected": 3,
-        "unsupported-setup": 35,
+        "setup": 158,
+        "setup-rejected": 0,
+        "unsupported-setup": 30,
         "session": 65,
         "skipped": 52,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: query engine failed: physical input is missing t1__2.a": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "Error: query engine failed: invalid physical plan: scalar or IN subquery must produce exac": 3,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM t1__13 AS alias1, t1__13 AS a": 1
       }
@@ -13730,8 +13643,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 4,
-        "setup": 0,
-        "setup-rejected": 3,
+        "setup": 3,
+        "setup-rejected": 0,
         "unsupported-setup": 34,
         "session": 6,
         "skipped": 7,
@@ -13739,9 +13652,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "subselect_extra",
@@ -13753,18 +13664,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 10,
-        "setup": 51,
-        "setup-rejected": 3,
-        "unsupported-setup": 31,
+        "setup": 59,
+        "setup-rejected": 0,
+        "unsupported-setup": 26,
         "session": 7,
         "skipped": 35,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "subselect_extra_no_semijoin",
@@ -13812,7 +13721,7 @@
       "file": "subselect_mat",
       "statements": 163,
       "counts": {
-        "exact": 16,
+        "exact": 15,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 5,
@@ -13823,7 +13732,7 @@
         "unsupported-setup": 34,
         "session": 8,
         "skipped": 28,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -13864,8 +13773,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 18,
-        "setup": 0,
-        "setup-rejected": 3,
+        "setup": 3,
+        "setup-rejected": 0,
         "unsupported-setup": 36,
         "session": 7,
         "skipped": 29,
@@ -13873,15 +13782,13 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "subselect_mat_cost_bugs",
       "statements": 199,
       "counts": {
-        "exact": 12,
+        "exact": 11,
         "mismatch": 1,
         "name-mismatch": 0,
         "pintail-error": 4,
@@ -13892,7 +13799,7 @@
         "unsupported-setup": 25,
         "session": 16,
         "skipped": 17,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -14148,15 +14055,15 @@
       "file": "subselect_sj2_mat",
       "statements": 144,
       "counts": {
-        "exact": 6,
+        "exact": 8,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 6,
-        "setup": 67,
-        "setup-rejected": 1,
-        "unsupported-setup": 4,
+        "tainted": 4,
+        "setup": 69,
+        "setup-rejected": 0,
+        "unsupported-setup": 3,
         "session": 34,
         "skipped": 22,
         "volatile": 2,
@@ -14164,7 +14071,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "Error: unsupported expression: (b1, b1)": 2
       }
     },
@@ -14194,17 +14100,17 @@
       "statements": 872,
       "counts": {
         "exact": 33,
-        "mismatch": 2,
+        "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 18,
         "mysql-error": 1,
-        "tainted": 63,
-        "setup": 372,
+        "tainted": 62,
+        "setup": 373,
         "setup-rejected": 21,
-        "unsupported-setup": 138,
+        "unsupported-setup": 137,
         "session": 72,
         "skipped": 151,
-        "volatile": 1,
+        "volatile": 4,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -14213,14 +14119,13 @@
         "INSERT: Error: Table _ doesn't exist": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 14,
         "INSERT: Error: value _ is not supported in INSERT": 4,
-        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
+        "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
         "Error: unsupported expression: (_, _)": 2,
         "Error: sql parser error: Expected: ), found: t5__1 at Line: _, Column: _": 1,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN MIN(a) FROM t1__30 WHERE a IN (SELEC": 1,
         "Error: unsupported expression: (a, c)": 2,
         "Error: unsupported expression: (t1_1.a, t1_2.a)": 1,
         "Error: unsupported expression: (alias2.c2, alias1.c1)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "Error: sql parser error: Expected: ), found: MIN at Line: _, Column: _": 1,
         "Error: query engine failed: invalid physical plan: scalar or IN subquery must produce exac": 2,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN t2__48.* FROM t1__56 JOIN t2__48 WHE": 1
@@ -14257,8 +14162,8 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 4,
-        "setup-rejected": 2,
+        "setup": 6,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -14266,9 +14171,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2
-      }
+      "errorClasses": {}
     },
     {
       "file": "sum_distinct",
@@ -14389,19 +14292,18 @@
         "name-mismatch": 0,
         "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 10,
-        "setup": 130,
-        "setup-rejected": 4,
-        "unsupported-setup": 46,
+        "tainted": 9,
+        "setup": 136,
+        "setup-rejected": 1,
+        "unsupported-setup": 43,
         "session": 5,
         "skipped": 79,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: sql parser error: Expected: end of statement, found: ON at Line: _, Column: _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1
       }
     },
@@ -14414,13 +14316,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 1,
+        "tainted": 0,
         "setup": 5,
         "setup-rejected": 0,
         "unsupported-setup": 4,
         "session": 0,
         "skipped": 0,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -14476,20 +14378,18 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 130,
-        "tainted": 20,
-        "setup": 33,
-        "setup-rejected": 1,
+        "mysql-error": 127,
+        "tainted": 18,
+        "setup": 34,
+        "setup-rejected": 0,
         "unsupported-setup": 41,
         "session": 2,
         "skipped": 184,
-        "volatile": 0,
+        "volatile": 5,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "tablelock",
@@ -15006,15 +14906,15 @@
       "file": "type_binary",
       "statements": 99,
       "counts": {
-        "exact": 3,
-        "mismatch": 0,
+        "exact": 16,
+        "mismatch": 4,
         "name-mismatch": 0,
         "pintail-error": 3,
         "mysql-error": 0,
-        "tainted": 28,
-        "setup": 35,
-        "setup-rejected": 10,
-        "unsupported-setup": 12,
+        "tainted": 11,
+        "setup": 49,
+        "setup-rejected": 0,
+        "unsupported-setup": 8,
         "session": 4,
         "skipped": 4,
         "volatile": 0,
@@ -15022,35 +14922,32 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 9,
-        "Error: DECIMAL value is out of range in _": 3,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
+        "Error: DECIMAL value is out of range in _": 3
       }
     },
     {
       "file": "type_bit",
       "statements": 297,
       "counts": {
-        "exact": 46,
-        "mismatch": 5,
+        "exact": 49,
+        "mismatch": 6,
         "name-mismatch": 0,
         "pintail-error": 6,
         "mysql-error": 0,
-        "tainted": 30,
-        "setup": 123,
-        "setup-rejected": 16,
+        "tainted": 25,
+        "setup": 131,
+        "setup-rejected": 8,
         "unsupported-setup": 41,
         "session": 2,
         "skipped": 28,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 6,
-        "INSERT: Error: value _ is not supported in INSERT": 10,
+        "INSERT: Error: value _ is not supported in INSERT": 5,
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "DDL: Error: column option DEFAULT B_ is not supported on a local table": 1
       }
     },
@@ -15058,15 +14955,15 @@
       "file": "type_blob",
       "statements": 417,
       "counts": {
-        "exact": 10,
-        "mismatch": 2,
+        "exact": 16,
+        "mismatch": 4,
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 111,
-        "setup": 111,
-        "setup-rejected": 17,
-        "unsupported-setup": 75,
+        "tainted": 103,
+        "setup": 141,
+        "setup-rejected": 6,
+        "unsupported-setup": 56,
         "session": 11,
         "skipped": 78,
         "volatile": 1,
@@ -15076,11 +14973,10 @@
       "errorClasses": {
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: byte at Line: _,": 1,
         "INSERT: Error: Column _ cannot be null": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 8,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 1,
         "Error: unsupported expression: f1()": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 5
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2
       }
     },
     {
@@ -15190,9 +15086,9 @@
         "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 15,
-        "setup": 19,
+        "setup": 20,
         "setup-rejected": 4,
-        "unsupported-setup": 29,
+        "unsupported-setup": 28,
         "session": 3,
         "skipped": 9,
         "volatile": 0,
@@ -15204,7 +15100,7 @@
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 1,
         "Error: unsupported expression: INTERVAL _ MICROSECOND": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1
+        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1
       }
     },
     {
@@ -15255,15 +15151,15 @@
       "file": "type_decimal",
       "statements": 443,
       "counts": {
-        "exact": 27,
+        "exact": 32,
         "mismatch": 7,
         "name-mismatch": 1,
         "pintail-error": 5,
         "mysql-error": 0,
-        "tainted": 26,
-        "setup": 124,
-        "setup-rejected": 16,
-        "unsupported-setup": 191,
+        "tainted": 21,
+        "setup": 268,
+        "setup-rejected": 11,
+        "unsupported-setup": 52,
         "session": 6,
         "skipped": 39,
         "volatile": 1,
@@ -15271,10 +15167,9 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3,
         "DDL: Error: column _: invalid MySQL metadata: decimal column a is missing precision": 3,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 5,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 5,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
         "Error: DECIMAL value is out of range in _": 2,
         "Error: numeric expression overflow": 3
       }
@@ -15283,15 +15178,15 @@
       "file": "type_enum",
       "statements": 337,
       "counts": {
-        "exact": 16,
+        "exact": 18,
         "mismatch": 3,
         "name-mismatch": 0,
-        "pintail-error": 14,
+        "pintail-error": 15,
         "mysql-error": 0,
-        "tainted": 33,
-        "setup": 147,
-        "setup-rejected": 14,
-        "unsupported-setup": 45,
+        "tainted": 30,
+        "setup": 158,
+        "setup-rejected": 5,
+        "unsupported-setup": 43,
         "session": 16,
         "skipped": 49,
         "volatile": 0,
@@ -15299,9 +15194,10 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 10,
+        "DDL: Error: Invalid default value for _": 1,
         "DDL: Error: sql parser error: Expected: literal string, found: X_ at Line: _, Column: _": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: BINARY at Line: ": 1,
+        "Error: unsupported expression: text collation latin1_swedish_ci is unsupported; supported:": 1,
         "INSERT: Error: Incorrect value _ for column _: Data truncated": 1,
         "Error: unsupported expression: text collation latin1_bin is unsupported; supported: utf8mb": 9,
         "Error: unsupported expression: text collation binary is unsupported; supported: utf8mb4_09": 4,
@@ -15313,23 +15209,22 @@
       "file": "type_float",
       "statements": 409,
       "counts": {
-        "exact": 38,
-        "mismatch": 14,
+        "exact": 42,
+        "mismatch": 17,
         "name-mismatch": 0,
         "pintail-error": 10,
         "mysql-error": 8,
-        "tainted": 40,
-        "setup": 157,
-        "setup-rejected": 11,
-        "unsupported-setup": 64,
+        "tainted": 32,
+        "setup": 166,
+        "setup-rejected": 4,
+        "unsupported-setup": 62,
         "session": 9,
         "skipped": 58,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 7,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
         "Error: numeric expression overflow": 2,
         "Error: query engine failed: bound expression has an invalid physical type": 1,
@@ -15339,7 +15234,7 @@
         "Error: query engine failed: row _ has type Int64; vector requires Float64": 4,
         "Error: unsupported expression: FORMAT(_, _, _)": 1,
         "Error: unsupported expression: FORMAT(0e0, _, _)": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1
+        "INSERT: Error: Incorrect value X_ for column _": 1
       }
     },
     {
@@ -15370,14 +15265,14 @@
       "file": "type_int",
       "statements": 329,
       "counts": {
-        "exact": 26,
+        "exact": 27,
         "mismatch": 7,
         "name-mismatch": 0,
         "pintail-error": 5,
         "mysql-error": 7,
-        "tainted": 33,
-        "setup": 87,
-        "setup-rejected": 11,
+        "tainted": 32,
+        "setup": 88,
+        "setup-rejected": 10,
         "unsupported-setup": 57,
         "session": 6,
         "skipped": 88,
@@ -15388,7 +15283,7 @@
       "errorClasses": {
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 2,
         "INSERT: Error: Incorrect value _ for column _: expected an integer": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 8,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 7,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1
       }
@@ -15401,10 +15296,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 1,
-        "tainted": 1,
-        "setup": 5,
-        "setup-rejected": 1,
+        "mysql-error": 2,
+        "tainted": 0,
+        "setup": 6,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -15412,9 +15307,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "type_json",
@@ -15470,15 +15363,15 @@
       "file": "type_newdecimal",
       "statements": 349,
       "counts": {
-        "exact": 156,
-        "mismatch": 22,
+        "exact": 176,
+        "mismatch": 5,
         "name-mismatch": 0,
         "pintail-error": 9,
         "mysql-error": 0,
-        "tainted": 10,
-        "setup": 83,
-        "setup-rejected": 8,
-        "unsupported-setup": 27,
+        "tainted": 7,
+        "setup": 90,
+        "setup-rejected": 6,
+        "unsupported-setup": 22,
         "session": 8,
         "skipped": 26,
         "volatile": 0,
@@ -15488,13 +15381,12 @@
       "errorClasses": {
         "DDL: Error: column _: invalid MySQL metadata: decimal column a is missing precision": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a non-negative integer": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: query engine failed: bound expression has an invalid physical type": 3,
         "Error: numeric expression overflow": 5,
         "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 1,
         "DDL: Error: column _: invalid MySQL metadata: decimal column d1 is missing precision": 1,
-        "DDL: Error: column option DEFAULT -_ is not supported on a local table": 1,
-        "DDL: Error: column option DEFAULT _._ is not supported on a local table": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
+        "DDL: Error: column _: invalid MySQL metadata: decimal column f1 is missing precision": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1
       }
     },
@@ -15596,8 +15488,8 @@
         "pintail-error": 16,
         "mysql-error": 0,
         "tainted": 18,
-        "setup": 69,
-        "setup-rejected": 4,
+        "setup": 70,
+        "setup-rejected": 3,
         "unsupported-setup": 24,
         "session": 8,
         "skipped": 29,
@@ -15606,7 +15498,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 2,
+        "DDL: Error: Invalid default value for _": 1,
         "Error: unsupported expression: text collation latin1_bin is unsupported; supported: utf8mb": 11,
         "Error: unsupported expression: text collation binary is unsupported; supported: utf8mb4_09": 4,
         "Error: UNION ALL column _ has types Some(Int32) and Some(Utf8)": 1,
@@ -15659,15 +15551,15 @@
       "file": "type_time",
       "statements": 950,
       "counts": {
-        "exact": 72,
-        "mismatch": 47,
+        "exact": 75,
+        "mismatch": 48,
         "name-mismatch": 0,
         "pintail-error": 9,
         "mysql-error": 3,
-        "tainted": 66,
-        "setup": 225,
-        "setup-rejected": 7,
-        "unsupported-setup": 365,
+        "tainted": 62,
+        "setup": 236,
+        "setup-rejected": 3,
+        "unsupported-setup": 358,
         "session": 37,
         "skipped": 112,
         "volatile": 7,
@@ -15675,9 +15567,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
         "Error: unsupported expression: TIMESTAMP(f1, _)": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 3,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 1,
         "Error: unsupported expression: TIMESTAMP(c, _)": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a time": 2,
@@ -15763,23 +15653,23 @@
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 3,
-        "tainted": 100,
-        "setup": 185,
-        "setup-rejected": 32,
-        "unsupported-setup": 185,
+        "tainted": 99,
+        "setup": 192,
+        "setup-rejected": 29,
+        "unsupported-setup": 181,
         "session": 112,
         "skipped": 170,
-        "volatile": 2,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 13,
         "DDL: Error: column option DEFAULT now() is not supported on a local table": 5,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 7,
+        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 2,
         "DDL: Error: column option DEFAULT current_timestamp is not supported on a local table": 5,
-        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "DDL: Error: Invalid default value for _": 2,
         "Error: column t1__56.c1 is neither grouped nor aggregated": 1
       }
     },
@@ -15829,14 +15719,14 @@
       "file": "type_uint",
       "statements": 37,
       "counts": {
-        "exact": 2,
+        "exact": 3,
         "mismatch": 1,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 4,
-        "setup": 16,
-        "setup-rejected": 1,
+        "tainted": 3,
+        "setup": 17,
+        "setup-rejected": 0,
         "unsupported-setup": 6,
         "session": 5,
         "skipped": 2,
@@ -15844,22 +15734,20 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: value _ is not supported in INSERT": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "type_varbinary",
       "statements": 7,
       "counts": {
-        "exact": 0,
+        "exact": 2,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 0,
+        "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 4,
-        "setup": 2,
-        "setup-rejected": 1,
+        "tainted": 0,
+        "setup": 3,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -15868,7 +15756,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
+        "Error: unsupported table expression: t1__1 IGNORE KEY (c1)": 2
       }
     },
     {
@@ -15923,8 +15811,8 @@
         "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 68,
-        "setup": 55,
-        "setup-rejected": 6,
+        "setup": 59,
+        "setup-rejected": 2,
         "unsupported-setup": 38,
         "session": 4,
         "skipped": 10,
@@ -15933,10 +15821,8 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 4,
-        "INSERT: Error: Incorrect value _ for column _: Out of range value": 1,
-        "Error: numeric expression overflow": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1
+        "INSERT: Error: Incorrect value _ for column _: Out of range value": 2,
+        "Error: numeric expression overflow": 1
       }
     },
     {
@@ -16009,33 +15895,32 @@
       "file": "union",
       "statements": 916,
       "counts": {
-        "exact": 84,
-        "mismatch": 18,
-        "name-mismatch": 1,
-        "pintail-error": 37,
+        "exact": 64,
+        "mismatch": 14,
+        "name-mismatch": 0,
+        "pintail-error": 27,
         "mysql-error": 7,
-        "tainted": 74,
-        "setup": 325,
-        "setup-rejected": 23,
-        "unsupported-setup": 150,
+        "tainted": 55,
+        "setup": 350,
+        "setup-rejected": 10,
+        "unsupported-setup": 138,
         "session": 24,
         "skipped": 154,
-        "volatile": 19,
+        "volatile": 73,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: query engine failed: invalid physical plan: UNION ALL input layouts are incompatibl": 1,
-        "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS a, b FROM t1__1": 2,
         "Error: unknown column a": 1,
         "Error: operator := does not accept None and Some(Int64)": 1,
         "Error: invalid ORDER BY expression (SELECT _)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 11,
+        "Error: UNION ALL column _ has types Some(Utf8) and Some(Int64)": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: t1__5 at Line: _": 1,
-        "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS * FROM t1__6": 15,
+        "Error: query engine failed: row _ has type UInt64; vector requires Int64": 2,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 6,
         "INSERT: Error: Column _ cannot be null": 1,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "DDL: Error: sql parser error: Expected: (, found: sdate at Line: _, Column: _": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 4,
         "Error: invalid ORDER BY expression a + _": 1,
@@ -16046,9 +15931,9 @@
         "Error: unsupported expression: (e, f)": 2,
         "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS * FROM t2__45": 1,
         "Error: unsupported query clause: SELECT SQL_CALC_FOUND_ROWS * FROM t1__96": 1,
-        "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: UNION ALL column _ has types Some(UInt64) and Some(Utf8)": 1,
-        "Error: UNION ALL column _ has types Some(Int64) and Some(Utf8)": 1
+        "Error: UNION ALL column _ has types Some(Int64) and Some(Utf8)": 1,
+        "Error: invalid ORDER BY expression (SELECT max(aa) FROM t1__113 WHERE aa < a)": 4
       }
     },
     {
@@ -16076,15 +15961,15 @@
       "file": "update",
       "statements": 348,
       "counts": {
-        "exact": 7,
+        "exact": 8,
         "mismatch": 3,
         "name-mismatch": 0,
         "pintail-error": 2,
         "mysql-error": 0,
-        "tainted": 26,
-        "setup": 119,
-        "setup-rejected": 10,
-        "unsupported-setup": 113,
+        "tainted": 25,
+        "setup": 138,
+        "setup-rejected": 5,
+        "unsupported-setup": 99,
         "session": 4,
         "skipped": 62,
         "volatile": 2,
@@ -16093,9 +15978,8 @@
       },
       "errorClasses": {
         "INSERT: Error: Column _ cannot be null": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 6,
+        "INSERT: Error: Incorrect value _ for column _: expected a datetime": 2,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 2,
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported expression: f1()": 1,
         "Error: unsupported expression: f2()": 1
       }
@@ -16131,19 +16015,16 @@
         "pintail-error": 0,
         "mysql-error": 0,
         "tainted": 0,
-        "setup": 62,
-        "setup-rejected": 5,
-        "unsupported-setup": 246,
+        "setup": 302,
+        "setup-rejected": 0,
+        "unsupported-setup": 11,
         "session": 21,
         "skipped": 53,
         "volatile": 0,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 3
-      }
+      "errorClasses": {}
     },
     {
       "file": "update_use_source",
@@ -16196,7 +16077,7 @@
         "exact": 22,
         "mismatch": 9,
         "name-mismatch": 0,
-        "pintail-error": 36,
+        "pintail-error": 32,
         "mysql-error": 12,
         "tainted": 12,
         "setup": 88,
@@ -16204,23 +16085,23 @@
         "unsupported-setup": 23,
         "session": 38,
         "skipped": 18,
-        "volatile": 8,
+        "volatile": 12,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
         "Error: operator := does not accept Some(Int64) and Some(Int64)": 6,
         "Error: operator := does not accept Some(Int64) and Some(Utf8)": 4,
-        "Error: operator := does not accept None and Some(Int64)": 4,
+        "Error: operator := does not accept None and Some(Int64)": 3,
         "Error: operator := does not accept None and None": 2,
         "Error: unsupported expression: charset(@a)": 3,
         "Error: operator := does not accept Some(Utf8) and Some(Utf8)": 7,
         "Error: unsupported expression: coercibility(@v)": 1,
         "Error: unsupported expression: coercibility(@v1)": 1,
         "Error: operator := does not accept None and Some(Int32)": 1,
-        "Error: operator := does not accept Some(UInt64) and Some(Int64)": 5,
         "Error: operator := does not accept None and Some(Decimal { precision: _, scale: _ })": 1,
         "Error: operator := does not accept Some(UInt64) and Some(Int32)": 1,
+        "Error: operator := does not accept Some(UInt64) and Some(Int64)": 2,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1
       }
     },
@@ -16228,15 +16109,15 @@
       "file": "varbinary",
       "statements": 69,
       "counts": {
-        "exact": 5,
-        "mismatch": 8,
-        "name-mismatch": 2,
+        "exact": 8,
+        "mismatch": 9,
+        "name-mismatch": 0,
         "pintail-error": 6,
         "mysql-error": 0,
-        "tainted": 9,
-        "setup": 17,
-        "setup-rejected": 3,
-        "unsupported-setup": 7,
+        "tainted": 7,
+        "setup": 21,
+        "setup-rejected": 1,
+        "unsupported-setup": 5,
         "session": 0,
         "skipped": 12,
         "volatile": 0,
@@ -16246,7 +16127,6 @@
       "errorClasses": {
         "Error: query engine failed: bound expression has an invalid physical type": 2,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 2,
-        "INSERT: Error: value _ is not supported in INSERT": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line": 1,
         "Error: unknown column 0b01000001": 1,
         "Error: unsupported literal: b_": 1
@@ -16256,34 +16136,31 @@
       "file": "view",
       "statements": 2978,
       "counts": {
-        "exact": 64,
-        "mismatch": 21,
+        "exact": 68,
+        "mismatch": 26,
         "name-mismatch": 0,
-        "pintail-error": 7,
+        "pintail-error": 6,
         "mysql-error": 4,
-        "tainted": 333,
-        "setup": 885,
-        "setup-rejected": 31,
-        "unsupported-setup": 691,
+        "tainted": 322,
+        "setup": 912,
+        "setup-rejected": 15,
+        "unsupported-setup": 680,
         "session": 70,
         "skipped": 854,
-        "volatile": 18,
+        "volatile": 21,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 5,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 4,
         "DDL: Error: sql parser error: Expected: column name or constraint definition, found: _ at Line:": 1,
         "DDL: Error: column option DEFAULT now() is not supported on a local table": 2,
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 2,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 12,
         "Error: unsupported expression: f1()": 1,
         "Error: sql parser error: Expected: an expression, found: ! at Line: _, Column: _": 1,
-        "Error: unknown column lgid": 1,
+        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 2,
         "Error: unsupported table expression: t1__171 USE INDEX (PRIMARY)": 1,
         "Error: unsupported table expression: t1__171 USE INDEX (c2)": 1,
-        "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: CHARSET at Line:": 1,
         "DDL: Error: column option DEFAULT CURRENT_TIMESTAMP is not supported on a local table": 1,
         "DDL: Error: character set cp1251 is not supported on a local table": 2,
@@ -16379,33 +16256,36 @@
       "file": "win",
       "statements": 904,
       "counts": {
-        "exact": 141,
+        "exact": 144,
         "mismatch": 2,
         "name-mismatch": 1,
-        "pintail-error": 17,
-        "mysql-error": 30,
-        "tainted": 68,
-        "setup": 412,
-        "setup-rejected": 7,
-        "unsupported-setup": 43,
+        "pintail-error": 21,
+        "mysql-error": 29,
+        "tainted": 59,
+        "setup": 418,
+        "setup-rejected": 3,
+        "unsupported-setup": 41,
         "session": 11,
         "skipped": 171,
-        "volatile": 1,
+        "volatile": 4,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 5,
+        "Error: unsupported expression: CUME_DIST() OVER (ORDER BY -s1)": 1,
+        "Error: unsupported expression: min(DISTINCT TDEC__1.CDEC) OVER ()": 1,
+        "Error: unsupported expression: max(DISTINCT TDEC__1.CDEC) OVER ()": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 1,
         "Error: unsupported query clause: window functions cannot combine with DISTINCT": 7,
-        "Error: unsupported expression: Nth_value(i, _) OVER ()": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1,
         "Error: operator := does not accept None and Some(Utf8)": 1,
         "Error: unsupported expression: row_number() OVER (ORDER BY b2)": 2,
         "Error: unsupported expression: max(t1__69.a) OVER (PARTITION BY c)": 2,
         "DDL: Error: column _: invalid MySQL metadata: decimal column d is missing precision": 1,
         "Error: unsupported expression: NAME_CONST(_, NULL)": 1,
-        "DDL: Error: column option DEFAULT _ is not supported on a local table": 1,
+        "Error: invalid use of group function: AVG(_)": 1,
+        "Error: unsupported expression: AVG(_) OVER ()": 1,
         "Error: unsupported expression: f()": 1
       }
     },
@@ -16434,14 +16314,14 @@
       "file": "win_avg",
       "statements": 5,
       "counts": {
-        "exact": 0,
+        "exact": 2,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 2,
-        "setup": 2,
-        "setup-rejected": 1,
+        "tainted": 0,
+        "setup": 3,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -16449,9 +16329,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "win_big",
@@ -16504,13 +16382,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 2,
+        "tainted": 0,
         "setup": 4,
         "setup-rejected": 0,
         "unsupported-setup": 2,
         "session": 2,
         "skipped": 7,
-        "volatile": 1,
+        "volatile": 3,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -16646,14 +16524,14 @@
       "file": "win_min_max",
       "statements": 49,
       "counts": {
-        "exact": 31,
+        "exact": 33,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 6,
         "mysql-error": 4,
-        "tainted": 2,
-        "setup": 5,
-        "setup-rejected": 1,
+        "tainted": 0,
+        "setup": 6,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -16662,7 +16540,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unsupported query clause: window frame start follows its end on min(b) OVER (ORDER ": 6
       }
     },
@@ -16721,10 +16598,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 1,
-        "mysql-error": 25,
-        "tainted": 2,
-        "setup": 12,
-        "setup-rejected": 1,
+        "mysql-error": 26,
+        "tainted": 1,
+        "setup": 13,
+        "setup-rejected": 0,
         "unsupported-setup": 2,
         "session": 0,
         "skipped": 8,
@@ -16733,7 +16610,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "Error: unknown column x": 1
       }
     },
@@ -16770,14 +16646,14 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 37,
+        "mysql-error": 36,
         "tainted": 3,
         "setup": 36,
         "setup-rejected": 1,
         "unsupported-setup": 14,
         "session": 0,
         "skipped": 20,
-        "volatile": 0,
+        "volatile": 1,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
@@ -16793,10 +16669,10 @@
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 0,
-        "mysql-error": 2,
-        "tainted": 4,
-        "setup": 11,
-        "setup-rejected": 1,
+        "mysql-error": 6,
+        "tainted": 0,
+        "setup": 12,
+        "setup-rejected": 0,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -16804,9 +16680,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "win_std",
@@ -16835,14 +16709,14 @@
       "file": "win_sum",
       "statements": 9,
       "counts": {
-        "exact": 0,
+        "exact": 2,
         "mismatch": 0,
         "name-mismatch": 0,
         "pintail-error": 1,
         "mysql-error": 0,
-        "tainted": 2,
-        "setup": 4,
-        "setup-rejected": 2,
+        "tainted": 0,
+        "setup": 5,
+        "setup-rejected": 1,
         "unsupported-setup": 0,
         "session": 0,
         "skipped": 0,
@@ -16851,8 +16725,8 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "Error: unsupported expression: sum(_) OVER ()": 1
+        "Error: unsupported expression: sum(_) OVER ()": 1,
+        "INSERT: Error: only literal values are supported in INSERT, got _": 1
       }
     },
     {
@@ -16994,13 +16868,13 @@
         "name-mismatch": 0,
         "pintail-error": 0,
         "mysql-error": 0,
-        "tainted": 16,
+        "tainted": 14,
         "setup": 18,
         "setup-rejected": 0,
         "unsupported-setup": 22,
         "session": 7,
         "skipped": 5,
-        "volatile": 0,
+        "volatile": 2,
         "replica-lag": 0,
         "replica-unsettled": 0
       },
