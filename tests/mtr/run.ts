@@ -509,7 +509,7 @@ function isSimpleCreate(sql: string): boolean {
 }
 
 function isSession(sql: string): boolean {
-  return /^\s*(?:set\s+(?!global\b|@@|password)|use\s+\w+)/i.test(sql)
+  return /^\s*(?:set\s+(?!global\b|persist\b|@@global\.|@@persist|password)|use\s+\w+)/i.test(sql)
 }
 
 /// A LIMIT with no outer ORDER BY keeps whichever rows the server reaches

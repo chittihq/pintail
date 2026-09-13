@@ -543,6 +543,23 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET SQL_SELECT_LIMIT = DEFAULT")
         .await
         .expect("remove the cap");
+    // A cap saved in a user variable and set back leaves no cap.
+    connection
+        .query_drop("set @save_limit= @@sql_select_limit")
+        .await
+        .expect("save the cap");
+    connection
+        .query_drop("SET sql_select_limit=0")
+        .await
+        .expect("no rows");
+    let none: Vec<u64> = connection.query("SELECT 1").await.expect("capped at zero");
+    assert!(none.is_empty());
+    connection
+        .query_drop("SET @@sql_select_limit= @save_limit")
+        .await
+        .expect("restore the cap");
+    let restored_rows: Vec<u64> = connection.query("SELECT 1").await.expect("uncapped");
+    assert_eq!(restored_rows.len(), 1);
     connection
         .query_drop("SET lc_time_names = 'en_US'")
         .await
