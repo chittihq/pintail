@@ -491,6 +491,46 @@ async fn run_snapshot_inner(
         }
     };
 
+    // Without the global read lock, a worker's snapshot begins some time
+    // after the position was captured, and the events in between are
+    // replayed on top of the copy. A keyed table absorbs that: the replay
+    // upserts rows the copy already holds. A keyless one cannot - its rows
+    // are identified by where they arrived in the stream, so a row that was
+    // both copied and replayed becomes two rows, with nothing able to tell
+    // afterwards that it happened. Those tables are left uncopied and
+    // flagged instead, and the next attempt takes them once the source is
+    // quiet enough for the lock.
+    let mut deferred = Vec::new();
+    let mut deferred_failures = Vec::new();
+    if !globally_consistent {
+        let (keyless, keyed): (Vec<_>, Vec<_>) = targets
+            .into_iter()
+            .partition(|target| target.source.key.mode == KeyMode::AppendRowId);
+        targets = keyed;
+        for target in keyless {
+            let reason = "a keyless table is copied only under the global read lock, which was \
+                          not available: without it the copy and the replay that follows it \
+                          would each hold the same rows"
+                .to_owned();
+            pintail_log::log_error!(
+                "snapshot table deferred db={database_id} table={} flagged for resync: {reason}",
+                target.source.name
+            );
+            metadata.mark_table_needs_resync(database_id, &target.source.name, &reason)?;
+            deferred_failures.push(TableSnapshotFailure {
+                table: target.source.name.clone(),
+                error: reason,
+            });
+            deferred.push(target);
+        }
+        if targets.is_empty() {
+            return Err(SnapshotError::EveryTableFailed {
+                count: deferred_failures.len(),
+                first: deferred_failures[0].error.clone(),
+            });
+        }
+    }
+
     let worker_count = options.workers.min(targets.len());
     let mut transactions = Vec::with_capacity(worker_count);
     for _ in 0..worker_count {
@@ -567,6 +607,11 @@ async fn run_snapshot_inner(
         populated.extend(targets);
         failed.extend(failures);
     }
+    // Deferred keyless tables join the result the way a failed copy does:
+    // the store comes back so the caller still holds it, and the failure
+    // beside it keeps the table out of the outcomes and in `needs_resync`.
+    populated.extend(deferred);
+    failed.extend(deferred_failures);
     populated.sort_by(|left, right| left.source.name.cmp(&right.source.name));
     failed.sort_by(|left, right| left.table.cmp(&right.table));
     if !failed.is_empty() && failed.len() == populated.len() {

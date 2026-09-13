@@ -335,6 +335,13 @@ stays readable as a list of things to fix.
   refuses the source during probe. Rebuilding from one source snapshot restores
   exact duplicate multiplicity; Pintail deliberately does not infer candidate
   identities or use collision-prone row fingerprints.
+- A keyless table is copied only under the global read lock. That lock is not
+  attempted while any table on the source is in use, because a pending one
+  queues every write behind it, so on a source that is never briefly idle such
+  a table is left uncopied and flagged `needs_resync` until an attempt finds
+  the source quiet. Keyed tables copy either way: the replay that follows the
+  copy upserts them, while a keyless table's rows are identified by where they
+  arrived in the stream and would be held twice.
 - A source charset outside utf8mb4/utf8mb3, ASCII and latin1 (cp1252) is
   quarantined through the DLQ.
 - Grouping by a case- or accent-insensitive column reports one of the equal
