@@ -4,7 +4,59 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.5-rc3] - 2026-09-13
+
+The columnar execution program, and the schema-migration decisions that go
+with it. Two hundred and sixty commits since rc2.
+
+### Added
+
+- `DECIMAL` results compute to 65 digits, MySQL's own limit, instead of
+  overflowing the 128-bit intermediate a narrower engine can hold.
+- Cross and theta joins plan whatever their estimated size, rather than
+  refusing above an estimate. **Breaking**: a query that was refused for its
+  estimate now runs, and a genuinely large one will take the time it takes.
+- `NO_UNSIGNED_SUBTRACTION` is implemented, so a subtraction below zero on
+  unsigned operands answers as MySQL does under that mode.
+- A session starts in the source's global time zone, so an unqualified
+  `TIMESTAMP` reads the way it reads on the source.
+- Statement tracing records where each statement's time goes, and the store
+  publishes a generation after every change to a table's files, which is what
+  lets a reader prove a replica current without asking.
+- A result is written to the client while it is produced, rather than after
+  it is complete.
+
+### Performance
+
+The theme of this release: expressions and operators work a batch at a time
+over packed columns, instead of a value at a time through `Value`.
+
+- The expression tree has batch kernels for comparison, exact arithmetic and
+  NULL tests; `NOT` and unary minus and plus; `IF`, `CASE`, `COALESCE` and
+  `NULLIF`; scalar functions generally; date parts and interval arithmetic;
+  `DATE`, `LAST_DAY`, `DATEDIFF` and `TIMESTAMPDIFF`; and `UPPER`, `LOWER`,
+  `LENGTH`, `CHAR_LENGTH` and `LIKE` read in place. A kernel can take another
+  kernel's answer as its argument, so a nested expression stays packed
+  throughout.
+- Those kernels are now reachable from a `WHERE` clause, a join residual, a
+  disjunction, and integer and temporal `IN` lists - the tree existed before
+  this and the filter could not reach it, which is where most of the gap was.
+- Decimals and temporals compare and format from their packed units rather
+  than round-tripping through text, including `DATE_FORMAT`, `TIME`
+  comparison numbers, and rounding to a place left of the point.
+- Sorting orders row references over the input's own batches; a top-k keeps
+  its rows as columns; window functions evaluate over batches in about one
+  pass per partition; a hash join probes a batch at a time and keeps its
+  build rows in their batches. A text sort key is prepared once per row, and
+  a text join key is held as its collation weight bytes.
+- Access paths: scans and joins pinned to a few keys are read by key, a
+  key-ordered join stops at its limit, a sort the scan's key order already
+  satisfies is left out, `TIMESTAMP` filters prune in a fixed-offset session,
+  and a derived table's unread columns are dropped.
+- The wire path streams a large result as execution produces it, encodes on
+  the worker that ran the statement, keeps rows as batches and encodes
+  straight from them, and prepares each statement once for both admission and
+  execution.
 
 ### Fixed
 
@@ -24,17 +76,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `ENUM`, appending to an `ENUM` or `SET`, widening a string or its character
   set, changing a collation, and the existing integer and decimal widenings
   still evolve in place.
+- A declaration this version cannot read is refused rather than adopted. An
+  `ENUM` or `SET` whose member list will not parse, a type respelled under the
+  same data type, and a generated expression recorded before expressions were
+  read each used to return "nothing to report", which the caller read as safe.
+- `ORDER BY ... LIMIT` answered a different set of rows between runs of the
+  same query over the same data, because the row top-k chose among tied rows
+  with an unstable selection and no tiebreak.
+- A `RIGHT JOIN` following an inner join kept a subquery in its `ON`, where it
+  previously answered too few rows, and an `EXISTS` decorrelates correctly
+  when an outer relation shares its alias.
+- Decimal semantics: scale widens in place for a text-stored column, an `IF`
+  or `CASE` branch renders at its own scale, a nested expression that outgrows
+  `i128` widens, and a wide total stays out of every aggregate state.
+- MySQL fidelity: `DOUBLE` prints as MySQL prints it, literals collate under
+  the connection's collation, trailing no-break spaces group apart under
+  `unicode_ci`, prepared-statement results are described as MySQL describes
+  them, the diagnostics area survives for `SHOW WARNINGS`, and multi-row
+  subqueries and bad JSON paths answer MySQL's error codes.
+- Resource and robustness: a join hands back its reservations when the plan
+  stops early, carries a cancellation out instead of dropping it, refuses a
+  residual batch before building it, and partitions a build that leaves no
+  room to continue; a sort charges its prepared text keys before building
+  them; one unreadable table no longer reloads a whole replica or makes a
+  database unreadable; and CDC advances past a DDL this engine cannot parse.
 
 ### Tests
 
 - A schema-migration differential gate (`tests/e2e/migrations.ts`, banked to
-  `tests/e2e/results-migrations.md`) runs twenty-nine migration families against a
+  `tests/e2e/results-migrations.md`) runs migration families against a
   live mirror and asks three questions of each: do the rows nobody wrote to
   after the migration still match the source, do the writes that follow it
   land, and does the table still match after a restart. Checking only the rows
   written after a migration passes every one of these cases while the table is
   wrong. `docs/schema-migrations.md` records what MySQL 8.4 was measured to do
-  to stored values in each family.
+  to stored values in each family. The stage runs in the `rc` profile.
+- The differential oracle corpus grew to 1,907 cases, all byte-exact against
+  MySQL 8.4, with ten multi-table join topologies added: three- and four-table
+  chains, a bushy join, an outer join above an inner one, and the
+  `RIGHT JOIN`-after-an-inner-join shape that was answering too few rows.
 
 ## [0.1.5-rc2] - 2026-09-10
 
