@@ -308,3 +308,14 @@ fn an_assignment_inside_a_query_is_refused() {
     // Only SET assigns a user variable; see docs/limitations.md.
     assert!(scalar("@n := 1").starts_with("error"));
 }
+
+#[test]
+fn time_and_makedate_follow_the_type_ranges() {
+    assert_answers(&[
+        ("TIME('-73:42:12')", "-73:42:12"),
+        ("TIME('838:59:59')", "838:59:59"),
+        ("CAST(MAKEDATE(03, 1) AS CHAR)", "2003-01-01"),
+        ("CAST(MAKEDATE(99, 1) AS CHAR)", "1999-01-01"),
+        ("MAKEDATE(9999, 366)", "NULL"),
+    ]);
+}

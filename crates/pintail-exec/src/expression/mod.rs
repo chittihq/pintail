@@ -3101,7 +3101,12 @@ fn evaluate_eager_scalar_inner(
                 .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M"));
             match time_only {
                 Ok(_) => Ok(Value::Utf8(trimmed.to_owned())),
-                Err(_) => Ok(Value::Null),
+                // A duration past a day, or a negative one, is still a TIME.
+                Err(_) => Ok(parse_temporal_micros(trimmed)
+                    .filter(|parsed| !parsed.datetime)
+                    .map_or(Value::Null, |parsed| {
+                        Value::Utf8(render_time_micros(parsed.micros, parsed.fsp))
+                    })),
             }
         }
         ScalarFunction::DatePart(part) => {
@@ -3307,6 +3312,12 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::MakeDate => {
             let year = mysql_i64(&values[0])?;
+            // A year below 100 takes the nearest century, as a two-digit year does.
+            let year = match year {
+                0..=69 => year + 2000,
+                70..=99 => year + 1900,
+                _ => year,
+            };
             let day_of_year = mysql_i64(&values[1])?;
             if day_of_year < 1 {
                 return Ok(Value::Null);
@@ -3315,9 +3326,13 @@ fn evaluate_eager_scalar_inner(
                 return Ok(Value::Null);
             };
             let start = chrono::NaiveDate::from_ymd_opt(year, 1, 1);
-            let date = start.and_then(|start| {
-                start.checked_add_signed(chrono::Duration::days(day_of_year - 1))
-            });
+            // A date past year 9999 is NULL, as in MySQL.
+            let date = start
+                .and_then(|start| {
+                    chrono::Duration::try_days(day_of_year - 1)
+                        .and_then(|days| start.checked_add_signed(days))
+                })
+                .filter(|date| date.year() <= 9999);
             Ok(date.map_or(Value::Null, |date| {
                 Value::Utf8(date.format("%Y-%m-%d").to_string())
             }))

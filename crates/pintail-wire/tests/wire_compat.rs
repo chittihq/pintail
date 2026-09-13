@@ -506,6 +506,23 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET div_precision_increment = 6")
         .await
         .expect("widen division");
+    // Settings whose other values are not implemented are refused, not ignored.
+    assert!(
+        connection
+            .query_drop("SET lc_time_names = 'de_DE'")
+            .await
+            .is_err()
+    );
+    assert!(
+        connection
+            .query_drop("SET default_week_format = 2")
+            .await
+            .is_err()
+    );
+    connection
+        .query_drop("SET lc_time_names = 'en_US'")
+        .await
+        .expect("the default locale");
     let widened: Option<String> = connection.query_first("SELECT 1/3").await.expect("1/3");
     assert_eq!(widened.as_deref(), Some("0.333333"));
     connection

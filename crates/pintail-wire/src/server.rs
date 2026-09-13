@@ -1582,6 +1582,15 @@ impl Backend {
                 session.max_execution_time_ms = limit;
                 Ok(())
             }
+            // These change answers - day and month names, week numbers - and only
+            // their defaults are implemented, so another value is refused rather
+            // than accepted and ignored.
+            "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
+                "Unknown locale: '{value}' (only en_US is supported)"
+            )),
+            "default_week_format" if value.trim() != "0" => Err(format!(
+                "Variable 'default_week_format' can't be set to the value of '{value}' (only 0 is supported)"
+            )),
             // Everything else keeps the accepted-no-op compatibility
             // behavior (isolation levels, probes, and autocommit on a
             // replicated database - a local one refuses it before reaching
