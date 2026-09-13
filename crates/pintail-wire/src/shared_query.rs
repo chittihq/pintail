@@ -79,6 +79,7 @@ pub(crate) struct SharedQueryKey {
     pub(crate) max_rows: usize,
     pub(crate) time_zone: Option<String>,
     pub(crate) calendar_locale: &'static str,
+    pub(crate) default_week_format: u8,
     pub(crate) collation: &'static str,
     pub(crate) group_concat_max_len: usize,
     pub(crate) cte_max_recursion_depth: u64,
@@ -102,6 +103,7 @@ impl SharedQueryKey {
             max_rows,
             time_zone: pintail_exec::session_time_zone_key(),
             calendar_locale: pintail_exec::session_calendar_locale(),
+            default_week_format: pintail_exec::session_default_week_format(),
             collation: pintail_sql::session_default_collation(),
             group_concat_max_len: pintail_exec::session_group_concat_max_len(),
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
@@ -407,6 +409,7 @@ mod tests {
             max_rows: 100,
             time_zone: None,
             calendar_locale: "en_US",
+            default_week_format: 0,
             collation: "utf8mb4_0900_ai_ci",
             group_concat_max_len: 1024,
             cte_max_recursion_depth: 1000,
@@ -492,6 +495,10 @@ mod tests {
             },
             SharedQueryKey {
                 time_zone: Some("f19800".to_owned()),
+                ..base.clone()
+            },
+            SharedQueryKey {
+                default_week_format: 3,
                 ..base.clone()
             },
             SharedQueryKey {

@@ -8,6 +8,10 @@ increasing agreement. Replica-mode evidence remains a separate workload.
 
 ## Implemented slices
 
+- `default_week_format` is captured in plans and cache keys. All eight
+  modes apply to `WEEK` and `EXTRACT(WEEK ...)`; explicit modes and
+  `YEARWEEK` keep their own behavior.
+
 - Calendar-name functions capture `lc_time_names` from the connection. All
   111 locale names and numeric identifiers select their full and abbreviated
   labels; worker execution and cached answers retain the chosen locale.

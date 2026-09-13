@@ -49,7 +49,10 @@ pub use explain::{
     explain_statement, format_physical_plan, format_physical_plan_with_stats,
 };
 pub use logical::{LogicalPlan, LogicalPlanner, Scan};
-pub use optimizer::{Optimizer, session_time_zone_key, set_session_time_zone};
+pub use optimizer::{
+    Optimizer, session_default_week_format, session_time_zone_key, set_session_default_week_format,
+    set_session_time_zone,
+};
 pub use storage::{PhysicalScanStats, SnapshotScanProvider};
 
 pub use execution::cancel_query_under_memory_pressure;

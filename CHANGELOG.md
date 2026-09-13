@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Session default week modes in `WEEK` and `EXTRACT(WEEK ...)`, with
+  explicit modes and `YEARWEEK` retaining their independent behavior.
+
 - Session calendar locales for `DAYNAME`, `MONTHNAME` and `DATE_FORMAT`,
   including locale-specific abbreviations and isolated cached answers.
 

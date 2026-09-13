@@ -549,13 +549,33 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET lc_time_names = @saved_locale")
         .await
         .expect("restore locale");
-    // Settings whose other values are not implemented are refused, not ignored.
-    assert!(
+    connection
+        .query_drop("SET @saved_week = @@default_week_format")
+        .await
+        .expect("save week mode");
+    for (mode, week) in [
+        (0, 0),
+        (1, 0),
+        (2, 52),
+        (3, 53),
+        (4, 0),
+        (5, 0),
+        (6, 53),
+        (7, 52),
+    ] {
         connection
-            .query_drop("SET default_week_format = 2")
+            .query_drop(format!("SET default_week_format = {mode}"))
             .await
-            .is_err()
-    );
+            .expect("set week mode");
+        let weeks: Option<(u64, u64, u64, u64)> = connection
+            .query_first("SELECT WEEK('2021-01-01'), EXTRACT(WEEK FROM '2021-01-01'), WEEK('2021-01-01', 0), YEARWEEK('2021-01-01')")
+            .await.expect("session week mode");
+        assert_eq!(weeks, Some((week, week, 0, 202052)));
+    }
+    connection
+        .query_drop("SET default_week_format = @saved_week")
+        .await
+        .expect("restore week mode");
     // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
     // setMaxRows asks; a written LIMIT is its own.
     connection

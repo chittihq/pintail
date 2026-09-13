@@ -530,3 +530,20 @@ fn calendar_locale_is_captured_before_execution() {
         assert_eq!(actual, expected);
     }
 }
+
+#[test]
+fn default_week_mode_is_captured_before_execution() {
+    struct ResetWeek;
+    impl Drop for ResetWeek {
+        fn drop(&mut self) {
+            pintail_exec::set_session_default_week_format(None);
+        }
+    }
+    let _reset = ResetWeek;
+    pintail_exec::set_session_default_week_format(Some(3));
+    let actual =
+        evaluate_rows_after_plan("WEEK(DATE_ADD('2020-12-31', INTERVAL id DAY))", 1, || {
+            pintail_exec::set_session_default_week_format(None);
+        });
+    assert_eq!(actual, "53");
+}

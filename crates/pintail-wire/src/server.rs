@@ -785,6 +785,7 @@ fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
 struct Session {
     time_zone: String,
     calendar_locale: &'static str,
+    default_week_format: u8,
     sql_mode: String,
     charset_client: String,
     charset_connection: String,
@@ -820,6 +821,7 @@ impl Default for Session {
         Self {
             time_zone: "SYSTEM".to_owned(),
             calendar_locale: "en_US",
+            default_week_format: 0,
             sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
                 .to_owned(),
@@ -1279,6 +1281,9 @@ impl Backend {
                     // optimization runs on this thread, so install-and-restore
                     // brackets exactly one statement.
                     let _ = pintail_exec::set_session_time_zone(Some(&session.time_zone));
+                    pintail_exec::set_session_default_week_format(Some(
+                        session.default_week_format,
+                    ));
                     let _ =
                         pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
                     pintail_sql::set_session_default_collation(Some(session.collation_connection));
@@ -1314,6 +1319,7 @@ impl Backend {
                     pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     let _ = pintail_exec::set_session_calendar_locale(None);
+                    pintail_exec::set_session_default_week_format(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
                     // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
@@ -1708,9 +1714,32 @@ impl Backend {
                     .ok_or_else(|| format!("Unknown locale: '{value}'"))?;
                 Ok(())
             }
-            "default_week_format" if value.trim() != "0" => Err(format!(
-                "Variable 'default_week_format' can't be set to the value of '{value}' (only 0 is supported)"
-            )),
+            "default_week_format" => {
+                let raw = command.split_once('=').map_or("", |(_, rhs)| rhs).trim();
+                let quoted = raw.starts_with(['\'', '"'])
+                    || raw.strip_prefix('@').is_some_and(|variable| {
+                        matches!(
+                            session.user_variables.get(&variable.to_ascii_lowercase()),
+                            Some(sqlparser::ast::Value::SingleQuotedString(_))
+                        )
+                    });
+                let mode = if value.eq_ignore_ascii_case("default")
+                    || value.eq_ignore_ascii_case("@@global.default_week_format")
+                {
+                    0
+                } else if quoted {
+                    return Err(
+                        "Incorrect argument type to variable 'default_week_format'".to_owned()
+                    );
+                } else {
+                    value.parse::<i128>().map_err(|_| {
+                        "Incorrect argument type to variable 'default_week_format'".to_owned()
+                    })?
+                };
+                session.default_week_format =
+                    u8::try_from(mode.clamp(0, 7)).expect("week mode is bounded");
+                Ok(())
+            }
             // Everything else keeps the accepted-no-op compatibility
             // behavior (isolation levels, probes, and autocommit on a
             // replicated database - a local one refuses it before reaching
@@ -3278,6 +3307,13 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         (
             "@@max_execution_time",
             Value::UInt64(session.max_execution_time_ms),
+        )
+    } else if normalized.contains("@@default_week_format")
+        || normalized.contains("@@session.default_week_format")
+    {
+        (
+            "@@default_week_format",
+            Value::UInt64(u64::from(session.default_week_format)),
         )
     } else if normalized.contains("@@lc_time_names")
         || normalized.contains("@@session.lc_time_names")

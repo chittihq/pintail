@@ -579,8 +579,21 @@ enum SessionZone {
 }
 
 thread_local! {
+    static SESSION_DEFAULT_WEEK_FORMAT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
     static SESSION_TIME_ZONE: std::cell::Cell<Option<SessionZone>> =
         const { std::cell::Cell::new(None) };
+}
+
+/// Installs the default week mode for planning, clamping it to 0 through 7.
+/// `None` restores mode zero.
+pub fn set_session_default_week_format(mode: Option<u8>) {
+    SESSION_DEFAULT_WEEK_FORMAT.set(mode.unwrap_or(0).min(7));
+}
+
+/// The installed default week mode, also used to separate cached answers.
+#[must_use]
+pub fn session_default_week_format() -> u8 {
+    SESSION_DEFAULT_WEEK_FORMAT.get()
 }
 
 /// The installed session zone's identity, or `None` for the host zone.
@@ -852,6 +865,16 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
             nullable: expr.nullable,
         },
         BoundExprKind::Scalar { function, args } => {
+            let function = if matches!(
+                function,
+                ScalarFunction::DatePart(pintail_sql::DatePart::Week)
+            ) {
+                ScalarFunction::DatePart(pintail_sql::DatePart::WeekMode(
+                    session_default_week_format(),
+                ))
+            } else {
+                function
+            };
             if args.is_empty()
                 && let Some(now) = STATEMENT_NOW.get()
                 && let Some(value) = statement_time_literal(function, now)
