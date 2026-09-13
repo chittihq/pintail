@@ -577,6 +577,59 @@ pub(super) fn date_part_of(value: &Value, integer: bool, part: DatePart) -> Resu
     Ok(date_part(datetime, part))
 }
 
+/// EXTRACT carries a duration's sign across every requested clock field.
+/// A calendar input contributes its day; a duration folds days into hours.
+pub(super) fn extract_time(
+    value: &Value,
+    leading: DatePart,
+    trailing: DatePart,
+) -> Result<i64, ExecError> {
+    let text = scalar_string(value)?;
+    let text = text.trim();
+    let whole = text.split_once('.').map_or(text, |(whole, _)| whole);
+    let unsigned = whole.trim_start_matches(['-', '+']);
+    let compact = unsigned.bytes().all(|byte| byte.is_ascii_digit());
+    // Numeric TIME conversion rejects overflow; textual TIME conversion
+    // clamps it. Neither interprets an eight-digit number as a date.
+    if compact && unsigned.len() < 12 && matches!(value, Value::Int64(_) | Value::UInt64(_)) {
+        let number = unsigned
+            .parse::<u128>()
+            .map_err(|_| ExecError::InvalidDateTime)?;
+        packed_time(number).ok_or(ExecError::InvalidDateTime)?;
+    }
+    let calendar = if compact && unsigned.len() >= 12 {
+        Some(
+            parse_mysql_datetime(text)?
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )
+    } else {
+        None
+    };
+    let text = calendar.as_deref().unwrap_or(text);
+    let (day, clock) =
+        super::canonical_temporal_parts(text, true).map_or((0, text), |(date, clock)| {
+            (
+                date[8..10].parse::<i64>().unwrap_or(0),
+                clock.unwrap_or("00:00:00"),
+            )
+        });
+    let time = super::parse_temporal_micros(clock).ok_or(ExecError::InvalidDateTime)?;
+    let seconds =
+        i64::try_from(time.micros.abs() / 1_000_000).map_err(|_| ExecError::NumericOverflow)?;
+    let fields = [day, seconds / 3_600, seconds / 60 % 60, seconds % 60];
+    let index = |part| match part {
+        DatePart::Day => 0,
+        DatePart::Hour => 1,
+        DatePart::Minute => 2,
+        _ => 3,
+    };
+    let number = fields[index(leading)..=index(trailing)]
+        .iter()
+        .fold(0, |total, part| total * 100 + part);
+    Ok(if time.micros < 0 { -number } else { number })
+}
+
 /// HHMMSS packed into an integer, up to the largest TIME.
 fn packed_time(number: u128) -> Option<(u64, u64, u64)> {
     let minutes = u64::try_from(number / 100 % 100).ok()?;

@@ -1442,7 +1442,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::Ceil { decimal: true }
         | ScalarFunction::Floor { decimal: true }
         | ScalarFunction::Sign
-        | ScalarFunction::JsonDepth | ScalarFunction::PackedDateParts { .. } => (Some(DataType::Int64), args[0].nullable),
+        | ScalarFunction::JsonDepth | ScalarFunction::ExtractTime { .. } | ScalarFunction::PackedDateParts { .. } => (Some(DataType::Int64), args[0].nullable),
         ScalarFunction::Truncate { decimal: true } => {
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {
                 return Err(BindError::UnsupportedExpression("TRUNCATE".to_owned()));

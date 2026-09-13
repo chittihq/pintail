@@ -2811,40 +2811,52 @@ fn bind_expr_inner(
                         _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
                     };
                     let operand = bind_expr_inner(inner, tables, aggregates, windows, subqueries)?;
-                    let mut folded: Option<BoundExpr> = None;
-                    for part in parts {
-                        let extracted =
-                            bind_scalar(ScalarFunction::DatePart(*part), vec![operand.clone()])?;
-                        folded = Some(match folded {
-                            None => extracted,
-                            Some(accumulated) => {
-                                let nullable = accumulated.nullable || extracted.nullable;
-                                let scaled = BoundExpr {
-                                    kind: BoundExprKind::Binary {
-                                        op: BinaryOp::Multiply,
-                                        left: Box::new(accumulated),
-                                        right: Box::new(BoundExpr {
-                                            kind: BoundExprKind::Literal(Value::Int64(100)),
-                                            data_type: Some(DataType::Int64),
-                                            nullable: false,
-                                        }),
-                                    },
-                                    data_type: Some(DataType::Int64),
-                                    nullable,
-                                };
-                                BoundExpr {
-                                    kind: BoundExprKind::Binary {
-                                        op: BinaryOp::Add,
-                                        left: Box::new(scaled),
-                                        right: Box::new(extracted),
-                                    },
-                                    data_type: Some(DataType::Int64),
-                                    nullable,
+                    let folded = if parts[0] == DatePart::Year {
+                        let mut folded: Option<BoundExpr> = None;
+                        for part in parts {
+                            let extracted = bind_scalar(
+                                ScalarFunction::DatePart(*part),
+                                vec![operand.clone()],
+                            )?;
+                            folded = Some(match folded {
+                                None => extracted,
+                                Some(accumulated) => {
+                                    let nullable = accumulated.nullable || extracted.nullable;
+                                    let scaled = BoundExpr {
+                                        kind: BoundExprKind::Binary {
+                                            op: BinaryOp::Multiply,
+                                            left: Box::new(accumulated),
+                                            right: Box::new(BoundExpr {
+                                                kind: BoundExprKind::Literal(Value::Int64(100)),
+                                                data_type: Some(DataType::Int64),
+                                                nullable: false,
+                                            }),
+                                        },
+                                        data_type: Some(DataType::Int64),
+                                        nullable,
+                                    };
+                                    BoundExpr {
+                                        kind: BoundExprKind::Binary {
+                                            op: BinaryOp::Add,
+                                            left: Box::new(scaled),
+                                            right: Box::new(extracted),
+                                        },
+                                        data_type: Some(DataType::Int64),
+                                        nullable,
+                                    }
                                 }
-                            }
-                        });
-                    }
-                    let folded = folded.expect("composite fields list at least two parts");
+                            });
+                        }
+                        folded.expect("composite fields list at least two parts")
+                    } else {
+                        bind_scalar(
+                            ScalarFunction::ExtractTime {
+                                leading: parts[0],
+                                trailing: *parts.last().expect("nonempty fields"),
+                            },
+                            vec![operand],
+                        )?
+                    };
                     let width = u8::try_from(
                         parts.len() * 2 + 1 + usize::from(parts[0] == DatePart::Year) * 2,
                     )
@@ -2861,7 +2873,14 @@ fn bind_expr_inner(
                 _ => return Err(BindError::UnsupportedExpression(expr.to_string())),
             };
             bind_scalar(
-                ScalarFunction::DatePart(part),
+                if matches!(part, DatePart::Hour | DatePart::Minute | DatePart::Second) {
+                    ScalarFunction::ExtractTime {
+                        leading: part,
+                        trailing: part,
+                    }
+                } else {
+                    ScalarFunction::DatePart(part)
+                },
                 vec![bind_expr_inner(
                     inner, tables, aggregates, windows, subqueries,
                 )?],

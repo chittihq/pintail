@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Clock `EXTRACT` fields preserve negative duration signs and fold day
+  prefixes into hours, while calendar inputs retain their day component.
+
 - Hour, minute and second intervals on typed `TIME` values preserve signed
   durations and fractional precision, returning NULL on range overflow.
 

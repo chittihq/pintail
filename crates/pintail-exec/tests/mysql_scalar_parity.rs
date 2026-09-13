@@ -931,3 +931,26 @@ fn time_intervals_keep_signed_duration_and_precision() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn extract_time_fields_preserve_duration_sign_and_day_prefix() {
+    for (expression, expected) in [
+        ("EXTRACT(DAY_MINUTE FROM '02 10:11:12')", "5811"),
+        ("EXTRACT(DAY_SECOND FROM '0000-00-00')", "0"),
+        ("EXTRACT(DAY_SECOND FROM '2020-00-00 10:11:12')", "101112"),
+        ("EXTRACT(DAY_SECOND FROM 20200317)", "NULL"),
+        ("EXTRACT(DAY_SECOND FROM '20200317')", "8385959"),
+        ("EXTRACT(DAY_SECOND FROM 123456)", "123456"),
+        ("EXTRACT(DAY_SECOND FROM '20200317101112')", "17101112"),
+        ("EXTRACT(DAY_SECOND FROM '225 10:11:12')", "8385959"),
+        ("EXTRACT(DAY_SECOND FROM '-02 10:11:12')", "-581112"),
+        ("EXTRACT(HOUR_MINUTE FROM '-02 10:11:12')", "-5811"),
+        ("EXTRACT(MINUTE_SECOND FROM '-02 10:11:12')", "-1112"),
+        ("EXTRACT(HOUR FROM '-02 10:11:12')", "-58"),
+        ("EXTRACT(DAY_SECOND FROM '2020-03-17 10:11:12')", "17101112"),
+        ("EXTRACT(DAY_HOUR FROM '2020-03-17 10:11:12')", "1710"),
+        ("EXTRACT(YEAR_MONTH FROM '2020-03-17 10:11:12')", "202003"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

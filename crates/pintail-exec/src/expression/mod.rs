@@ -1560,6 +1560,7 @@ impl CompiledExpr {
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
+                    | ScalarFunction::ExtractTime { .. }
                     | ScalarFunction::PackedDateParts { .. }
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
@@ -1749,6 +1750,7 @@ impl CompiledExpr {
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
+                    | ScalarFunction::ExtractTime { .. }
                     | ScalarFunction::PackedDateParts { .. }
                     | ScalarFunction::DateDiff
                     | ScalarFunction::UnixTimestamp
@@ -2270,6 +2272,9 @@ fn evaluate_eager_scalar_inner(
             Ok(Value::UInt64(bytes.iter().fold(0_u64, |total, byte| {
                 total.wrapping_mul(256).wrapping_add(u64::from(*byte))
             })))
+        }
+        ScalarFunction::ExtractTime { leading, trailing } => {
+            temporal::extract_time(&values[0], leading, trailing).map(Value::Int64)
         }
         ScalarFunction::Collate { .. } | ScalarFunction::PackedDateParts { .. } => {
             Ok(values[0].clone())

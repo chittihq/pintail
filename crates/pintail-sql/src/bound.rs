@@ -1106,6 +1106,13 @@ pub enum ScalarFunction {
     Time,
     /// Extract a calendar/time component.
     DatePart(DatePart),
+    /// Signed EXTRACT clock fields, including a calendar day when present.
+    ExtractTime {
+        /// First component in the packed result.
+        leading: DatePart,
+        /// Last component in the packed result.
+        trailing: DatePart,
+    },
     /// Concatenated decimal date/time components with their display width.
     PackedDateParts {
         /// Maximum decimal characters, including a sign.
