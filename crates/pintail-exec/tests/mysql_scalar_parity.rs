@@ -95,6 +95,26 @@ fn assert_answers(cases: &[(&str, &str)]) {
 }
 
 #[test]
+fn string_boundaries_match_for_literals_and_column_expressions() {
+    for text in ["'pearl'", "REPEAT('pearl', id)"] {
+        assert_answers(&[
+            (&format!("REPLACE({text}, '', 'x')"), "pearl"),
+            (&format!("INSERT({text}, 6, 0, 'x')"), "pearl"),
+            (&format!("SUBSTRING({text}, -6)"), ""),
+            (&format!("SUBSTRING({text}, -5, 2)"), "pe"),
+            (&format!("INSERT({text}, 5, 0, 'x')"), "pearxl"),
+        ]);
+    }
+    assert_answers(&[
+        ("REPLACE('é猫', '', 'x')", "é猫"),
+        ("SUBSTRING('é猫', -3)", ""),
+        ("SUBSTRING('é猫', -2, 1)", "é"),
+        ("INSERT('é猫', 3, 0, 'x')", "é猫"),
+        ("INSERT('', 1, 0, 'x')", ""),
+    ]);
+}
+
+#[test]
 fn a_binary_cast_holds_exactly_its_declared_bytes() {
     assert_answers(&[
         ("HEX(CAST('a' AS BINARY(2)))", "6100"),

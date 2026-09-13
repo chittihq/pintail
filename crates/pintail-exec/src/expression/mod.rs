@@ -2354,10 +2354,16 @@ fn evaluate_eager_scalar_inner(
             other => u64::try_from(scalar_string(other)?.chars().count())
                 .map_err(|_| ExecError::NumericOverflow)?,
         })),
-        ScalarFunction::Replace => Ok(Value::Utf8(
-            scalar_string(&values[0])?
-                .replace(&scalar_string(&values[1])?, &scalar_string(&values[2])?),
-        )),
+        ScalarFunction::Replace => {
+            let text = scalar_string(&values[0])?;
+            let search = scalar_string(&values[1])?;
+            let replacement = scalar_string(&values[2])?;
+            Ok(Value::Utf8(if search.is_empty() {
+                text
+            } else {
+                text.replace(&search, &replacement)
+            }))
+        }
         ScalarFunction::Left => {
             let count = saturating_argument(&values[1])?.max(0);
             let count = usize::try_from(count).unwrap_or(usize::MAX);
@@ -2660,7 +2666,7 @@ fn evaluate_eager_scalar_inner(
             let replacement = scalar_string(&values[3])?;
             let characters: Vec<char> = text.chars().collect();
             let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
-            if position < 1 || position > total + 1 {
+            if position < 1 || position > total {
                 return Ok(Value::Utf8(text));
             }
             let start = position - 1;
