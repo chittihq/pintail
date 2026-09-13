@@ -3,7 +3,7 @@
   "repo": "MariaDB/server",
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
-  "measuredAt": "2026-09-13T13:20:25.802Z",
+  "measuredAt": "2026-09-13T17:53:35.186Z",
   "totals": {
     "exact": 6823,
     "compared": 7946,

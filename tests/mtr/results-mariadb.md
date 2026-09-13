@@ -1,8 +1,8 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-09-13T13:20:25.800Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-09-13T17:53:35.184Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-**6,823 of 7,946 compared SELECTs match MySQL byte-for-byte** (85.9%). 998 differ in rows, 125 in column names only. 5,274 SELECTs Pintail could not run, 10,512 were not compared because their tables were changed by statements a local database cannot follow, 2,684 failed on MySQL itself, 3,758 depend on the clock, session or server and were not compared. Fixtures: 25,772 accepted, 993 rejected by Pintail, 25,456 outside the replayed subset.
+**6,823 of 7,946 compared SELECTs match MySQL byte-for-byte** (85.9%), **out of 30,174 SELECTs replayed** - 22,228 never reached a comparison, so this is a share of what could be compared and not of the suite. 998 differ in rows, 125 in column names only. 5,274 SELECTs Pintail could not run, 10,512 were not compared because their tables were changed by statements a local database cannot follow, 2,684 failed on MySQL itself, 3,758 depend on the clock, session or server and were not compared. Fixtures: 25,772 accepted, 993 rejected by Pintail, 25,456 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
