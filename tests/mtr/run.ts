@@ -44,6 +44,7 @@ import { createServer } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { hasOuterOrderBy, unorderedLimit } from './sql-reading.ts'
 import mysql from 'mysql2/promise'
 
 const repository = resolve(import.meta.dir, '..', '..')
@@ -310,11 +311,11 @@ async function expandSources(text: string, depth = 0): Promise<string> {
       out.push('')
       continue
     }
-    try {
-      out.push(await expandSources(await fetchCached(`${SUITE.dir[0]}/${relative}`), depth + 1))
-    } catch {
-      out.push('')
-    }
+    // Not swallowed. A lost include drops its statements, and a statement's
+    // identity is its text plus which occurrence it is - so the NEXT
+    // identical statement inherits the missing one's id and is banked under
+    // it. A file that cannot be assembled is not a file that passed.
+    out.push(await expandSources(await fetchCached(`${SUITE.dir[0]}/${relative}`), depth + 1))
   }
   return out.join('\n')
 }
@@ -466,6 +467,17 @@ function firstWords(sql: string): string {
   return sql.replace(/^\s*\/\*.*?\*\/\s*/s, '').toLowerCase().replace(/\s+/g, ' ').slice(0, 40)
 }
 
+/// How a session variable can be spelled before its name. `SET x`,
+/// `SET SESSION x`, `SET LOCAL x`, `SET @@x`, `SET @@SESSION.x` and
+/// `SET @@LOCAL.x` all set the same thing, and a check that knew only the
+/// first two let the rest through.
+const SESSION_SCOPE = String.raw`(?:session\s+|local\s+|@@session\.|@@local\.|@@)?`
+
+/// Opens a transaction: what turns autocommit off, however it is spelled.
+const AUTOCOMMIT_OFF = new RegExp(String.raw`^set\s+${SESSION_SCOPE}autocommit\s*=\s*(?:0|off|false)\b`, 'i')
+/// Closes one.
+const AUTOCOMMIT_ON = new RegExp(String.raw`^set\s+${SESSION_SCOPE}autocommit\s*=\s*(?:1|on|true)\b`, 'i')
+
 function createdTable(sql: string): string | undefined {
   return new RegExp(String.raw`^\s*create\s+(?:temporary\s+)?table\s+(?:if\s+not\s+exists\s+)?(?:\w+\.)?${IDENT}`, 'i').exec(sql)?.[1]
 }
@@ -510,25 +522,6 @@ function isSimpleCreate(sql: string): boolean {
 
 function isSession(sql: string): boolean {
   return /^\s*(?:set\s+(?!global\b|persist\b|@@global\.|@@persist|password)|use\s+\w+)/i.test(sql)
-}
-
-/// A LIMIT with no outer ORDER BY keeps whichever rows the server reaches
-/// first, which neither server defines, so its rows are not compared.
-function unorderedLimit(sql: string): boolean {
-  return /\blimit\s+\d/i.test(sql) && !hasOuterOrderBy(sql)
-}
-
-function hasOuterOrderBy(sql: string): boolean {
-  let depth = 0
-  const lower = sql.toLowerCase()
-  for (let index = 0; index < lower.length; index += 1) {
-    const char = lower[index]
-    if (char === '(') depth += 1
-    else if (char === ')') depth -= 1
-    // ORDER BY NULL asks for no order at all.
-    else if (depth === 0 && lower.startsWith('order by', index)) return !/^order by\s+null\b/.test(lower.slice(index))
-  }
-  return false
 }
 
 class Epochs {
@@ -683,16 +676,22 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
       // A local database has no transactions: a row written inside one stays
       // written when MySQL rolls it back, so its table stops being comparable.
       const head = firstWords(sql)
-      if (/^(begin|start transaction|xa start)/.test(head) || /^set (session )?autocommit\s*=\s*(0|off)/.test(head)) inTransaction = true
-      if ((/^(commit|rollback)\b/.test(head) && !/^rollback to/.test(head)) || /^set (session )?autocommit\s*=\s*(1|on)/.test(head)) inTransaction = false
+      if (/^(begin|start transaction|xa start)/.test(head) || AUTOCOMMIT_OFF.test(head)) inTransaction = true
+      if ((/^(commit|rollback)\b/.test(head) && !/^rollback to/.test(head)) || AUTOCOMMIT_ON.test(head)) inTransaction = false
       if (statement.expectError) {
         counts.skipped += 1
         continue
       }
       if (isSession(sql)) {
         counts.session += 1
-        await my.query(sql).catch(() => {})
-        await pt.query(sql).catch(() => {})
+        // Through the same rewriting every other statement gets. Forwarded
+        // as written, `SET @x = (SELECT ... FROM t1)` names a table that
+        // exists here only as `t1__N`, so it failed on both sides - and
+        // every later query reading @x then compared two NULLs and banked
+        // the agreement as an exact match.
+        const session = epochs.rewrite(sql)
+        await my.query(session).catch(() => {})
+        await pt.query(session).catch(() => {})
         continue
       }
       if (/^\s*drop\s+(?:temporary\s+)?table\b/i.test(sql)) {
@@ -845,8 +844,15 @@ const stalls: string[] = []
 
 /// Statements never sent to the shared source: they would stop, reconfigure
 /// or detach the server every other file and the mirror depend on.
-const SOURCE_UNSAFE =
-  /^\s*(reset\s+(master|binary|replica|slave|persist)|purge\s|change\s+(master|replication)|start\s+(slave|replica|group_replication)|stop\s|shutdown|restart|kill\s|set\s+(global|persist|@@global|@@persist)|create\s+(database|schema)|drop\s+(database|schema)|alter\s+(database|schema|instance|user)|use\s|flush\s|install\s|uninstall\s|lock\s+instance|unlock\s+instance|xa\s|grant\s|revoke\s|create\s+user|drop\s+user|rename\s+user|set\s+password|binlog\s|set\s+(session\s+)?sql_log_bin|clone\s|create\s+(undo\s+)?tablespace|alter\s+(undo\s+)?tablespace|set\s+(session\s+)?(gtid_next|pseudo_|binlog_format|transaction_isolation))/i
+const SOURCE_UNSAFE = new RegExp(
+  String.raw`^\s*(reset\s+(master|binary|replica|slave|persist)|purge\s|change\s+(master|replication)|start\s+(slave|replica|group_replication)|stop\s|shutdown|restart|kill\s|set\s+(global|persist|@@global|@@persist)|create\s+(database|schema)|drop\s+(database|schema)|alter\s+(database|schema|instance|user)|use\s|flush\s|install\s|uninstall\s|lock\s+instance|unlock\s+instance|xa\s|grant\s|revoke\s|create\s+user|drop\s+user|rename\s+user|set\s+password|binlog\s|clone\s|create\s+(undo\s+)?tablespace|alter\s+(undo\s+)?tablespace|` +
+    // Every spelling of the session scope: `SET @@session.sql_log_bin = 0`
+    // and `SET @@session.binlog_format` reached the shared source while the
+    // check knew only `SET sql_log_bin` and `SET SESSION sql_log_bin`, and
+    // either one detaches the source from every mirror following it.
+    String.raw`set\s+${SESSION_SCOPE}(sql_log_bin|gtid_next|pseudo_|binlog_format|transaction_isolation))`,
+  'i',
+)
 
 async function runFileReplica(name: string, text: string, root: mysql.Connection, host: string): Promise<FileResult> {
   const counts = {
@@ -995,9 +1001,9 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
         counts.skipped += 1
         continue
       }
-      if (/^(begin|start transaction|xa start)/.test(shape) || /^set (session )?autocommit\s*=\s*(0|off)/.test(shape)) inTransaction = true
+      if (/^(begin|start transaction|xa start)/.test(shape) || AUTOCOMMIT_OFF.test(shape)) inTransaction = true
       if (/^(commit|rollback)\b/.test(shape) && !/^rollback to/.test(shape)) inTransaction = false
-      if (/^set (session )?autocommit\s*=\s*(1|on)/.test(shape)) inTransaction = false
+      if (AUTOCOMMIT_ON.test(shape)) inTransaction = false
       if (isQuery(sql) && !statement.expectError) {
         const id = statementId(name, sql, seen)
         if (VOLATILE.test(sql) || unorderedLimit(sql)) { counts.volatile += 1; continue }
@@ -1345,13 +1351,6 @@ async function main() {
   log(`${exact} of ${compared} compared SELECTs exact; report at ${join(import.meta.dir, `results${suffix}.md`)}`)
   // Every run leaves its exact set beside the gate evidence, so two runs -
   // two oracle versions, two binaries - can be compared statement by statement.
-  mkdirSync(join(repository, 'validate-out', 'mtr'), { recursive: true })
-  writeFileSync(
-    join(repository, 'validate-out', 'mtr', `exact${suffix}.json`),
-    JSON.stringify({ suite: SUITE_NAME, ref: REF, oracle: mysqlVersion, files: Object.fromEntries(results.map((r) => [r.file, r.exact])) }) + '\n',
-  )
-  // Every run leaves its exact set beside the gate evidence, so two runs -
-  // two oracle versions, two binaries - compare statement by statement.
   mkdirSync(join(repository, 'validate-out', 'mtr'), { recursive: true })
   writeFileSync(
     join(repository, 'validate-out', 'mtr', `exact${suffix}.json`),
