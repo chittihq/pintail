@@ -149,3 +149,36 @@ query profiles as a replay; `PINTAIL_DISABLE_SETTLED_MEMO=1` makes every
 run execute.
 
 An unprofiled execution builds no recorder and pays nothing for this.
+
+### A timeline instead of a table
+
+`PINTAIL_QUERY_TRACE_JSON=<file>` writes the same per-statement phases as a
+Chrome trace. Open the file in [ui.perfetto.dev](https://ui.perfetto.dev) or
+`chrome://tracing` and each statement is a span with its phases nested
+inside, one row per worker thread, so statements that ran at the same time
+read as concurrent. `PINTAIL_QUERY_TRACE=<file>` writes the same marks as
+one tab-separated line per statement; both can be set at once. Neither
+writes the statement text - a literal can be a row value - so a trace joins
+to a case by hash.
+
+The array in the JSON file is left unterminated on purpose, so a trace is
+readable from a server that is still running. Both viewers accept that.
+
+### When the problem is between tasks, not inside one
+
+A profiler measures work that happened. It cannot show you a task parked on
+a lock nobody expected it to want, a connection task that ended without
+saying why, or a runtime whose workers are all busy while nothing
+progresses. `tokio-console` shows those:
+
+```
+RUSTFLAGS="--cfg tokio_unstable" cargo build --features console -p pintail
+# run that binary, then, beside it:
+tokio-console
+```
+
+It is deliberately awkward. `--cfg tokio_unstable` changes tokio's ABI, so
+the whole tree rebuilds and the result is not the binary you ship; the task
+view also answers questions about the process to anything that reaches its
+port. Build it on purpose, look, and throw it away. The feature is off by
+default and is not enabled in any release profile or compose file.

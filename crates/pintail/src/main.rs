@@ -21,8 +21,37 @@ use tokio::net::TcpListener;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+/// Serves the task view `tokio-console` connects to, when built with the
+/// `console` feature.
+///
+/// This is the instrument for anything that goes wrong BETWEEN tasks rather
+/// than inside one: a connection task that ends without saying why, a task
+/// parked on a lock nobody expected it to want, a runtime whose workers are
+/// all busy while nothing progresses. Those are invisible to a profiler,
+/// which measures the work that did happen rather than the work that did
+/// not.
+///
+/// It is deliberately awkward to turn on. `--cfg tokio_unstable` changes
+/// tokio's ABI, and the port answers questions about the process to whoever
+/// reaches it, so this is a thing you build on purpose, look at, and throw
+/// away - not a flag anyone can flip on a running deployment.
+#[cfg(feature = "console")]
+fn install_console() {
+    console_subscriber::init();
+    pintail_log::log_info!("tokio-console task view on 127.0.0.1:6669");
+}
+
+/// Without the feature there is no task view and nothing to install.
+#[cfg(not(feature = "console"))]
+const fn install_console() {}
+
+// Boot is a sequence, and splitting it to satisfy a line count would put
+// ordering that matters - telemetry before anything that can fail, secrets
+// before the metadata they unlock - behind a function call that hides it.
+#[allow(clippy::too_many_lines)]
 #[tokio::main]
 async fn main() -> Result<()> {
+    install_console();
     let started = std::time::Instant::now();
     // First, before anything that can fail. Secrets loading, metadata open and
     // spill preparation all abort startup on error, and a boot that dies

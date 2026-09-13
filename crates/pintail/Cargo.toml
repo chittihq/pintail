@@ -8,6 +8,16 @@ repository.workspace = true
 rust-version.workspace = true
 
 [features]
+# Serves the tokio task view on 127.0.0.1:6669 for `tokio-console`.
+#
+# Off by default and never in a shipped binary: it needs
+# `RUSTFLAGS="--cfg tokio_unstable"`, which changes tokio's ABI, and it
+# opens a port that answers questions about the process to anyone who can
+# reach it. Build it deliberately, look, and throw the binary away:
+#
+#   RUSTFLAGS="--cfg tokio_unstable" cargo run --features console
+#   tokio-console
+console = ["dep:console-subscriber"]
 failpoints = [
     "pintail-api/failpoints",
     "pintail-cdc/failpoints",
@@ -36,6 +46,7 @@ rand.workspace = true
 rustix.workspace = true
 serde.workspace = true
 tokio.workspace = true
+console-subscriber = { version = "0.4", optional = true }
 toml.workspace = true
 tikv-jemallocator.workspace = true
 
