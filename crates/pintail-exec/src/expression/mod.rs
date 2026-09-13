@@ -1500,7 +1500,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonOverlaps
                     | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
-                    ScalarFunction::Locate => string_arguments.saturating_mul(12),
+                    ScalarFunction::Locate | ScalarFunction::Instr => string_arguments.saturating_mul(32).saturating_add(8),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
                         first.saturating_add(first.saturating_add(1).saturating_mul(string(2)))
                     }
@@ -1574,7 +1574,6 @@ impl CompiledExpr {
                     | ScalarFunction::Log2
                     | ScalarFunction::Log10
                     | ScalarFunction::Truncate { .. }
-                    | ScalarFunction::Instr
                     | ScalarFunction::FindInSet
                     | ScalarFunction::Ascii
                     | ScalarFunction::Ord
@@ -2442,15 +2441,16 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::Locate => {
             let binary = matches!(values[1], Value::Binary(_));
             let text = if binary { byte_text } else { scalar_string };
-            let exact = binary || collation == Collation::Utf8mb4Bin;
-            let needle = fold_unless_binary(&text(&values[0])?, exact);
-            let haystack = fold_unless_binary(&text(&values[1])?, exact);
+            let needle = text(&values[0])?;
+            let haystack = text(&values[1])?;
             let start = values
                 .get(2)
                 .map(saturating_argument)
                 .transpose()?
                 .unwrap_or(1);
-            Ok(Value::UInt64(locate(&needle, &haystack, start)))
+            Ok(Value::UInt64(locate_collated(
+                &needle, &haystack, start, binary, collation,
+            )))
         }
         ScalarFunction::Like { negated, escape } => {
             let binary = binary_operand(&values[0..2]);
@@ -2790,10 +2790,11 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::Instr => {
             let binary = matches!(values[0], Value::Binary(_));
             let text = if binary { byte_text } else { scalar_string };
-            let exact = binary || collation == Collation::Utf8mb4Bin;
-            let haystack = fold_unless_binary(&text(&values[0])?, exact);
-            let needle = fold_unless_binary(&text(&values[1])?, exact);
-            Ok(Value::UInt64(locate(&needle, &haystack, 1)))
+            let haystack = text(&values[0])?;
+            let needle = text(&values[1])?;
+            Ok(Value::UInt64(locate_collated(
+                &needle, &haystack, 1, binary, collation,
+            )))
         }
         ScalarFunction::FindInSet => {
             let needle = scalar_string(&values[0])?;
@@ -5151,19 +5152,69 @@ fn binary_operand(values: &[Value]) -> bool {
     values.iter().any(|value| matches!(value, Value::Binary(_)))
 }
 
-/// Applies the case/accent fold used by locate functions unless a binary
-/// operand demands exact byte comparison. LIKE compares source characters
-/// directly through the collator so `_` still consumes one source character.
-fn fold_unless_binary(text: &str, binary: bool) -> String {
-    if binary {
-        text.to_owned()
+/// Search is case-insensitive but accent-sensitive. Keep source character
+/// boundaries so an expansion matches only in full and never shifts a position.
+fn locate_collated(
+    needle: &str,
+    haystack: &str,
+    start: i64,
+    binary: bool,
+    collation: Collation,
+) -> u64 {
+    if binary || collation == Collation::Utf8mb4Bin {
+        return locate(needle, haystack, start);
+    }
+    if needle.is_ascii() && haystack.is_ascii() {
+        return locate(
+            &needle.to_ascii_lowercase(),
+            &haystack.to_ascii_lowercase(),
+            start,
+        );
+    }
+    if start <= 0 {
+        return 0;
+    }
+    let mut folded_needle = String::new();
+    for character in needle.chars() {
+        append_search_fold(&mut folded_needle, character, collation);
+    }
+    let mut folded = String::new();
+    let mut boundaries = Vec::with_capacity(haystack.chars().count().saturating_add(1));
+    for character in haystack.chars() {
+        boundaries.push(folded.len());
+        append_search_fold(&mut folded, character, collation);
+    }
+    boundaries.push(folded.len());
+    let Some(mut offset) = usize::try_from(start - 1)
+        .ok()
+        .and_then(|index| boundaries.get(index))
+        .copied()
+    else {
+        return 0;
+    };
+    while let Some(relative) = folded[offset..].find(&folded_needle) {
+        let begin = offset + relative;
+        let end = begin + folded_needle.len();
+        if let Ok(index) = boundaries.binary_search(&begin)
+            && boundaries.binary_search(&end).is_ok()
+        {
+            return u64::try_from(index).unwrap_or(u64::MAX).saturating_add(1);
+        }
+        let Some(character) = folded[begin..].chars().next() else {
+            break;
+        };
+        offset = begin + character.len_utf8();
+    }
+    0
+}
+
+fn append_search_fold(output: &mut String, character: char, collation: Collation) {
+    use unicode_casefold::{Locale, UnicodeCaseFold as _, Variant};
+    use unicode_normalization::UnicodeNormalization as _;
+    if collation == Collation::Utf8mb4GeneralCi {
+        output.extend(character.case_fold_with(Variant::Simple, Locale::NonTurkic));
     } else {
-        use unicode_casefold::UnicodeCaseFold as _;
-        use unicode_normalization::UnicodeNormalization as _;
-        text.nfd()
-            .filter(|character| !unicode_normalization::char::is_combining_mark(*character))
-            .case_fold()
-            .collect()
+        output.extend(std::iter::once(character).nfd().case_fold());
     }
 }
 
@@ -7699,7 +7750,7 @@ mod tests {
                 ScalarFunction::Instr,
                 vec![Value::Utf8("CAFÉ".into()), Value::Utf8("cafe".into())]
             ),
-            Value::Utf8("1".into())
+            Value::Utf8("0".into())
         );
         assert_eq!(
             call(

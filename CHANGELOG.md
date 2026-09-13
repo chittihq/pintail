@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Unicode string search retains accents, matches complete case-folded
+  characters, and returns positions in the original subject.
+
 - String search and `FIELD` capture the subject collation; binary patterns
   retain text-subject search and padding semantics.
 

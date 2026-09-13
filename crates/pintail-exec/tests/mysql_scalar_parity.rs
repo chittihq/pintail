@@ -707,3 +707,27 @@ fn string_search_and_padding_use_subject_semantics() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn string_search_preserves_accents_and_source_character_positions() {
+    for (expression, expected) in [
+        ("LOCATE('e', 'café')", "0"),
+        ("LOCATE('ss', 'straße')", "5"),
+        ("LOCATE('s', 'ß')", "0"),
+        ("LOCATE('s', 'ßs')", "2"),
+        ("LOCATE('e', 'straße')", "6"),
+        ("LOCATE('é', 'e\u{301}')", "1"),
+        ("LOCATE('e', 'e\u{301}')", "1"),
+        ("LOCATE('x', 'e\u{301}x')", "3"),
+        ("LOCATE('ss', 'straße' COLLATE utf8mb4_general_ci)", "0"),
+        ("LOCATE('é', 'e\u{301}' COLLATE utf8mb4_general_ci)", "0"),
+        ("INSTR('café', 'E')", "0"),
+        ("INSTR('straße', 'E')", "6"),
+        ("LOCATE('Σ', 'ς')", "1"),
+        ("LOCATE('ffi', 'ﬃ')", "1"),
+        ("LOCATE('f', 'ﬃ')", "0"),
+        ("LOCATE('ss', 'ßss', 2)", "2"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
