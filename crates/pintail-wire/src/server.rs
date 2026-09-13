@@ -767,6 +767,20 @@ fn sql_mode_has(sql_mode: &str, mode: &str) -> bool {
 /// shifts the statement-pinned time functions, `NAMES` accepts only the
 /// utf8 charsets Pintail actually serves, and `sql_mode` accepts only
 /// modes that are genuinely inert on a read-only replica.
+///
+/// A variable a client sets without being asked is implemented or
+/// accepted and ignored - never refused. Refusing fails the connection
+/// over a setting the user never chose: a driver sends what it always
+/// sends, gets an error for it, and the session is unusable with nothing
+/// the user can change. `sql_select_limit` is the worked example, and it
+/// cost a BI client its connection entirely before it was implemented
+/// properly; refusing it looked like the honest answer and was the one
+/// that broke a tool nobody could fix from the outside.
+///
+/// Refusal is right where a client asks for something and would be
+/// misled by silence - a `sql_mode` that would change answers, a charset
+/// Pintail does not serve. The distinction is whether the client chose
+/// the setting or its driver did.
 #[derive(Clone, Debug)]
 struct Session {
     time_zone: String,

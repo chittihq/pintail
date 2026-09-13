@@ -1710,3 +1710,25 @@ Literal date-interval expressions use the existing scalar evaluator during
 constant folding. The resulting literal permits the existing scan-bound logic
 to recognize date ranges. Unsupported or failing expressions retain runtime
 evaluation; there is no separate calendar arithmetic implementation.
+
+### A session variable a client sets blindly is implemented or ignored, never refused
+
+Drivers announce themselves. A JDBC client sets `sql_select_limit` on connect,
+a BI tool sets `div_precision_increment`, a pool sets `time_zone` — none of it
+asked for by the person running the query, and none of it something they can
+stop. Refusing one of those fails the connection over a setting the user never
+chose and cannot remove: the driver sends what it always sends, gets an error,
+and the session is unusable from the outside.
+
+So a variable of that kind is either implemented with its real semantics or
+accepted and ignored. `sql_select_limit` is the worked example. Refusing it
+read as the honest answer — better to say no than to pretend — and it took a BI
+client's connection out entirely, which no amount of honesty helps with. It is
+implemented now, and the release gate's BI client stage is what caught the
+regression.
+
+Refusal stays right where a client asks for something deliberately and silence
+would mislead it: a `sql_mode` that would change which rows come back, a
+character set Pintail does not serve, an isolation level a read-only replica
+cannot honour. The test is not how hard the variable is to support. It is
+whether the client chose it, or its driver did.
