@@ -60,7 +60,7 @@ MySQL 8.4 and 8.0 servers before it merges.
 | Generated queries | Seeded, randomly composed queries, same comparison | 400 per run; 100,000+ in [banked sweeps](tests/sqllogic/fuzz-results.md) | no mismatch |
 | MySQL's own regression suite | `mysql-test` from [mysql/mysql-server](https://github.com/mysql/mysql-server/tree/trunk/mysql-test/t), replayed statement by statement against Pintail and a live MySQL 8.4 | 633 files, 23,118 SELECTs replayed | [3,476 of 3,882 compared match](tests/mtr/results.md); MariaDB's suite is replayed beside it |
 | Storage layouts | The same answers from memtable, flushed, mixed, compacted and reopened data, and under forced spill | 5 layouts | match |
-| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,016 checks per MySQL version | [0 failed](tests/e2e/results.md) |
+| Replication, end to end | A real MySQL replicated through snapshot, change capture and schema changes, then queried over the wire | 7,015 passing checks per MySQL version | [0 failed](tests/e2e/results.md) |
 | Crash recovery | Faults mid-write and `kill -9`, then every table compared | 38 scenarios, 692 checks | [0 failed](tests/e2e/results-recovery.md) |
 | Clients | JDBC, Go, Python, Bun and the `mysql` CLI against the wire endpoint | 5 client stacks | pass |
 
