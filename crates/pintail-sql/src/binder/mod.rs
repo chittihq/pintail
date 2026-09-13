@@ -3028,11 +3028,10 @@ fn bind_expr_inner(
                 subqueries,
             )
         }
-        // A charset introducer (_latin1 '...') names the literal's encoding;
-        // the fixtures that use one hold ASCII, where every encoding agrees.
-        Expr::Prefixed { value, .. } => {
-            bind_expr_inner(value, tables, aggregates, windows, subqueries)
-        }
+        Expr::Prefixed { prefix, value } => bind_introducer(
+            &prefix.value,
+            bind_expr_inner(value, tables, aggregates, windows, subqueries)?,
+        ),
         Expr::Convert { .. } => bind_convert(expr, tables, aggregates, windows, subqueries),
         Expr::Substring {
             expr,
@@ -5884,6 +5883,50 @@ fn exact_numeric_type(data_type: Option<DataType>) -> bool {
     )
 }
 
+/// A literal behind a character set introducer (`_utf8mb4 '...'`,
+/// `_binary X'00'`). The introducer names how the literal's bytes are
+/// encoded: under a UTF-8 set they are this engine's own text, under
+/// `_binary` they are bytes, and under `_latin1` or `_ascii` they spell the
+/// same text only while every byte is ASCII. Any other set - `_ucs2`,
+/// `_utf16`, a non-ASCII latin1 literal - would need transcoding, and reading
+/// its bytes as UTF-8 answers different text, so it is refused.
+fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
+    let charset = prefix
+        .strip_prefix('_')
+        .unwrap_or(prefix)
+        .to_ascii_lowercase();
+    let refuse = || {
+        Err(BindError::UnsupportedExpression(format!(
+            "character set introducer {prefix}"
+        )))
+    };
+    let BoundExprKind::Literal(value) = &literal.kind else {
+        return refuse();
+    };
+    let bytes = match value {
+        Value::Utf8(text) => text.as_bytes(),
+        Value::Binary(bytes) => bytes.as_slice(),
+        Value::Null => return Ok(literal),
+        _ => return refuse(),
+    };
+    let value = match charset.as_str() {
+        "binary" => Value::Binary(bytes.to_vec()),
+        "utf8mb4" | "utf8mb3" | "utf8" => match std::str::from_utf8(bytes) {
+            Ok(text) => Value::Utf8(text.to_owned()),
+            Err(_) => return refuse(),
+        },
+        "latin1" | "ascii" if bytes.is_ascii() => {
+            Value::Utf8(String::from_utf8_lossy(bytes).into_owned())
+        }
+        _ => return refuse(),
+    };
+    Ok(BoundExpr {
+        data_type: value.data_type(),
+        nullable: false,
+        kind: BoundExprKind::Literal(value),
+    })
+}
+
 /// A date or datetime literal in one of the spellings `MySQL` reads:
 /// `YYYY-M-D`, optionally followed by `[ T]H:M[:S[.fraction]]`, with any one
 /// punctuation character between date parts, or the digit runs `YYYYMMDD`
@@ -8234,7 +8277,7 @@ mod tests {
 fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindError> {
     let mut unsupported = collations
         .iter()
-        .filter(|collation| !crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collation.as_str()));
+        .filter(|collation| crate::bound::comparison_collation(collation).is_none());
     if let Some(collation) = unsupported.next() {
         return Err(BindError::UnsupportedExpression(format!(
             "text collation {collation} is unsupported; supported: {}",
@@ -8243,10 +8286,6 @@ fn resolve_query_collation(collations: &[String]) -> Result<&'static str, BindEr
     }
     Ok(collations
         .iter()
-        .find_map(|collation| {
-            crate::bound::SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == collation)
-        })
+        .find_map(|collation| crate::bound::comparison_collation(collation))
         .unwrap_or_else(crate::bound::session_default_collation))
 }

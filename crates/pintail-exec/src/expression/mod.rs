@@ -2195,10 +2195,10 @@ fn evaluate_eager_scalar_inner(
                 .concat(),
         )),
         ScalarFunction::Substring => {
-            let start = mysql_i64(&values[1])?;
+            let start = saturating_argument(&values[1])?;
             let length = values
                 .get(2)
-                .map(mysql_i64)
+                .map(saturating_argument)
                 .transpose()?
                 .unwrap_or(i64::MAX);
             // A binary string counts bytes, not characters.
@@ -2359,7 +2359,7 @@ fn evaluate_eager_scalar_inner(
                 .replace(&scalar_string(&values[1])?, &scalar_string(&values[2])?),
         )),
         ScalarFunction::Left => {
-            let count = mysql_i64(&values[1])?.max(0);
+            let count = saturating_argument(&values[1])?.max(0);
             let count = usize::try_from(count).unwrap_or(usize::MAX);
             Ok(Value::Utf8(
                 scalar_string(&values[0])?.chars().take(count).collect(),
@@ -2367,7 +2367,8 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Right => {
             let value = scalar_string(&values[0])?;
-            let count = usize::try_from(mysql_i64(&values[1])?.max(0)).unwrap_or(usize::MAX);
+            let count =
+                usize::try_from(saturating_argument(&values[1])?.max(0)).unwrap_or(usize::MAX);
             let skip = value.chars().count().saturating_sub(count);
             Ok(Value::Utf8(value.chars().skip(skip).collect()))
         }
@@ -2377,7 +2378,11 @@ fn evaluate_eager_scalar_inner(
             let binary = binary_operand(&values[0..2]);
             let needle = fold_unless_binary(&scalar_string(&values[0])?, binary);
             let haystack = fold_unless_binary(&scalar_string(&values[1])?, binary);
-            let start = values.get(2).map(mysql_i64).transpose()?.unwrap_or(1);
+            let start = values
+                .get(2)
+                .map(saturating_argument)
+                .transpose()?
+                .unwrap_or(1);
             Ok(Value::UInt64(locate(&needle, &haystack, start)))
         }
         ScalarFunction::Like { negated, escape } => {
@@ -2650,8 +2655,8 @@ fn evaluate_eager_scalar_inner(
             // string returns it unchanged; a length past the end, or a
             // negative one, replaces the rest of the string.
             let text = scalar_string(&values[0])?;
-            let position = mysql_i64(&values[1])?;
-            let length = mysql_i64(&values[2])?;
+            let position = saturating_argument(&values[1])?;
+            let length = saturating_argument(&values[2])?;
             let replacement = scalar_string(&values[3])?;
             let characters: Vec<char> = text.chars().collect();
             let total = i64::try_from(characters.len()).map_err(|_| ExecError::NumericOverflow)?;
@@ -6680,7 +6685,14 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
 /// every such value behaves like an extreme one, so it is clamped to a
 /// range the callers' arithmetic cannot overflow on.
 fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
-    let saturated = match value {
+    Ok(saturating_argument(value)?.clamp(-100, 100))
+}
+
+/// An integer argument read the way `MySQL` reads a count or a position: a
+/// value past the signed 64-bit range saturates rather than failing, so
+/// `LEFT(s, 18446744073709551616)` is the whole string.
+fn saturating_argument(value: &Value) -> Result<i64, ExecError> {
+    Ok(match value {
         Value::UInt64(unsigned) => i64::try_from(*unsigned).unwrap_or(i64::MAX),
         Value::Float64(number) => saturating_i64(number.get()),
         Value::Utf8(text) | Value::Enum { label: text, .. } => {
@@ -6691,8 +6703,7 @@ fn mysql_decimals(value: &Value) -> Result<i64, ExecError> {
             saturating_i64(parse_mysql_number(text))
         }
         other => mysql_i64(other)?,
-    };
-    Ok(saturated.clamp(-100, 100))
+    })
 }
 
 fn saturating_i64(number: f64) -> i64 {

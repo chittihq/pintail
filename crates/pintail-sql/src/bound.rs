@@ -39,6 +39,26 @@ pub const SUPPORTED_TEXT_COLLATIONS: [&str; 4] = [
 ];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
+/// The supported collation a comparison under `name` follows, if any.
+///
+/// utf8mb3 holds only characters of the basic plane, and over those its
+/// `general_ci`, `unicode_ci` and `bin` collations weigh every character exactly
+/// as their utf8mb4 twins do - so a legacy `utf8` column compares as the
+/// twin rather than being refused.
+#[must_use]
+pub fn comparison_collation(name: &str) -> Option<&'static str> {
+    let lower = name.to_ascii_lowercase();
+    let twin = lower
+        .strip_prefix("utf8mb3_")
+        .or_else(|| lower.strip_prefix("utf8_"))
+        .filter(|rest| matches!(*rest, "general_ci" | "unicode_ci" | "bin"))
+        .map(|rest| format!("utf8mb4_{rest}"));
+    let wanted = twin.as_deref().unwrap_or(&lower);
+    SUPPORTED_TEXT_COLLATIONS
+        .into_iter()
+        .find(|supported| *supported == wanted)
+}
+
 /// A table made unambiguous against one catalog snapshot.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundTable {
@@ -1448,9 +1468,7 @@ impl BoundExpr {
         explicit.sort_unstable();
         explicit.dedup();
         if let [only] = explicit.as_slice() {
-            return SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == only);
+            return comparison_collation(only);
         }
         let mut collations = Vec::new();
         self.collect_source_collations(&mut collations);
@@ -1461,9 +1479,7 @@ impl BoundExpr {
             // utf8mb4_bin, everything else under the session default - the
             // same ladder result_collation applies.
             [] if self.reads_json_text() => Some(BIN_TEXT_COLLATION),
-            [only] => SUPPORTED_TEXT_COLLATIONS
-                .into_iter()
-                .find(|supported| supported == only),
+            [only] => comparison_collation(only),
             _ => None,
         }
     }

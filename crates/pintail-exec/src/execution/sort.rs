@@ -345,9 +345,7 @@ pub(super) fn build_distinct(
                     if name == pintail_sql::JSON_TEXT_COLLATION {
                         return Some(pintail_sql::JSON_TEXT_COLLATION);
                     }
-                    pintail_sql::SUPPORTED_TEXT_COLLATIONS
-                        .into_iter()
-                        .find(|supported| *supported == name)
+                    pintail_sql::comparison_collation(name)
                 }),
         })
         .collect::<Vec<_>>();

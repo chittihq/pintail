@@ -190,3 +190,51 @@ fn a_decimal_cast_clamps_to_its_declared_range() {
         ("CAST(123456.7 AS DECIMAL(7,2))", "99999.99"),
     ]);
 }
+
+#[test]
+fn a_count_or_position_past_the_64_bit_range_saturates() {
+    assert_answers(&[
+        (
+            "CONCAT('[', LEFT('hello', 18446744073709551616), ']')",
+            "[hello]",
+        ),
+        (
+            "CONCAT('[', LEFT('hello', -18446744073709551616), ']')",
+            "[]",
+        ),
+        (
+            "CONCAT('[', RIGHT('hello', 18446744073709551615), ']')",
+            "[hello]",
+        ),
+        (
+            "CONCAT('[', SUBSTRING('hello', -18446744073709551616, 1), ']')",
+            "[]",
+        ),
+        (
+            "CONCAT('[', SUBSTRING('hello', 1, 18446744073709551617), ']')",
+            "[hello]",
+        ),
+        ("LOCATE('lo', 'hello', -18446744073709551615)", "0"),
+        ("LOCATE('lo', 'hello', 18446744073709551617)", "0"),
+        ("INSERT('hello', 1, 18446744073709551616, 'hi')", "hi"),
+        ("INSERT('hello', -18446744073709551615, 1, 'hi')", "hello"),
+        ("LENGTH(LEFT(REPEAT('a', 300), 150))", "150"),
+        ("LENGTH(SUBSTRING(REPEAT('a', 300), 101))", "200"),
+    ]);
+}
+
+#[test]
+fn a_character_set_introducer_decides_what_the_literal_bytes_mean() {
+    assert_answers(&[
+        ("CHAR_LENGTH(_utf8mb4 X'D0A0')", "1"),
+        ("CHAR_LENGTH(_utf8mb4 0xD0A0)", "1"),
+        ("IF(_binary 'a' = 'A', 1, 0)", "0"),
+        ("IF('a' = 'A', 1, 0)", "1"),
+        ("_latin1 'abc'", "abc"),
+        ("HEX(_binary 'ab')", "6162"),
+    ]);
+    // Reading these bytes as UTF-8 would answer different text.
+    for refused in ["_ucs2 X'0420'", "_utf16 'ab'", "_latin1 'caf\u{e9}'"] {
+        assert!(scalar(refused).starts_with("error"), "{refused}");
+    }
+}

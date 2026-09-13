@@ -1861,7 +1861,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     explicit.dedup();
     match explicit.as_slice() {
         [] => {}
-        [only] if crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&only.as_str()) => {
+        [only] if crate::bound::comparison_collation(only).is_some() => {
             return Ok(());
         }
         _ => {
@@ -1886,9 +1886,7 @@ pub(super) fn ensure_supported_text_collation(expressions: &[&BoundExpr]) -> Res
     // about supplementary characters, so the comparison has two defensible
     // answers. MySQL picks one by coercibility; guessing here would produce a
     // wrong answer where refusing produces an error.
-    if collations.len() == 1
-        && crate::bound::SUPPORTED_TEXT_COLLATIONS.contains(&collations[0].as_str())
-    {
+    if collations.len() == 1 && crate::bound::comparison_collation(&collations[0]).is_some() {
         return Ok(());
     }
     let detail = collations.join(", ");
