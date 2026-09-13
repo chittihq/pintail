@@ -54,6 +54,30 @@ impl<R: AsyncRead + Unpin> PacketReader<R> {
         self.primed.extend(bytes);
     }
 
+    /// Waits until the next packet has begun to arrive, without consuming it.
+    ///
+    /// The byte that proves it arrived is handed straight back through the
+    /// primed queue, so the packet still reads whole afterwards. This is what
+    /// lets a caller put a deadline on an idle connection without putting one
+    /// on the work a command asks for.
+    ///
+    /// `Ok(false)` is end of stream: the peer closed while nothing was in
+    /// flight.
+    ///
+    /// # Errors
+    /// Propagates I/O failures from the underlying stream.
+    pub async fn wait_for_packet(&mut self) -> std::io::Result<bool> {
+        if !self.primed.is_empty() {
+            return Ok(true);
+        }
+        let mut byte = [0_u8; 1];
+        if self.inner.read(&mut byte).await? == 0 {
+            return Ok(false);
+        }
+        self.primed.push_back(byte[0]);
+        Ok(true)
+    }
+
     /// Returns the stream, so a plaintext connection can be upgraded to TLS
     /// mid-handshake without losing the sequence.
     ///

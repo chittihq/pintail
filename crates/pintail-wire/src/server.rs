@@ -438,7 +438,14 @@ impl DisconnectWatch for TcpDisconnectWatch {
                 Ok(0) => return WatchOutcome::Disconnected,
                 // Data is genuinely there and untouched; not a disconnect.
                 Ok(_) => return WatchOutcome::Primed(Vec::new()),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                // Readiness is advisory and a signal can cut a syscall short:
+                // neither says the peer left, and calling either a disconnect
+                // ends a live connection mid-query without an error packet.
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) => {}
                 Err(_) => return WatchOutcome::Disconnected,
             }
         }
@@ -560,15 +567,22 @@ where
         return Ok(());
     }
     loop {
-        let served = tokio::time::timeout(
-            idle_timeout,
-            connection.serve_one_with_disconnect_watch(&mut backend, &mut watch),
-        )
-        .await;
-        match served {
-            Ok(Ok(true)) => {}
-            Ok(Ok(false)) | Err(_) => return Ok(()),
-            Ok(Err(error)) => return Err(error),
+        // The deadline belongs on waiting for a command, not on serving one.
+        // Wrapped around the whole of `serve_one` it closes the socket part
+        // way through a long query, with no error packet - which a client
+        // cannot tell from the server dying.
+        match connection.await_command(idle_timeout).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        match connection
+            .serve_one_with_disconnect_watch(&mut backend, &mut watch)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(error),
         }
     }
 }
@@ -591,11 +605,15 @@ where
         return Ok(());
     }
     loop {
-        let served = tokio::time::timeout(idle_timeout, connection.serve_one(&mut backend)).await;
-        match served {
-            Ok(Ok(true)) => {}
-            Ok(Ok(false)) | Err(_) => return Ok(()),
-            Ok(Err(error)) => return Err(error),
+        match connection.await_command(idle_timeout).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        match connection.serve_one(&mut backend).await {
+            Ok(true) => {}
+            Ok(false) => return Ok(()),
+            Err(error) => return Err(error),
         }
     }
 }

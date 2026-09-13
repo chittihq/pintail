@@ -533,6 +533,27 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         }
     }
 
+    /// Waits for the next command to arrive, giving up after `idle`.
+    ///
+    /// This is the only part of serving a connection that is idle: once a
+    /// command has arrived the connection is working, and how long the work
+    /// takes is the query's business. Timing out around the whole of
+    /// [`Self::serve_one`] instead would close the socket part way through a
+    /// long query, with no error packet, which a client cannot tell from the
+    /// server dying.
+    ///
+    /// `Ok(false)` means the peer went away while idle, which is the ordinary
+    /// end of a connection and not an error.
+    ///
+    /// # Errors
+    /// Propagates I/O failures from the underlying stream.
+    pub async fn await_command(&mut self, idle: std::time::Duration) -> std::io::Result<bool> {
+        match tokio::time::timeout(idle, self.reader.wait_for_packet()).await {
+            Ok(result) => result,
+            Err(_) => Ok(false),
+        }
+    }
+
     async fn serve_one_inner(
         &mut self,
         handler: &mut dyn Handler,
@@ -1544,5 +1565,91 @@ mod tests {
             .expect("query terminator");
         let ping_ok = reader.next_payload().await.expect("io").expect("ping ok");
         assert_eq!(ping_ok[0], 0x00, "the primed PING was answered with OK");
+    }
+
+    /// A command that takes longer than the idle deadline still answers.
+    ///
+    /// The deadline exists to close connections nobody is using. Applied to
+    /// the whole of serving a command it closes the socket part way through
+    /// a long query instead, with no error packet - which is exactly what a
+    /// client reports as the server having gone away.
+    #[tokio::test]
+    async fn a_slow_command_outlives_the_idle_deadline() {
+        struct SlowFixture;
+
+        #[async_trait]
+        impl Handler for SlowFixture {
+            async fn authenticate(&mut self, _: &HandshakeResponse, _: &[u8]) -> bool {
+                true
+            }
+
+            async fn query(&mut self, _: &[u8]) -> Response {
+                // Longer than the deadline the connection waits under.
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                Response::Ok(OkPacket::default(), String::new())
+            }
+
+            async fn prepare(
+                &mut self,
+                _: &[u8],
+            ) -> Result<PreparedStatement, (ErrorKind, String)> {
+                Ok(PreparedStatement::default())
+            }
+
+            async fn execute(&mut self, _: u32, _: &[u8]) -> Response {
+                Response::Ok(OkPacket::default(), String::new())
+            }
+
+            async fn close_statement(&mut self, _: u32) {}
+
+            async fn init_database(&mut self, _: &[u8]) -> Result<(), (ErrorKind, String)> {
+                Ok(())
+            }
+        }
+
+        let mut input = Vec::new();
+        input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
+        let mut output = Vec::new();
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        let idle = std::time::Duration::from_millis(20);
+
+        // The command is already there, so waiting returns at once.
+        assert!(
+            connection.await_command(idle).await.expect("io"),
+            "a command already in flight is not an idle connection"
+        );
+        // Serving it takes six times the deadline, and must not be cut off.
+        assert!(
+            connection.serve_one(&mut SlowFixture).await.expect("io"),
+            "the connection stays open for the answer"
+        );
+        let mut reader = PacketReader::new(output.as_slice());
+        let reply = reader.next_payload().await.expect("io").expect("a reply");
+        assert_eq!(reply[0], 0x00, "the slow command answered with OK");
+    }
+
+    /// Waiting hands the byte that proved arrival straight back, so the
+    /// packet still reads whole.
+    #[tokio::test]
+    async fn waiting_for_a_command_does_not_consume_it() {
+        let mut input = Vec::new();
+        input.extend_from_slice(&packet(0, b"\x03SELECT 1"));
+        let mut output = Vec::new();
+        let mut connection = Connection::new(input.as_slice(), &mut output);
+        assert!(
+            connection
+                .await_command(std::time::Duration::from_secs(5))
+                .await
+                .expect("io")
+        );
+        let mut handler = Fixture {
+            accept: true,
+            last_query: Vec::new(),
+        };
+        assert!(connection.serve_one(&mut handler).await.expect("io"));
+        assert_eq!(
+            handler.last_query, b"SELECT 1",
+            "the command read whole after being waited for"
+        );
     }
 }
