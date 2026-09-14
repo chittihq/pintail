@@ -176,3 +176,30 @@ fn scalar_bit_operators_preserve_binary_width_and_literal_domains() {
         Err(pintail_exec::ExecError::BinaryBitwiseLength)
     ));
 }
+
+#[test]
+fn binary_padding_declares_aggregate_identity_width() {
+    for (function, populated) in [
+        ("LPAD", "00000000012345678901"),
+        ("RPAD", "01234567890100000000"),
+    ] {
+        for (filter, expected) in [
+            ("id=1", populated),
+            ("id=0", "FFFFFFFFFFFFFFFFFFFF"),
+            ("id=3", "FFFFFFFFFFFFFFFFFFFF"),
+        ] {
+            let sql = format!(
+                "SELECT HEX(BIT_AND({function}(payload,10,0x00))) FROM items WHERE {filter}"
+            );
+            assert_eq!(query(&sql).unwrap(), vec![vec![expected]], "{sql}");
+        }
+    }
+}
+
+#[test]
+fn binary_padding_keeps_width_when_constant_null() {
+    assert_eq!(
+        query("SELECT HEX(BIT_AND(LPAD(CAST(NULL AS BINARY(6)),10,0x00))) FROM items").unwrap(),
+        vec![vec!["FFFFFFFFFFFFFFFFFFFF"]]
+    );
+}

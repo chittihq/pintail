@@ -993,6 +993,10 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
             ..
         } => None,
         BoundExprKind::Scalar {
+            function: ScalarFunction::Lpad | ScalarFunction::Rpad,
+            ..
+        } if expr.binary_width().is_some() => None,
+        BoundExprKind::Scalar {
             function:
                 ScalarFunction::DateInterval { .. }
                 | ScalarFunction::Cast(_)

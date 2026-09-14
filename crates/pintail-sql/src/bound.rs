@@ -233,6 +233,18 @@ impl BoundExpr {
                 args,
             } => args.first()?.binary_width(),
             BoundExprKind::Scalar {
+                function: ScalarFunction::Lpad | ScalarFunction::Rpad,
+                args,
+            } => match &args.get(1)?.kind {
+                BoundExprKind::Literal(Value::UInt64(width)) => {
+                    Some(u32::try_from(*width).unwrap_or(u32::MAX))
+                }
+                BoundExprKind::Literal(Value::Int64(width)) => {
+                    Some(u32::try_from(*width).unwrap_or(u32::MAX))
+                }
+                _ => None,
+            },
+            BoundExprKind::Scalar {
                 function: ScalarFunction::If,
                 args,
             } => binary_branch_width(&args[1..]),
