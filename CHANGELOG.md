@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Typed `TIME` casts to calendar types and calendar intervals anchor to
+  the captured session date. Query sharing separates different dates.
+
 - Clock `EXTRACT` fields preserve negative duration signs and fold day
   prefixes into hours, while calendar inputs retain their day component.
 

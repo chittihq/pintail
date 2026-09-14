@@ -79,7 +79,7 @@ pub(crate) struct SharedQueryKey {
     pub(crate) max_rows: usize,
     pub(crate) time_zone: Option<String>,
     pub(crate) timestamp_micros: Option<i64>,
-    pub(crate) statement_year: i32,
+    pub(crate) statement_date: i32,
     pub(crate) character_set: pintail_types::CharacterSet,
     pub(crate) calendar_locale: &'static str,
     pub(crate) default_week_format: u8,
@@ -106,7 +106,7 @@ impl SharedQueryKey {
             max_rows,
             time_zone: pintail_exec::session_time_zone_key(),
             timestamp_micros: pintail_exec::session_timestamp_micros(),
-            statement_year: pintail_exec::session_statement_year(),
+            statement_date: pintail_exec::session_statement_date(),
             character_set: pintail_sql::session_character_set(),
             calendar_locale: pintail_exec::session_calendar_locale(),
             default_week_format: pintail_exec::session_default_week_format(),
@@ -415,7 +415,7 @@ mod tests {
             max_rows: 100,
             time_zone: None,
             timestamp_micros: None,
-            statement_year: 2020,
+            statement_date: 737_607,
             character_set: pintail_types::CharacterSet::Utf8Mb4,
             calendar_locale: "en_US",
             default_week_format: 0,
@@ -507,7 +507,7 @@ mod tests {
                 ..base.clone()
             },
             SharedQueryKey {
-                statement_year: 2021,
+                statement_date: 737_608,
                 ..base.clone()
             },
             SharedQueryKey {

@@ -954,3 +954,21 @@ fn extract_time_fields_preserve_duration_sign_and_day_prefix() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn time_calendar_conversions_capture_the_statement_date() {
+    for (expression, expected) in [
+        ("CAST(clock AS DATETIME)", "2020-07-01 11:11:11"),
+        ("DATE(TIME '-01:00:00')", "2020-06-30"),
+        ("CAST(TIME '-01:00:00' AS DATETIME)", "2020-06-30 23:00:00"),
+        ("CAST(TIME '25:00:00' AS DATE)", "2020-07-02"),
+        ("DATE_ADD(clock, INTERVAL 1 DAY)", "2020-07-02 11:11:11"),
+        ("DATE_ADD(clock, INTERVAL 1 MONTH)", "2020-08-01 11:11:11"),
+    ] {
+        pintail_exec::set_session_timestamp_micros(Some(1_593_561_600_000_000));
+        let answer = evaluate_rows_after_plan(expression, 1, || {
+            pintail_exec::set_session_timestamp_micros(None);
+        });
+        assert_eq!(answer, expected, "{expression}");
+    }
+}

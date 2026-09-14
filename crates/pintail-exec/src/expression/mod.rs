@@ -2507,6 +2507,7 @@ fn evaluate_eager_scalar_inner(
                 &values[0],
                 argument_types.first().copied().flatten(),
                 target,
+                values.get(1),
             ) {
                 return Ok(value);
             }
@@ -2520,6 +2521,7 @@ fn evaluate_eager_scalar_inner(
                 &values[0],
                 argument_types.first().copied().flatten(),
                 target,
+                values.get(1),
             ) {
                 return Ok(value);
             }
@@ -3186,6 +3188,7 @@ fn evaluate_eager_scalar_inner(
                 &values[0],
                 argument_types.first().copied().flatten(),
                 DataType::Date32,
+                values.get(1),
             ) {
                 return Ok(value);
             }
@@ -3205,6 +3208,7 @@ fn evaluate_eager_scalar_inner(
                 &values[0],
                 argument_types.first().copied().flatten(),
                 data_type.unwrap_or(DataType::Time64 { fsp: 0 }),
+                None,
             ) {
                 return Ok(value);
             }
@@ -3291,6 +3295,13 @@ fn evaluate_eager_scalar_inner(
                     Value::Utf8(render_time_micros(total, fsp))
                 });
             }
+            let input = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                data_type.unwrap_or(DataType::DateTime64 { fsp: 0 }),
+                values.get(2),
+            )
+            .map_or(Ok(input), |value| scalar_string(&value))?;
             let value = parse_mysql_datetime(&input)?;
             let amount = mysql_i64(&values[1])?;
             let value = apply_interval(value, amount, unit, subtract)?;
@@ -4061,7 +4072,24 @@ fn cast_temporal_carrier(
     value: &Value,
     source: Option<DataType>,
     target: DataType,
+    statement_date: Option<&Value>,
 ) -> Option<Value> {
+    if matches!(source, Some(DataType::Time64 { .. }))
+        && matches!(target, DataType::Date32 | DataType::DateTime64 { .. })
+    {
+        let time = parse_temporal_micros(&scalar_string(value).ok()?)?;
+        let date = statement_date
+            .map(scalar_string)
+            .transpose()
+            .ok()?
+            .unwrap_or_else(|| Local::now().format("%Y-%m-%d").to_string());
+        let midnight = parse_mysql_datetime(&date)
+            .ok()?
+            .and_utc()
+            .timestamp_micros();
+        let datetime = render_datetime_micros(i128::from(midnight) + time.micros, 6)?;
+        return Some(cast_scalar(&Value::Utf8(datetime), Some(target)).unwrap_or(Value::Null));
+    }
     if !matches!(source, Some(DataType::Date32 | DataType::DateTime64 { .. })) {
         return None;
     }

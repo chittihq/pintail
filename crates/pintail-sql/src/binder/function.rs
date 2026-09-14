@@ -1684,7 +1684,7 @@ pub(super) fn bind_scalar(
                 {
                     DataType::Time64 { fsp }
                 }
-                Some(DataType::DateTime64 { fsp }) => DataType::DateTime64 { fsp },
+                Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => DataType::DateTime64 { fsp },
                 Some(DataType::Date32) => DataType::DateTime64 { fsp: 0 },
                 _ => DataType::Utf8,
             }),

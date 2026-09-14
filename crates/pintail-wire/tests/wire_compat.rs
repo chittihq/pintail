@@ -616,6 +616,20 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
             .expect("fixed clock reaches runtime and cached plans");
         assert_eq!(clock, Some((now.to_owned(), year, timestamp)));
     }
+    for (timestamp, expected) in [
+        (1_593_561_600_u64, "2020-07-01 01:02:03"),
+        (1_593_648_000_u64, "2020-07-02 01:02:03"),
+    ] {
+        connection
+            .query_drop(format!("SET timestamp = {timestamp}"))
+            .await
+            .expect("set calendar date");
+        let converted: Option<String> = connection
+            .query_first("SELECT CAST(TIME'01:02:03' AS DATETIME)")
+            .await
+            .expect("time cast captures session date");
+        assert_eq!(converted.as_deref(), Some(expected));
+    }
     connection
         .query_drop("SET timestamp = UNIX_TIMESTAMP('2020-12-22 03:30:00')")
         .await

@@ -587,10 +587,10 @@ pub fn session_timestamp_micros() -> Option<i64> {
     SESSION_TIMESTAMP_MICROS.get()
 }
 
-/// The calendar year of this session's clock, needed by year-dependent caches.
+/// The local calendar date of this session's clock, needed by temporal casts.
 #[must_use]
-pub fn session_statement_year() -> i32 {
-    chrono::Datelike::year(&statement_now().local)
+pub fn session_statement_date() -> i32 {
+    chrono::Datelike::num_days_from_ce(&statement_now().local.date())
 }
 
 fn statement_now() -> StatementNow {
@@ -810,6 +810,32 @@ fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
                 &now.local,
             )))),
             data_type: Some(DataType::Int64),
+            nullable: false,
+        });
+    }
+    let date_arity = match function {
+        ScalarFunction::Date
+        | ScalarFunction::Cast(DataType::Date32 | DataType::DateTime64 { .. })
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Date32 | DataType::DateTime64 { .. },
+            ..
+        } => Some(1),
+        ScalarFunction::DateInterval {
+            unit:
+                pintail_sql::IntervalUnit::Year
+                | pintail_sql::IntervalUnit::Month
+                | pintail_sql::IntervalUnit::Day,
+            ..
+        } => Some(2),
+        _ => None,
+    };
+    if date_arity == Some(args.len())
+        && matches!(args[0].data_type, Some(DataType::Time64 { .. }))
+        && let Some(now) = STATEMENT_NOW.get()
+    {
+        args.push(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8(now.local.format("%Y-%m-%d").to_string())),
+            data_type: Some(DataType::Date32),
             nullable: false,
         });
     }
