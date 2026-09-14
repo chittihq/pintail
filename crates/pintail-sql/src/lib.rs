@@ -103,7 +103,9 @@ pub fn executable_comment_body(comment: &[u8]) -> Option<&[u8]> {
         if body
             .get(..6)
             .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
-            && body.get(6).is_some_and(u8::is_ascii_whitespace)
+            && body
+                .get(6)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t'..=b'\r'))
         {
             6
         } else {

@@ -7246,7 +7246,45 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     }
     let end = source_label_end(sql, last?, previous, end, clause, &offsets)?;
     let begin = offset_of(tokens[first].span.start)?;
-    (begin < end).then(|| sql[begin..end].to_owned())
+    source_comment_label(sql, begin, end, &tokens, &offsets)
+}
+
+fn source_comment_label(
+    sql: &str,
+    begin: usize,
+    end: usize,
+    tokens: &[sqlparser::tokenizer::TokenWithSpan],
+    offsets: &[usize],
+) -> Option<String> {
+    use sqlparser::tokenizer::Token;
+    let offset_of = |location| source_offset(sql, offsets, location);
+    if begin >= end {
+        return None;
+    }
+    let mut label = String::new();
+    let mut copied = begin;
+    for token in tokens {
+        let Token::Whitespace(sqlparser::tokenizer::Whitespace::MultiLineComment(comment)) =
+            &token.token
+        else {
+            continue;
+        };
+        if !comment.starts_with('!') {
+            continue;
+        }
+        let start = offset_of(token.span.start)?;
+        let stop = offset_of(token.span.end)?;
+        if start < copied || stop > end {
+            continue;
+        }
+        label.push_str(&sql[copied..start]);
+        if let Some(body) = crate::executable_comment_body(comment.as_bytes()) {
+            label.push_str(std::str::from_utf8(body).ok()?);
+        }
+        copied = stop;
+    }
+    label.push_str(&sql[copied..end]);
+    Some(label)
 }
 
 /// Byte offset of the first character of every line.
@@ -7746,6 +7784,11 @@ mod tests {
             ),
             ("SELECT 'a'  regexp 'A'", vec!["'a'  regexp 'A'"]),
             ("SELECT 1 # tail", vec!["1"]),
+            (
+                "SELECT 1 + /*!00000 2 */ + 3 /*!99999 noise*/ + 4",
+                vec!["1 +  2  + 3  + 4"],
+            ),
+            ("SELECT 1 /*!080100\u{000b}+1*/ AS value", vec!["value"]),
         ] {
             let statement = parse_statement(sql).expect("parse");
             let query = Binder::new(&catalog, Some("analytics"))
