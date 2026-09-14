@@ -187,6 +187,11 @@ impl<'catalog> Binder<'catalog> {
         }
 
         let mut bound = self.bind_set_expr(&query.body, &ctes)?;
+        if matches!(query.body.as_ref(), SetExpr::Query(_))
+            && (bound.limit.is_some() || !bound.order_by.is_empty())
+        {
+            bound = self.wrap_set_operand(bound);
+        }
         bind_order_by(self.source, query, &mut bound)?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)

@@ -397,6 +397,36 @@ pub(super) mod tests {
         assert_eq!(result.fields[0].name, "label");
     }
 
+    #[tokio::test]
+    async fn parenthesized_queries_keep_inner_order_and_limit() {
+        let (_directory, backend) = local_backend();
+        let source = "SELECT 1 AS n UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4 UNION ALL SELECT 5";
+        let sql = format!(
+            "(SELECT n FROM ({source}) entries ORDER BY n DESC LIMIT 3) ORDER BY n LIMIT 2"
+        );
+        let result = backend.execute(&sql).await.unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![pintail_types::Value::Int64(3)],
+                vec![pintail_types::Value::Int64(4)]
+            ]
+        );
+        let result = backend
+            .execute(&format!(
+                "(SELECT n FROM ({source}) entries ORDER BY n DESC LIMIT 2)"
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![pintail_types::Value::Int64(5)],
+                vec![pintail_types::Value::Int64(4)]
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
