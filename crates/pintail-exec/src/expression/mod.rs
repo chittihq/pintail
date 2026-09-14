@@ -5791,7 +5791,10 @@ fn compile_regex(
     if pattern.len() > MAX_REGEX_PATTERN_BYTES {
         return Err(ExecError::InvalidExpressionType);
     }
-    let mut case_insensitive = collation != Collation::Utf8mb40900AsCs;
+    let mut case_insensitive = !matches!(
+        collation,
+        Collation::Utf8mb40900AsCs | Collation::Utf8mb4Bin
+    );
     let mut multi_line = false;
     let mut dot_matches_new_line = false;
     for option in match_type.chars() {

@@ -1610,3 +1610,19 @@ fn conditional_temporals_unify_calendar_kind_and_fractional_precision() {
         assert_eq!(answer, expected, "{query}");
     }
 }
+
+#[test]
+fn regular_expressions_honor_binary_collation_case_sensitivity() {
+    assert_answers(&[
+        ("'a' REGEXP 'A' COLLATE utf8mb4_bin", "Boolean(false)"),
+        (
+            "_latin1'a' REGEXP _latin1'A' COLLATE latin1_bin",
+            "Boolean(false)",
+        ),
+        ("'a' REGEXP 'A' COLLATE utf8mb4_general_ci", "Boolean(true)"),
+        (
+            "REGEXP_LIKE('a' COLLATE utf8mb4_bin,'A','i')",
+            "Boolean(true)",
+        ),
+    ]);
+}
