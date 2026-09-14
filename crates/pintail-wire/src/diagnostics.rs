@@ -442,6 +442,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn clock_parts_include_duration_days() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT HOUR('1 00:00:00'), HOUR('-2 03:04:05.123456'), MINUTE('2 03:04:05'), SECOND('2 03:04:05')")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Int64(24),
+                Value::Int64(51),
+                Value::Int64(4),
+                Value::Int64(5)
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn date_text_variables_keep_dynamic_fractional_metadata() {
         let (_directory, backend) = local_backend();
         backend

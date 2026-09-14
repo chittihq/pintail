@@ -653,17 +653,23 @@ fn packed_time(number: u128) -> Option<(u64, u64, u64)> {
         .flatten()
 }
 
-/// A time written `[-]H:MM[:SS[.fraction]]`; hours are not limited to a day.
+/// A time written `[-][days ]H:MM[:SS[.fraction]]`; days contribute 24 hours.
 fn text_time(text: &str) -> Option<(u64, u64, u64)> {
     let text = text.trim();
-    let text = text.strip_prefix('-').unwrap_or(text);
+    let text = text.trim_start_matches(['-', '+']);
     let field = |text: &str| -> Option<u64> {
         (!text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()))
             .then(|| text.parse().ok())
             .flatten()
     };
-    let mut fields = text.split(':');
-    let hours = field(fields.next()?)?;
+    let (days, clock) = match text.split_once(' ') {
+        Some((days, clock)) => (field(days)?, clock.trim_start()),
+        None => (0, text),
+    };
+    let mut fields = clock.split(':');
+    let hours = days
+        .saturating_mul(24)
+        .saturating_add(field(fields.next()?)?);
     let minutes = field(fields.next()?)?;
     let seconds = match fields.next() {
         None => 0,
