@@ -2978,7 +2978,16 @@ fn wire_text_value<'a>(
 ) -> std::borrow::Cow<'a, Value> {
     if let Some(charset) = single_byte_charset(result_charset_name(field, charset)) {
         let text = match value {
-            Value::Utf8(text) if field.data_type == Some(DataType::Utf8) => Some(text),
+            // JSON is carried as text and leaves here as text, so it converts
+            // into the connection's character set like any other text. Left
+            // out, a document reached a latin1 client still in utf8mb4, and
+            // the client read those bytes as latin1: `["ä"]` arrived as
+            // `["Ã¤"]`, the same characters encoded a second time.
+            Value::Utf8(text)
+                if matches!(field.data_type, Some(DataType::Utf8 | DataType::Json)) =>
+            {
+                Some(text)
+            }
             Value::Enum { label, .. } => Some(label),
             _ => None,
         };
@@ -2993,7 +3002,9 @@ fn put_encoded_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, field: &QueryFie
     let charset_name = charset;
     if let Some(charset) = single_byte_charset(result_charset_name(field, charset)) {
         match cell {
-            Cell::Text(bytes) if field.data_type == Some(DataType::Utf8) => {
+            Cell::Text(bytes)
+                if matches!(field.data_type, Some(DataType::Utf8 | DataType::Json)) =>
+            {
                 let text = std::str::from_utf8(bytes).expect("text columns contain Unicode");
                 row.bytes(&charset.encode(text));
                 return;
@@ -6074,6 +6085,48 @@ mod result_ceiling_tests {
             assert!(!super::may_answer_compatibly(engine), "{engine}");
         }
     }
+    /// A JSON document is text on the wire and converts like text.
+    ///
+    /// Left in utf8mb4 for a latin1 client, the client reads those bytes as
+    /// latin1 and every non-ASCII character arrives encoded a second time:
+    /// `["ä"]` becomes `["Ã¤"]`. The binary charset is the one case that must
+    /// NOT convert - bytes asked for as bytes stay as they are.
+    #[test]
+    fn a_json_document_converts_into_the_connection_character_set() {
+        let field = super::QueryField {
+            wire_column: Some(super::Column::new("doc", super::ColumnType::MysqlTypeJson)),
+            name: "doc".to_owned(),
+            data_type: Some(super::DataType::Json),
+            nullable: false,
+            collation: Some("utf8mb4_bin".to_owned()),
+            group_concat: false,
+            geometry: false,
+            timestamp: false,
+            wire_hint: None,
+        };
+        let document = super::Value::Utf8("[\"ä\"]".to_owned());
+        // latin1 holds this character in one byte, and that is what goes out.
+        assert_eq!(
+            super::wire_text_value(&document, &field, "latin1").into_owned(),
+            super::Value::Binary(vec![b'[', b'"', 0xE4, b'"', b']']),
+        );
+        // A utf8mb4 client keeps the document's own bytes untouched.
+        assert_eq!(
+            super::wire_text_value(&document, &field, "utf8mb4").into_owned(),
+            document,
+        );
+        let mut encoded = super::EncodedRows::with_capacity(1);
+        super::put_encoded_text_cell(
+            &mut encoded.text_row(),
+            super::Cell::Text("[\"ä\"]".as_bytes()),
+            &field,
+            "latin1",
+        );
+        for row in encoded.iter() {
+            assert_eq!(&row[1..], &[b'[', b'"', 0xE4, b'"', b']']);
+        }
+    }
+
     #[test]
     fn fixed_float_text_keeps_declared_zeros_without_changing_binary_values() {
         let mut declaration = super::Column::new("reading", super::ColumnType::MysqlTypeDouble);
