@@ -2747,14 +2747,10 @@ fn bind_expr_inner(
                 && let Some(value) = crate::user_variables::user_variable(&identifier.value) =>
         {
             let value = bind_literal(&value)?;
-            if crate::user_variable_writes().is_some() {
-                let name = bind_literal_raw(&SqlValue::SingleQuotedString(
-                    identifier.value[1..].to_ascii_lowercase(),
-                ))?;
-                function::bind_scalar(ScalarFunction::UserVariableRead, vec![name, value])
-            } else {
-                Ok(value)
-            }
+            let name = bind_literal_raw(&SqlValue::SingleQuotedString(
+                identifier.value[1..].to_ascii_lowercase(),
+            ))?;
+            function::bind_scalar(ScalarFunction::UserVariableRead, vec![name, value])
         }
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),

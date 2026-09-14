@@ -1255,6 +1255,9 @@ impl CompiledExpr {
                     ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign
                 ) {
                     let Some(variables) = variables else {
+                        if *function == ScalarFunction::UserVariableRead {
+                            return args[1].evaluate(batch, row);
+                        }
                         return Err(ExecError::UnsupportedOperator(
                             "user variable assignment requires a connection",
                         ));

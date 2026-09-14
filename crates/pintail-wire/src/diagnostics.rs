@@ -266,6 +266,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn date_text_variables_keep_dynamic_fractional_metadata() {
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("SELECT @instant := FROM_UNIXTIME(1)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT UNIX_TIMESTAMP(@instant)")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            pintail_types::Value::Utf8("1.000000".to_owned())
+        );
+    }
+
+    #[tokio::test]
     async fn select_assignments_persist_and_read_previous_rows() {
         use pintail_protocol::Handler;
         use pintail_types::Value as SqlValue;
