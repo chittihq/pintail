@@ -712,3 +712,29 @@ fn binary_columns_pad_fixed_width_and_truncate_by_bytes() {
         },
     );
 }
+
+#[test]
+fn text_columns_compare_with_calendar_columns_as_datetimes() {
+    use pintail_types::Value::{Boolean, Null};
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE dates(id INT PRIMARY KEY,d DATETIME,c VARCHAR(32))",
+    )
+    .unwrap();
+    run(&fixture, "INSERT INTO dates VALUES(1,'2001-01-01','X'),(2,'2001-01-01','20010101'),(3,'2001-01-01',NULL),(4,'2001-01-01','2001-01-01 00:00:00.001')").unwrap();
+    let output = run(&fixture, "SELECT c<d,c=d,c<>d FROM dates ORDER BY id").unwrap();
+    assert_eq!(
+        output.rows[0],
+        vec![Boolean(true), Boolean(false), Boolean(true)]
+    );
+    assert_eq!(
+        output.rows[1],
+        vec![Boolean(false), Boolean(true), Boolean(false)]
+    );
+    assert_eq!(output.rows[2], vec![Null, Null, Null]);
+    assert_eq!(
+        output.rows[3],
+        vec![Boolean(false), Boolean(false), Boolean(true)]
+    );
+}

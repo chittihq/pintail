@@ -5888,6 +5888,20 @@ const COMMON_TEMPORAL: DataType = DataType::DateTime64 { fsp: 6 };
 /// written a DATE never equalled the DATETIME at its midnight. Both are read
 /// as DATETIME(6), whose fixed-width text orders as time does.
 fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    let text_column =
+        |expr: &BoundExpr| is_plain_text(expr) && matches!(expr.kind, BoundExprKind::Column(_));
+    if is_temporal(left.data_type) && text_column(&right) {
+        return (
+            cast_to(as_common_temporal(left), DataType::Utf8),
+            calendar_text_comparand(right),
+        );
+    }
+    if is_temporal(right.data_type) && text_column(&left) {
+        return (
+            calendar_text_comparand(left),
+            cast_to(as_common_temporal(right), DataType::Utf8),
+        );
+    }
     if is_temporal(left.data_type)
         && is_temporal(right.data_type)
         && left.data_type != right.data_type
@@ -5895,6 +5909,50 @@ fn unify_temporal_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Bou
         (as_common_temporal(left), as_common_temporal(right))
     } else {
         (left, right)
+    }
+}
+
+/// A text column compared with a calendar value is parsed as DATETIME.
+/// Invalid text compares as the zero datetime, while SQL NULL stays NULL.
+fn calendar_text_comparand(expr: BoundExpr) -> BoundExpr {
+    let nullable = expr.nullable;
+    let null_test = BoundExpr {
+        data_type: Some(DataType::Boolean),
+        nullable: false,
+        kind: BoundExprKind::IsNull {
+            expr: Box::new(expr.clone()),
+            negated: false,
+        },
+    };
+    let parsed = cast_to(as_common_temporal(expr), DataType::Utf8);
+    let zero = BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+        kind: BoundExprKind::Literal(Value::Utf8("0000-00-00 00:00:00.000000".to_owned())),
+    };
+    let parsed_or_zero = BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable: false,
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::Coalesce,
+            args: vec![parsed, zero],
+        },
+    };
+    BoundExpr {
+        data_type: Some(DataType::Utf8),
+        nullable,
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::If,
+            args: vec![
+                null_test,
+                BoundExpr {
+                    data_type: None,
+                    nullable: true,
+                    kind: BoundExprKind::Literal(Value::Null),
+                },
+                parsed_or_zero,
+            ],
+        },
     }
 }
 

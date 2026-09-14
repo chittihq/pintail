@@ -1472,3 +1472,22 @@ fn mysql_xor_and_high_not_precedence_bind_before_arithmetic_and_comparison() {
         },
     );
 }
+
+#[test]
+fn partial_calendar_casts_accept_minute_precision_clocks() {
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::default(), || {
+        for (expression, expected) in [
+            ("CAST(TIMESTAMP'0000-00-00 00:00' AS YEAR)", "0"),
+            (
+                "CAST('0000-00-00 00:00' AS DATETIME)",
+                "0000-00-00 00:00:00",
+            ),
+            (
+                "CAST('2001-01-01 00:00' AS DATETIME)",
+                "2001-01-01 00:00:00",
+            ),
+        ] {
+            assert_eq!(scalar(expression), expected, "{expression}");
+        }
+    });
+}

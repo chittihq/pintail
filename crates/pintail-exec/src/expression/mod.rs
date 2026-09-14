@@ -4218,7 +4218,12 @@ fn canonical_temporal_parts_policy(
             .iter()
             .fold(0_u32, |total, digit| total * 10 + u32::from(digit - b'0'))
     };
-    if !(digits(0, 4) && bytes[4] == b'-' && digits(5, 7) && bytes[7] == b'-' && digits(8, 10)) {
+    if !(digits(0, 4)
+        && bytes.get(4) == Some(&b'-')
+        && digits(5, 7)
+        && bytes.get(7) == Some(&b'-')
+        && digits(8, 10))
+    {
         return None;
     }
     let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
@@ -4232,6 +4237,17 @@ fn canonical_temporal_parts_policy(
     }
     if bytes.len() == 10 {
         return Some((&text[..10], None));
+    }
+    if allow_zero
+        && bytes.len() == 16
+        && bytes[10] == b' '
+        && digits(11, 13)
+        && bytes[13] == b':'
+        && digits(14, 16)
+        && number(11, 13) < 24
+        && number(14, 16) < 60
+    {
+        return Some((&text[..10], Some(&text[11..])));
     }
     let clock = bytes.len() >= 19
         && bytes[10] == b' '
