@@ -2468,7 +2468,12 @@ fn rewrite_right_joins(item: &TableWithJoins) -> Option<TableWithJoins> {
 
 fn validate_select_shape(select: &Select) -> Result<(), BindError> {
     if !crate::hints::select_hints_are_supported(select)
-        || select.select_modifiers.is_some()
+        // Result-size hints are advisory; reservation limits still determine
+        // when an aggregate or sort spills. Other modifiers need their own semantics.
+        || select.select_modifiers.as_ref().is_some_and(|modifiers| {
+            modifiers.high_priority || modifiers.straight_join || modifiers.sql_buffer_result
+                || modifiers.sql_no_cache || modifiers.sql_calc_found_rows
+        })
         || select.top.is_some()
         || select.exclude.is_some()
         || select.into.is_some()

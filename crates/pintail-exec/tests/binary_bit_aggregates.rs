@@ -203,3 +203,16 @@ fn binary_padding_keeps_width_when_constant_null() {
         vec![vec!["FFFFFFFFFFFFFFFFFFFF"]]
     );
 }
+
+#[test]
+fn result_size_hints_leave_grouped_answers_unchanged() {
+    for hint in ["SQL_BIG_RESULT", "SQL_SMALL_RESULT"] {
+        let sql = format!(
+            "SELECT {hint} id, HEX(BIT_AND(payload)) FROM items WHERE id<=2 GROUP BY id ORDER BY id"
+        );
+        assert_eq!(
+            query(&sql).unwrap(),
+            vec![vec!["1", "012345678901"], vec!["2", "010345210100"]]
+        );
+    }
+}
