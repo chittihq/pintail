@@ -1064,6 +1064,8 @@ pub enum ScalarFunction {
     BitNot,
     /// `UUID()`: a fresh random identifier per call (volatile, like RAND).
     Uuid,
+    /// A process-wide, increasing unsigned 64-bit identifier.
+    UuidShort,
     /// `BIN(n)`: base-2 digits of the 64-bit value.
     Bin,
     /// `OCT(n)`: base-8 digits of the 64-bit value.

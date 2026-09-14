@@ -266,6 +266,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn short_identifiers_increment_across_statement_assignments() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        for sql in [b"SET @a=UUID_SHORT()".as_slice(), b"SET @b=UUID_SHORT()"] {
+            assert!(matches!(
+                backend.query(sql).await,
+                pintail_protocol::Response::Ok(..)
+            ));
+        }
+        let output = backend.execute("SELECT @b-@a").await.unwrap();
+        assert_eq!(output.rows[0][0], pintail_types::Value::Int64(1));
+        let output = backend.execute("SELECT UUID_SHORT() FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) AS numbers").await.unwrap();
+        let values: std::collections::BTreeSet<_> = output
+            .rows
+            .into_values()
+            .into_iter()
+            .map(|row| match row[0] {
+                pintail_types::Value::UInt64(value) => value,
+                ref other => panic!("expected an unsigned identifier, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(values.len(), 3);
+    }
+
+    #[tokio::test]
     async fn oversized_binary_casts_leave_a_packet_limit_warning() {
         let (_directory, backend) = local_backend();
         let output = backend

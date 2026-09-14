@@ -1117,6 +1117,8 @@ impl CompiledExpr {
                         | ScalarFunction::Rand
                         | ScalarFunction::Pi
                         | ScalarFunction::RandSeeded
+                        | ScalarFunction::Uuid
+                        | ScalarFunction::UuidShort
                 ) {
                     return None;
                 }
@@ -1607,7 +1609,8 @@ impl CompiledExpr {
                     | ScalarFunction::JsonValid
                     | ScalarFunction::JsonLength
                     | ScalarFunction::JsonContains
-                    | ScalarFunction::JsonContainsPath => 0,
+                    | ScalarFunction::JsonContainsPath
+                    | ScalarFunction::UuidShort => 0,
                     ScalarFunction::Repeat
                     | ScalarFunction::Insert
                     | ScalarFunction::Space
@@ -1618,6 +1621,7 @@ impl CompiledExpr {
                     // The widest SHA-2 answer (512 bits) in hex.
                     ScalarFunction::Sha2 => 128,
                     ScalarFunction::Uuid => 36,
+
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -1805,7 +1809,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonContainsPath
                     | ScalarFunction::JsonDepth
                     | ScalarFunction::JsonOverlaps
-                    | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
+                    | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString | ScalarFunction::UuidShort => 24,
                     ScalarFunction::FixedFloatString(_) => 342,
                     ScalarFunction::Repeat
                     | ScalarFunction::Insert
@@ -1817,6 +1821,7 @@ impl CompiledExpr {
                     // The widest SHA-2 answer (512 bits) in hex.
                     ScalarFunction::Sha2 => 128,
                     ScalarFunction::Uuid => 36,
+
                     ScalarFunction::Hex | ScalarFunction::ToBase64 => {
                         first.saturating_mul(2).saturating_add(24)
                     }
@@ -3043,6 +3048,16 @@ fn evaluate_eager_scalar_inner(
                 value => scalar_string(value)?.into_bytes(),
             };
             Ok(Value::UInt64(u64::from(crc32fast::hash(&input))))
+        }
+        ScalarFunction::UuidShort => {
+            use std::sync::{OnceLock, atomic::{AtomicU64, Ordering as AtomicOrdering}};
+            static NEXT: OnceLock<AtomicU64> = OnceLock::new();
+            let sequence = NEXT.get_or_init(|| {
+                let seconds = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs());
+                AtomicU64::new((1_u64 << 56) | ((seconds & 0xffff_ffff) << 24))
+            });
+            sequence.fetch_update(AtomicOrdering::Relaxed, AtomicOrdering::Relaxed, |current| current.checked_add(1))
+                .map(Value::UInt64).map_err(|_| ExecError::NumericOverflow)
         }
         ScalarFunction::Uuid => {
             // Version-4 layout from the same generator RAND uses. MySQL

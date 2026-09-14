@@ -182,6 +182,7 @@ stays readable as a list of things to fix.
 - Source `DECIMAL` columns above precision 38 are replicated as text with a
   probe warning and deliberately decline exact-numeric expression semantics.
 
+- `UUID_SHORT` identifiers are not coordinated across servers or restarts within the same second.
 - `REPEAT`, `SPACE`, `LPAD`, and `RPAD` cap their result at 4096 bytes and error beyond it; MySQL's ceiling is `max_allowed_packet`. `FORMAT` uses en_US grouping only (no locale argument).
 
 ### Planning and execution

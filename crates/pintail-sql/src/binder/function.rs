@@ -420,6 +420,7 @@ pub(super) fn bind_scalar_function(
         "CRC32" if args.len() == 1 => ScalarFunction::Crc32,
         "BIT_COUNT" if args.len() == 1 => ScalarFunction::BitCount,
         "UUID" if args.is_empty() => ScalarFunction::Uuid,
+        "UUID_SHORT" if args.is_empty() => ScalarFunction::UuidShort,
         "BIN" if args.len() == 1 => ScalarFunction::Bin,
         "OCT" if args.len() == 1 => ScalarFunction::Oct,
         "INET_ATON" if args.len() == 1 => ScalarFunction::InetAton,
@@ -1599,6 +1600,7 @@ pub(super) fn bind_scalar(
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.
         ScalarFunction::Uuid => (Some(DataType::Utf8), false),
+        ScalarFunction::UuidShort => (Some(DataType::UInt64), false),
         ScalarFunction::JsonOverlaps | ScalarFunction::JsonMemberOf => {
             (Some(DataType::Int64), args.iter().any(|argument| argument.nullable))
         }
