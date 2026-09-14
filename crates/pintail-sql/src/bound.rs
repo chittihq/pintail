@@ -2052,9 +2052,18 @@ impl BoundQuery {
                 // derived table or CTE column built from ->> recorded the
                 // session default, and DISTINCT above the boundary folded
                 // case variants MySQL keeps apart (Chitti's coll-10).
-                if let ScalarFunction::Collate { collation } = function {
-                    collations.push(collation.as_str().to_owned());
-                    return;
+                match function {
+                    ScalarFunction::Collate { collation }
+                    | ScalarFunction::TextCharset(_, collation)
+                    | ScalarFunction::RawText(_, collation) => {
+                        collations.push(collation.as_str().to_owned());
+                        return;
+                    }
+                    ScalarFunction::DecodeText(charset) | ScalarFunction::CoerceText(charset) => {
+                        collations.push(charset.default_collation().to_owned());
+                        return;
+                    }
+                    _ => {}
                 }
                 if json_text_producer(*function) {
                     collations.push(BIN_TEXT_COLLATION.to_owned());

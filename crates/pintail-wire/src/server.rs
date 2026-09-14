@@ -1050,6 +1050,30 @@ impl Backend {
         }
     }
 
+    fn client_uses_latin1(&self) -> Result<bool, String> {
+        Ok(self
+            .session
+            .lock()
+            .map_err(|error| error.to_string())?
+            .charset_client
+            == "latin1")
+    }
+
+    fn decode_statement<'a>(&self, sql: &'a [u8]) -> Result<std::borrow::Cow<'a, str>, String> {
+        let latin1 = self.client_uses_latin1()?;
+        if latin1 {
+            Ok(std::borrow::Cow::Owned(
+                pintail_types::CharacterSet::Latin1
+                    .decode(sql)
+                    .expect("single-byte input always decodes"),
+            ))
+        } else {
+            std::str::from_utf8(sql)
+                .map(std::borrow::Cow::Borrowed)
+                .map_err(|_| "statement is not valid UTF-8".to_owned())
+        }
+    }
+
     async fn text_answer(
         &self,
         sql: &str,
@@ -1889,8 +1913,10 @@ impl Backend {
                     session.collation_connection = encoding.default_collation();
                     return Ok(());
                 }
-                if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4" | "binary")
-                    || (name == "character_set_results" && charset == "null")
+                if matches!(
+                    charset.as_str(),
+                    "utf8" | "utf8mb3" | "utf8mb4" | "binary" | "latin1"
+                ) || (name == "character_set_results" && charset == "null")
                 {
                     match name {
                         "character_set_client" => session.charset_client = charset,
@@ -2097,13 +2123,22 @@ fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
     let charset = words.next().unwrap_or("").to_owned();
     let default = match charset.as_str() {
         "utf8mb4" => "utf8mb4_0900_ai_ci",
+        "latin1" => "latin1_swedish_ci",
         "utf8" | "utf8mb3" => "utf8mb4_general_ci",
         "binary" => "utf8mb4_bin",
         _ => return Err(format!("Unknown character set: '{charset}'")),
     };
     match (words.next(), words.next(), words.next()) {
         (None, _, _) => Ok((charset, default)),
-        (Some("collate"), Some(name), None) => Ok((charset, connection_collation(name)?)),
+        (Some("collate"), Some(name), None) => {
+            let collation = connection_collation(name)?;
+            if (charset == "latin1") != collation.starts_with("latin1_") {
+                return Err(format!(
+                    "COLLATION '{name}' is not valid for CHARACTER SET '{charset}'"
+                ));
+            }
+            Ok((charset, collation))
+        }
         _ => Err(format!(
             "You have an error in your SQL syntax near 'SET NAMES {rest}'"
         )),
@@ -2133,6 +2168,8 @@ fn connection_collation(name: &str) -> Result<&'static str, String> {
 /// The collation id stamped on text results for a connection collation.
 fn collation_byte(collation: &str, charset: &str) -> u16 {
     match (charset, collation) {
+        ("latin1", "latin1_bin") => 47,
+        ("latin1", _) => 8,
         ("binary", _) => 63,
         ("utf8" | "utf8mb3", _) => 33,
         (_, "utf8mb4_general_ci") => 45,
@@ -2265,12 +2302,11 @@ impl Handler for Backend {
     }
 
     async fn query(&mut self, sql: &[u8]) -> Response {
-        let Ok(sql) = std::str::from_utf8(sql) else {
-            return Response::Error(
-                ErrorKind::ErParseError,
-                "statement is not valid UTF-8".to_owned(),
-            );
+        let decoded = match self.decode_statement(sql) {
+            Ok(decoded) => decoded,
+            Err(message) => return Response::Error(ErrorKind::ErParseError, message),
         };
+        let sql = decoded.as_ref();
         if let Ok(mut session) = self.session.lock()
             && let Some(result) = diagnostics::apply(sql, &mut session)
         {
@@ -2329,12 +2365,10 @@ impl Handler for Backend {
     }
 
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {
-        let sql = std::str::from_utf8(sql).map_err(|_| {
-            (
-                ErrorKind::ErParseError,
-                "statement is not valid UTF-8".to_owned(),
-            )
-        })?;
+        let decoded = self
+            .decode_statement(sql)
+            .map_err(|message| (ErrorKind::ErParseError, message))?;
+        let sql = decoded.as_ref();
         if let Some(refusal) = self.prepared_statement_refusal(sql.len()) {
             record_prepared_refused();
             return Err((ErrorKind::ErMaxPreparedStmtCountReached, refusal));
@@ -2440,7 +2474,7 @@ impl Handler for Backend {
             );
         };
         if let Some(entry) = self.prepared.get_mut(&id) {
-            entry.parameter_types = Some(types);
+            entry.parameter_types = Some(types.clone());
         }
         // MySQL refuses a LIMIT or OFFSET bound to a floating-point value.
         if statement
@@ -2456,6 +2490,7 @@ impl Handler for Backend {
                 "Incorrect arguments to mysqld_stmt_execute".to_owned(),
             );
         }
+        let client_latin1 = self.client_uses_latin1().unwrap_or(false);
         let literals = match values
             .iter()
             .enumerate()
@@ -2465,9 +2500,12 @@ impl Handler for Backend {
                 {
                     Ok(parameter_integer(&String::from_utf8_lossy(bytes)).to_string())
                 }
-                value => {
-                    pintail_sql::with_parse_mode(statement.parse_mode, || parameter_literal(value))
-                }
+                value => pintail_sql::with_parse_mode(statement.parse_mode, || {
+                    encoded_parameter_literal(
+                        value,
+                        client_latin1 && matches!(types[index].column_type, 15 | 253 | 254),
+                    )
+                }),
             })
             .collect::<Result<Vec<_>, _>>()
         {
@@ -2667,18 +2705,25 @@ fn query_output_to_response(
         .map(|field| mysql_column(field, group_concat_max_len, charset, negotiated))
         .collect::<Vec<_>>();
     let mut rows = EncodedRows::with_capacity(output.rows.len());
-    let encoded = encode_rows(&output.fields, &output.rows, binary, &mut rows, |rows| {
-        if encoded_limit > 0 && rows.resident_bytes() > encoded_limit {
-            return Err((
-                ErrorKind::ErUnknownError,
-                format!(
-                    "query memory limit exceeded: the encoded result set alone is over \
+    let encoded = encode_rows(
+        &output.fields,
+        &output.rows,
+        binary,
+        charset,
+        &mut rows,
+        |rows| {
+            if encoded_limit > 0 && rows.resident_bytes() > encoded_limit {
+                return Err((
+                    ErrorKind::ErUnknownError,
+                    format!(
+                        "query memory limit exceeded: the encoded result set alone is over \
                      {encoded_limit} bytes; narrow the projection or add a LIMIT"
-                ),
-            ));
-        }
-        Ok(())
-    });
+                    ),
+                ));
+            }
+            Ok(())
+        },
+    );
     if let Err((kind, message)) = encoded {
         return Response::Error(kind, message);
     }
@@ -2689,6 +2734,53 @@ fn query_output_to_response(
     }))
 }
 
+fn result_uses_latin1(field: &QueryField, charset: &str) -> bool {
+    charset == "latin1"
+        || (charset == "null"
+            && field
+                .collation
+                .as_deref()
+                .is_some_and(|collation| collation.starts_with("latin1_")))
+}
+
+fn wire_text_value<'a>(
+    value: &'a Value,
+    field: &QueryField,
+    charset: &str,
+) -> std::borrow::Cow<'a, Value> {
+    if result_uses_latin1(field, charset) {
+        let text = match value {
+            Value::Utf8(text) if field.data_type == Some(DataType::Utf8) => Some(text),
+            Value::Enum { label, .. } => Some(label),
+            _ => None,
+        };
+        if let Some(text) = text {
+            return std::borrow::Cow::Owned(Value::Binary(
+                pintail_types::CharacterSet::Latin1.encode(text),
+            ));
+        }
+    }
+    std::borrow::Cow::Borrowed(value)
+}
+
+fn put_encoded_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, field: &QueryField, charset: &str) {
+    if result_uses_latin1(field, charset) {
+        match cell {
+            Cell::Text(bytes) if field.data_type == Some(DataType::Utf8) => {
+                let text = std::str::from_utf8(bytes).expect("text columns contain Unicode");
+                row.bytes(&pintail_types::CharacterSet::Latin1.encode(text));
+                return;
+            }
+            Cell::Value(value) => {
+                put_text_value(row, &wire_text_value(value, field, charset), field);
+                return;
+            }
+            _ => {}
+        }
+    }
+    put_text_cell(row, cell, field);
+}
+
 /// Encodes `rows` into `into` in the text or binary protocol, calling
 /// `after_row` after each row - where a caller bounds what it holds, or
 /// hands a chunk on - and stopping at the first error either returns.
@@ -2696,6 +2788,7 @@ fn encode_rows(
     fields: &[QueryField],
     rows: &ResultRows,
     binary: bool,
+    charset: &str,
     into: &mut EncodedRows,
     mut after_row: impl FnMut(&mut EncodedRows) -> Result<(), (ErrorKind, String)>,
 ) -> Result<(), (ErrorKind, String)> {
@@ -2708,13 +2801,17 @@ fn encode_rows(
                     if binary {
                         cells.clear();
                         for (field, value) in fields.iter().zip(row) {
-                            cells.push(binary_column_value(field, value).map_err(binary_failure)?);
+                            let encoded = wire_text_value(value, field, charset);
+                            cells.push(
+                                binary_column_value(field, &encoded).map_err(binary_failure)?,
+                            );
                         }
                         into.push_binary_row(&cells);
                     } else {
                         let mut text = into.text_row();
                         for (field, value) in fields.iter().zip(row) {
-                            put_text_value(&mut text, value, field);
+                            let encoded = wire_text_value(value, field, charset);
+                            put_text_value(&mut text, &encoded, field);
                         }
                     }
                     after_row(into)?;
@@ -2726,14 +2823,17 @@ fn encode_rows(
                         cells.clear();
                         for (field, column) in fields.iter().zip(batch.columns()) {
                             let value = column.value_owned(row).unwrap_or(Value::Null);
-                            cells.push(binary_column_value(field, &value).map_err(binary_failure)?);
+                            let encoded = wire_text_value(&value, field, charset);
+                            cells.push(
+                                binary_column_value(field, &encoded).map_err(binary_failure)?,
+                            );
                         }
                         into.push_binary_row(&cells);
                     } else {
                         let mut text = into.text_row();
                         for (field, column) in fields.iter().zip(batch.columns()) {
                             column.with_cell(row, |cell| {
-                                put_text_cell(&mut text, cell, field);
+                                put_encoded_text_cell(&mut text, cell, field, charset);
                             });
                         }
                     }
@@ -2850,6 +2950,7 @@ impl crate::engine::RowSink for WireSink {
             &self.fields,
             &rows,
             self.encoding.binary,
+            &self.encoding.charset,
             &mut chunk,
             |chunk| {
                 if chunk.resident_bytes() < STREAM_CHUNK_BYTES {
@@ -3177,6 +3278,14 @@ impl MysqlTimeValue {
 
 fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     match charset {
+        "latin1" => {
+            if negotiated == 47 {
+                47
+            } else {
+                8
+            }
+        }
+        "utf8mb4" if matches!(negotiated, 8 | 47 | 33 | 63) => 255,
         "utf8" | "utf8mb3" => 33,
         "binary" => 63,
         // The connection's negotiated collation id: measured, MySQL stamps
@@ -3199,6 +3308,25 @@ fn mysql_metadata_name(name: &str) -> String {
         .collect()
 }
 
+fn encode_metadata_names(column: &mut Column, charset: &str) {
+    column.encoded_names = None;
+    if charset == "latin1" {
+        column.encode_names(|name| pintail_types::CharacterSet::Latin1.encode(name));
+    }
+}
+
+fn result_charset_name<'a>(field: &'a QueryField, charset: &'a str) -> &'a str {
+    if charset == "null" {
+        field
+            .collation
+            .as_deref()
+            .and_then(|name| name.split('_').next())
+            .unwrap_or("utf8mb4")
+    } else {
+        charset
+    }
+}
+
 fn negotiated_column(
     field: &QueryField,
     declared: &Column,
@@ -3209,7 +3337,8 @@ fn negotiated_column(
     let mut column = declared.clone();
     column.column = mysql_metadata_name(&field.name);
     if column.character_set != 63 {
-        column.character_set = mysql_text_character_set(charset, negotiated);
+        column.character_set =
+            mysql_text_character_set(result_charset_name(field, charset), negotiated);
         if column.character_set == 63 {
             column.colflags |= ColumnFlags::BINARY_FLAG;
         }
@@ -3230,6 +3359,12 @@ fn negotiated_column(
                 4
             });
     }
+    // Expression declarations use four-byte Unicode widths. Result conversion
+    // to a single-byte character set changes the maximum encoded byte count.
+    if matches!(column.character_set, 8 | 47) {
+        column.column_length /= 4;
+    }
+    encode_metadata_names(&mut column, charset);
     column
 }
 
@@ -3344,7 +3479,7 @@ pub(crate) fn mysql_column(
     let character_set = if matches!(field.wire_hint, Some(crate::engine::WireTypeHint::JsonText))
         || (field.wire_hint.is_none() && matches!(field.data_type, Some(DataType::Utf8)))
     {
-        mysql_text_character_set(charset, negotiated)
+        mysql_text_character_set(result_charset_name(field, charset), negotiated)
     } else {
         63
     };
@@ -3353,6 +3488,7 @@ pub(crate) fn mysql_column(
     column.character_set = character_set;
     column.colflags = colflags;
     column.decimals = decimals;
+    encode_metadata_names(&mut column, charset);
     column
 }
 
@@ -4376,6 +4512,17 @@ fn placeholder_offsets(sql: &str) -> Vec<usize> {
         .collect()
 }
 
+fn encoded_parameter_literal(value: &BinaryValue, latin1: bool) -> Result<String, String> {
+    if latin1 && let BinaryValue::Bytes(bytes) = value {
+        let text = pintail_types::CharacterSet::Latin1
+            .decode(bytes)
+            .expect("single-byte parameter decodes");
+        parameter_literal(&BinaryValue::Bytes(text.into_bytes()))
+    } else {
+        parameter_literal(value)
+    }
+}
+
 /// Renders one decoded EXECUTE parameter as a `SQL` literal, substituted
 /// directly into the prepared statement's text.
 ///
@@ -4679,7 +4826,13 @@ mod tests {
             Ok(("utf8".to_owned(), "utf8mb4_general_ci"))
         );
         // Unknown names are refused, never replaced by a different collation.
-        assert!(set_names_target("latin1").is_err());
+        assert_eq!(
+            set_names_target("latin1"),
+            Ok(("latin1".to_owned(), "latin1_swedish_ci"))
+        );
+        assert!(set_names_target("latin1 collate utf8mb4_bin").is_err());
+        assert!(set_names_target("utf8mb4 collate latin1_bin").is_err());
+        assert!(set_names_target("koi8r").is_err());
         assert!(set_names_target("utf8mb4 collate utf8mb4_de_pb_0900_ai_ci").is_err());
         assert!(set_names_target("utf8mb4 collate").is_err());
         assert_eq!(connection_collation("'UTF8MB4_BIN'"), Ok("utf8mb4_bin"));

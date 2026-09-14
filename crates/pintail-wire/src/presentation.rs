@@ -503,7 +503,9 @@ fn expression(
                         column = first.clone();
                     }
                 }
-                ScalarFunction::Upper
+                ScalarFunction::TextCharset(_, _)
+                | ScalarFunction::CoerceText(_)
+                | ScalarFunction::Upper
                 | ScalarFunction::Lower
                 | ScalarFunction::Trim
                 | ScalarFunction::Substring

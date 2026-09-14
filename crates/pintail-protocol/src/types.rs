@@ -171,6 +171,9 @@ pub struct Column {
     pub column: String,
     /// Underlying column name.
     pub org_column: String,
+    /// Optional wire bytes for schema, table, original table, column and
+    /// original column names, in protocol order. Absent names use UTF-8.
+    pub encoded_names: Option<Box<[Vec<u8>; 5]>>,
     /// Maximum width in bytes. Clients size buffers and choose native types
     /// from this, so a constant here breaks type mapping in every ORM.
     pub column_length: u32,
@@ -187,6 +190,17 @@ pub struct Column {
 }
 
 impl Column {
+    /// Materialize identifier bytes in the connection's result encoding.
+    pub fn encode_names(&mut self, encode: impl Fn(&str) -> Vec<u8>) {
+        self.encoded_names = Some(Box::new([
+            encode(&self.schema),
+            encode(&self.table),
+            encode(&self.org_table),
+            encode(&self.column),
+            encode(&self.org_column),
+        ]));
+    }
+
     /// A column carrying the protocol defaults, for callers that fill in the
     /// distinguishing fields afterwards.
     #[must_use]
@@ -197,6 +211,7 @@ impl Column {
             org_table: String::new(),
             column: column.into(),
             org_column: String::new(),
+            encoded_names: None,
             column_length: 0,
             character_set: 63,
             decimals: 0,

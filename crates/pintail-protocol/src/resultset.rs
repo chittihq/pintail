@@ -91,11 +91,20 @@ pub fn encode_eof(capabilities: CapabilityFlags, status: StatusFlags, warnings: 
 pub fn encode_column_definition(column: &Column) -> Vec<u8> {
     let mut payload = Vec::new();
     put_length_encoded_bytes(&mut payload, b"def");
-    put_length_encoded_bytes(&mut payload, column.schema.as_bytes());
-    put_length_encoded_bytes(&mut payload, column.table.as_bytes());
-    put_length_encoded_bytes(&mut payload, column.org_table.as_bytes());
-    put_length_encoded_bytes(&mut payload, column.column.as_bytes());
-    put_length_encoded_bytes(&mut payload, column.org_column.as_bytes());
+    let names = [
+        column.schema.as_bytes(),
+        column.table.as_bytes(),
+        column.org_table.as_bytes(),
+        column.column.as_bytes(),
+        column.org_column.as_bytes(),
+    ];
+    for (index, name) in names.into_iter().enumerate() {
+        let name = column
+            .encoded_names
+            .as_ref()
+            .map_or(name, |encoded| encoded[index].as_slice());
+        put_length_encoded_bytes(&mut payload, name);
+    }
     // Fixed-length remainder: charset, length, type, flags, decimals.
     payload.push(0x0c);
     payload.extend_from_slice(&column.character_set.to_le_bytes());
@@ -315,6 +324,7 @@ mod tests {
             org_table: "orders".to_owned(),
             column: "total".to_owned(),
             org_column: "total".to_owned(),
+            encoded_names: None,
             column_length: 14,
             character_set: 255,
             decimals: 2,

@@ -1146,6 +1146,85 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn latin1_wire_decodes_statements_and_encodes_rows_and_names() {
+        use pintail_protocol::{Column, Handler, Response, RowChunk};
+        async fn collect(response: Response) -> (Vec<Column>, Vec<Vec<u8>>) {
+            match response {
+                Response::Rows(result) => (
+                    result.columns,
+                    result.rows.iter().map(<[u8]>::to_vec).collect(),
+                ),
+                Response::Stream(mut stream) => {
+                    let mut rows = Vec::new();
+                    while let Some(chunk) = stream.chunks.recv().await {
+                        match chunk {
+                            RowChunk::Rows(chunk) => rows.extend(chunk.iter().map(<[u8]>::to_vec)),
+                            RowChunk::Done => break,
+                            other @ RowChunk::Failed(..) => {
+                                panic!("unexpected stream result: {other:?}")
+                            }
+                        }
+                    }
+                    (stream.columns, rows)
+                }
+                other => panic!("unexpected query response: {other:?}"),
+            }
+        }
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET NAMES latin1").await,
+            Response::Ok(..)
+        ));
+        let (columns, rows) = collect(
+            backend
+                .query(b"SELECT '\xe9' AS '\xe9',HEX('\xe9'),'a\\0'<'a'")
+                .await,
+        )
+        .await;
+        assert_eq!(columns[0].character_set, 8);
+        assert_eq!(columns[0].column_length, 1);
+        assert!(
+            pintail_protocol::encode_column_definition(&columns[0])
+                .starts_with(b"\x03def\x00\x00\x00\x01\xe9\x00")
+        );
+        assert_eq!(rows, vec![vec![1, 0xe9, 2, b'E', b'9', 1, b'1']]);
+        assert!(matches!(
+            backend.query(b"SET character_set_results=utf8mb4").await,
+            Response::Ok(..)
+        ));
+        let (columns, rows) = collect(backend.query(b"SELECT '\xe9' AS label").await).await;
+        assert_eq!(columns[0].character_set, 255);
+        assert_eq!(rows, vec![vec![2, 0xc3, 0xa9]]);
+        assert_eq!(columns[0].column_length, 4);
+        assert!(matches!(
+            backend.query(b"SET character_set_results=NULL").await,
+            Response::Ok(..)
+        ));
+        let (columns, rows) = collect(backend.query(b"SELECT '\xe9' AS label").await).await;
+        assert_eq!(columns[0].character_set, 8);
+        assert_eq!(columns[0].column_length, 1);
+        assert_eq!(rows, vec![vec![1, 0xe9]]);
+        assert!(matches!(
+            backend.query(b"SET NAMES latin1").await,
+            Response::Ok(..)
+        ));
+        let prepared = Handler::prepare(&mut backend, b"SELECT ? AS '\xe9'")
+            .await
+            .unwrap();
+        let (columns, rows) = collect(
+            Handler::execute(
+                &mut backend,
+                prepared.id,
+                &[0, 1, 0, 0, 0, 0, 1, 253, 0, 1, 0xe9],
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(columns[0].character_set, 8);
+        assert_eq!(rows, vec![vec![0, 0, 1, 0xe9]]);
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
