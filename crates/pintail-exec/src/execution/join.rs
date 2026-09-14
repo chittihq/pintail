@@ -360,6 +360,9 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
         Collation::Latin1SwedishCi | Collation::Latin1Bin => out.extend_from_slice(
             &crate::collation::latin1_sort_key(text, collation == Collation::Latin1Bin),
         ),
+        Collation::Latin2GeneralCi | Collation::Latin2Bin => out.extend_from_slice(
+            &crate::collation::latin2_sort_key(text, collation == Collation::Latin2Bin),
+        ),
         Collation::Koi8RGeneralCi | Collation::Koi8RBin => out.extend_from_slice(
             &crate::collation::koi8r_sort_key(text, collation == Collation::Koi8RBin),
         ),
@@ -3007,6 +3010,9 @@ pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
         Collation::Latin1SwedishCi | Collation::Latin1Bin => {
             key = crate::collation::latin1_sort_key(text, collation == Collation::Latin1Bin);
         }
+        Collation::Latin2GeneralCi | Collation::Latin2Bin => {
+            key = crate::collation::latin2_sort_key(text, collation == Collation::Latin2Bin);
+        }
         Collation::Koi8RGeneralCi | Collation::Koi8RBin => {
             key = crate::collation::koi8r_sort_key(text, collation == Collation::Koi8RBin);
         }
@@ -3037,6 +3043,9 @@ pub fn compare_collated_text(left: &str, right: &str, collation: Collation) -> s
     match collation {
         Collation::Latin1SwedishCi | Collation::Latin1Bin => {
             crate::collation::compare_latin1(left, right, collation == Collation::Latin1Bin)
+        }
+        Collation::Latin2GeneralCi | Collation::Latin2Bin => {
+            crate::collation::compare_latin2(left, right, collation == Collation::Latin2Bin)
         }
         Collation::Koi8RGeneralCi | Collation::Koi8RBin => {
             crate::collation::compare_koi8r(left, right, collation == Collation::Koi8RBin)

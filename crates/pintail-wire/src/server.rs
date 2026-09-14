@@ -1983,7 +1983,7 @@ impl Backend {
                 }
                 if matches!(
                     charset.as_str(),
-                    "utf8" | "utf8mb3" | "utf8mb4" | "binary" | "latin1" | "koi8r"
+                    "utf8" | "utf8mb3" | "utf8mb4" | "binary" | "latin1" | "latin2" | "koi8r"
                 ) || (name == "character_set_results" && charset == "null")
                 {
                     match name {
@@ -2211,6 +2211,7 @@ fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
         "utf8mb4" => "utf8mb4_0900_ai_ci",
         "latin1" => "latin1_swedish_ci",
         "koi8r" => "koi8r_general_ci",
+        "latin2" => "latin2_general_ci",
         "utf8" | "utf8mb3" => "utf8mb4_general_ci",
         "binary" => "utf8mb4_bin",
         _ => return Err(format!("Unknown character set: '{charset}'")),
@@ -2219,7 +2220,7 @@ fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
         (None, _, _) => Ok((charset, default)),
         (Some("collate"), Some(name), None) => {
             let collation = connection_collation(name)?;
-            if ["latin1", "koi8r"]
+            if ["latin1", "latin2", "koi8r"]
                 .iter()
                 .any(|name| (charset == *name) != collation.starts_with(&format!("{name}_")))
             {
@@ -2258,6 +2259,8 @@ fn connection_collation(name: &str) -> Result<&'static str, String> {
 /// The collation id stamped on text results for a connection collation.
 fn collation_byte(collation: &str, charset: &str) -> u16 {
     match (charset, collation) {
+        ("latin2", "latin2_bin") => 77,
+        ("latin2", _) => 9,
         ("koi8r", "koi8r_bin") => 74,
         ("koi8r", _) => 7,
         ("latin1", "latin1_bin") => 47,
@@ -2838,6 +2841,7 @@ fn single_byte_charset(name: &str) -> Option<pintail_types::CharacterSet> {
     match name {
         "latin1" => Some(pintail_types::CharacterSet::Latin1),
         "koi8r" => Some(pintail_types::CharacterSet::Koi8R),
+        "latin2" => Some(pintail_types::CharacterSet::Latin2),
         _ => None,
     }
 }
@@ -3376,6 +3380,13 @@ impl MysqlTimeValue {
 
 fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     match charset {
+        "latin2" => {
+            if negotiated == 77 {
+                77
+            } else {
+                9
+            }
+        }
         "koi8r" => {
             if negotiated == 74 {
                 74
@@ -3390,7 +3401,7 @@ fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
                 8
             }
         }
-        "utf8mb4" if matches!(negotiated, 7 | 8 | 47 | 33 | 63 | 74) => 255,
+        "utf8mb4" if matches!(negotiated, 7 | 8 | 9 | 47 | 33 | 63 | 74 | 77) => 255,
         "utf8" | "utf8mb3" => 33,
         "binary" => 63,
         // The connection's negotiated collation id: measured, MySQL stamps

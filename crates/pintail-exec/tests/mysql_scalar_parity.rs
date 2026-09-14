@@ -1678,3 +1678,36 @@ fn union_text_coercion_preserves_bytes_and_numeric_text() {
         ),
     ]);
 }
+
+#[test]
+fn latin2_reads_use_encoded_bytes_case_weights_and_space_padding() {
+    assert_answers(&[
+        ("HEX(CONVERT('ĄąČčŁłŐő' USING latin2))", "A1B1C8E8A3B3D5F5"),
+        ("HEX(UPPER(CONVERT('ß' USING latin2)))", "DF"),
+        ("HEX(LOWER(CONVERT('ĄČŁŐ' USING latin2)))", "B1E8B3F5"),
+        (
+            "CONVERT('Ą' USING latin2) = CONVERT('ą' USING latin2)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('á' USING latin2) = CONVERT('a' USING latin2)",
+            "Boolean(false)",
+        ),
+        (
+            "CONVERT('ą' USING latin2) = CONVERT('a' USING latin2)",
+            "Boolean(false)",
+        ),
+        (
+            "CONVERT('a\\0' USING latin2) < CONVERT('a' USING latin2)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('a ' USING latin2) = CONVERT('a' USING latin2)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('Ą' USING latin2) COLLATE latin2_bin = CONVERT('ą' USING latin2)",
+            "Boolean(false)",
+        ),
+    ]);
+}

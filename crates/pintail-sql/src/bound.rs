@@ -32,7 +32,7 @@ pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
 /// neither, so it is its own profile and not an alias for one.
 pub const UNICODE_CI_TEXT_COLLATION: &str = "utf8mb4_unicode_ci";
 pub const AS_CS_TEXT_COLLATION: &str = "utf8mb4_0900_as_cs";
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 9] = [
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 11] = [
     DEFAULT_TEXT_COLLATION,
     AS_CS_TEXT_COLLATION,
     GENERAL_CI_TEXT_COLLATION,
@@ -40,6 +40,8 @@ pub const SUPPORTED_TEXT_COLLATIONS: [&str; 9] = [
     BIN_TEXT_COLLATION,
     "latin1_swedish_ci",
     "latin1_bin",
+    "latin2_general_ci",
+    "latin2_bin",
     "koi8r_general_ci",
     "koi8r_bin",
 ];
@@ -613,6 +615,10 @@ pub enum NamedCollation {
     Latin1SwedishCi,
     /// `latin1_bin`.
     Latin1Bin,
+    /// Central European single-byte case-insensitive weights.
+    Latin2GeneralCi,
+    /// Central European encoded byte order.
+    Latin2Bin,
     /// Cyrillic single-byte case-insensitive weights.
     Koi8RGeneralCi,
     /// Cyrillic encoded byte order.
@@ -638,6 +644,10 @@ impl NamedCollation {
             Some(Self::Latin1SwedishCi)
         } else if lower == "latin1_bin" {
             Some(Self::Latin1Bin)
+        } else if lower == "latin2_general_ci" {
+            Some(Self::Latin2GeneralCi)
+        } else if lower == "latin2_bin" {
+            Some(Self::Latin2Bin)
         } else if lower == "koi8r_general_ci" {
             Some(Self::Koi8RGeneralCi)
         } else if lower == "koi8r_bin" {
@@ -677,6 +687,8 @@ impl NamedCollation {
         match self {
             Self::Latin1SwedishCi => "latin1_swedish_ci",
             Self::Latin1Bin => "latin1_bin",
+            Self::Latin2GeneralCi => "latin2_general_ci",
+            Self::Latin2Bin => "latin2_bin",
             Self::Koi8RGeneralCi => "koi8r_general_ci",
             Self::Koi8RBin => "koi8r_bin",
             Self::Default => DEFAULT_TEXT_COLLATION,

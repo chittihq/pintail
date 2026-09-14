@@ -638,7 +638,7 @@ but may be wrong.
   databases still accept all of them: they write nothing, so the no-op
   claims nothing false.
 - A local table's text must be declared in `utf8mb4`, `utf8mb3`, `ascii`,
-  `latin1` or `binary`. A column, table default or collation naming any other
+  `latin1`, `latin2` or `binary`. A column, table default or collation naming any other
   character set is refused at `CREATE TABLE`, because values are stored as
   decoded characters and would answer byte lengths, hex and ordering in the
   wrong encoding.

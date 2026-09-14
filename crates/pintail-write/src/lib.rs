@@ -1298,6 +1298,7 @@ fn default_collation(charset: &str) -> String {
     match charset.to_ascii_lowercase().as_str() {
         "utf8" | "utf8mb3" => "utf8mb3_general_ci",
         "latin1" => "latin1_swedish_ci",
+        "latin2" => "latin2_general_ci",
         "ascii" => "ascii_general_ci",
         "binary" => "binary",
         _ => "utf8mb4_0900_ai_ci",
@@ -1328,8 +1329,9 @@ fn table_text_defaults(create: &CreateTable) -> (Option<String>, Option<String>)
 }
 
 /// Character sets whose text is stored here exactly as the source spells it.
-const STORED_CHARACTER_SETS: [&str; 6] =
-    ["utf8mb4", "utf8mb3", "utf8", "ascii", "latin1", "binary"];
+const STORED_CHARACTER_SETS: [&str; 7] = [
+    "utf8mb4", "utf8mb3", "utf8", "ascii", "latin1", "latin2", "binary",
+];
 
 /// The first character set a definition names, directly or through a
 /// collation, that text is not stored in.

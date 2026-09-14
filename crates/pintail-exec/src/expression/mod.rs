@@ -2377,6 +2377,9 @@ fn evaluate_eager_scalar_inner(
             let Value::Binary(bytes) = &values[0] else {
                 return Err(ExecError::InvalidExpressionType);
             };
+            if let Some(output) = charset.single_byte_case(bytes, upper) {
+                return Ok(Value::Binary(output));
+            }
             let prefix = charset.decode_prefix(bytes);
             let consumed = charset.encode(&prefix).len();
             let changed = if upper {
@@ -5894,6 +5897,7 @@ fn locate_collated(
             Collation::Utf8mb4Bin
                 | Collation::Latin1Bin
                 | Collation::Koi8RBin
+                | Collation::Latin2Bin
                 | Collation::Utf8mb40900AsCs
         )
     {
@@ -6017,6 +6021,7 @@ fn compile_regex(
             | Collation::Utf8mb4Bin
             | Collation::Latin1Bin
             | Collation::Koi8RBin
+            | Collation::Latin2Bin
     );
     let mut multi_line = false;
     let mut dot_matches_new_line = false;

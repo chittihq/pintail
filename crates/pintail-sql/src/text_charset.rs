@@ -98,13 +98,14 @@ pub(crate) fn annotate(expression: BoundExpr, charset: CharacterSet) -> BoundExp
             );
         }
         if matches!(function, ScalarFunction::Lower | ScalarFunction::Upper)
-            && matches!(
-                args[0].kind,
-                BoundExprKind::Scalar {
-                    function: ScalarFunction::RawText(_, _),
-                    ..
-                }
-            )
+            && (charset == CharacterSet::Latin2
+                || matches!(
+                    args[0].kind,
+                    BoundExprKind::Scalar {
+                        function: ScalarFunction::RawText(_, _),
+                        ..
+                    }
+                ))
         {
             let bytes = wrap(
                 encoded(args[0].clone()),

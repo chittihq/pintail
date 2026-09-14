@@ -1807,3 +1807,12 @@ the combined ceiling for both representations. Capture-state workspace is estima
 from the automaton before matching and capped at 4 MiB; each evaluation charges
 that workspace separately from the retained compiled program. Execution tracks
 visited states at each input offset and does not use recursive backtracking.
+
+### Latin2 read and connection encoding
+
+Latin2 values retain their single-byte encoding through byte functions, local
+storage and wire results. The general and binary profiles use encoded weights
+with PAD SPACE semantics; case conversion uses fixed-width byte maps rather
+than Unicode expansions. The full byte mapping and general weights were checked
+against the live oracle. Other Latin2 collation variants remain outside these
+profiles.

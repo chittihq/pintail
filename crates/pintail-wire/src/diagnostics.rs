@@ -1086,6 +1086,43 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn latin2_sessions_preserve_text_and_group_by_declared_weights() {
+        use pintail_protocol::{Handler, Response};
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET NAMES latin2").await,
+            Response::Ok(..)
+        ));
+        backend
+            .execute("CREATE TABLE labels (label VARCHAR(20) CHARACTER SET latin2)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO labels VALUES ('a'),('á'),('ą'),('Ą'),('b')")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT COUNT(*) FROM labels GROUP BY label ORDER BY label")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![Value::UInt64(1)],
+                vec![Value::UInt64(2)],
+                vec![Value::UInt64(1)],
+                vec![Value::UInt64(1)]
+            ]
+        );
+        let result = backend
+            .execute("SELECT @@character_set_client,@@character_set_results")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::Utf8("latin2".into()); 2]);
+    }
+
+    #[tokio::test]
     async fn binary_connection_literals_keep_the_client_encoding() {
         use pintail_protocol::{Handler, Response};
         use pintail_types::Value;
