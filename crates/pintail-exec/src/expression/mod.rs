@@ -3461,6 +3461,9 @@ fn evaluate_eager_scalar_inner(
             ) {
                 return Ok(value);
             }
+            if let Some(value) = cast_partial_calendar(&values[0], DataType::Date32, values.get(1)) {
+                return Ok(value);
+            }
             let text = scalar_string(&values[0])?;
             if let Some((date, _)) = canonical_temporal(&text) {
                 return Ok(Value::Utf8(date.to_owned()));
@@ -4419,12 +4422,22 @@ fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>
         return None;
     };
     let text = scalar_string(value).ok()?;
+    let text = if matches!(text.len(), 8 | 14) && text.bytes().all(|byte| byte.is_ascii_digit()) {
+        let date = format!("{}-{}-{}", &text[..4], &text[4..6], &text[6..8]);
+        if text.len() == 14 {
+            format!("{date} {}:{}:{}", &text[8..10], &text[10..12], &text[12..])
+        } else {
+            date
+        }
+    } else {
+        text
+    };
     let (date, clock) = canonical_temporal_parts_policy(&text, true, true)?;
     let year: u32 = date[..4].parse().ok()?;
     let month: u32 = date[5..7].parse().ok()?;
     let day: u32 = date[8..].parse().ok()?;
     if (policy & 1 != 0 && year == 0 && month == 0 && day == 0)
-        || (policy & 2 != 0 && year != 0 && (month == 0 || day == 0))
+        || (policy & 2 != 0 && (year != 0 || month != 0 || day != 0) && (month == 0 || day == 0))
         || (policy & 4 == 0 && month != 0 && day > mysql_month_days(year, month)?)
     {
         return Some(Value::Null);

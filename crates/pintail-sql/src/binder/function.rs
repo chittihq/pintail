@@ -1883,7 +1883,8 @@ pub(super) fn bind_scalar(
     }
     if matches!(
         function,
-        ScalarFunction::Cast(DataType::Date32 | DataType::DateTime64 { .. })
+        ScalarFunction::Date
+            | ScalarFunction::Cast(DataType::Date32 | DataType::DateTime64 { .. })
             | ScalarFunction::DeclaredCast {
                 target: DataType::Date32 | DataType::DateTime64 { .. },
                 ..

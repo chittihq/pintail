@@ -1391,6 +1391,51 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn date_extraction_preserves_partial_dates_when_modes_allow_them() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend.apply_session_command("SET sql_mode=''").unwrap();
+        let result = backend.execute("SELECT DATE('20091000'),DATE('00000100'),LAST_DAY(DATE('2009-10-00')),DATE('20090231')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("2009-10-00".to_owned()),
+                Value::Utf8("0000-01-00".to_owned()),
+                Value::Utf8("2009-10-31".to_owned()),
+                Value::Null
+            ]
+        );
+        backend
+            .apply_session_command("SET sql_mode='NO_ZERO_IN_DATE'")
+            .unwrap();
+        let result = backend.execute("SELECT DATE('00000000'),DATE('00000100'),DATE('20091000'),CAST('0000-01-00' AS DATE)").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("0000-00-00".to_owned()),
+                Value::Null,
+                Value::Null,
+                Value::Null
+            ]
+        );
+        backend
+            .apply_session_command("SET sql_mode='NO_ZERO_DATE'")
+            .unwrap();
+        let result = backend
+            .execute("SELECT DATE('00000000'),DATE('00000100'),DATE('20091000')")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Null,
+                Value::Utf8("0000-01-00".to_owned()),
+                Value::Utf8("2009-10-00".to_owned())
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
