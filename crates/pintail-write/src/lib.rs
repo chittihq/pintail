@@ -807,6 +807,44 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         }
         DataType::Float64 => {
             let number: f64 = text.parse().map_err(|_| wrong("expected a number"))?;
+            let mut maximum = if column.pintail_type == DataType::Float32 {
+                f64::from(f32::MAX)
+            } else {
+                f64::MAX
+            };
+            if let Some((precision, scale)) = column
+                .mysql_column_type
+                .split_once('(')
+                .and_then(|(_, tail)| tail.split_once(')'))
+                .and_then(|(shape, _)| shape.split_once(','))
+                .and_then(|(precision, scale)| {
+                    Some((
+                        precision.trim().parse::<i32>().ok()?,
+                        scale.trim().parse::<i32>().ok()?,
+                    ))
+                })
+            {
+                if precision < scale || !(0..=30).contains(&scale) {
+                    return Err(wrong("invalid floating-point declaration"));
+                }
+                maximum = maximum.min(10_f64.powi(precision - scale) - 10_f64.powi(-scale));
+            }
+            let minimum = if column
+                .mysql_column_type
+                .to_ascii_lowercase()
+                .contains("unsigned")
+            {
+                0.0
+            } else {
+                -maximum
+            };
+            if number.is_nan()
+                || (pintail_sql::session_parse_mode().strict
+                    && !(minimum..=maximum).contains(&number))
+            {
+                return Err(wrong("Out of range value"));
+            }
+            let number = number.clamp(minimum, maximum);
             // FLOAT stores single precision even though the physical carrier
             // shared with DOUBLE is a 64-bit value.
             #[allow(clippy::cast_possible_truncation)]

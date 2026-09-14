@@ -331,3 +331,32 @@ fn scientific_number_literals_choose_text_that_fits_the_column() {
             .to_vec()
     );
 }
+
+#[test]
+fn permissive_float_writes_clamp_to_declared_ranges() {
+    let fixture = fixture();
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        run(
+            &fixture,
+            "CREATE TABLE readings (narrow FLOAT, fixed DOUBLE(4,3), positive DOUBLE UNSIGNED)",
+        )
+        .unwrap();
+        run(&fixture, "INSERT INTO readings VALUES (1e150, -11, -2)").unwrap();
+    });
+    assert_eq!(
+        stored_rows(&fixture, "readings"),
+        vec![vec![
+            Value::float64(f64::from(f32::MAX)),
+            Value::float64(-9.999),
+            Value::float64(0.0)
+        ]]
+    );
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("STRICT_ALL_TABLES"),
+        || {
+            assert!(run(&fixture, "INSERT INTO readings VALUES (1e150, 0, 0)").is_err());
+            assert!(run(&fixture, "INSERT INTO readings VALUES (0, 11, 0)").is_err());
+            assert!(run(&fixture, "INSERT INTO readings VALUES (0, 0, -1)").is_err());
+        },
+    );
+}
