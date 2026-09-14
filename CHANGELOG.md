@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Wide-character connection collations retain their encoding and comparison
+  profile, including a collation assignment following `SET NAMES`.
+
 - Scalar bitwise operators and `BIT_COUNT` preserve binary byte strings,
   fixed-width shifts and numeric hex-literal semantics.
 

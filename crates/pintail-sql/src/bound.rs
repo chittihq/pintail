@@ -227,7 +227,7 @@ impl BoundExpr {
             BoundExprKind::Scalar {
                 function:
                     ScalarFunction::Collate { .. }
-                    | ScalarFunction::TextCharset(_)
+                    | ScalarFunction::TextCharset(_, _)
                     | ScalarFunction::Cast(DataType::Binary)
                     | ScalarFunction::BitNot,
                 args,
@@ -566,7 +566,14 @@ impl BoundExpr {
             return Some(only.clone());
         }
         if let BoundExprKind::Scalar {
-            function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
+            function: ScalarFunction::TextCharset(_, collation),
+            ..
+        } = &self.kind
+        {
+            return Some(collation.as_str().to_owned());
+        }
+        if let BoundExprKind::Scalar {
+            function: ScalarFunction::DecodeText(charset),
             ..
         } = &self.kind
         {
@@ -594,11 +601,13 @@ impl BoundExpr {
     fn collect_encoded_collations(&self, collations: &mut Vec<String>) {
         match &self.kind {
             BoundExprKind::Scalar {
-                function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
+                function: ScalarFunction::TextCharset(_, collation),
                 ..
-            } => {
-                collations.push(charset.default_collation().to_owned());
-            }
+            } => collations.push(collation.as_str().to_owned()),
+            BoundExprKind::Scalar {
+                function: ScalarFunction::DecodeText(charset),
+                ..
+            } => collations.push(charset.default_collation().to_owned()),
             BoundExprKind::Scalar { args, .. } => {
                 for argument in args {
                     argument.collect_encoded_collations(collations);
@@ -884,7 +893,7 @@ pub enum ScalarFunction {
     /// Render a single-precision value in a string context.
     FloatString,
     /// Normalize Unicode into a SQL character set and retain its identity.
-    TextCharset(pintail_types::CharacterSet),
+    TextCharset(pintail_types::CharacterSet, NamedCollation),
     /// Read encoded bytes as Unicode, retaining the original character set.
     DecodeText(pintail_types::CharacterSet),
     /// Materialize SQL text bytes at a byte-observing boundary.

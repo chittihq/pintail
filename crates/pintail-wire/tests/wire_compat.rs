@@ -565,6 +565,50 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore Unicode defaults");
+    for (setting, expected) in [
+        ("SET collation_connection=utf16_unicode_ci", "0061"),
+        ("SET collation_connection=utf32_unicode_ci", "00000061"),
+        (
+            "SET NAMES utf8mb3, collation_connection=utf16le_general_ci",
+            "6100",
+        ),
+    ] {
+        connection
+            .query_drop(setting)
+            .await
+            .expect("wide connection collation");
+        let encoded: Option<String> = connection
+            .query_first("SELECT HEX('a')")
+            .await
+            .expect("wide literal bytes");
+        assert_eq!(encoded.as_deref(), Some(expected), "{setting}");
+        let equal: Option<u8> = connection
+            .query_first("SELECT 'a\\0' = 'a'")
+            .await
+            .expect("wide comparison weights");
+        assert_eq!(
+            equal,
+            Some(u8::from(setting.contains("unicode_ci"))),
+            "{setting}"
+        );
+    }
+    connection
+        .query_drop("SET NAMES utf8mb4")
+        .await
+        .expect("restore connection");
+    connection
+        .query_drop("SET collation_connection=utf8mb3_unicode_ci")
+        .await
+        .expect("legacy Unicode connection");
+    let introduced: Option<u8> = connection
+        .query_first("SELECT _utf8mb3'a\\0' = _utf8mb3'a'")
+        .await
+        .expect("introducer comparison profile");
+    assert_eq!(introduced, Some(0));
+    connection
+        .query_drop("SET NAMES utf8mb4")
+        .await
+        .expect("restore connection");
     let folded: Option<String> = connection
         .query_first("SELECT HEX(BIT_AND(_binary'abc'))")
         .await

@@ -59,21 +59,13 @@ impl Collation {
     /// differently - a wrong answer is worse than a refusal here.
     #[must_use]
     pub fn from_mysql_name(name: &str) -> Option<Self> {
-        match name.to_ascii_lowercase().as_str() {
+        match pintail_sql::comparison_collation(name).unwrap_or(name) {
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
             "utf8mb4_0900_as_cs" => Some(Self::Utf8mb40900AsCs),
-            // utf8mb3 holds only characters of the basic plane, and over those
-            // its general_ci, unicode_ci and bin collations weigh every
-            // character exactly as their utf8mb4 twins do.
-            "utf8mb4_general_ci" | "utf8mb3_general_ci" | "utf8_general_ci" | "ucs2_general_ci"
-            | "utf16_general_ci" | "utf16le_general_ci" | "utf32_general_ci" => {
-                Some(Self::Utf8mb4GeneralCi)
-            }
-            "utf8mb4_unicode_ci" | "utf8mb3_unicode_ci" | "utf8_unicode_ci" => {
-                Some(Self::Utf8mb4UnicodeCi)
-            }
-            "utf8mb4_bin" | "utf8mb3_bin" | "utf8_bin" => Some(Self::Utf8mb4Bin),
-            "json" => Some(Self::Json),
+            "utf8mb4_general_ci" => Some(Self::Utf8mb4GeneralCi),
+            "utf8mb4_unicode_ci" => Some(Self::Utf8mb4UnicodeCi),
+            "utf8mb4_bin" => Some(Self::Utf8mb4Bin),
+            name if name.eq_ignore_ascii_case("json") => Some(Self::Json),
             _ => None,
         }
     }

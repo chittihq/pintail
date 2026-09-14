@@ -24,7 +24,7 @@ pub fn session_character_set() -> CharacterSet {
 pub(crate) fn character_set(expression: &BoundExpr) -> CharacterSet {
     match &expression.kind {
         BoundExprKind::Scalar {
-            function: ScalarFunction::TextCharset(charset) | ScalarFunction::DecodeText(charset),
+            function: ScalarFunction::TextCharset(charset, _) | ScalarFunction::DecodeText(charset),
             ..
         } => *charset,
         BoundExprKind::Scalar {
@@ -45,9 +45,17 @@ pub(crate) fn annotate(expression: BoundExpr, charset: CharacterSet) -> BoundExp
     if expression.data_type != Some(DataType::Utf8) || charset == CharacterSet::Utf8Mb4 {
         return expression;
     }
+    let fallback = if charset == session_character_set() {
+        crate::session_default_collation()
+    } else {
+        charset.default_collation()
+    };
+    let collation =
+        crate::bound::NamedCollation::from_name(expression.text_collation().unwrap_or(fallback))
+            .expect("text encoding has a supported comparison profile");
     wrap(
         expression,
-        ScalarFunction::TextCharset(charset),
+        ScalarFunction::TextCharset(charset, collation),
         DataType::Utf8,
     )
 }
@@ -168,7 +176,7 @@ pub(crate) fn literal_value(expression: &BoundExpr) -> Option<std::borrow::Cow<'
     match &expression.kind {
         BoundExprKind::Literal(value) => Some(Cow::Borrowed(value)),
         BoundExprKind::Scalar {
-            function: ScalarFunction::TextCharset(charset),
+            function: ScalarFunction::TextCharset(charset, _),
             args,
         } => {
             let value = literal_value(&args[0])?;

@@ -1116,7 +1116,11 @@ pub(super) fn bind_convert(
             // to UTF-8 from a differently encoded expression.
             Ok(crate::text_charset::wrap(
                 cast,
-                ScalarFunction::TextCharset(encoding),
+                ScalarFunction::TextCharset(
+                    encoding,
+                    crate::bound::NamedCollation::from_name(encoding.default_collation())
+                        .expect("supported encoding collation"),
+                ),
                 DataType::Utf8,
             ))
         };
@@ -1515,7 +1519,7 @@ pub(super) fn bind_scalar(
             extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::FloatString | ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
+        ScalarFunction::FloatString | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse

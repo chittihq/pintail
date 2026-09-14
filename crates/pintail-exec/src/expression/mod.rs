@@ -1453,7 +1453,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
-                    ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -1655,7 +1655,7 @@ impl CompiledExpr {
                 };
                 let first = bound(0);
                 match function {
-                    ScalarFunction::TextCharset(_) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -2250,7 +2250,7 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::FloatString => Ok(Value::Utf8(
             pintail_types::Float64::new(mysql_f64(&values[0])?).mysql_float_string(),
         )),
-        ScalarFunction::TextCharset(charset) => {
+        ScalarFunction::TextCharset(charset, _) => {
             let text = scalar_string(&values[0])?;
             charset
                 .decode(&charset.encode(&text))

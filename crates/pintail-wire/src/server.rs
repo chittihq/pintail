@@ -1603,13 +1603,26 @@ impl Backend {
             // SET NAMES replaces the handshake-negotiated collation: with
             // the named one, or with the charset's default, as MySQL does.
             // Literal comparisons collate under it.
-            let (charset, collation) = set_names_target(rest)?;
+            let (names, following) = rest.split_once(',').map_or((rest, None), |(names, _)| {
+                // Preserve case in subsequent setting values, including zones.
+                (
+                    names,
+                    command.split_once(',').map(|(_, setting)| setting.trim()),
+                )
+            });
+            if following.is_some_and(str::is_empty) {
+                return Err("You have an error in your SQL syntax after SET NAMES".to_owned());
+            }
+            let (charset, collation) = set_names_target(names)?;
             session.charset_client.clone_from(&charset);
             session.charset_connection.clone_from(&charset);
             session.charset_results = charset;
             session.collation_connection = collation;
             session.charset_byte = collation_byte(collation, &session.charset_connection);
-            return Ok(());
+            drop(session);
+            return following.map_or(Ok(()), |setting| {
+                self.apply_session_command(&format!("SET {setting}"))
+            });
         }
         if let Some(rest) = lowered.strip_prefix("kill ") {
             return apply_kill_command(rest);

@@ -5888,7 +5888,7 @@ fn implicit_day_number(expr: &BoundExpr) -> Option<BoundExpr> {
             },
             DataType::Float64,
         )),
-        ScalarFunction::TextCharset(_) | ScalarFunction::Collate { .. } => {
+        ScalarFunction::TextCharset(_, _) | ScalarFunction::Collate { .. } => {
             implicit_day_number(&args[0])
         }
         ScalarFunction::If => {
@@ -6194,13 +6194,18 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
             let Some(text) = encoding.decode(bytes) else {
                 return refuse();
             };
-            return Ok(crate::text_charset::annotate(
+            return Ok(crate::text_charset::wrap(
                 BoundExpr {
                     data_type: Some(DataType::Utf8),
                     nullable: false,
                     kind: BoundExprKind::Literal(Value::Utf8(text)),
                 },
-                encoding,
+                ScalarFunction::TextCharset(
+                    encoding,
+                    crate::bound::NamedCollation::from_name(encoding.default_collation())
+                        .expect("supported encoding collation"),
+                ),
+                DataType::Utf8,
             ));
         }
         let width = encoding.minimum_width();
