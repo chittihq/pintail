@@ -454,6 +454,11 @@ mod tests {
                 Value::Utf8("2024-03-01 00:00:00.15".into())
             ]]
         );
+        let overflow = backend.execute("SELECT DATE_ADD('1995-01-05', INTERVAL 9223372036854775806 SECOND), DATE_ADD('1995-01-05', INTERVAL -9223372036854775806 SECOND)").await.unwrap();
+        assert_eq!(
+            overflow.rows.into_values(),
+            vec![vec![Value::Null, Value::Null]]
+        );
     }
 
     #[tokio::test]

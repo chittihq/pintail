@@ -3560,7 +3560,7 @@ fn evaluate_eager_scalar_inner(
             let value = if unit == IntervalUnit::Second {
                 let amount = interval_second_micros(&values[1])?;
                 let signed = if subtract { -amount } else { amount };
-                let micros = i64::try_from(signed).map_err(|_| ExecError::NumericOverflow)?;
+                let micros = i64::try_from(signed).map_err(|_| ExecError::InvalidDateTime)?;
                 value.checked_add_signed(chrono::Duration::microseconds(micros)).filter(|shifted| (0..=9999).contains(&shifted.year())).ok_or(ExecError::InvalidDateTime)?
             } else {
                 apply_interval(value, mysql_i64(&values[1])?, unit, subtract)?
