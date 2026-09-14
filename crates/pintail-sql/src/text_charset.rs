@@ -303,6 +303,33 @@ pub(crate) fn literal_value(expression: &BoundExpr) -> Option<std::borrow::Cow<'
                 charset.decode(&charset.encode(text))?,
             )))
         }
+        // A cast that only restates text is one of these crossings too, and it
+        // has to be crossed HERE rather than peeled off the outside: on a
+        // connection that is not utf8mb4 the charset node sits OUTSIDE the
+        // cast (`TextCharset(CAST(TextCharset(literal)))`), so an outer peel
+        // never reaches it and the constant went unseen. That decided a result
+        // type - `STR_TO_DATE(..., CAST(_utf8'%Y-%m-%d' AS CHAR))` named a
+        // DATE on a utf8mb4 connection and a dynamic-format DATETIME(6) on a
+        // utf8mb3 or latin1 one, for the same statement.
+        //
+        // A width is not the identity: `CAST(x AS CHAR(4))` truncates, and a
+        // cast over a non-text value writes the text rather than restating it,
+        // so both keep their own representation.
+        BoundExprKind::Scalar {
+            function:
+                ScalarFunction::Cast(DataType::Utf8)
+                | ScalarFunction::DeclaredCast {
+                    target: DataType::Utf8,
+                    characters: None,
+                },
+            args,
+        } if matches!(
+            args.first().and_then(|argument| argument.data_type),
+            Some(DataType::Utf8 | DataType::Binary)
+        ) =>
+        {
+            literal_value(&args[0])
+        }
         BoundExprKind::Scalar {
             function: ScalarFunction::Utf8Prefix,
             args,

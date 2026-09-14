@@ -71,7 +71,7 @@ fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
     // where MySQL renders 24:00:00. It reached ordinary statements because
     // under `SET NAMES binary` every unprefixed literal is binary too.
     if matches!(argument.data_type, Some(DataType::Utf8 | DataType::Binary))
-        && let Some(value) = crate::text_charset::literal_value(constant_text_expression(argument))
+        && let Some(value) = crate::text_charset::literal_value(argument)
         && let Some(text) = literal_text(value.as_ref())
     {
         return text.rsplit_once('.').map_or(0, |(_, fraction)| {
@@ -103,33 +103,6 @@ fn literal_text(value: &Value) -> Option<&str> {
     }
 }
 
-/// See past a cast that only restates the text it is given. `CAST(x AS CHAR)`
-/// with no width is the identity on text, and `MySQL` decides a result type from
-/// the constant underneath it - so `STR_TO_DATE(..., CAST('%Y-%m-%d' AS CHAR))`
-/// is the DATE its format spells, where reading only a bare literal declared
-/// the dynamic-format DATETIME(6) and rendered `00:00:00.000000` onto a date.
-///
-/// A width is not the identity: `CAST(x AS CHAR(4))` truncates, and peeling it
-/// would read a format the statement does not use. Those keep the default.
-fn constant_text_expression(argument: &BoundExpr) -> &BoundExpr {
-    let mut argument = argument;
-    while let BoundExprKind::Scalar { function, args } = &argument.kind
-        && matches!(
-            function,
-            ScalarFunction::Cast(DataType::Utf8)
-                | ScalarFunction::DeclaredCast {
-                    target: DataType::Utf8,
-                    characters: None,
-                }
-        )
-        && let [inner] = args.as_slice()
-        && matches!(inner.data_type, Some(DataType::Utf8 | DataType::Binary))
-    {
-        argument = inner;
-    }
-    argument
-}
-
 // Strip the offset only for result precision inference. Value conversion
 // still resolves it against the connection zone in the execution plan.
 fn literal_datetime_without_offset(text: &str) -> &str {
@@ -155,8 +128,7 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
         // appended `.000000` to a whole-second instant MySQL renders bare.
         Some(DataType::Utf8 | DataType::Binary) => {
             if parses_datetime
-                && let Some(value) =
-                    crate::text_charset::literal_value(constant_text_expression(argument))
+                && let Some(value) = crate::text_charset::literal_value(argument)
                 && let Some(text) = literal_text(value.as_ref())
             {
                 let text = literal_datetime_without_offset(text);
@@ -2018,11 +1990,7 @@ fn str_to_date_has_specifier(format: &str, wanted: &[char]) -> bool {
 }
 
 fn str_to_date_result_type(args: &[BoundExpr]) -> DataType {
-    let Some(value) = args
-        .get(1)
-        .map(constant_text_expression)
-        .and_then(crate::text_charset::literal_value)
-    else {
+    let Some(value) = args.get(1).and_then(crate::text_charset::literal_value) else {
         return DataType::DateTime64 { fsp: 6 };
     };
     // A format spelled in bytes is as known at bind time as one spelled in

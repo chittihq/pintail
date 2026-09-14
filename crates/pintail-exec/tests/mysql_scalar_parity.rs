@@ -2017,6 +2017,32 @@ fn binary_operands_answer_as_mysql_does() {
     ]);
 }
 
+/// A constant stays constant whatever character set the connection uses.
+///
+/// `STR_TO_DATE`'s result type is the shape its format names, and the format
+/// here is a constant behind a cast and an introducer. A connection that is
+/// not utf8mb4 wraps that constant in a coercion, and while that coercion hid
+/// the constant the format was unknown - so the same statement answered a
+/// `DATE` on one connection and a dynamic-format `DATETIME(6)` on the next,
+/// rendering `2001-01-01 00:00:00.000000` where `MySQL` renders `2001-01-01`.
+/// The character set is not supposed to reach the result type at all.
+#[test]
+fn a_constant_format_is_read_whatever_the_connection_character_set_is() {
+    let sql = "STR_TO_DATE(CAST(_utf8'2001\u{00f7}01\u{00f7}01' AS CHAR), \
+               CAST(_utf8'%Y\u{00f7}%m\u{00f7}%d' AS CHAR))";
+    assert_eq!(scalar(sql), "2001-01-01", "default connection");
+    for charset in [
+        pintail_types::CharacterSet::Utf8Mb3,
+        pintail_types::CharacterSet::Utf8Mb4,
+        pintail_types::CharacterSet::Latin1,
+    ] {
+        pintail_sql::set_session_character_set(Some(charset));
+        let answer = scalar(sql);
+        pintail_sql::set_session_character_set(None);
+        assert_eq!(answer, "2001-01-01", "{charset:?} connection");
+    }
+}
+
 /// A run of digits read as a temporal names its parts by how many there are.
 ///
 /// The short widths carry a two-digit year, pivoting at 70, and they are not
