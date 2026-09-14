@@ -165,21 +165,11 @@ stays readable as a list of things to fix.
 - Unix timestamp conversions round excess fractional digits to microseconds;
   `TIME_TRUNCATE_FRACTIONAL` does not switch them to truncation.
 
-- The all-zero `DATE`/`DATETIME` (`0000-00-00`) is preserved as a value, as
-  MySQL does: it is returned by a `SELECT`, does not match `IS NULL`, and is
-  counted by `COUNT(column)`. Genuinely invalid values such as February 31st
-  still normalize to SQL `NULL` during snapshot and CDC ingestion, because
-  they have no canonical form MySQL round-trips. Existing replicas keep
-  whatever ingestion already wrote; only rows re-ingested after this change
-  carry the zero date.
-- A zero date cannot be evaluated by the temporal functions: `YEAR`,
-  `DATE_ADD` and their relatives error on it where MySQL returns `0` or
-  `NULL`. That is the deliberate trade for it being a value at all - an
-  explicit error rather than three silently wrong answers from mapping it to
-  `NULL`.
-- `sql_mode` does not reinterpret mirrored values, and `ALLOW_INVALID_DATES`
-  is refused rather than accepted and ignored, so a client cannot believe it
-  has asked for the invalid ones back.
+- Impossible calendar dates such as February 31st still normalize to SQL
+  `NULL` during snapshot and CDC ingestion. Changing `sql_mode` cannot
+  restore values ingestion already normalized.
+- Replicas created before zero-date preservation keep their previous
+  normalized values until the affected rows are re-ingested.
 
 - `TIME` values are stored and compared as their canonical text. Ordering
   and comparison are exact for non-negative times under 100 hours; negative
