@@ -1608,6 +1608,7 @@ pub(super) fn bind_scalar(
         // nullable regardless of their inputs.
         ScalarFunction::Uuid => (Some(DataType::Utf8), false),
         ScalarFunction::UuidShort => (Some(DataType::UInt64), false),
+        ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign => (args[1].data_type, args[1].nullable),
         ScalarFunction::JsonOverlaps | ScalarFunction::JsonMemberOf => {
             (Some(DataType::Int64), args.iter().any(|argument| argument.nullable))
         }

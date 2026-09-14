@@ -26,7 +26,8 @@ pub use repeatable::is_repeatable_statement;
 
 mod user_variables;
 pub use user_variables::{
-    UserVariables, select_variable_targets, user_variable_assignments, with_user_variables,
+    UserVariableWrites, UserVariables, select_variable_targets, user_variable_assignments,
+    user_variable_writes, with_user_variable_writes, with_user_variables,
 };
 
 pub use bound::set_session_database_name;

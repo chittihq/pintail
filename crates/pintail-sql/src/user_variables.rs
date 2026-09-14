@@ -1,11 +1,13 @@
-//! A connection's user variables: `SET @name = expr` and `@name` in a query.
+//! A connection's user variables: SET, SELECT assignments, and query references.
 //!
 //! A variable holds the literal its assignment evaluated to, so a query
 //! that reads it binds exactly as if the value had been written in its
 //! place - a decimal stays a decimal, a string stays a string - while the
 //! column it projects keeps its written name. The connection owns the
 //! values; a statement sees them through [`with_user_variables`], which
-//! scopes them to the synchronous work that binds it.
+//! scopes them to the synchronous work that binds it. Statements containing
+//! assignments additionally capture mutable state in compiled expressions;
+//! execution workers share that state and the connection receives it on completion.
 
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
@@ -234,4 +236,85 @@ mod tests {
         });
         assert_eq!(user_variable("@a"), Some(Value::Null));
     }
+}
+
+type AssignedValues = HashMap<String, (pintail_types::Value, Option<pintail_types::DataType>)>;
+
+/// Values assigned while one statement executes, shared by its compiled expressions.
+#[derive(Clone, Debug, Default)]
+pub struct UserVariableWrites(Arc<std::sync::Mutex<AssignedValues>>);
+
+impl PartialEq for UserVariableWrites {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+impl Eq for UserVariableWrites {}
+
+impl UserVariableWrites {
+    /// Reads the latest assignment in this statement.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<pintail_types::Value> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .map(|(value, _)| value.clone())
+    }
+    /// Inspects a value without allocating a copy before the executor reserves memory.
+    pub fn with_value<T>(
+        &self,
+        name: &str,
+        read: impl FnOnce(&pintail_types::Value) -> T,
+    ) -> Option<T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(name)
+            .map(|(value, _)| read(value))
+    }
+    /// Records an assignment, retaining its SQL type for the next statement.
+    pub fn set(
+        &self,
+        name: String,
+        value: pintail_types::Value,
+        data_type: Option<pintail_types::DataType>,
+    ) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(name, (value, data_type));
+    }
+    /// Takes completed assignments once execution has settled.
+    #[must_use]
+    pub fn take(&self) -> HashMap<String, (pintail_types::Value, Option<pintail_types::DataType>)> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+thread_local! {
+    static WRITES: RefCell<Option<UserVariableWrites>> = const { RefCell::new(None) };
+}
+/// Captures the current statement's assignment state during compilation.
+#[must_use]
+pub fn user_variable_writes() -> Option<UserVariableWrites> {
+    WRITES.with(|cell| cell.borrow().clone())
+}
+/// Scopes assignment state to binding and compilation; compiled expressions retain it.
+pub fn with_user_variable_writes<T>(
+    writes: Option<UserVariableWrites>,
+    work: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<UserVariableWrites>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WRITES.with(|cell| *cell.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(WRITES.with(|cell| std::mem::replace(&mut *cell.borrow_mut(), writes)));
+    work()
 }

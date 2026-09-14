@@ -266,6 +266,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn select_assignments_persist_and_read_previous_rows() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value as SqlValue;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET @counter=0").await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        let result = backend.execute("SELECT @counter := @counter + 1 FROM (SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3) AS numbers").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![
+                vec![SqlValue::Int64(1)],
+                vec![SqlValue::Int64(2)],
+                vec![SqlValue::Int64(3)]
+            ]
+        );
+        let result = backend.execute("SELECT @counter").await.unwrap();
+        assert_eq!(result.rows[0][0], SqlValue::Int64(3));
+        backend
+            .execute("SELECT CONCAT(@label := 'value', '!')")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT @label").await.unwrap();
+        assert_eq!(result.rows[0][0], SqlValue::Utf8("value".to_owned()));
+        backend
+            .execute("SELECT IF(FALSE, @counter := 99, 0)")
+            .await
+            .unwrap();
+        backend
+            .execute("SELECT @counter := 99 WHERE FALSE")
+            .await
+            .unwrap();
+        backend
+            .prepare(b"SELECT @counter := @counter + 1")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT @counter").await.unwrap();
+        assert_eq!(result.rows[0][0], SqlValue::Int64(3));
+        let (_other_directory, other) = local_backend();
+        let result = other.execute("SELECT @counter").await.unwrap();
+        assert_eq!(result.rows[0][0], SqlValue::Null);
+    }
+
+    #[tokio::test]
     async fn ansi_mode_changes_real_casts_columns_and_concatenation() {
         use pintail_protocol::Handler;
         use pintail_types::Value as SqlValue;

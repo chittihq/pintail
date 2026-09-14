@@ -962,6 +962,7 @@ struct RecordedStatement {
 
 /// What a statement's worker leaves once it is done.
 struct Settled {
+    variable_writes: pintail_sql::UserVariableWrites,
     row_count: i64,
     conditions: (Vec<Condition>, u64),
     rows: Result<usize, QueryError>,
@@ -1357,17 +1358,22 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(Some(
                         session.cte_max_recursion_depth,
                     ));
-                    let answer =
-                        pintail_sql::with_user_variables(session.user_variables.clone(), || {
-                            engine.execute_answer(
-                                &database_id,
-                                &sql,
-                                max_result_rows(),
-                                deadline,
-                                sink.as_mut()
-                                    .map(|sink| sink as &mut dyn crate::engine::RowSink),
-                            )
-                        });
+                    let variable_writes = pintail_sql::UserVariableWrites::default();
+                    let answer = pintail_sql::with_user_variable_writes(
+                        sql.contains(":=").then(|| variable_writes.clone()),
+                        || {
+                            pintail_sql::with_user_variables(session.user_variables.clone(), || {
+                                engine.execute_answer(
+                                    &database_id,
+                                    &sql,
+                                    max_result_rows(),
+                                    deadline,
+                                    sink.as_mut()
+                                        .map(|sink| sink as &mut dyn crate::engine::RowSink),
+                                )
+                            })
+                        },
+                    );
                     let warnings = (
                         pintail_exec::take_session_group_concat_warnings(),
                         pintail_exec::take_session_division_warnings(),
@@ -1445,6 +1451,7 @@ impl Backend {
                     }
                     let conditions = (listed, count);
                     let settled = Settled {
+                        variable_writes,
                         row_count,
                         conditions,
                         rows,
@@ -1523,6 +1530,13 @@ impl Backend {
         if let Ok(mut current) = self.session.lock() {
             (current.conditions, current.condition_count) = settled.conditions;
             current.row_count = settled.row_count;
+            let writes = settled.variable_writes.take();
+            if !writes.is_empty() {
+                let variables = std::sync::Arc::make_mut(&mut current.user_variables);
+                for (name, (value, data_type)) in writes {
+                    variables.insert(name, user_variable_literal(value, data_type));
+                }
+            }
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
@@ -2315,9 +2329,19 @@ impl Handler for Backend {
                 )
             });
         let preview = preview.map_err(|error| (ErrorKind::ErParseError, error))?;
-        let output = Backend::execute(self, &preview)
-            .await
-            .map_err(|error| (error_kind(&error), error.to_string()))?;
+        let variables = self
+            .session
+            .lock()
+            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?
+            .user_variables
+            .clone();
+        let output = Backend::execute(self, &preview).await;
+        // Preparing describes the result without committing expression assignments.
+        self.session
+            .lock()
+            .map_err(|error| (ErrorKind::ErUnknownError, error.to_string()))?
+            .user_variables = variables;
+        let output = output.map_err(|error| (error_kind(&error), error.to_string()))?;
         let statement_id = self.next_statement_id;
         self.next_statement_id = self.next_statement_id.wrapping_add(1).max(1);
         self.prepared_bytes = self.prepared_bytes.saturating_add(sql.len());

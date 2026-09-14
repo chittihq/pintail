@@ -860,6 +860,10 @@ pub enum BoundExprKind {
 /// Built-in scalar operations supported by the v1 executor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScalarFunction {
+    /// Reads a statement variable, falling back to its initial literal.
+    UserVariableRead,
+    /// Assigns and returns a value in the current connection.
+    UserVariableAssign,
     /// Concatenate strings, returning NULL when any argument is NULL.
     Concat,
     /// `JSON_SET`/`JSON_INSERT`/`JSON_REPLACE`: `(doc, path, value, ...)`.

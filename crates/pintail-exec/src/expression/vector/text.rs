@@ -333,6 +333,7 @@ mod tests {
                         ],
                         argument_types: vec![Some(DataType::Utf8); 2],
                         literal_regex: None,
+                        variables: None,
                         data_type: Some(DataType::Boolean),
                         collation: Collation::from_mysql_name(name).expect("collation"),
                         overflow: None,

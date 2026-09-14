@@ -1595,7 +1595,11 @@ pub(crate) fn is_volatile(expr: &BoundExpr) -> bool {
         BoundExprKind::Scalar { function, args } => {
             matches!(
                 function,
-                ScalarFunction::Rand | ScalarFunction::Uuid | ScalarFunction::UuidShort
+                ScalarFunction::Rand
+                    | ScalarFunction::Uuid
+                    | ScalarFunction::UuidShort
+                    | ScalarFunction::UserVariableRead
+                    | ScalarFunction::UserVariableAssign
             ) || args.iter().any(is_volatile)
         }
         BoundExprKind::PreparedIn { expr, .. }

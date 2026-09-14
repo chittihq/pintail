@@ -2746,7 +2746,15 @@ fn bind_expr_inner(
             if identifier.quote_style.is_none()
                 && let Some(value) = crate::user_variables::user_variable(&identifier.value) =>
         {
-            bind_literal(&value)
+            let value = bind_literal(&value)?;
+            if crate::user_variable_writes().is_some() {
+                let name = bind_literal_raw(&SqlValue::SingleQuotedString(
+                    identifier.value[1..].to_ascii_lowercase(),
+                ))?;
+                function::bind_scalar(ScalarFunction::UserVariableRead, vec![name, value])
+            } else {
+                Ok(value)
+            }
         }
         Expr::Identifier(identifier) => bind_column(std::slice::from_ref(identifier), tables),
         Expr::CompoundIdentifier(identifiers) => bind_column(identifiers, tables),
@@ -2918,6 +2926,30 @@ fn bind_expr_inner(
         }
         Expr::UnaryOp { op, expr } => {
             bind_unary(*op, expr, tables, aggregates, windows, subqueries)
+        }
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Assignment,
+            right,
+        } => {
+            let Expr::Identifier(identifier) = left.as_ref() else {
+                return Err(BindError::UnsupportedExpression(expr.to_string()));
+            };
+            let Some(name) = identifier
+                .value
+                .strip_prefix('@')
+                .filter(|name| !name.starts_with('@') && !name.is_empty())
+            else {
+                return Err(BindError::UnsupportedExpression(expr.to_string()));
+            };
+            let value = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
+            function::bind_scalar(
+                ScalarFunction::UserVariableAssign,
+                vec![
+                    bind_literal_raw(&SqlValue::SingleQuotedString(name.to_ascii_lowercase()))?,
+                    value,
+                ],
+            )
         }
         Expr::BinaryOp { left, op, right } => {
             bind_binary(left, op, right, tables, aggregates, windows, subqueries)

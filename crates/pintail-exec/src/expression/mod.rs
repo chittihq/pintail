@@ -507,6 +507,7 @@ pub(crate) enum CompiledExpr {
         args: Vec<Self>,
         argument_types: Vec<Option<DataType>>,
         literal_regex: Option<CompiledRegex>,
+        variables: Option<pintail_sql::UserVariableWrites>,
         data_type: Option<DataType>,
         /// Needed by `IN`, which compares its needle against every element.
         collation: Collation,
@@ -1054,6 +1055,7 @@ impl CompiledExpr {
                         .map(|argument| Self::compile(argument, columns, collation))
                         .collect::<Result<Vec<_>, _>>()?,
                     literal_regex,
+                    variables: pintail_sql::user_variable_writes(),
                     data_type: expr.data_type,
                     collation: scalar_collation,
                     overflow: overflow_message(expr),
@@ -1064,6 +1066,25 @@ impl CompiledExpr {
             | BoundExprKind::ExistsSubquery { .. } => Err(ExecError::InvalidPhysicalPlan(
                 "unresolved subquery reached expression compilation",
             )),
+        }
+    }
+
+    /// Whether evaluation can read or change a statement variable.
+    pub(super) fn has_variable_effects(&self) -> bool {
+        match self {
+            Self::Scalar { function, args, .. } => {
+                matches!(
+                    function,
+                    ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign
+                ) || args.iter().any(Self::has_variable_effects)
+            }
+            Self::Binary { left, right, .. } => {
+                left.has_variable_effects() || right.has_variable_effects()
+            }
+            Self::Unary { expr, .. }
+            | Self::IsNull { expr, .. }
+            | Self::PreparedIn { expr, .. } => expr.has_variable_effects(),
+            Self::Column(_) | Self::Literal(_) => false,
         }
     }
 
@@ -1105,6 +1126,7 @@ impl CompiledExpr {
                 args,
                 argument_types,
                 literal_regex: _,
+                variables: _,
                 data_type,
                 collation: _,
                 overflow: _,
@@ -1119,6 +1141,8 @@ impl CompiledExpr {
                         | ScalarFunction::RandSeeded
                         | ScalarFunction::Uuid
                         | ScalarFunction::UuidShort
+                        | ScalarFunction::UserVariableRead
+                        | ScalarFunction::UserVariableAssign
                 ) {
                     return None;
                 }
@@ -1221,10 +1245,32 @@ impl CompiledExpr {
                 args,
                 argument_types,
                 literal_regex,
+                variables,
                 data_type,
                 collation,
                 overflow,
             } => {
+                if matches!(
+                    function,
+                    ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign
+                ) {
+                    let Some(variables) = variables else {
+                        return Err(ExecError::UnsupportedOperator(
+                            "user variable assignment requires a connection",
+                        ));
+                    };
+                    let Value::Utf8(name) = args[0].evaluate(batch, row)? else {
+                        unreachable!("variable name literal")
+                    };
+                    if *function == ScalarFunction::UserVariableRead {
+                        return variables
+                            .get(&name)
+                            .map_or_else(|| args[1].evaluate(batch, row), Ok);
+                    }
+                    let value = args[1].evaluate(batch, row)?;
+                    variables.set(name, value.clone(), argument_types[1]);
+                    return Ok(value);
+                }
                 if let ScalarFunction::DatePart(part) = function
                     && let [argument] = args.as_slice()
                 {
@@ -1435,6 +1481,7 @@ impl CompiledExpr {
                 args,
                 data_type: _,
                 argument_types: _,
+                variables: _,
                 literal_regex,
                 collation: _,
                 overflow: _,
@@ -1456,6 +1503,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
+                    ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign => self.string_value_upper_bound(batch, row),
                     ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
@@ -1656,13 +1704,26 @@ impl CompiledExpr {
                 }
             }
             Self::PreparedIn { .. } | Self::IsNull { .. } => 1,
-            Self::Scalar { function, args, .. } => {
+            Self::Scalar {
+                function,
+                args,
+                variables,
+                ..
+            } => {
                 let bound = |index: usize| {
                     args.get(index)
                         .map_or(0, |argument| argument.string_value_upper_bound(batch, row))
                 };
                 let first = bound(0);
                 match function {
+                    ScalarFunction::UserVariableRead => {
+                        let stored = match (variables, args.first()) {
+                            (Some(variables), Some(Self::Literal(Value::Utf8(name)))) => variables.with_value(name, scalar_string_upper_bound).unwrap_or(0),
+                            _ => 0,
+                        };
+                        stored.max(bound(1))
+                    }
+                    ScalarFunction::UserVariableAssign => bound(1),
                     ScalarFunction::BitBytes(_) => 8,
                     ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
@@ -3049,6 +3110,7 @@ fn evaluate_eager_scalar_inner(
             };
             Ok(Value::UInt64(u64::from(crc32fast::hash(&input))))
         }
+        ScalarFunction::UserVariableRead | ScalarFunction::UserVariableAssign => unreachable!("variables evaluate with statement state"),
         ScalarFunction::UuidShort => {
             use std::sync::{OnceLock, atomic::{AtomicU64, Ordering as AtomicOrdering}};
             static NEXT: OnceLock<AtomicU64> = OnceLock::new();
@@ -7821,6 +7883,7 @@ mod tests {
             argument_types: vec![None; 3],
             args: vec![super::CompiledExpr::Column(0), literal(2), literal(5)],
             literal_regex: None,
+            variables: None,
             data_type: Some(DataType::Boolean),
             collation: Collation::default(),
             overflow: None,
@@ -7869,6 +7932,7 @@ mod tests {
                 argument_types: vec![None; args.len()],
                 args,
                 literal_regex: None,
+                variables: None,
                 data_type: Some(DataType::Boolean),
                 collation: Collation::default(),
                 overflow: None,
@@ -8756,6 +8820,7 @@ mod tests {
                 Some(DataType::Utf8),
             ],
             literal_regex: None,
+            variables: None,
             collation: Collation::default(),
             overflow: None,
         };

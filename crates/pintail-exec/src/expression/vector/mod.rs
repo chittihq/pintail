@@ -95,6 +95,11 @@ impl CompiledExpr {
         batch: &RecordBatch,
         data_type: Option<DataType>,
     ) -> Option<ColumnVector> {
+        // A declined vector attempt must not leave assignments behind before
+        // the row path retries the same expression.
+        if self.has_variable_effects() {
+            return None;
+        }
         let mut effects = Effects::default();
         let column = kernel(self, batch, data_type, &mut effects)?;
         effects.record();
@@ -114,6 +119,11 @@ impl CompiledExpr {
         batch: &RecordBatch,
         data_type: Option<DataType>,
     ) -> Option<ColumnVector> {
+        // A declined vector attempt must not leave assignments behind before
+        // the row path retries the same expression.
+        if self.has_variable_effects() {
+            return None;
+        }
         let mut effects = Effects {
             adapter: false,
             ..Effects::default()
@@ -388,6 +398,7 @@ mod testing {
             argument_types: vec![None; args.len()],
             args,
             literal_regex: None,
+            variables: None,
             data_type: Some(data_type),
             collation: Collation::default(),
             overflow: None,
