@@ -1478,6 +1478,40 @@ fn nullif_year_returns_text_to_numeric_aggregates() {
     }
 }
 
+/// `clock` holds `11:11:11` on the row these read.
+///
+/// One item in an `IN` list is not a list: `MySQL` answers it as the
+/// equality, in the TIME domain. Two items bring in the aggregated
+/// comparison type, and a datetime among them makes every operand a
+/// datetime - the column's time acquires the statement's date, so a literal
+/// dated 2001 stops matching while the same time dated today still does.
+/// The 2001 literals below are never today, so these hold on any date.
+#[test]
+fn an_in_list_with_a_datetime_compares_a_time_column_as_a_datetime() {
+    assert_answers(&[
+        // One item: the equality, in the TIME domain, so the date is ignored.
+        ("clock IN (TIMESTAMP'2001-01-01 11:11:11')", "Boolean(true)"),
+        ("clock = TIMESTAMP'2001-01-01 11:11:11'", "Boolean(true)"),
+        // Two items: now the date counts, and 2001 is not today.
+        (
+            "clock IN (TIMESTAMP'2001-01-01 11:11:11', TIMESTAMP'2001-01-01 11:11:12')",
+            "Boolean(false)",
+        ),
+        // The TIME item still matches, both sides having taken today's date.
+        (
+            "clock IN (TIME'11:11:11', TIMESTAMP'2001-01-01 11:11:12')",
+            "Boolean(true)",
+        ),
+        (
+            "clock IN (TIME'11:11:12', TIMESTAMP'2001-01-01 11:11:11')",
+            "Boolean(false)",
+        ),
+        // No datetime in the list leaves the TIME domain alone.
+        ("clock IN (TIME'11:11:11', 111112)", "Boolean(true)"),
+        ("clock IN (TIME'11:11:12', 111111)", "Boolean(true)"),
+    ]);
+}
+
 #[test]
 fn time_expressions_compare_with_strings_as_text() {
     for (expression, expected) in [

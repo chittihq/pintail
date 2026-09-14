@@ -921,6 +921,9 @@ pub(super) fn bind_in_list(
         )?);
     }
     let args = super::unify_temporal_list(args);
+    // Before unify_time_list, which would settle the list in the TIME domain:
+    // a datetime among the items takes the whole list to the datetime one.
+    let args = super::unify_time_with_datetime_list(args);
     let args = super::unify_time_list(args);
     // Before the per-item canonicalization below, which converts a numeric
     // string against an exact-numeric column into that exact integer: a list

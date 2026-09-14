@@ -6702,6 +6702,45 @@ fn is_time(expr: &BoundExpr) -> bool {
     matches!(expr.data_type, Some(DataType::Time64 { .. }))
 }
 
+/// A real `IN` list holding a datetime compares every operand as a datetime,
+/// and a bare `TIME` becomes that time on the statement's own date.
+///
+/// One item is not a list: `MySQL` answers `a IN (TIMESTAMP'2001-01-01
+/// 10:20:32')` exactly as it answers the equality, comparing in the TIME
+/// domain, and a TIME column holding `10:20:32` matches. Add a second item -
+/// even another datetime - and the aggregated type takes over: the column's
+/// time now carries today's date, so a literal dated 2001 matches nothing,
+/// while the same literal dated today matches again. That is the whole
+/// difference between `IN (x)` and `IN (x, y)` here, and it is why the count
+/// is part of the condition rather than an optimization detail.
+///
+/// Measured against `MySQL` 8.4 in both shapes. The conversion itself is the
+/// one `CAST(t AS DATETIME)` already performs, statement date included.
+fn unify_time_with_datetime_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let datetime = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::DateTime64 { .. }));
+    // args[0] is the subject, so two list items means three arguments.
+    if args.len() < 3 || !(args.iter().any(datetime) && args.iter().any(is_time)) {
+        return args;
+    }
+    let fsp = args
+        .iter()
+        .filter_map(|arg| match arg.data_type {
+            Some(DataType::DateTime64 { fsp }) => Some(fsp),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    args.into_iter()
+        .map(|arg| {
+            if is_time(&arg) {
+                cast_to(arg, DataType::DateTime64 { fsp })
+            } else {
+                arg
+            }
+        })
+        .collect()
+}
+
 fn time_as_text(expr: BoundExpr) -> BoundExpr {
     if is_time(&expr) {
         cast_to(expr, DataType::Utf8)
