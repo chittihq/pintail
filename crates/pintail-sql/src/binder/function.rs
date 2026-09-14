@@ -922,6 +922,10 @@ pub(super) fn bind_in_list(
     }
     let args = super::unify_temporal_list(args);
     let args = super::unify_time_list(args);
+    // Before the per-item canonicalization below, which converts a numeric
+    // string against an exact-numeric column into that exact integer: a list
+    // holding a number too does not get that conversion in MySQL.
+    let args = super::mixed_text_and_number_list_as_double(args);
     let subject = args[0].clone();
     let args = args
         .into_iter()
@@ -1079,7 +1083,15 @@ pub(super) fn bind_case(
         let condition =
             bind_expr_inner(&clause.condition, tables, aggregates, windows, subqueries)?;
         let condition = if let Some(operand) = &operand {
-            equality_expr(operand.clone(), condition)?
+            // `CASE x WHEN ...` is not `WHERE x = ...`. A plain equality
+            // against a constant converts that constant to the column's own
+            // exact type while preparing, so `WHERE id = '97716021308405770'`
+            // answers for one row; a simple CASE gets no such conversion and
+            // compares an integer against a string as a double, which above
+            // 2^53 makes neighbouring ids equal - MySQL answers the FIRST
+            // branch for all three of them. Both are MySQL's, measured.
+            let (operand, condition) = super::number_and_text_as_double(operand.clone(), condition);
+            equality_expr(operand, condition)?
         } else {
             if !is_truth_value(condition.data_type) {
                 return Err(BindError::ExpectedPredicate {

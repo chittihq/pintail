@@ -6768,6 +6768,71 @@ fn text_as_number(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
 /// DECIMAL shares it with text or a floating-point number, every member
 /// compares as a double. Compared pair by pair instead, the DECIMAL members
 /// met each other as text and `7.00 IN ('x', 7.0)` failed.
+/// True where this operand is a number for comparison-typing purposes.
+fn compares_as_number(expr: &BoundExpr) -> bool {
+    exact_numeric_type(expr.data_type)
+        || matches!(expr.data_type, Some(DataType::Float32 | DataType::Float64))
+}
+
+/// A number compared with a string compares as a double, both sides cast.
+///
+/// This is `MySQL`'s ordinary rule for the pair. What hides it is that the
+/// two most common places to write such a comparison - `WHERE id = '1'` and
+/// `id IN ('1')` - are the ones `MySQL` optimizes, converting the constant to
+/// the column's own exact type while preparing. A simple `CASE x WHEN ...`
+/// gets no such conversion, so it is the plain rule that applies there, and
+/// above 2^53 a double stops telling neighbouring integers apart: `MySQL`
+/// answers the first branch for three different ids where an exact
+/// comparison answers a different branch for each.
+fn number_and_text_as_double(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    if compares_as_number(&left) && is_plain_text(&right) {
+        return (
+            cast_to(left, DataType::Float64),
+            cast_to(right, DataType::Float64),
+        );
+    }
+    if is_plain_text(&left) && compares_as_number(&right) {
+        return (
+            cast_to(left, DataType::Float64),
+            cast_to(right, DataType::Float64),
+        );
+    }
+    (left, right)
+}
+
+/// An `IN` list that mixes a string with a number compares as a double.
+///
+/// Comparing an integer with a string is a double comparison in `MySQL`. `=`
+/// and `IN` against constants escape that: the constant is converted to the
+/// column's own exact type while the statement is prepared, so
+/// `id IN ('97716021308405775')` answers for exactly that row. The escape
+/// needs every item to convert that way, and one number in the list ends it -
+/// the comparison falls back to the aggregated type. Above 2^53 a double no
+/// longer tells neighbouring integers apart, so
+/// `id IN (1234, '97716021308405775')` answers for three adjacent ids at once
+/// where the same list without the 1234 answers for one. Both readings are
+/// `MySQL`'s, measured; the difference is the list, not the id.
+fn mixed_text_and_number_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let Some((subject, items)) = args.split_first() else {
+        return args;
+    };
+    if !(compares_as_number(subject)
+        && items.iter().any(is_plain_text)
+        && items.iter().any(compares_as_number))
+    {
+        return args;
+    }
+    args.into_iter()
+        .map(|argument| {
+            if compares_as_number(&argument) || is_plain_text(&argument) {
+                cast_to(argument, DataType::Float64)
+            } else {
+                argument
+            }
+        })
+        .collect()
+}
+
 fn numeric_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
     let decimal = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::Decimal { .. }));
     let inexact = |expr: &BoundExpr| {
