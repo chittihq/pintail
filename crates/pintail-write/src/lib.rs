@@ -636,6 +636,48 @@ fn timestamp_to_utc(micros: i64, zone: &str) -> Option<i64> {
     Some(utc.timestamp_micros())
 }
 
+/// Round the original fraction directly to its declared precision. The
+/// parser keeps six digits, so only a six-digit target needs the seventh
+/// input digit; rounding that digit first would double-round shorter targets.
+fn temporal_storage_precision(micros: i64, text: &str, fsp: u8, duration: bool) -> i64 {
+    let unit = 10_i64.pow(6 - u32::from(fsp.min(6)));
+    if pintail_sql::session_parse_mode().time_truncate_fractional {
+        return if duration {
+            micros / unit * unit
+        } else {
+            micros.div_euclid(unit).saturating_mul(unit)
+        };
+    }
+    if unit == 1 {
+        let round_up = text
+            .split_once('.')
+            .and_then(|(_, fraction)| fraction.as_bytes().get(6))
+            .is_some_and(|digit| matches!(digit, b'5'..=b'9'));
+        return if round_up {
+            micros.saturating_add(if duration && text.trim_start().starts_with('-') {
+                -1
+            } else {
+                1
+            })
+        } else {
+            micros
+        };
+    }
+    if duration {
+        let shifted = if micros < 0 {
+            micros.saturating_sub(unit / 2)
+        } else {
+            micros.saturating_add(unit / 2)
+        };
+        shifted / unit * unit
+    } else {
+        micros
+            .saturating_add(unit / 2)
+            .div_euclid(unit)
+            .saturating_mul(unit)
+    }
+}
+
 /// Converts one literal's text into the physical value the column stores.
 ///
 /// `DataType::storage_type` decides the variant: a `TINYINT` column stores
@@ -664,7 +706,7 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         DataType::DateTime64 { fsp } => {
             let micros = pintail_types::parse_datetime_lenient_micros(text)
                 .ok_or_else(|| wrong("expected a datetime"))?;
-            let rounded = pintail_types::round_micros_to_fsp(micros, fsp);
+            let rounded = temporal_storage_precision(micros, text, fsp, false);
             let stored = if column.mysql_data_type.eq_ignore_ascii_case("timestamp")
                 && let Some(zone) = pintail_sql::session_timestamp_zone()
             {
@@ -680,7 +722,7 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             let micros =
                 pintail_types::parse_time_micros(text).ok_or_else(|| wrong("expected a time"))?;
             return Ok(Value::Utf8(pintail_types::format_time_micros(
-                pintail_types::round_micros_to_fsp(micros, fsp),
+                temporal_storage_precision(micros, text, fsp, true),
                 fsp,
             )));
         }

@@ -248,3 +248,30 @@ fn statements_a_local_database_does_not_accept_are_refused() {
         assert!(run(&fixture, sql).is_err(), "must refuse: {sql}");
     }
 }
+
+#[test]
+fn temporal_writes_round_once_at_declared_precision_or_truncate() {
+    for (mode, duration, moment) in [
+        ("", "-00:00:00.111112", "1960-01-01 00:00:01.000000"),
+        (
+            "TIME_TRUNCATE_FRACTIONAL",
+            "-00:00:00.111111",
+            "1960-01-01 00:00:00.999999",
+        ),
+    ] {
+        let fixture = fixture();
+        pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+            run(&fixture, "CREATE TABLE clocks (id BIGINT PRIMARY KEY, duration TIME(6), short_duration TIME(3), moment DATETIME(6))").unwrap();
+            run(&fixture, "INSERT INTO clocks VALUES (1, '-00:00:00.1111115', '00:00:00.123499999', '1960-01-01 00:00:00.9999995')").unwrap();
+        });
+        assert_eq!(
+            stored_rows(&fixture, "clocks"),
+            vec![vec![
+                Value::Int64(1),
+                Value::Utf8(duration.into()),
+                Value::Utf8("00:00:00.123".into()),
+                Value::Utf8(moment.into())
+            ]]
+        );
+    }
+}
