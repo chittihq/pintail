@@ -807,10 +807,32 @@ impl<'catalog> Binder<'catalog> {
             // PARTITION BY, and ORDER BY re-express in terms of group keys
             // and aggregate outputs (q07's share-of-category shape).
             for window in &mut windows {
-                if let WindowFunction::Aggregate(aggregate) = &mut window.function
-                    && let Some(expr) = &mut aggregate.expr
-                {
-                    rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
+                match &mut window.function {
+                    WindowFunction::Aggregate(aggregate) => {
+                        if let Some(expr) = &mut aggregate.expr {
+                            rewrite_group_references(
+                                expr,
+                                &group_by,
+                                &determined,
+                                &mut aggregates,
+                            )?;
+                        }
+                    }
+                    WindowFunction::Offset { expr, default, .. } => {
+                        rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
+                        if let Some(default) = default {
+                            rewrite_group_references(
+                                default,
+                                &group_by,
+                                &determined,
+                                &mut aggregates,
+                            )?;
+                        }
+                    }
+                    WindowFunction::Extreme { expr, .. } => {
+                        rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
+                    }
+                    _ => {}
                 }
                 for expr in &mut window.partition_by {
                     rewrite_group_references(expr, &group_by, &determined, &mut aggregates)?;
