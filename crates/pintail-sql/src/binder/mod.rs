@@ -3606,7 +3606,11 @@ fn parse_number(value: &str) -> Result<(Value, Option<DataType>), BindError> {
             .unwrap_or(MAX_DECIMAL_PRECISION)
             .clamp(scale.max(1), MAX_DECIMAL_PRECISION);
         return Ok((
-            Value::Utf8(value.to_owned()),
+            Value::Utf8(if fraction.is_empty() {
+                integer.to_owned()
+            } else {
+                value.to_owned()
+            }),
             Some(DataType::Decimal { precision, scale }),
         ));
     }
@@ -7092,6 +7096,16 @@ fn unsigned_literal(expr: &Expr) -> Result<u64, BindError> {
 /// the user typed it - `floor(5.5)` stays lowercase, `round(5.64,1)` keeps
 /// its spacing. Without the statement text the parser's rendering stands in.
 fn projection_name(expr: &Expr, source: Option<&str>, clause: SourceClause) -> String {
+    let mut inner = expr;
+    while let Expr::Nested(nested) = inner {
+        inner = nested;
+    }
+    let expr = if matches!(inner, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) {
+        inner
+    } else {
+        expr
+    };
+
     let mut name = match expr {
         Expr::Identifier(identifier) => identifier.value.clone(),
         Expr::CompoundIdentifier(identifiers) => identifiers

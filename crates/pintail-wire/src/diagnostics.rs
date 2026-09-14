@@ -373,6 +373,30 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn zero_scale_decimal_literals_have_no_trailing_point() {
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT 10., 10.0, -10.").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Utf8("10".into()),
+                pintail_types::Value::Utf8("10.0".into()),
+                pintail_types::Value::Utf8("-10".into())
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn parenthesized_column_projections_keep_the_column_name() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT DISTINCT((label)) FROM (SELECT 1 AS label) entries")
+            .await
+            .unwrap();
+        assert_eq!(result.fields[0].name, "label");
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
