@@ -442,6 +442,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn integer_time_casts_round_the_clock_before_encoding_digits() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT CAST(TIME'11:22:59.9' AS SIGNED), CAST(TIME'-11:22:59.9' AS SIGNED), TIME'-11:22:59.9' << 0, CAST(TIME'11:22:59.9' AS DECIMAL(10,1))").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Int64(112_300),
+                Value::Int64(-112_300),
+                Value::UInt64(0_u64.wrapping_sub(112_300)),
+                Value::Utf8("112259.9".into())
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn time_literals_accept_day_prefix_spacing_and_short_clocks() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

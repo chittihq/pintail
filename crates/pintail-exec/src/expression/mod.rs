@@ -4603,11 +4603,23 @@ fn numeric_cast_operand<'a>(
     if numeric && matches!(argument_types.first(), Some(Some(DataType::Time64 { .. }))) {
         // An integer target reads a whole-second TIME straight from its
         // text; the general path renders the number only to parse it back.
-        if target == DataType::Int64
+        if matches!(target, DataType::Int64 | DataType::UInt64)
             && let Value::Utf8(text) = value
-            && let Some(number) = whole_second_time_number(text)
         {
-            return std::borrow::Cow::Owned(Value::Int64(number));
+            if let Some(number) = whole_second_time_number(text) {
+                return std::borrow::Cow::Owned(Value::Int64(number));
+            }
+            if let Some(time) = parse_temporal_micros(text).filter(|time| !time.datetime) {
+                let seconds = (time.micros.unsigned_abs() + 500_000) / 1_000_000;
+                let packed = seconds / 3600 * 10_000 + seconds / 60 % 60 * 100 + seconds % 60;
+                if let Ok(number) = i64::try_from(packed) {
+                    return std::borrow::Cow::Owned(Value::Int64(if time.micros < 0 {
+                        -number
+                    } else {
+                        number
+                    }));
+                }
+            }
         }
         std::borrow::Cow::Owned(time_as_number(value))
     } else if numeric
