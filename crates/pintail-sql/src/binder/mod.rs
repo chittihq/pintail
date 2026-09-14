@@ -6982,6 +6982,11 @@ impl TemporalLiteral {
             return Ok(None);
         }
         let day = digits(&mut remaining, 2)?.parse().map_err(|_| ())?;
+        // Zero calendar components retain the existing literal comparison
+        // path; they are not invalid civil dates to reject here.
+        if year == 0 || month == 0 || day == 0 {
+            return Ok(None);
+        }
         let mut clock = [0; 3];
         for part in &mut clock {
             if !separators(&mut remaining, true)

@@ -975,6 +975,14 @@ pub(super) mod tests {
             ]
         );
         assert_eq!(result.rows[1], vec![Value::Boolean(true); 5]);
+        let result = backend
+            .execute("SELECT d='0000-00-00',d='2005-00-00' FROM calendar_values ORDER BY d")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![vec![Value::Boolean(false), Value::Boolean(false)]; 2]
+        );
         for literal in ["2005-09-033a", "2005-09-03 25:00junk", "2005-02-30junk"] {
             assert!(
                 backend
