@@ -1759,8 +1759,10 @@ within-file effects stay unchanged.
 
 ### Grouped windows without ordering use a reproducible traversal
 
-An order-sensitive window without `ORDER BY` receives grouped rows in ascending
-group-key order, with NULL keys first and each key's declared collation. This
+An order-sensitive window without `ORDER BY` reuses the final query ordering when
+that ordering consists entirely of group keys. Otherwise it receives grouped
+rows in ascending group-key order, with NULL keys first. Remaining group keys
+settle ties, and each key retains its declared collation and NULL placement. This
 avoids assigning row numbers or cumulative frames according to hash-table bucket
 order. The sort runs after aggregation and HAVING, and only when a window leaves
 its order unspecified. Explicit window ordering remains authoritative.

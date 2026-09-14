@@ -210,7 +210,12 @@ pub struct LogicalPlanner;
 
 /// Give order-sensitive windows without ORDER BY a reproducible grouped input.
 /// Explicitly ordered windows continue to use their declared ordering keys.
-fn grouped_window_order(group_by: &[BoundExpr], windows: &[BoundWindow]) -> Vec<BoundOrderKey> {
+fn grouped_window_order(
+    group_by: &[BoundExpr],
+    windows: &[BoundWindow],
+    projection: &[BoundProjection],
+    order_by: &[BoundOrderKey],
+) -> Vec<BoundOrderKey> {
     use pintail_sql::{OrderValueKind, WindowFunction};
     if !windows.iter().any(|window| {
         window.order_by.is_empty()
@@ -224,9 +229,22 @@ fn grouped_window_order(group_by: &[BoundExpr], windows: &[BoundWindow]) -> Vec<
     }) {
         return Vec::new();
     }
-    group_by
+    let requested: Option<Vec<_>> = order_by
+        .iter()
+        .map(|key| {
+            let BoundExprKind::GroupKey(index) = projection.get(key.index)?.expr.kind else {
+                return None;
+            };
+            Some(BoundOrderKey { index, ..*key })
+        })
+        .collect();
+    let mut keys = requested.unwrap_or_default();
+    // A final ordering made entirely of group keys can also order the
+    // window input. Remaining group keys settle ties reproducibly.
+    let remaining = group_by
         .iter()
         .enumerate()
+        .filter(|(index, _)| !keys.iter().any(|key| key.index == *index))
         .map(|(index, key)| BoundOrderKey {
             index,
             ascending: true,
@@ -238,7 +256,9 @@ fn grouped_window_order(group_by: &[BoundExpr], windows: &[BoundWindow]) -> Vec<
                 key.text_collation()
             },
         })
-        .collect()
+        .collect::<Vec<_>>();
+    keys.extend(remaining);
+    keys
 }
 
 impl LogicalPlanner {
@@ -285,7 +305,7 @@ impl LogicalPlanner {
                 }
             }
         }
-        let window_input_order = grouped_window_order(&group_by, &windows);
+        let window_input_order = grouped_window_order(&group_by, &windows, &projection, &order_by);
         let mut plan = source_plan(from);
         if let Some(predicate) = filter {
             plan = LogicalPlan::Filter {
