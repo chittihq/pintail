@@ -1712,7 +1712,7 @@ impl<'catalog> Binder<'catalog> {
                             .collect::<Result<Vec<_>, _>>()?;
                         Some(Self::bind_using_join(
                             &columns,
-                            &table,
+                            &relation.wildcard_order,
                             &mut item_wildcard,
                             &mut tables,
                         )?)
@@ -1725,20 +1725,20 @@ impl<'catalog> Binder<'catalog> {
                             .iter()
                             .filter(|column| !column.using_shadowed)
                             .filter(|column| {
-                                table
-                                    .columns
+                                relation
+                                    .wildcard_order
                                     .iter()
                                     .any(|right| right.name.eq_ignore_ascii_case(&column.name))
                             })
                             .map(|column| column.name.clone())
                             .collect::<Vec<_>>();
                         if columns.is_empty() {
-                            item_wildcard.extend(table.columns.iter().cloned());
+                            item_wildcard.extend(relation.wildcard_order.iter().cloned());
                             None
                         } else {
                             Some(Self::bind_using_join(
                                 &columns,
-                                &table,
+                                &relation.wildcard_order,
                                 &mut item_wildcard,
                                 &mut tables,
                             )?)
@@ -1870,7 +1870,7 @@ impl<'catalog> Binder<'catalog> {
     /// expansion to the standard join-columns-first layout.
     fn bind_using_join(
         columns: &[String],
-        right: &BoundTable,
+        right: &[BoundColumn],
         item_wildcard: &mut Vec<BoundColumn>,
         tables: &mut [BoundTable],
     ) -> Result<BoundExpr, BindError> {
@@ -1888,7 +1888,6 @@ impl<'catalog> Binder<'catalog> {
                 _ => return Err(BindError::AmbiguousColumn(name.clone())),
             };
             let right_column = right
-                .columns
                 .iter()
                 .find(|column| column.name.eq_ignore_ascii_case(name))
                 .cloned()
@@ -1917,11 +1916,14 @@ impl<'catalog> Binder<'catalog> {
         }
         // Shadow the consumed right-side columns in the resolution scope
         // only; the executed join schema is untouched.
-        if let Some(bound_right) = tables.last_mut() {
-            for column in &mut bound_right.columns {
+        for table in tables {
+            for column in &mut table.columns {
                 if columns
                     .iter()
                     .any(|name| column.name.eq_ignore_ascii_case(name))
+                    && right.iter().any(|visible| {
+                        visible.relation_name == column.relation_name && visible.name == column.name
+                    })
                 {
                     column.using_shadowed = true;
                 }
@@ -1931,7 +1933,6 @@ impl<'catalog> Binder<'catalog> {
         item_wildcard.extend(front);
         item_wildcard.extend(
             right
-                .columns
                 .iter()
                 .filter(|column| {
                     !columns

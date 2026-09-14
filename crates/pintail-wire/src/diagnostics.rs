@@ -266,6 +266,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nested_natural_joins_keep_only_visible_wildcard_columns() {
+        let (_directory, backend) = local_backend();
+        let source = "(SELECT 3 AS x, 1 AS y) AS a NATURAL JOIN ((SELECT 1 AS y, 11 AS z) AS b NATURAL JOIN (SELECT 11 AS z, 4 AS w) AS c)";
+        let result = backend
+            .execute(&format!("SELECT * FROM {source}"))
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["y", "x", "z", "w"]
+        );
+        let result = backend
+            .execute(&format!("SELECT y, b.z, c.z FROM {source}"))
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Int64(1),
+                pintail_types::Value::Int64(11),
+                pintail_types::Value::Int64(11)
+            ]
+        );
+    }
+
+    #[tokio::test]
     async fn having_prefers_a_group_key_over_a_conflicting_projection_alias() {
         let (_directory, backend) = local_backend();
         let result = backend.execute("SELECT v*0 AS v FROM (SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3) AS numbers GROUP BY v HAVING v<>0").await.unwrap();
