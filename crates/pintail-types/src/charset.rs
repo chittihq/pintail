@@ -110,6 +110,41 @@ impl CharacterSet {
         Some(bytes)
     }
 
+    /// Decode the complete leading characters of a raw result buffer.
+    /// Byte consumers can retain the original buffer independently.
+    #[must_use]
+    pub fn decode_prefix(self, bytes: &[u8]) -> String {
+        match self {
+            Self::Utf8Mb4 | Self::Utf8Mb3 => std::str::from_utf8(utf8_prefix(bytes))
+                .unwrap_or_default()
+                .chars()
+                .take_while(|character| self != Self::Utf8Mb3 || u32::from(*character) <= 0xffff)
+                .collect(),
+            Self::Ucs2 | Self::Utf16 | Self::Utf16Le => {
+                let units = bytes.chunks_exact(2).map(|pair| {
+                    if self == Self::Utf16Le {
+                        u16::from_le_bytes([pair[0], pair[1]])
+                    } else {
+                        u16::from_be_bytes([pair[0], pair[1]])
+                    }
+                });
+                if self == Self::Ucs2 {
+                    units
+                        .map_while(|unit| char::from_u32(u32::from(unit)))
+                        .collect()
+                } else {
+                    char::decode_utf16(units).map_while(Result::ok).collect()
+                }
+            }
+            Self::Utf32 => bytes
+                .chunks_exact(4)
+                .map_while(|part| {
+                    char::from_u32(u32::from_be_bytes([part[0], part[1], part[2], part[3]]))
+                })
+                .collect(),
+        }
+    }
+
     /// Decode valid encoded text. Ill-formed input has no Unicode carrier.
     #[must_use]
     pub fn decode(self, bytes: &[u8]) -> Option<String> {

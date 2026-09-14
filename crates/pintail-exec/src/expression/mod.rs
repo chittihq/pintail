@@ -1453,7 +1453,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
-                    ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -1658,7 +1658,7 @@ impl CompiledExpr {
                 let first = bound(0);
                 match function {
                     ScalarFunction::BitBytes(_) => 8,
-                    ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -2266,6 +2266,25 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::FloatString => Ok(Value::Utf8(
             pintail_types::Float64::new(mysql_f64(&values[0])?).mysql_float_string(),
         )),
+        ScalarFunction::EncodedCase { charset, upper } => {
+            let Value::Binary(bytes) = &values[0] else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            let prefix = charset.decode_prefix(bytes);
+            let consumed = charset.encode(&prefix).len();
+            let changed = if upper {
+                prefix.to_uppercase()
+            } else {
+                prefix.to_lowercase()
+            };
+            let mut output = charset.encode(&changed);
+            output.extend_from_slice(&bytes[consumed..]);
+            Ok(Value::Binary(output))
+        }
+        ScalarFunction::RawText(charset, _) => match &values[0] {
+            Value::Binary(bytes) => Ok(Value::Utf8(charset.decode_prefix(bytes))),
+            _ => Err(ExecError::InvalidExpressionType),
+        },
         ScalarFunction::TextCharset(charset, _) => {
             let text = scalar_string(&values[0])?;
             charset

@@ -1114,3 +1114,26 @@ fn utf8_conversion_keeps_the_valid_prefix_before_invalid_bytes() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn base_digits_keep_raw_bytes_under_a_wide_connection_encoding() {
+    pintail_sql::set_session_character_set(Some(pintail_types::CharacterSet::Utf16Le));
+    for (expression, expected) in [
+        ("HEX(CONV(CONVERT('123' USING utf16le),10,16))", "3742"),
+        ("HEX(CONV(CONVERT('123' USING utf16le),-10,16))", "3742"),
+        ("CONV(123,10,16)", "䈷"),
+        ("CONV(1,10,16)", ""),
+        ("HEX(BIN(3))", "3131"),
+        ("HEX(OCT(9))", "3131"),
+        ("HEX(LOWER(CONV(1,10,16)))", "31"),
+        ("HEX(UPPER(CONV(1,10,16)))", "31"),
+        ("LENGTH(CONV(1,10,16))", "1"),
+        ("CHAR_LENGTH(CONV(1,10,16))", "0"),
+        ("HEX(CONCAT(CONV(1,10,16)))", "31"),
+        ("HEX(CONCAT(CONV(1,10,16),'a'))", "316100"),
+        ("HEX(CONCAT_WS('',CONV(1,10,16),'a'))", "316100"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+    pintail_sql::set_session_character_set(None);
+}

@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Base-conversion results retain their raw digits under wide connection
+  encodings, including byte consumers, concatenation and case conversion.
+
 - Binary-to-UTF-8 conversion keeps the well-formed prefix before malformed
   bytes, including an empty result when the first byte is invalid.
 

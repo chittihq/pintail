@@ -589,7 +589,8 @@ impl BoundExpr {
             return Some(only.clone());
         }
         if let BoundExprKind::Scalar {
-            function: ScalarFunction::TextCharset(_, collation),
+            function:
+                ScalarFunction::TextCharset(_, collation) | ScalarFunction::RawText(_, collation),
             ..
         } = &self.kind
         {
@@ -624,7 +625,8 @@ impl BoundExpr {
     fn collect_encoded_collations(&self, collations: &mut Vec<String>) {
         match &self.kind {
             BoundExprKind::Scalar {
-                function: ScalarFunction::TextCharset(_, collation),
+                function:
+                    ScalarFunction::TextCharset(_, collation) | ScalarFunction::RawText(_, collation),
                 ..
             } => collations.push(collation.as_str().to_owned()),
             BoundExprKind::Scalar {
@@ -921,6 +923,15 @@ pub enum ScalarFunction {
     Utf8Prefix,
     /// Normalize Unicode into a SQL character set and retain its identity.
     TextCharset(pintail_types::CharacterSet, NamedCollation),
+    /// Raw result bytes interpreted in a declared encoding for character consumers.
+    RawText(pintail_types::CharacterSet, NamedCollation),
+    /// Change case in complete encoded characters while preserving trailing bytes.
+    EncodedCase {
+        /// Encoding used to read and rewrite complete characters.
+        charset: pintail_types::CharacterSet,
+        /// Uppercase when true, lowercase otherwise.
+        upper: bool,
+    },
     /// Read encoded bytes as Unicode, retaining the original character set.
     DecodeText(pintail_types::CharacterSet),
     /// Materialize SQL text bytes at a byte-observing boundary.

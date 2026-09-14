@@ -24,7 +24,10 @@ pub fn session_character_set() -> CharacterSet {
 pub(crate) fn character_set(expression: &BoundExpr) -> CharacterSet {
     match &expression.kind {
         BoundExprKind::Scalar {
-            function: ScalarFunction::TextCharset(charset, _) | ScalarFunction::DecodeText(charset),
+            function:
+                ScalarFunction::TextCharset(charset, _)
+                | ScalarFunction::RawText(charset, _)
+                | ScalarFunction::DecodeText(charset),
             ..
         } => *charset,
         BoundExprKind::Scalar {
@@ -53,6 +56,86 @@ pub(crate) fn annotate(expression: BoundExpr, charset: CharacterSet) -> BoundExp
     let collation =
         crate::bound::NamedCollation::from_name(expression.text_collation().unwrap_or(fallback))
             .expect("text encoding has a supported comparison profile");
+    if let BoundExprKind::Scalar { function, args } = &expression.kind {
+        if matches!(
+            function,
+            ScalarFunction::Conv | ScalarFunction::Bin | ScalarFunction::Oct
+        ) {
+            let bytes = wrap(
+                expression,
+                ScalarFunction::Cast(DataType::Binary),
+                DataType::Binary,
+            );
+            return wrap(
+                bytes,
+                ScalarFunction::RawText(charset, collation),
+                DataType::Utf8,
+            );
+        }
+        if matches!(function, ScalarFunction::Lower | ScalarFunction::Upper)
+            && matches!(
+                args[0].kind,
+                BoundExprKind::Scalar {
+                    function: ScalarFunction::RawText(_, _),
+                    ..
+                }
+            )
+        {
+            let bytes = wrap(
+                encoded(args[0].clone()),
+                ScalarFunction::EncodedCase {
+                    charset,
+                    upper: *function == ScalarFunction::Upper,
+                },
+                DataType::Binary,
+            );
+            return wrap(
+                bytes,
+                ScalarFunction::RawText(charset, collation),
+                DataType::Utf8,
+            );
+        }
+        if matches!(function, ScalarFunction::Concat | ScalarFunction::ConcatWs)
+            && args.iter().any(|argument| {
+                matches!(
+                    argument.kind,
+                    BoundExprKind::Scalar {
+                        function: ScalarFunction::RawText(_, _),
+                        ..
+                    }
+                )
+            })
+        {
+            let args = args
+                .iter()
+                .cloned()
+                .map(|argument| {
+                    if character_set(&argument) == charset {
+                        encoded(argument)
+                    } else {
+                        wrap(
+                            argument,
+                            ScalarFunction::EncodeText(charset),
+                            DataType::Binary,
+                        )
+                    }
+                })
+                .collect();
+            let bytes = BoundExpr {
+                nullable: expression.nullable,
+                data_type: Some(DataType::Binary),
+                kind: BoundExprKind::Scalar {
+                    function: *function,
+                    args,
+                },
+            };
+            return wrap(
+                bytes,
+                ScalarFunction::RawText(charset, collation),
+                DataType::Utf8,
+            );
+        }
+    }
     wrap(
         expression,
         ScalarFunction::TextCharset(charset, collation),
@@ -80,6 +163,13 @@ pub(crate) fn encoded(expression: BoundExpr) -> BoundExpr {
         return expression;
     }
     let charset = character_set(&expression);
+    if let BoundExprKind::Scalar {
+        function: ScalarFunction::RawText(_, _),
+        args,
+    } = &expression.kind
+    {
+        return args[0].clone();
+    }
     if let BoundExprKind::Scalar {
         function: ScalarFunction::DecodeText(decoded),
         args,

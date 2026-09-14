@@ -210,3 +210,8 @@ BIT columns retain their declaration alongside the unsigned storage carrier.
 Concatenation binds an explicit byte conversion at that width; direct and
 derived column projections keep the declaration, while ordinary numeric
 consumers continue to read the unsigned value.
+
+Base-conversion functions can expose raw ASCII digits even when their text
+metadata names a wide encoding. Raw result wrappers retain those bytes for
+byte consumers and decode complete characters for text consumers.
+Concatenation and case conversion preserve incomplete trailing bytes.
