@@ -1191,7 +1191,7 @@ pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, Prob
         name: column.name.to_owned(),
         nullable: column.nullable,
         data_type: column.data_type.to_ascii_lowercase(),
-        column_type: column.column_type.to_ascii_lowercase(),
+        column_type: column.column_type.to_owned(),
         numeric_precision: column.numeric_precision,
         numeric_scale: column.numeric_scale,
         datetime_precision: column.datetime_precision,

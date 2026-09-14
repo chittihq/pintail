@@ -275,3 +275,21 @@ fn temporal_writes_round_once_at_declared_precision_or_truncate() {
         );
     }
 }
+
+#[test]
+fn enum_and_set_store_labels_with_the_declared_case() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE labels (choice ENUM('Alpha','Beta'), choices SET('Alpha','Beta'))",
+    )
+    .unwrap();
+    run(&fixture, "INSERT INTO labels VALUES ('alpha','beta,alpha')").unwrap();
+    assert_eq!(
+        stored_rows(&fixture, "labels"),
+        vec![vec![
+            Value::Utf8("Alpha".into()),
+            Value::Utf8("Alpha,Beta".into())
+        ]]
+    );
+}
