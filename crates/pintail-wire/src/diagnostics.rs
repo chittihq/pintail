@@ -951,6 +951,41 @@ pub(super) mod tests {
         assert_eq!(result.rows[0][1], Value::Int64(7));
     }
 
+    #[tokio::test]
+    async fn date_comparisons_consume_valid_temporal_prefixes() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE calendar_values (d DATE)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO calendar_values VALUES ('2005-09-03'),('2005-09-30')")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT d>='2005-09-3a',d>='2005-09-3!',d>='2005-09-03junk12',d>='2005-09-03 12junk',d>='2005-09-03 12:34:56.123junk' FROM calendar_values ORDER BY d").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::Boolean(true),
+                Value::Boolean(false),
+                Value::Boolean(false)
+            ]
+        );
+        assert_eq!(result.rows[1], vec![Value::Boolean(true); 5]);
+        for literal in ["2005-09-033a", "2005-09-03 25:00junk", "2005-02-30junk"] {
+            assert!(
+                backend
+                    .execute(&format!("SELECT d>='{literal}' FROM calendar_values"))
+                    .await
+                    .is_err(),
+                "{literal}"
+            );
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

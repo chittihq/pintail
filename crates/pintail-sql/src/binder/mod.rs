@@ -6728,7 +6728,13 @@ fn canonical_literal_operand(
         _ => return Ok(operand),
     };
     let text = microsecond_temporal_bound(&text).unwrap_or(text);
-    let Some(parsed) = TemporalLiteral::parse(&text) else {
+    let parsed = TemporalLiteral::parse_comparison(&text).map_err(|()| {
+        BindError::UnsupportedExpression(format!(
+            "incorrect {} value: '{text}'",
+            if date_only { "DATE" } else { "DATETIME" }
+        ))
+    })?;
+    let Some(parsed) = parsed else {
         return Ok(operand);
     };
     if !parsed.is_valid() {
@@ -6929,6 +6935,81 @@ struct TemporalLiteral {
 }
 
 impl TemporalLiteral {
+    /// Comparisons consume a calendar prefix even when trailing text remains.
+    /// Once a numeric field begins, an invalid field must not fall back to a
+    /// shorter valid date or to a lexical string comparison.
+    fn parse_comparison(text: &str) -> Result<Option<Self>, ()> {
+        fn digits<'a>(remaining: &mut &'a str, width: usize) -> Result<&'a str, ()> {
+            let count = remaining.bytes().take_while(u8::is_ascii_digit).count();
+            if count == 0 || count > width {
+                return Err(());
+            }
+            let result = &remaining[..count];
+            *remaining = &remaining[count..];
+            Ok(result)
+        }
+        fn separators(remaining: &mut &str, clock: bool) -> bool {
+            let before = remaining.len();
+            *remaining = remaining.trim_start_matches(|character: char| {
+                character.is_ascii_punctuation()
+                    || (clock && (character.is_ascii_whitespace() || character == 'T'))
+            });
+            remaining.len() < before
+        }
+        if let Some(parsed) = Self::parse(text) {
+            return Ok(Some(parsed));
+        }
+        let mut remaining = text.trim();
+        let year_digits = remaining.bytes().take_while(u8::is_ascii_digit).count();
+        if year_digits == 0
+            || !remaining
+                .as_bytes()
+                .get(year_digits)
+                .is_some_and(u8::is_ascii_punctuation)
+        {
+            return Ok(None);
+        }
+        let written_year = digits(&mut remaining, 4)?;
+        let mut year = written_year.parse::<u32>().map_err(|_| ())?;
+        if written_year.len() <= 2 {
+            year += if year < 70 { 2000 } else { 1900 };
+        }
+        if !separators(&mut remaining, false) {
+            return Ok(None);
+        }
+        let month = digits(&mut remaining, 2)?.parse().map_err(|_| ())?;
+        if !separators(&mut remaining, false) {
+            return Ok(None);
+        }
+        let day = digits(&mut remaining, 2)?.parse().map_err(|_| ())?;
+        let mut clock = [0; 3];
+        for part in &mut clock {
+            if !separators(&mut remaining, true)
+                || !remaining.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            {
+                break;
+            }
+            *part = digits(&mut remaining, 2)?.parse().map_err(|_| ())?;
+        }
+        let fraction = remaining.strip_prefix('.').map_or("", |fraction| {
+            let count = fraction.bytes().take_while(u8::is_ascii_digit).count();
+            &fraction[..count]
+        });
+        let literal = Self {
+            year,
+            month,
+            day,
+            hour: clock[0],
+            minute: clock[1],
+            second: clock[2],
+            fraction: fraction.trim_end_matches('0').into(),
+        };
+        if let Some(rounded) = microsecond_temporal_bound(&literal.canonical(false, 6)) {
+            return Ok(Self::parse(&rounded));
+        }
+        Ok(Some(literal))
+    }
+
     fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.bytes().all(|byte| byte.is_ascii_digit()) {
