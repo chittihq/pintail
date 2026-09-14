@@ -1743,3 +1743,36 @@ fn thai_conversion_and_comparison_keep_the_encoded_rules() {
         ),
     ]);
 }
+
+/// A temporal literal's precision comes from the fraction its own text
+/// carries, and bytes spell that text too. Read only as Utf8, a binary
+/// literal fell through to the six-digit default for bytes, so TIMEDIFF of
+/// two whole-second datetimes rendered `24:00:00.000000`. It reached
+/// ordinary statements through `SET NAMES binary`, where every unprefixed
+/// literal is binary - which is how a whole `ctype_binary` file diverged.
+#[test]
+fn binary_temporal_literals_keep_the_precision_their_text_carries() {
+    assert_answers(&[
+        (
+            "TIMEDIFF('2001-01-02 00:00:00', '2001-01-01 00:00:00')",
+            "24:00:00",
+        ),
+        (
+            "TIMEDIFF(_binary'2001-01-02 00:00:00', _binary'2001-01-01 00:00:00')",
+            "24:00:00",
+        ),
+        (
+            "HEX(CONCAT(TIMEDIFF(_binary'2001-01-02 00:00:00', _binary'2001-01-01 00:00:00')))",
+            "32343A30303A3030",
+        ),
+        // A fraction that IS written still survives, from either spelling.
+        (
+            "TIMEDIFF('2001-01-02 00:00:00.5', '2001-01-01 00:00:00')",
+            "24:00:00.5",
+        ),
+        (
+            "TIMEDIFF(_binary'2001-01-02 00:00:00.5', _binary'2001-01-01 00:00:00')",
+            "24:00:00.5",
+        ),
+    ]);
+}

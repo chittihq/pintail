@@ -62,9 +62,25 @@ pub(super) fn typed_temporal_precision(text: &str, time: bool) -> Option<u64> {
 }
 
 fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
-    if argument.data_type == Some(DataType::Utf8)
+    // A temporal literal's precision is the fraction its own text carries,
+    // and bytes spell that text just as well: `_binary'2001-01-02 00:00:00'`
+    // and the same value written as a hex literal are the instant the quoted
+    // form is. Reading only Utf8 sent every binary-typed literal to the
+    // fallback, which answers six for bytes - so TIMEDIFF of two
+    // whole-second datetimes declared TIME(6) and rendered 24:00:00.000000
+    // where MySQL renders 24:00:00. It reached ordinary statements because
+    // under `SET NAMES binary` every unprefixed literal is binary too.
+    if matches!(argument.data_type, Some(DataType::Utf8 | DataType::Binary))
         && let Some(value) = crate::text_charset::literal_value(argument)
-        && let Value::Utf8(text) = value.as_ref()
+        && let Some(text) = match value.as_ref() {
+            Value::Utf8(text) => Some(std::borrow::Cow::Borrowed(text.as_str())),
+            // Not lossy: a temporal literal is ASCII, and bytes that are not
+            // valid UTF-8 are not one, so they fall through to the default.
+            Value::Binary(bytes) => std::str::from_utf8(bytes)
+                .ok()
+                .map(std::borrow::Cow::Borrowed),
+            _ => None,
+        }
     {
         return text.rsplit_once('.').map_or(0, |(_, fraction)| {
             u8::try_from(
