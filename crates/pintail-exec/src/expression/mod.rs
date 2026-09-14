@@ -3931,37 +3931,8 @@ fn evaluate_eager_scalar_inner(
         ScalarFunction::MakeTime => {
             let hour = mysql_i64(&values[0])?;
             let minute = mysql_i64(&values[1])?;
-            if matches!(
-                argument_types.get(2),
-                Some(Some(DataType::Float32 | DataType::Float64))
-            ) {
-                let seconds = mysql_f64(&values[2])?;
-                if !(0.0..60.0).contains(&seconds) {
-                    return Ok(Value::Null);
-                }
-                let text = format!("{seconds:.6}");
-                let (whole, fraction) = text.split_once('.').ok_or(ExecError::InvalidDateTime)?;
-                let whole = whole
-                    .parse::<i64>()
-                    .map_err(|_| ExecError::InvalidDateTime)?;
-                return Ok(make_time(hour, minute, whole).map_or(Value::Null, |clock| {
-                    Value::Utf8(format!("{clock}.{fraction}"))
-                }));
-            }
-            // MySQL keeps a fractional second: MAKETIME(12,15,30.5) is
-            // 12:15:30.500000. The fraction is read from the argument's own
-            // text so its digit count survives the integer conversion.
-            let seconds_text = scalar_string(&values[2]).unwrap_or_default();
-            let fraction = seconds_text
-                .split_once('.')
-                .map(|(_, digits)| digits.trim_end_matches('0').to_owned())
-                .filter(|digits| !digits.is_empty());
-            let second = mysql_i64(&values[2])?;
-            Ok(make_time(hour, minute, second)
-                .map(|rendered| match fraction {
-                    Some(digits) => format!("{rendered}.{digits}"),
-                    None => rendered,
-                })
+            let truncate = matches!(values.get(3), Some(Value::Boolean(true)));
+            Ok(make_time(hour, minute, &values[2], argument_types.get(2).copied().flatten(), truncate)
                 .map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::JsonValue => {
@@ -6216,19 +6187,55 @@ fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
 /// `MySQL` `MAKETIME`. Built by formatting rather than through a clock type:
 /// `MySQL`'s TIME spans -838:59:59..=838:59:59, which no civil-time type
 /// represents, and out-of-range hours clamp to that boundary.
-fn make_time(hour: i64, minute: i64, second: i64) -> Option<String> {
-    if !(0..=59).contains(&minute) || !(0..=59).contains(&second) {
+fn make_time(
+    hour: i64,
+    minute: i64,
+    second: &Value,
+    second_type: Option<DataType>,
+    truncate: bool,
+) -> Option<String> {
+    if !(0..=59).contains(&minute) {
         return None;
     }
-    let negative = hour < 0;
-    let magnitude = hour.unsigned_abs();
-    let (hours, minutes, seconds) = if magnitude > 838 {
-        (838, 59, 59)
+    let text = scalar_string(second).ok()?;
+    // Decimal input retains all written digits until the final microsecond
+    // rounding. Non-decimal numeric spellings use their numeric value.
+    let text = if pintail_types::parse_decimal_rounded(&text, 6).is_some() {
+        text
     } else {
-        (magnitude, minute.unsigned_abs(), second.unsigned_abs())
+        let number = mysql_f64(second).ok()?;
+        if !(0.0..60.0).contains(&number) {
+            return None;
+        }
+        format!("{number:.9}")
     };
-    let sign = if negative { "-" } else { "" };
-    Some(format!("{sign}{hours:02}:{minutes:02}:{seconds:02}"))
+    let whole = text.split('.').next()?.parse::<i64>().ok()?;
+    if !(0..=59).contains(&whole)
+        || (text.starts_with('-') && text.bytes().any(|byte| matches!(byte, b'1'..=b'9')))
+    {
+        return None;
+    }
+    let fsp = match second_type {
+        Some(DataType::Decimal { scale, .. }) => scale.min(6),
+        Some(DataType::Float32 | DataType::Float64 | DataType::Utf8 | DataType::Binary) => 6,
+        _ => text.split_once('.').map_or(0, |(_, digits)| {
+            u8::try_from(digits.len().min(6)).unwrap_or(6)
+        }),
+    };
+    let truncated;
+    let rounded_text = if truncate && let Some((whole, fraction)) = text.split_once('.') {
+        truncated = format!("{whole}.{}", &fraction[..fraction.len().min(6)]);
+        &truncated
+    } else {
+        &text
+    };
+    let seconds = pintail_types::parse_decimal_rounded(rounded_text, 6)?;
+    let micros =
+        (i128::from(hour.unsigned_abs()) * 3_600 + i128::from(minute) * 60) * 1_000_000 + seconds;
+    Some(render_time_micros(
+        if hour < 0 { -micros } else { micros },
+        fsp,
+    ))
 }
 
 /// Parses a JSON-valued argument, raising rather than guessing when the text

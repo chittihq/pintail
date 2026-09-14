@@ -442,6 +442,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maketime_rounds_or_truncates_fractional_seconds() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        let result = backend.execute("SELECT MAKETIME(12,15,59.9999999), MAKETIME(12,15,30.500), MAKETIME(838,59,59.0000005)").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("12:16:00.000000".into()),
+                Value::Utf8("12:15:30.500".into()),
+                Value::Utf8("838:59:59.000000".into())
+            ]]
+        );
+        backend
+            .query(b"SET sql_mode='TIME_TRUNCATE_FRACTIONAL'")
+            .await;
+        let result = backend
+            .execute(
+                "SELECT MAKETIME(12,15,59.9999999), MAKETIME(12,15,CAST(59.9999999 AS DOUBLE))",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("12:15:59.999999".into()),
+                Value::Utf8("12:15:59.999999".into())
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn signed_time_order_uses_duration_value() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

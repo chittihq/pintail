@@ -1817,7 +1817,10 @@ pub(super) fn bind_scalar(
             kind: BoundExprKind::Literal(Value::UInt64(policy)),
         });
     }
-    if function == ScalarFunction::FromUnixTime {
+    if matches!(
+        function,
+        ScalarFunction::FromUnixTime | ScalarFunction::MakeTime
+    ) {
         args.push(BoundExpr {
             data_type: Some(DataType::Boolean),
             nullable: false,
