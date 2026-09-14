@@ -1745,3 +1745,14 @@ Unicode value. Query sharing includes connection encoding.
 This extends the read layer to explicit Unicode encoding conversions without
 claiming the deferred full collation/coercibility matrix, changing storage
 formats, or enabling unimplemented client and result protocol encodings.
+
+### Upstream replay files start from the same oracle server state
+
+A fresh fixture database does not isolate changes to global variables or grant
+tables. Some upstream files delete login accounts, leaving later files unable
+to establish their oracle connections; counting those as unsupported setup
+conceals comparisons. Local replay snapshots the disposable oracle's startup
+globals and grant tables, then restores them after every file, including before
+a retry. Grant snapshots remain temporary tables on the supervisor connection.
+A failed restoration aborts the run. Statement selection, comparison rules and
+within-file effects stay unchanged.

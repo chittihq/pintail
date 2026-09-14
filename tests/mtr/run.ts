@@ -46,6 +46,7 @@ import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rea
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
 import mysql from 'mysql2/promise'
+import { captureOracleState } from './oracle-state'
 
 const repository = resolve(import.meta.dir, '..', '..')
 const nonce = Date.now().toString(36)
@@ -1305,6 +1306,14 @@ async function main() {
   }
   const [[version]] = await mysqlRoot.query<mysql.RowDataPacket[][]>({ sql: 'SELECT VERSION()', rowsAsArray: true })
   const mysqlVersion = String((version as unknown as string[])[0])
+  const oracleState = MODE === 'local' ? await captureOracleState(mysqlRoot) : undefined
+  const replayFile = async (name: string, text: string) => {
+    try {
+      return await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot!, mysqlHost)
+    } finally {
+      await oracleState?.restore()
+    }
+  }
 
   const binary = await buildPintail()
   const hash = createHash('sha256')
@@ -1344,10 +1353,10 @@ async function main() {
       continue
     }
     const started = performance.now()
-    let result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+    let result = await replayFile(name, text)
     if (baseline && lostStatements(baseline, result).length) {
       log(`${name}: ${lostStatements(baseline, result).length} banked statements not exact; replaying the file once`)
-      result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+      result = await replayFile(name, text)
     }
     results.push(result)
     const c = result.counts
