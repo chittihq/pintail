@@ -1582,3 +1582,31 @@ fn hex_reads_decimal_operands_as_rounded_signed_integers() {
         ("HEX('10.5')", "31302E35"),
     ]);
 }
+
+#[test]
+fn conditional_temporals_unify_calendar_kind_and_fractional_precision() {
+    pintail_exec::set_session_timestamp_micros(Some(1_593_561_600_000_000));
+    let answers = [
+        (
+            "CONCAT(IFNULL(TIME'00:00:00.567',DATE'2002-01-01'))",
+            "2020-07-01 00:00:00.567",
+        ),
+        (
+            "CONCAT(IF(TRUE,TIME'00:00:00.567',DATE'2002-01-01'))",
+            "2020-07-01 00:00:00.567",
+        ),
+        (
+            "CONCAT(COALESCE(CAST(NULL AS TIME(3)),DATE'2002-01-01'))",
+            "2002-01-01 00:00:00.000",
+        ),
+        (
+            "CONCAT(IFNULL(TIME'01:02:03.1',TIME'02:03:04.123'))",
+            "01:02:03.100",
+        ),
+    ]
+    .map(|(query, expected)| (query, expected, scalar(query)));
+    pintail_exec::set_session_timestamp_micros(None);
+    for (query, expected, answer) in answers {
+        assert_eq!(answer, expected, "{query}");
+    }
+}

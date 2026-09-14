@@ -1777,6 +1777,7 @@ pub(super) fn bind_scalar(
     let charset = crate::text_charset::scalar_charset(function, &args);
     let mut args = args;
     coerce_decimal_branches(function, data_type, &mut args);
+    coerce_temporal_branches(function, data_type, &mut args)?;
     if data_type == Some(DataType::Binary) {
         let branches = match function {
             ScalarFunction::If => &mut args[1..],
@@ -1887,6 +1888,29 @@ fn str_to_date_result_type(args: &[BoundExpr]) -> DataType {
         (false, true) => DataType::Time64 { fsp },
         _ => DataType::Date32,
     }
+}
+
+fn coerce_temporal_branches(
+    function: ScalarFunction,
+    data_type: Option<DataType>,
+    args: &mut [BoundExpr],
+) -> Result<(), BindError> {
+    let Some(target @ (DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })) =
+        data_type
+    else {
+        return Ok(());
+    };
+    let branches = match function {
+        ScalarFunction::If => &mut args[1..],
+        ScalarFunction::Coalesce => args,
+        _ => return Ok(()),
+    };
+    for branch in branches {
+        if branch.data_type.is_some_and(|source| source != target) {
+            *branch = bind_scalar(ScalarFunction::Cast(target), vec![branch.clone()])?;
+        }
+    }
+    Ok(())
 }
 
 /// A decimal-unified COALESCE/GREATEST/LEAST must also coerce its branch
@@ -2026,6 +2050,36 @@ fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindErro
 }
 
 fn conditional_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
+    let types: Vec<_> = args.iter().filter_map(|arg| arg.data_type).collect();
+    if !types.is_empty()
+        && types.iter().all(|kind| {
+            matches!(
+                kind,
+                DataType::Date32 | DataType::Time64 { .. } | DataType::DateTime64 { .. }
+            )
+        })
+    {
+        let fsp = types
+            .iter()
+            .map(|kind| match kind {
+                DataType::Time64 { fsp } | DataType::DateTime64 { fsp } => *fsp,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        return Ok(Some(
+            if types.iter().all(|kind| *kind == DataType::Date32) {
+                DataType::Date32
+            } else if types
+                .iter()
+                .all(|kind| matches!(kind, DataType::Time64 { .. }))
+            {
+                DataType::Time64 { fsp }
+            } else {
+                DataType::DateTime64 { fsp }
+            },
+        ));
+    }
     let common = common_result_type(args)?;
     // A possible binary result keeps the conditional in the byte domain,
     // even when the branch selected on this row is text.
