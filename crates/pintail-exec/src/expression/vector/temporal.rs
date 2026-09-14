@@ -360,6 +360,11 @@ pub(super) fn date_interval_column(
     if matches!(amount, Value::Null) {
         return None;
     }
+    if unit == IntervalUnit::Second
+        && crate::expression::interval_second_micros(amount).ok()? % 1_000_000 != 0
+    {
+        return None;
+    }
     let amount = crate::expression::mysql_i64(amount).ok()?;
     let Operand::Column(input) = operand(batch, argument, effects)? else {
         return None;

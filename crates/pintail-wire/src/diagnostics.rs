@@ -442,6 +442,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn second_intervals_preserve_fractional_amounts() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT TIME'00:00:00.1' + INTERVAL 1.25 SECOND, TIME'-10:00:00.1' - INTERVAL 1.1 SECOND, TIMESTAMP'2024-02-29 23:59:59.9' + INTERVAL 0.25 SECOND").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("00:00:01.35".into()),
+                Value::Utf8("-10:00:01.2".into()),
+                Value::Utf8("2024-03-01 00:00:00.15".into())
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn time_extrema_use_the_greatest_fractional_precision() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

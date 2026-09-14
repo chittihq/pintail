@@ -1773,8 +1773,9 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::DateInterval { unit, .. } => (
-            Some(match args[0].data_type {
+        ScalarFunction::DateInterval { unit, .. } => {
+            let amount_fsp = if unit == IntervalUnit::Second { temporal_argument_precision(&args[1]) } else { 0 };
+            (Some(match args[0].data_type {
                 Some(DataType::Date32)
                     if matches!(
                         unit,
@@ -1788,14 +1789,14 @@ pub(super) fn bind_scalar(
                 Some(DataType::Time64 { fsp })
                     if matches!(unit, IntervalUnit::Hour | IntervalUnit::Minute | IntervalUnit::Second) =>
                 {
-                    DataType::Time64 { fsp }
+                    DataType::Time64 { fsp: fsp.max(amount_fsp) }
                 }
-                Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => DataType::DateTime64 { fsp },
-                Some(DataType::Date32) => DataType::DateTime64 { fsp: 0 },
+                Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => DataType::DateTime64 { fsp: fsp.max(amount_fsp) },
+                Some(DataType::Date32) => DataType::DateTime64 { fsp: amount_fsp },
                 _ => DataType::Utf8,
             }),
             args.iter().any(|argument| argument.nullable),
-        ),
+        )},
         // MySQL types every date-part extraction as SIGNED - `-WEEKDAY(x)`
         // is a legal expression there, so an unsigned carrier here turned
         // the negation into a spurious overflow (found by the BI corpus).

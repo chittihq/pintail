@@ -3537,7 +3537,9 @@ fn evaluate_eager_scalar_inner(
                     IntervalUnit::Second => 1,
                     _ => return Ok(Value::Null),
                 };
-                let amount = i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000;
+                let amount = if unit == IntervalUnit::Second {
+                    interval_second_micros(&values[1])?
+                } else { i128::from(mysql_i64(&values[1])?) * seconds * 1_000_000 };
                 let total = time.micros + if subtract { -amount } else { amount };
                 // Interval arithmetic rejects an out-of-range TIME; ADDTIME
                 // uses the same duration carrier but clamps its result.
@@ -3555,8 +3557,14 @@ fn evaluate_eager_scalar_inner(
             )
             .map_or(Ok(input), |value| scalar_string(&value))?;
             let value = parse_mysql_datetime(&input)?;
-            let amount = mysql_i64(&values[1])?;
-            let value = apply_interval(value, amount, unit, subtract)?;
+            let value = if unit == IntervalUnit::Second {
+                let amount = interval_second_micros(&values[1])?;
+                let signed = if subtract { -amount } else { amount };
+                let micros = i64::try_from(signed).map_err(|_| ExecError::NumericOverflow)?;
+                value.checked_add_signed(chrono::Duration::microseconds(micros)).filter(|shifted| (0..=9999).contains(&shifted.year())).ok_or(ExecError::InvalidDateTime)?
+            } else {
+                apply_interval(value, mysql_i64(&values[1])?, unit, subtract)?
+            };
             let date_only = input.len() <= 10
                 && matches!(
                     unit,
@@ -6182,6 +6190,14 @@ fn conv_base(subject: &str, from: i64, to: i64) -> Option<String> {
         "{sign}{}",
         rendered.into_iter().collect::<String>()
     ))
+}
+
+fn interval_second_micros(value: &Value) -> Result<i128, ExecError> {
+    let text = scalar_string(value)?;
+    if let Some(micros) = pintail_types::parse_decimal_rounded(&text, 6) {
+        return Ok(micros);
+    }
+    Ok(i128::from(mysql_i64(value)?) * 1_000_000)
 }
 
 /// `MySQL` `MAKETIME`. Built by formatting rather than through a clock type:
