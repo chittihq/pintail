@@ -1241,6 +1241,10 @@ fn declared_characters(data_type: &SqlDataType) -> Option<u32> {
         }))
         // BINARY(n) is a byte count, and the cast pads to it.
         | SqlDataType::Binary(Some(length)) => u32::try_from(*length).ok(),
+        SqlDataType::Custom(name, arguments)
+            if name.to_string().eq_ignore_ascii_case("nchar") && arguments.len() == 1 => {
+                arguments[0].parse().ok()
+            }
         _ => None,
     }
 }

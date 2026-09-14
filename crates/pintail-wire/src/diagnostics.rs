@@ -1376,6 +1376,21 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn national_character_casts_honor_character_limits() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT CAST('abcdef' AS NCHAR(2)),CAST(_koi8r X'C6C7C8' AS NCHAR(2)),CAST('a' AS NCHAR(0))").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("ab".to_owned()),
+                Value::Utf8("фг".to_owned()),
+                Value::Utf8(String::new())
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
