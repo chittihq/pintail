@@ -1,3 +1,6 @@
+#[path = "diagnostics.rs"]
+mod diagnostics;
+
 use std::{
     collections::BTreeMap,
     future::Future,
@@ -715,6 +718,7 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
 struct Condition {
     level: &'static str,
     code: u16,
+    sql_state: &'static [u8; 5],
     message: String,
 }
 
@@ -732,6 +736,7 @@ fn statement_conditions<T>(
         let condition = Condition {
             level: "Error",
             code: error_kind(error).code(),
+            sql_state: error_kind(error).sql_state(),
             message: error.to_string(),
         };
         return (vec![condition], 1);
@@ -739,6 +744,7 @@ fn statement_conditions<T>(
     let warning = |code: u16, message: String| Condition {
         level: "Warning",
         code,
+        sql_state: if code == 1365 { b"22012" } else { b"HY000" },
         message,
     };
     let conditions = (0..division)
@@ -803,6 +809,7 @@ struct Session {
     /// How many conditions the last statement raised, including any past
     /// the listed ones.
     condition_count: u64,
+    row_count: i64,
     cte_max_recursion_depth: u64,
     max_execution_time_ms: u64,
     /// Fraction digits division and `AVG` add to the dividend's scale.
@@ -841,6 +848,7 @@ impl Default for Session {
             collation_connection: "utf8mb4_0900_ai_ci",
             conditions: Vec::new(),
             condition_count: 0,
+            row_count: 0,
             cte_max_recursion_depth: pintail_exec::DEFAULT_CTE_MAX_RECURSION_DEPTH,
             max_execution_time_ms: 0,
             div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
@@ -936,6 +944,7 @@ struct RecordedStatement {
 
 /// What a statement's worker leaves once it is done.
 struct Settled {
+    row_count: i64,
     conditions: (Vec<Condition>, u64),
     rows: Result<usize, QueryError>,
     trace: Option<crate::trace::Trace>,
@@ -1248,6 +1257,16 @@ impl Backend {
             .map_err(|error| QueryError::Internal(error.to_string()))?
             .clone();
         if let Some(output) = compatibility_query(sql, &authenticated.database_name, &session) {
+            let normalized = normalized_command(sql);
+            if !normalized.starts_with("show warnings")
+                && !normalized.contains("@@warning_count")
+                && !normalized.contains("@@error_count")
+                && let Ok(mut current) = self.session.lock()
+            {
+                current.row_count = -1;
+                current.conditions.clear();
+                current.condition_count = 0;
+            }
             return Ok(Executed::Done(finish(Ok(output))));
         }
 
@@ -1356,6 +1375,12 @@ impl Backend {
                     } else {
                         0
                     };
+                    let row_count = match &answer {
+                        Ok(crate::engine::Answer::Whole(output)) => output
+                            .affected
+                            .map_or(-1, |rows| i64::try_from(rows).unwrap_or(i64::MAX)),
+                        _ => -1,
+                    };
                     let (finished, rows) = match answer {
                         Ok(crate::engine::Answer::Whole(output)) => {
                             let result = refuse_truncated(output);
@@ -1384,6 +1409,7 @@ impl Backend {
                     drop(sink);
                     let conditions = statement_conditions(&rows, group_concat, division);
                     let settled = Settled {
+                        row_count,
                         conditions,
                         rows,
                         trace: crate::trace::take(),
@@ -1460,6 +1486,7 @@ impl Backend {
         }
         if let Ok(mut current) = self.session.lock() {
             (current.conditions, current.condition_count) = settled.conditions;
+            current.row_count = settled.row_count;
         }
         // Recorded on both outcomes: a query that failed is the one an
         // operator most wants to find, and logging only successes would hide
@@ -2132,9 +2159,26 @@ impl Handler for Backend {
                 "statement is not valid UTF-8".to_owned(),
             );
         };
-        if let Some(assignments) = self.user_variable_assignments(sql) {
-            return match self.assign_user_variables(assignments).await {
+        if let Ok(mut session) = self.session.lock()
+            && let Some(result) = diagnostics::apply(sql, &mut session)
+        {
+            return match result {
                 Ok(()) => Response::Ok(OkPacket::default(), String::new()),
+                Err(message) => Response::Error(ErrorKind::ErParseError, message),
+            };
+        }
+        if let Some(assignments) = self.user_variable_assignments(sql) {
+            if let Ok(mut session) = self.session.lock() {
+                session.conditions.clear();
+                session.condition_count = 0;
+            }
+            return match self.assign_user_variables(assignments).await {
+                Ok(()) => {
+                    if let Ok(mut session) = self.session.lock() {
+                        session.row_count = 0;
+                    }
+                    Response::Ok(OkPacket::default(), String::new())
+                }
                 Err(error) => Response::Error(error_kind(&error), error.to_string()),
             };
         }
@@ -2143,7 +2187,14 @@ impl Handler for Backend {
                 return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
             }
             return match self.evaluate_session_command(sql).await {
-                Ok(()) => Response::Ok(OkPacket::default(), String::new()),
+                Ok(()) => {
+                    if let Ok(mut session) = self.session.lock() {
+                        session.row_count = 0;
+                        session.conditions.clear();
+                        session.condition_count = 0;
+                    }
+                    Response::Ok(OkPacket::default(), String::new())
+                }
                 Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
             };
         }
@@ -3352,6 +3403,7 @@ fn may_answer_compatibly(sql: &str) -> bool {
         || starts("show ")
         || starts("select version()")
         || starts("select database()")
+        || starts("select row_count()")
 }
 
 fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<QueryOutput> {
@@ -3427,6 +3479,8 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
             "@@transaction_isolation",
             Value::Utf8("REPEATABLE-READ".to_owned()),
         )
+    } else if normalized.starts_with("select row_count()") {
+        ("ROW_COUNT()", Value::Int64(session.row_count))
     } else if normalized.starts_with("select version()") {
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
@@ -5330,6 +5384,7 @@ mod result_ceiling_tests {
             [super::Condition {
                 level: "Error",
                 code: 1690,
+                sql_state: b"22003",
                 message: "BIGINT UNSIGNED value is out of range in '(cast(0 as unsigned) - 1)'"
                     .to_owned(),
             }]

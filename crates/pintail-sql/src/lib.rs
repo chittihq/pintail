@@ -663,7 +663,7 @@ pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
             let simple = matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_))
                 && text.starts_with("@@");
             if !simple
-                && !["VERSION()", "DATABASE()"]
+                && !["VERSION()", "DATABASE()", "ROW_COUNT()"]
                     .iter()
                     .any(|name| text.eq_ignore_ascii_case(name))
             {
