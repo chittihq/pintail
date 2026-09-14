@@ -371,8 +371,26 @@ fn subject(expr: &BoundExpr) -> Option<Subject<'_>> {
     let BoundExprKind::Scalar { function, args } = &expr.kind else {
         return None;
     };
-    let [argument] = args.as_slice() else {
-        return None;
+    // Calendar casts carry a captured SQL-mode policy after their input.
+    // Typed calendar columns need no text validation, so that policy does
+    // not change the range represented by their date extraction.
+    let argument = match args.as_slice() {
+        [argument] => argument,
+        [argument, policy]
+            if matches!(policy.kind, BoundExprKind::Literal(Value::UInt64(_)))
+                && matches!(
+                    function,
+                    ScalarFunction::Date
+                        | ScalarFunction::Cast(DataType::Date32)
+                        | ScalarFunction::DeclaredCast {
+                            target: DataType::Date32,
+                            ..
+                        }
+                ) =>
+        {
+            argument
+        }
+        _ => return None,
     };
     let BoundExprKind::Column(column) = &argument.kind else {
         return None;
