@@ -254,6 +254,7 @@ impl<'catalog> Binder<'catalog> {
                 enum_labels: None,
                 geometry: false,
                 timestamp: false,
+                binary_width: anchor.result_binary_width(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2050,6 +2051,7 @@ impl<'catalog> Binder<'catalog> {
                     .map(|labels| std::sync::Arc::new(labels.to_vec())),
                 geometry: column.is_geometry(),
                 timestamp: column.is_timestamp(),
+                binary_width: column.binary_width(),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2108,6 +2110,7 @@ impl<'catalog> Binder<'catalog> {
                 enum_labels: None,
                 geometry: false,
                 timestamp: false,
+                binary_width: input.result_binary_width(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })
@@ -8642,6 +8645,24 @@ mod tests {
                 }),
             ]
         );
+    }
+
+    #[test]
+    fn binary_declaration_width_survives_derived_layouts() {
+        for sql in [
+            "SELECT CAST(NULL AS BINARY(6)) AS b",
+            "SELECT p.b FROM (SELECT CAST(NULL AS BINARY(6)) AS b) p",
+            "WITH p AS (SELECT CAST(NULL AS BINARY(6)) AS b) SELECT b FROM p",
+            "SELECT p.b FROM (SELECT CAST(NULL AS BINARY(6)) AS b GROUP BY b) p",
+            "SELECT IF(id=1, CAST(NULL AS BINARY(6)), CAST(NULL AS BINARY(3))) FROM Events",
+        ] {
+            let query = bind(sql).expect("bind binary declaration");
+            assert_eq!(
+                query.result_binary_width(&query.projection[0].expr),
+                Some(6),
+                "{sql}"
+            );
+        }
     }
 
     #[test]

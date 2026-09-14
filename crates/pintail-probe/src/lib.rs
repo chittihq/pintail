@@ -212,6 +212,22 @@ impl SourceTable {
                                 | "geometrycollection"
                         ))
                         .with_timestamp(column.mysql_data_type.eq_ignore_ascii_case("timestamp"))
+                        .with_binary_width(
+                            matches!(
+                                column.mysql_data_type.to_ascii_lowercase().as_str(),
+                                "binary" | "varbinary"
+                            )
+                            .then(|| {
+                                column
+                                    .mysql_column_type
+                                    .split_once('(')?
+                                    .1
+                                    .strip_suffix(')')?
+                                    .parse::<u32>()
+                                    .ok()
+                            })
+                            .flatten(),
+                        )
                         // A SET sorts by its member bitmask; the members and
                         // their declaration order are that mask's bits.
                         .with_set_members(
@@ -2112,5 +2128,18 @@ mod stabilization_tests {
                 "{family} was refused although it rewrites nothing",
             );
         }
+    }
+    #[test]
+    fn binary_declaration_width_is_recovered_without_rows() {
+        let mut payload = identifier();
+        payload.id = 2;
+        payload.name = "payload".to_owned();
+        payload.pintail_type = DataType::Binary;
+        payload.mysql_data_type = "varbinary".to_owned();
+        payload.mysql_column_type = "varbinary(6)".to_owned();
+        let source = table(vec![identifier(), payload]);
+        let schema = source.table_schema().expect("binary schema");
+        assert_eq!(schema.columns()[0].binary_width(), None);
+        assert_eq!(schema.columns()[1].binary_width(), Some(6));
     }
 }

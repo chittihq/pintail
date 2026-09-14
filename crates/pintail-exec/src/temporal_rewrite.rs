@@ -614,6 +614,7 @@ mod tests {
             enum_labels: None,
             geometry: false,
             timestamp: false,
+            binary_width: None,
             outer: false,
             using_shadowed: false,
         }

@@ -4701,22 +4701,25 @@ fn build_operator_inner(
             // real column entries so their own type layout and appended
             // outputs line up; synthetic identities keep Column resolution
             // unambiguous, matching the window-output convention.
-            let synthetic =
-                |index: usize, data_type: Option<DataType>, nullable: bool| BoundColumn {
-                    database_id: DatabaseId::new(u64::MAX),
-                    table_id: TableId::new(u64::MAX - 1),
-                    column_id: u32::try_from(index).unwrap_or(u32::MAX),
-                    relation_name: "<aggregate>".to_owned(),
-                    name: format!("<aggregate-{index}>"),
-                    data_type: data_type.unwrap_or(DataType::Utf8),
-                    nullable,
-                    collation: None,
-                    enum_labels: None,
-                    geometry: false,
-                    timestamp: false,
-                    outer: false,
-                    using_shadowed: false,
-                };
+            let synthetic = |index: usize,
+                             data_type: Option<DataType>,
+                             nullable: bool,
+                             binary_width: Option<u32>| BoundColumn {
+                database_id: DatabaseId::new(u64::MAX),
+                table_id: TableId::new(u64::MAX - 1),
+                column_id: u32::try_from(index).unwrap_or(u32::MAX),
+                relation_name: "<aggregate>".to_owned(),
+                name: format!("<aggregate-{index}>"),
+                data_type: data_type.unwrap_or(DataType::Utf8),
+                nullable,
+                collation: None,
+                enum_labels: None,
+                geometry: false,
+                timestamp: false,
+                binary_width,
+                outer: false,
+                using_shadowed: false,
+            };
             let mut output_columns = group_by
                 .iter()
                 .enumerate()
@@ -4727,7 +4730,12 @@ fn build_operator_inner(
                         column.nullable = expression.nullable;
                         column
                     }
-                    _ => synthetic(index, expression.data_type, expression.nullable),
+                    _ => synthetic(
+                        index,
+                        expression.data_type,
+                        expression.nullable,
+                        expression.binary_width(),
+                    ),
                 })
                 .collect::<Vec<_>>();
             output_columns.extend(aggregates.iter().enumerate().map(|(offset, aggregate)| {
@@ -4735,6 +4743,7 @@ fn build_operator_inner(
                     group_by.len().saturating_add(offset),
                     aggregate.data_type,
                     aggregate.nullable,
+                    aggregate.expr.as_ref().and_then(BoundExpr::binary_width),
                 )
             }));
             // Each grouping key folds under ITS OWN collation - grouping
@@ -4797,6 +4806,7 @@ fn build_operator_inner(
                         enum_labels: None,
                         geometry: false,
                         timestamp: false,
+                        binary_width: projection.expr.binary_width(),
                         outer: false,
                         using_shadowed: false,
                     },

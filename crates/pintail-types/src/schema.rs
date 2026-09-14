@@ -95,6 +95,8 @@ pub struct Column {
     /// type, nullability and name only), so existing stores keep opening;
     /// rebuilt from the durable source column type on every open.
     timestamp: bool,
+    /// Declared BINARY/VARBINARY byte width, recovered from source metadata.
+    binary_width: Option<u32>,
 }
 
 impl Column {
@@ -111,6 +113,7 @@ impl Column {
             set_members: None,
             geometry: false,
             timestamp: false,
+            binary_width: None,
         }
     }
 
@@ -168,6 +171,19 @@ impl Column {
     #[must_use]
     pub fn is_timestamp(&self) -> bool {
         self.timestamp
+    }
+
+    /// Retains the declared binary width even when every value is NULL.
+    #[must_use]
+    pub fn with_binary_width(mut self, width: Option<u32>) -> Self {
+        self.binary_width = width;
+        self
+    }
+
+    /// Declared maximum bytes for a BINARY or VARBINARY column.
+    #[must_use]
+    pub fn binary_width(&self) -> Option<u32> {
+        self.binary_width
     }
 
     /// Returns the declared SET members, when the column is a SET.

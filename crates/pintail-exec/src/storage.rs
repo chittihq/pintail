@@ -1620,6 +1620,7 @@ fn build_prewhere_spec(
             enum_labels: None,
             geometry: false,
             timestamp: false,
+            binary_width: column.binary_width(),
             outer: false,
             using_shadowed: false,
         });

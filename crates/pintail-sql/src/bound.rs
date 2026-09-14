@@ -125,6 +125,8 @@ pub struct BoundColumn {
     pub geometry: bool,
     /// Whether the source column is a `TIMESTAMP`; drives the wire type byte.
     pub timestamp: bool,
+    /// Declared BINARY/VARBINARY bytes, including empty/all-NULL inputs.
+    pub binary_width: Option<u32>,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.
@@ -190,7 +192,54 @@ pub fn session_timestamp_zone() -> Option<String> {
     SESSION_TIMESTAMP_ZONE.with(|cell| cell.borrow().clone())
 }
 
+fn binary_branch_width(args: &[BoundExpr]) -> Option<u32> {
+    args.iter().try_fold(0, |maximum, argument| {
+        let width = if matches!(argument.kind, BoundExprKind::Literal(Value::Null)) {
+            0
+        } else {
+            argument.binary_width()?
+        };
+        Some(maximum.max(width))
+    })
+}
+
 impl BoundExpr {
+    /// Maximum binary result bytes when the declaration determines them.
+    #[must_use]
+    pub fn binary_width(&self) -> Option<u32> {
+        if self.data_type != Some(DataType::Binary) {
+            return None;
+        }
+        match &self.kind {
+            BoundExprKind::Column(column) => column.binary_width,
+            BoundExprKind::Literal(Value::Binary(bytes)) => u32::try_from(bytes.len()).ok(),
+            BoundExprKind::Scalar {
+                function:
+                    ScalarFunction::DeclaredCast {
+                        target: DataType::Binary,
+                        characters: Some(width),
+                    },
+                ..
+            } => Some(*width),
+            BoundExprKind::Scalar {
+                function:
+                    ScalarFunction::Collate { .. }
+                    | ScalarFunction::TextCharset(_)
+                    | ScalarFunction::Cast(DataType::Binary),
+                args,
+            } => args.first()?.binary_width(),
+            BoundExprKind::Scalar {
+                function: ScalarFunction::If,
+                args,
+            } => binary_branch_width(&args[1..]),
+            BoundExprKind::Scalar {
+                function: ScalarFunction::Coalesce,
+                args,
+            } => binary_branch_width(args),
+            _ => None,
+        }
+    }
+
     /// A reference to `column`. A source `TIMESTAMP` column reads in the
     /// session's time zone when one is installed, as `MySQL` converts it on
     /// retrieval, so filters, grouping and functions all see the session's
@@ -1591,6 +1640,30 @@ impl BoundExpr {
 }
 
 impl BoundQuery {
+    /// Resolve binary width across grouping, aggregate and derived layouts.
+    #[must_use]
+    pub fn result_binary_width(&self, expr: &BoundExpr) -> Option<u32> {
+        if expr.data_type != Some(DataType::Binary) {
+            return None;
+        }
+        match &expr.kind {
+            BoundExprKind::GroupKey(index) => self.result_binary_width(self.group_by.get(*index)?),
+            BoundExprKind::Aggregate(index) => {
+                self.result_binary_width(self.aggregates.get(*index)?.expr.as_ref()?)
+            }
+            BoundExprKind::Window(index) => match &self.windows.get(*index)?.function {
+                WindowFunction::Aggregate(aggregate) => {
+                    self.result_binary_width(aggregate.expr.as_ref()?)
+                }
+                WindowFunction::Offset { expr, .. } | WindowFunction::Extreme { expr, .. } => {
+                    self.result_binary_width(expr)
+                }
+                _ => None,
+            },
+            _ => expr.binary_width(),
+        }
+    }
+
     /// Every distinct text collation this query COMPARES, deduplicated.
     ///
     /// Only comparing positions count. Handing a column back to the client

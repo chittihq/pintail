@@ -269,6 +269,14 @@ impl LogicalPlanner {
                     enum_labels: None,
                     geometry: false,
                     timestamp: false,
+                    binary_width: match &window.function {
+                        pintail_sql::WindowFunction::Aggregate(aggregate) => {
+                            aggregate.expr.as_ref().and_then(BoundExpr::binary_width)
+                        }
+                        pintail_sql::WindowFunction::Offset { expr, .. }
+                        | pintail_sql::WindowFunction::Extreme { expr, .. } => expr.binary_width(),
+                        _ => None,
+                    },
                     outer: false,
                     using_shadowed: false,
                 })
