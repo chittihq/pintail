@@ -65,6 +65,9 @@ use crate::{
 const DEFAULT_GROUP_CONCAT_MAX_LEN: usize = 1024;
 
 thread_local! {
+    static SESSION_CONVERSION_WARNINGS: std::cell::RefCell<(Vec<String>, u64)> =
+        const { std::cell::RefCell::new((Vec::new(), 0)) };
+
     static SESSION_GROUP_CONCAT_MAX_LEN: std::cell::Cell<usize> =
         const { std::cell::Cell::new(DEFAULT_GROUP_CONCAT_MAX_LEN) };
     static SESSION_GROUP_CONCAT_WARNINGS: std::cell::Cell<u64> =
@@ -104,6 +107,23 @@ pub fn set_session_group_concat_max_len(limit: Option<usize>) {
     SESSION_GROUP_CONCAT_MAX_LEN.set(limit.unwrap_or(DEFAULT_GROUP_CONCAT_MAX_LEN).max(4));
     SESSION_GROUP_CONCAT_WARNINGS.set(0);
     SESSION_DIVISION_WARNINGS.set(0);
+    SESSION_CONVERSION_WARNINGS.with(|warnings| *warnings.borrow_mut() = (Vec::new(), 0));
+}
+
+pub(crate) fn record_conversion_warning(message: String) {
+    SESSION_CONVERSION_WARNINGS.with(|warnings| {
+        let mut warnings = warnings.borrow_mut();
+        warnings.1 = warnings.1.saturating_add(1);
+        if warnings.0.len() < 1024 {
+            warnings.0.push(message);
+        }
+    });
+}
+
+/// Takes conversion warning messages and their total count for this statement.
+#[must_use]
+pub fn take_session_conversion_warnings() -> (Vec<String>, u64) {
+    SESSION_CONVERSION_WARNINGS.with(|warnings| std::mem::take(&mut *warnings.borrow_mut()))
 }
 
 /// The `group_concat_max_len` this thread's executions observe.

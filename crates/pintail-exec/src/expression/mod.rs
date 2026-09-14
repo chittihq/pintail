@@ -2597,6 +2597,12 @@ fn evaluate_eager_scalar_inner(
             )
         }
         ScalarFunction::DeclaredCast { target, characters } => {
+            if matches!(target, DataType::Int64 | DataType::UInt64)
+                && matches!(argument_types.first(), Some(Some(DataType::Decimal { .. })))
+                && !matches!(values[0], Value::Null)
+            {
+                return cast_decimal_integer(&values[0], target);
+            }
             if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
@@ -4694,6 +4700,35 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
 /// civil clock type. Hours may exceed 23, optional day prefixes are folded
 /// into hours, compact numerics are read as HHMMSS, and the declared FSP is
 /// rounded before the documented +/-838:59:59 clamp.
+fn cast_decimal_integer(value: &Value, target: DataType) -> Result<Value, ExecError> {
+    let text = scalar_string(value)?;
+    let rounded =
+        pintail_types::parse_decimal_wide_rounded(&text, 0).ok_or(ExecError::NumericOverflow)?;
+    let minimum = pintail_types::WideInt::from_i128(i128::from(i64::MIN));
+    let maximum = pintail_types::WideInt::from_i128(if target == DataType::UInt64 {
+        i128::from(u64::MAX)
+    } else {
+        i128::from(i64::MAX)
+    });
+    let clamped = rounded.clamp(minimum, maximum);
+    if clamped != rounded {
+        crate::execution::record_conversion_warning(format!(
+            "Truncated incorrect DECIMAL value: '{text}'"
+        ));
+    }
+    let integer = clamped.to_i128().ok_or(ExecError::NumericOverflow)?;
+    if target == DataType::UInt64 {
+        Ok(Value::UInt64(
+            u64::try_from(integer.rem_euclid(1_i128 << 64))
+                .map_err(|_| ExecError::NumericOverflow)?,
+        ))
+    } else {
+        Ok(Value::Int64(
+            i64::try_from(integer).map_err(|_| ExecError::NumericOverflow)?,
+        ))
+    }
+}
+
 fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
     let text = text.trim();
     let unsigned = text.trim_start_matches(['-', '+']);

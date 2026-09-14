@@ -986,6 +986,22 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
+        // Integer casts of decimals may warn. Keep them in execution so
+        // diagnostics are produced for each evaluated row, not during planning.
+        BoundExprKind::Scalar {
+            function:
+                ScalarFunction::DeclaredCast {
+                    target: DataType::Int64 | DataType::UInt64,
+                    ..
+                },
+            args,
+        } if matches!(
+            args.first().and_then(|arg| arg.data_type),
+            Some(DataType::Decimal { .. })
+        ) =>
+        {
+            None
+        }
         // A binary declaration carries the identity width for downstream
         // bit folds, including CAST(NULL AS BINARY(n)). A literal alone
         // cannot preserve it, so retain the declaration during planning.

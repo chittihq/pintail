@@ -216,5 +216,38 @@ mod tests {
         let result = backend.execute("SELECT ROW_COUNT()").await.unwrap();
         assert_eq!(result.rows[0][0], pintail_types::Value::Int64(0));
         assert_eq!(backend.session.lock().unwrap().row_count, -1);
+        for _ in 0..2 {
+            let result = backend.execute("SELECT CAST(-19999999999999999999 AS SIGNED), CAST(-19999999999999999999 AS SIGNED)").await.unwrap();
+            assert_eq!(
+                result.rows[0],
+                vec![pintail_types::Value::Int64(i64::MIN); 2]
+            );
+            assert!(matches!(
+                backend.query(b"GET DIAGNOSTICS @count=NUMBER").await,
+                pintail_protocol::Response::Ok(..)
+            ));
+            assert!(matches!(backend.query(b"GET DIAGNOSTICS CONDITION 1 @code=MYSQL_ERRNO,@state=RETURNED_SQLSTATE,@message=MESSAGE_TEXT").await, pintail_protocol::Response::Ok(..)));
+            let session = backend.session.lock().unwrap();
+            assert_eq!(
+                session.user_variables["count"],
+                Value::Number("2".into(), false)
+            );
+            assert_eq!(
+                session.user_variables["code"],
+                Value::Number("1292".into(), false)
+            );
+            assert_eq!(
+                session.user_variables["state"],
+                Value::SingleQuotedString("22007".into())
+            );
+            assert_eq!(
+                session.user_variables["message"],
+                Value::SingleQuotedString(
+                    "Truncated incorrect DECIMAL value: '-19999999999999999999'".into()
+                )
+            );
+        }
+        backend.execute("SELECT 1").await.unwrap();
+        assert_eq!(backend.session.lock().unwrap().condition_count, 0);
     }
 }

@@ -1353,6 +1353,7 @@ impl Backend {
                     let warnings = (
                         pintail_exec::take_session_group_concat_warnings(),
                         pintail_exec::take_session_division_warnings(),
+                        pintail_exec::take_session_conversion_warnings(),
                     );
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
@@ -1368,7 +1369,7 @@ impl Backend {
                     // Division by zero is a warning only under
                     // ERROR_FOR_DIVISION_BY_ZERO. No statement of this
                     // connection can change the mode while this one runs.
-                    let (group_concat, division) = warnings;
+                    let (group_concat, division, conversion) = warnings;
                     let division = if sql_mode_has(&session.sql_mode, "ERROR_FOR_DIVISION_BY_ZERO")
                     {
                         division
@@ -1407,7 +1408,24 @@ impl Backend {
                         },
                     };
                     drop(sink);
-                    let conditions = statement_conditions(&rows, group_concat, division);
+                    let (mut listed, mut count) =
+                        statement_conditions(&rows, group_concat, division);
+                    if rows.is_ok() {
+                        count = count.saturating_add(conversion.1);
+                        listed.extend(
+                            conversion
+                                .0
+                                .into_iter()
+                                .take(MAX_LISTED_CONDITIONS.saturating_sub(listed.len()))
+                                .map(|message| Condition {
+                                    level: "Warning",
+                                    code: 1292,
+                                    sql_state: b"22007",
+                                    message,
+                                }),
+                        );
+                    }
+                    let conditions = (listed, count);
                     let settled = Settled {
                         row_count,
                         conditions,

@@ -252,6 +252,35 @@ fn an_integer_cast_of_text_is_exact() {
 }
 
 #[test]
+fn decimal_integer_casts_round_and_saturate_at_integer_bounds() {
+    assert_answers(&[
+        (
+            "CAST(19999999999999999999 AS SIGNED)",
+            "9223372036854775807",
+        ),
+        (
+            "CAST(-19999999999999999999 AS SIGNED)",
+            "-9223372036854775808",
+        ),
+        (
+            "CAST(9223372036854775808.0 AS SIGNED)",
+            "9223372036854775807",
+        ),
+        (
+            "CAST(-19999999999999999999 AS UNSIGNED)",
+            "9223372036854775808",
+        ),
+        (
+            "CAST(19999999999999999999 AS UNSIGNED)",
+            "18446744073709551615",
+        ),
+        ("CAST(1.5 AS SIGNED)", "2"),
+        ("CAST(-1.5 AS SIGNED)", "-2"),
+        ("CAST(-1.5 AS UNSIGNED)", "18446744073709551614"),
+    ]);
+}
+
+#[test]
 fn truncate_and_div_keep_integers_exact() {
     assert_answers(&[
         ("TRUNCATE(18446744073709551615, -1)", "18446744073709551610"),
