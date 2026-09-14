@@ -1286,6 +1286,23 @@ pub(super) mod tests {
         assert!(backend.take_session_changes().is_empty());
     }
 
+    #[tokio::test]
+    async fn converted_variable_results_use_the_requested_wire_encoding() {
+        use pintail_protocol::{Handler, Response};
+        let (_directory, mut backend) = local_backend();
+        for sql in [b"SET NAMES latin1".as_slice(), b"SET @label=_latin1'\xfd'"] {
+            assert!(matches!(backend.query(sql).await, Response::Ok(..)));
+        }
+        let (columns, rows) = collect_wire(
+            backend
+                .query(b"SELECT CONVERT(@label COLLATE latin1_bin USING utf8mb3)")
+                .await,
+        )
+        .await;
+        assert_eq!(columns[0].character_set, 8);
+        assert_eq!(rows, vec![vec![1, 0xfd]]);
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

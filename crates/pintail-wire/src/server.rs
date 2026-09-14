@@ -1440,6 +1440,9 @@ impl Backend {
                     ));
                     let _ =
                         pintail_exec::set_session_calendar_locale(Some(session.calendar_locale));
+                    pintail_sql::set_session_client_character_set(
+                        pintail_types::CharacterSet::from_name(&session.charset_client),
+                    );
                     pintail_sql::set_session_character_set(pintail_types::CharacterSet::from_name(
                         &session.charset_connection,
                     ));
@@ -1479,6 +1482,7 @@ impl Backend {
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
                     pintail_sql::set_session_character_set(None);
+                    pintail_sql::set_session_client_character_set(None);
                     pintail_sql::set_session_div_precision_increment(None);
                     pintail_sql::set_session_select_limit(None);
                     let _ = pintail_exec::set_session_time_zone(None);

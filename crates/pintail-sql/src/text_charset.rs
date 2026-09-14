@@ -7,7 +7,17 @@ use pintail_types::{CharacterSet, DataType, Value};
 use crate::{BoundExpr, BoundExprKind, ScalarFunction};
 
 thread_local! {
+    static CLIENT: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
     static CONNECTION: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
+}
+
+/// Install the encoding used to reconstruct literal bytes from decoded SQL.
+pub fn set_session_client_character_set(charset: Option<CharacterSet>) {
+    CLIENT.set(charset.unwrap_or_default());
+}
+
+pub(crate) fn client_character_set() -> CharacterSet {
+    CLIENT.get()
 }
 
 /// Install the connection's literal and generated-text encoding for binding.

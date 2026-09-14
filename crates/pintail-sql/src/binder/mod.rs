@@ -6896,8 +6896,12 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
     let BoundExprKind::Literal(value) = &literal.kind else {
         return refuse();
     };
+    let encoded;
     let bytes = match value {
-        Value::Utf8(text) => text.as_bytes(),
+        Value::Utf8(text) => {
+            encoded = crate::text_charset::client_character_set().encode(text);
+            encoded.as_slice()
+        }
         Value::Binary(bytes) => bytes.as_slice(),
         Value::Null => return Ok(literal),
         _ => return refuse(),
