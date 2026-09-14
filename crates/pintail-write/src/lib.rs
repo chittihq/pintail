@@ -1025,6 +1025,20 @@ fn mysql_terms(
             .join(",")
     };
     let full = match data_type {
+        SqlDataType::Float(sqlparser::ast::ExactNumberInfo::Precision(bits))
+        | SqlDataType::FloatUnsigned(sqlparser::ast::ExactNumberInfo::Precision(bits)) => {
+            if *bits > 53 {
+                return Err(WriteError::Invalid(
+                    "FLOAT precision is out of range".into(),
+                ));
+            }
+            let base = if *bits > 24 { "double" } else { "float" };
+            if matches!(data_type, SqlDataType::FloatUnsigned(_)) {
+                format!("{base} unsigned")
+            } else {
+                base.into()
+            }
+        }
         SqlDataType::Real | SqlDataType::RealUnsigned => {
             let base = if pintail_sql::session_parse_mode().real_as_float {
                 "float"

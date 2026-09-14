@@ -293,3 +293,24 @@ fn enum_and_set_store_labels_with_the_declared_case() {
         ]]
     );
 }
+
+#[test]
+fn float_bit_precision_selects_single_or_double_storage() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE readings (narrow FLOAT(24), wide FLOAT(52))",
+    )
+    .unwrap();
+    run(&fixture, "INSERT INTO readings VALUES (1e-150, 1e-150)").unwrap();
+    assert_eq!(
+        stored_rows(&fixture, "readings"),
+        vec![vec![Value::float64(0.0), Value::float64(1e-150)]]
+    );
+    let catalog = fixture.database.catalog().unwrap();
+    assert_eq!(
+        catalog[0].columns[1].pintail_type,
+        pintail_types::DataType::Float64
+    );
+    assert_eq!(catalog[0].columns[1].mysql_data_type, "double");
+}
