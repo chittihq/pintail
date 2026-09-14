@@ -104,7 +104,9 @@ pub fn select_variable_targets(sql: &str) -> Option<(String, Vec<String>)> {
         .iter()
         .filter(|token| !matches!(token.token, Token::Whitespace(_)))
         .collect();
-    if !matches!(&tokens.first()?.token, Token::Word(word) if word.value.eq_ignore_ascii_case("SELECT") || word.value.eq_ignore_ascii_case("WITH"))
+    let first = &tokens.first()?.token;
+    if !matches!(first, Token::LParen)
+        && !matches!(first, Token::Word(word) if word.value.eq_ignore_ascii_case("SELECT") || word.value.eq_ignore_ascii_case("WITH"))
     {
         return None;
     }
@@ -181,6 +183,8 @@ mod tests {
             "SELECT 1, 'é' INTO @a, @B",
             "SELECT 1, 'é' INTO @a, @B FROM records",
             "SELECT 1, 'é' FROM records INTO @a, @B",
+            "(SELECT 1, 'é') INTO @a, @B",
+            "(SELECT 1 AS n, 'é') ORDER BY n LIMIT 1 INTO @a, @B",
         ] {
             let (query, names) = select_variable_targets(sql).expect("targets");
             assert_eq!(names, ["a", "b"]);

@@ -644,6 +644,25 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn parenthesized_select_into_assigns_the_outer_query_result() {
+        use pintail_protocol::{Handler, Response};
+        let (_directory, mut backend) = local_backend();
+        for (sql, expected) in [
+            ("(SELECT 1) LIMIT 1 INTO @var", 1),
+            ("(SELECT 2 AS c) ORDER BY c INTO @var", 2),
+            ("(SELECT 3 AS c) ORDER BY c LIMIT 1 INTO @var", 3),
+            ("(SELECT 4) INTO @var", 4),
+        ] {
+            assert!(matches!(
+                backend.query(sql.as_bytes()).await,
+                Response::Ok(..)
+            ));
+            let result = backend.execute("SELECT @var").await.unwrap();
+            assert_eq!(result.rows[0][0], pintail_types::Value::Int64(expected));
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
