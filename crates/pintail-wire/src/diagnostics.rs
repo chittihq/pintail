@@ -324,6 +324,23 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn logical_xor_and_bit_shifts_follow_mysql_precedence() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT NULL XOR 1 AND 0, 240 & 15 << 4, 15 & 240 >> 4")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Null,
+                pintail_types::Value::UInt64(240),
+                pintail_types::Value::UInt64(15)
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

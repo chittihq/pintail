@@ -524,6 +524,9 @@ impl Dialect for PintailDialect {
         false
     }
     fn prec_value(&self, precedence: sqlparser::dialect::Precedence) -> u8 {
+        if matches!(precedence, sqlparser::dialect::Precedence::Xor) {
+            return 7;
+        }
         if self.1.high_not_precedence
             && matches!(precedence, sqlparser::dialect::Precedence::UnaryNot)
         {
@@ -552,6 +555,12 @@ impl Dialect for PintailDialect {
         }))
     }
     fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
+        if matches!(
+            parser.peek_token().token,
+            sqlparser::tokenizer::Token::ShiftLeft | sqlparser::tokenizer::Token::ShiftRight
+        ) {
+            return Some(Ok(25));
+        }
         if parser.peek_token().token == sqlparser::tokenizer::Token::Caret {
             return Some(Ok(44));
         }
