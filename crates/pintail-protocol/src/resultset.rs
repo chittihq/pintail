@@ -46,6 +46,36 @@ pub fn encode_ok(packet: OkPacket, info: &str) -> Vec<u8> {
     payload
 }
 
+/// Encodes tracked system-variable changes only for clients that negotiated them.
+#[must_use]
+pub fn encode_ok_with_session(
+    mut packet: OkPacket,
+    info: &str,
+    capabilities: CapabilityFlags,
+    changes: &[(String, String)],
+) -> Vec<u8> {
+    if !capabilities.contains(CapabilityFlags::CLIENT_SESSION_TRACK) {
+        return encode_ok(packet, info);
+    }
+    if !changes.is_empty() {
+        packet.status = packet.status | StatusFlags::SERVER_SESSION_STATE_CHANGED;
+    }
+    let mut payload = encode_ok(packet, "");
+    put_length_encoded_bytes(&mut payload, info.as_bytes());
+    if !changes.is_empty() {
+        let mut state = Vec::new();
+        for (name, value) in changes {
+            let mut data = Vec::new();
+            put_length_encoded_bytes(&mut data, name.as_bytes());
+            put_length_encoded_bytes(&mut data, value.as_bytes());
+            state.push(0); // System-variable change.
+            put_length_encoded_bytes(&mut state, &data);
+        }
+        put_length_encoded_bytes(&mut payload, &state);
+    }
+    payload
+}
+
 /// Encodes an error packet.
 ///
 /// The `#` before the SQLSTATE is required by the 4.1 protocol; without it
@@ -426,5 +456,32 @@ mod tests {
     fn an_ok_packet_reports_no_writes_on_a_read_only_replica() {
         let encoded = encode_ok(OkPacket::default(), "");
         assert_eq!(encoded, vec![0x00, 0, 0, 0, 0, 0, 0]);
+    }
+}
+
+#[cfg(test)]
+mod session_tracking_tests {
+    use super::*;
+    #[test]
+    fn session_changes_are_length_encoded_and_capability_gated() {
+        let changes = vec![("character_set_client".to_owned(), "latin1".to_owned())];
+        let legacy = encode_ok_with_session(
+            OkPacket::default(),
+            "ok",
+            CapabilityFlags::empty(),
+            &changes,
+        );
+        assert_eq!(legacy, encode_ok(OkPacket::default(), "ok"));
+        let tracked = encode_ok_with_session(
+            OkPacket::default(),
+            "",
+            CapabilityFlags::CLIENT_SESSION_TRACK,
+            &changes,
+        );
+        let mut expected = vec![0, 0, 0, 0, 0x40, 0, 0, 0, 30, 0, 28, 20];
+        expected.extend_from_slice(b"character_set_client");
+        expected.push(6);
+        expected.extend_from_slice(b"latin1");
+        assert_eq!(tracked, expected);
     }
 }

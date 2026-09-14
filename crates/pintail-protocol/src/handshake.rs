@@ -43,8 +43,9 @@ impl CapabilityFlags {
     pub const CLIENT_CONNECT_ATTRS: Self = Self(0x0010_0000);
     /// Auth response is length-encoded rather than one length byte.
     pub const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA: Self = Self(0x0020_0000);
-    /// EOF packets are replaced by OK packets. Changes how every result set
-    /// terminates, so it must be honoured on write.
+    /// OK packets carry length-encoded information and session-state changes.
+    pub const CLIENT_SESSION_TRACK: Self = Self(0x0080_0000);
+    /// EOF packets are replaced by OK packets.
     pub const CLIENT_DEPRECATE_EOF: Self = Self(0x0100_0000);
 
     /// An empty set.

@@ -13,6 +13,7 @@ use crate::handshake::{CapabilityFlags, Handshake, HandshakeResponse, SCRAMBLE_S
 use crate::packet::{PacketReader, PacketWriter, put_length_encoded_integer};
 use crate::resultset::{
     EncodedRows, OkPacket, encode_column_definition, encode_eof, encode_error, encode_ok,
+    encode_ok_with_session,
 };
 use crate::types::{Column, ErrorKind, StatusFlags};
 
@@ -30,6 +31,7 @@ pub fn server_capabilities() -> CapabilityFlags {
         | CapabilityFlags::CLIENT_PLUGIN_AUTH
         | CapabilityFlags::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
         | CapabilityFlags::CLIENT_CONNECT_ATTRS
+        | CapabilityFlags::CLIENT_SESSION_TRACK
         | CapabilityFlags::CLIENT_DEPRECATE_EOF
         | CapabilityFlags::CLIENT_MULTI_STATEMENTS
         | CapabilityFlags::CLIENT_MULTI_RESULTS
@@ -101,6 +103,11 @@ pub struct PreparedStatement {
 /// Everything the driver asks of the server it front-ends.
 #[async_trait]
 pub trait Handler: Send + Sync {
+    /// Drains system-variable changes since the preceding successful command.
+    fn take_session_changes(&mut self) -> Vec<(String, String)> {
+        Vec::new()
+    }
+
     /// Version string reported to clients.
     fn server_version(&self) -> String {
         "8.0.0".to_owned()
@@ -767,7 +774,12 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         status: StatusFlags,
     ) -> std::io::Result<bool> {
         let streamed = matches!(response, Response::Stream(_));
-        let written = self.write_response_status(response, status).await;
+        let changes = if matches!(response, Response::Ok(..)) {
+            handler.take_session_changes()
+        } else {
+            Vec::new()
+        };
+        let written = self.write_response_status(response, status, &changes).await;
         if streamed {
             handler.finish_stream(written.is_ok()).await;
         }
@@ -778,11 +790,12 @@ impl<R: AsyncRead + Unpin + Send, W: AsyncWrite + Unpin + Send> Connection<R, W>
         &mut self,
         response: Response,
         status: StatusFlags,
+        changes: &[(String, String)],
     ) -> std::io::Result<bool> {
         match response {
             Response::Ok(mut packet, info) => {
                 packet.status = packet.status | status;
-                let payload = encode_ok(packet, &info);
+                let payload = encode_ok_with_session(packet, &info, self.capabilities, changes);
                 self.writer.write_payload(&payload).await?;
                 self.writer.flush().await?;
                 Ok(true)

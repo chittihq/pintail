@@ -1253,6 +1253,39 @@ pub(super) mod tests {
         assert_eq!(rows, vec![vec![3, 0xf3, 0xf3, 0xf2]]);
     }
 
+    #[tokio::test]
+    async fn charset_assignments_notify_drivers_and_can_disable_tracking() {
+        use pintail_protocol::{Handler, Response};
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET NAMES latin1").await,
+            Response::Ok(..)
+        ));
+        let changes = backend.take_session_changes();
+        assert_eq!(changes.len(), 3);
+        assert!(changes.contains(&("character_set_client".to_owned(), "latin1".to_owned())));
+        assert!(backend.take_session_changes().is_empty());
+        assert!(matches!(
+            backend.query(b"SET character_set_client=utf8mb4").await,
+            Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.take_session_changes(),
+            vec![("character_set_client".to_owned(), "utf8mb4".to_owned())]
+        );
+        assert!(matches!(
+            backend
+                .query(b"SET session_track_system_variables=''")
+                .await,
+            Response::Ok(..)
+        ));
+        assert!(matches!(
+            backend.query(b"SET NAMES koi8r").await,
+            Response::Ok(..)
+        ));
+        assert!(backend.take_session_changes().is_empty());
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

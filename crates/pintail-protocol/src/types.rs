@@ -137,6 +137,9 @@ impl StatusFlags {
     /// Another result set follows this one.
     pub const SERVER_MORE_RESULTS_EXISTS: Self = Self(0x0008);
 
+    /// An OK packet includes tracked session-state changes.
+    pub const SERVER_SESSION_STATE_CHANGED: Self = Self(0x4000);
+
     /// An empty set.
     #[must_use]
     pub const fn empty() -> Self {

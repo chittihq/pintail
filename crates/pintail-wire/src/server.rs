@@ -814,6 +814,8 @@ struct Session {
     charset_client: String,
     charset_connection: String,
     charset_results: String,
+    pending_variable_changes: Vec<(String, String)>,
+    tracked_system_variables: String,
     /// The collation id the client negotiated in its handshake. `MySQL`
     /// stamps text results with THIS id - the connection's collation, not
     /// the charset's default - so column metadata must echo it.
@@ -841,6 +843,39 @@ struct Session {
     user_variables: pintail_sql::UserVariables,
 }
 
+impl Session {
+    fn track_variable(&mut self, name: &str) {
+        if !self
+            .tracked_system_variables
+            .split(',')
+            .any(|tracked| tracked.trim() == name || tracked.trim() == "*")
+        {
+            return;
+        }
+        let value = match name {
+            "character_set_client" => &self.charset_client,
+            "character_set_connection" => &self.charset_connection,
+            "character_set_results" => &self.charset_results,
+            "time_zone" => &self.time_zone,
+            _ => return,
+        }
+        .clone();
+        self.pending_variable_changes
+            .retain(|(previous, _)| previous != name);
+        self.pending_variable_changes.push((name.to_owned(), value));
+    }
+
+    fn track_charsets(&mut self) {
+        for name in [
+            "character_set_client",
+            "character_set_connection",
+            "character_set_results",
+        ] {
+            self.track_variable(name);
+        }
+    }
+}
+
 const DEFAULT_SQL_MODE: &str = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
 ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION";
 
@@ -863,6 +898,8 @@ impl Default for Session {
             charset_client: "utf8mb4".to_owned(),
             charset_connection: "utf8mb4".to_owned(),
             charset_results: "utf8mb4".to_owned(),
+            pending_variable_changes: Vec::new(),
+            tracked_system_variables: "time_zone,autocommit,character_set_client,character_set_results,character_set_connection".to_owned(),
             charset_byte: 255,
             group_concat_max_len: 1024,
             collation_connection: "utf8mb4_0900_ai_ci",
@@ -1792,6 +1829,7 @@ impl Backend {
             session.charset_results = charset;
             session.collation_connection = collation;
             session.charset_byte = collation_byte(collation, &session.charset_connection);
+            session.track_charsets();
             drop(session);
             return following.map_or(Ok(()), |setting| {
                 self.apply_session_command(&format!("SET {setting}"))
@@ -1807,6 +1845,7 @@ impl Backend {
             "utf8mb4".clone_into(&mut session.charset_connection);
             session.collation_connection = "utf8mb4_0900_ai_ci";
             session.charset_byte = 255;
+            session.track_charsets();
             return Ok(());
         }
         if let Some(rest) = lowered.strip_prefix("kill ") {
@@ -1891,6 +1930,7 @@ impl Backend {
                 if pintail_exec::set_session_time_zone(Some(&value)) {
                     let _ = pintail_exec::set_session_time_zone(None);
                     session.time_zone = value;
+                    session.track_variable("time_zone");
                     Ok(())
                 } else {
                     Err(format!("Unknown or incorrect time zone: '{value}'"))
@@ -1920,6 +1960,7 @@ impl Backend {
                     session.collation_connection = encoding.default_collation();
                     session.charset_byte =
                         collation_byte(session.collation_connection, &session.charset_connection);
+                    session.track_variable(name);
                     return Ok(());
                 }
                 if matches!(
@@ -1933,6 +1974,7 @@ impl Backend {
                         "character_set_results" => session.charset_results = charset,
                         _ => unreachable!(),
                     }
+                    session.track_variable(name);
                     Ok(())
                 } else {
                     Err(format!("Unknown character set: '{value}'"))
@@ -1954,6 +1996,11 @@ impl Backend {
                     charset
                 };
                 session.charset_byte = collation_byte(collation, &session.charset_connection);
+                session.track_variable("character_set_connection");
+                Ok(())
+            }
+            "session_track_system_variables" => {
+                session.tracked_system_variables = value.to_ascii_lowercase();
                 Ok(())
             }
             "group_concat_max_len" => {
@@ -2209,6 +2256,13 @@ fn reported_server_version() -> String {
 
 #[async_trait]
 impl Handler for Backend {
+    fn take_session_changes(&mut self) -> Vec<(String, String)> {
+        self.session
+            .lock()
+            .map(|mut session| std::mem::take(&mut session.pending_variable_changes))
+            .unwrap_or_default()
+    }
+
     fn server_version(&self) -> String {
         reported_server_version()
     }
@@ -3738,6 +3792,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
                 "GRANT SELECT ON `{}`.* TO CURRENT_USER()",
                 database.replace('`', "``")
             )),
+        )
+    } else if normalized.contains("@@session_track_system_variables") {
+        (
+            "@@session_track_system_variables",
+            Value::Utf8(session.tracked_system_variables.clone()),
         )
     } else if normalized.contains("@@character_set_server") {
         ("@@character_set_server", Value::Utf8("utf8mb4".to_owned()))
