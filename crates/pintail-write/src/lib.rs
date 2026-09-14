@@ -955,15 +955,26 @@ fn character_value(text: &str, column: &SourceColumn) -> Result<String, WriteErr
     .to_owned())
 }
 
-/// The declared label an ENUM value names: a label matched regardless of
-/// case and trailing spaces, or a one-based index written as a number. The
+fn label_matches(label: &str, wanted: &str, column: &SourceColumn) -> bool {
+    if column
+        .collation
+        .as_deref()
+        .is_some_and(|name| name.ends_with("_bin") || name.ends_with("_cs"))
+    {
+        label == wanted
+    } else {
+        label.eq_ignore_ascii_case(wanted)
+    }
+}
+
+/// The declared label an ENUM value names, or a one-based index written as a number. The
 /// column stores the label as declared, as a replicated row carries it.
 fn enum_label(text: &str, column: &SourceColumn) -> Option<String> {
     let labels = pintail_types::declaration_labels(&column.mysql_column_type, "enum")?;
     let wanted = text.trim_end_matches(' ');
     if let Some(label) = labels
         .iter()
-        .find(|label| label.eq_ignore_ascii_case(wanted))
+        .find(|label| label_matches(label, wanted, column))
     {
         return Some(label.clone());
     }
@@ -972,7 +983,7 @@ fn enum_label(text: &str, column: &SourceColumn) -> Option<String> {
 }
 
 /// The members a SET value names, in declaration order and each once: a
-/// comma-separated list matched regardless of case, or a member bitmask
+/// comma-separated list matched under the column's case rule, or a member bitmask
 /// written as a number.
 fn set_labels(text: &str, column: &SourceColumn) -> Option<String> {
     let labels = pintail_types::declaration_labels(&column.mysql_column_type, "set")?;
@@ -982,7 +993,7 @@ fn set_labels(text: &str, column: &SourceColumn) -> Option<String> {
             let wanted = member.trim_end_matches(' ');
             match labels
                 .iter()
-                .position(|label| label.eq_ignore_ascii_case(wanted))
+                .position(|label| label_matches(label, wanted, column))
             {
                 Some(position) => mask |= 1 << position,
                 None => {

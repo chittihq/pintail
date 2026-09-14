@@ -372,3 +372,17 @@ fn wide_fixed_float_bounds_use_correctly_rounded_decimal_powers() {
     assert!(rows.contains(&vec![Value::float64(1e200)]));
     assert!(rows.contains(&vec![Value::float64(-1e200)]));
 }
+
+#[test]
+fn binary_enum_and_set_members_keep_case_distinct() {
+    let fixture = fixture();
+    run(&fixture, "CREATE TABLE labels (choice ENUM('a','A') COLLATE utf8mb4_bin, choices SET('a','A') COLLATE utf8mb4_bin)").unwrap();
+    run(&fixture, "INSERT INTO labels VALUES ('A','A,a'),('a','A')").unwrap();
+    assert_eq!(
+        stored_rows(&fixture, "labels"),
+        vec![
+            vec![Value::Utf8("A".into()), Value::Utf8("a,A".into())],
+            vec![Value::Utf8("a".into()), Value::Utf8("A".into())]
+        ]
+    );
+}
