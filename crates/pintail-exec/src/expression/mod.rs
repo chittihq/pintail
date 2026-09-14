@@ -4896,7 +4896,25 @@ fn temporal_argument(
     } else {
         scalar_string(value)?
     };
-    Ok(parse_temporal_micros(&text))
+    let parsed = parse_temporal_micros(&text);
+    if matches!(data_type, Some(DataType::Utf8 | DataType::Binary)) {
+        let trimmed = text.trim();
+        let date_only =
+            parsed.as_ref().is_some_and(|value| value.datetime) && !trimmed.contains([' ', 'T']);
+        if date_only || (parsed.is_none() && !trimmed.contains(':')) {
+            // An untyped date without a clock is read as a TIME numeric
+            // prefix; a typed DATE retains its calendar interpretation.
+            let sign = usize::from(trimmed.starts_with(['-', '+']));
+            let digits = trimmed[sign..]
+                .bytes()
+                .take_while(u8::is_ascii_digit)
+                .count();
+            if digits > 0 {
+                return Ok(parse_temporal_micros(&trimmed[..sign + digits]));
+            }
+        }
+    }
+    Ok(parsed)
 }
 
 fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {

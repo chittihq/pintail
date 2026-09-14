@@ -252,6 +252,26 @@ fn an_integer_cast_of_text_is_exact() {
 }
 
 #[test]
+fn time_arithmetic_distinguishes_date_text_from_typed_dates() {
+    assert_answers(&[
+        ("ADDTIME('2021-01-01','01:01:01')", "01:21:22"),
+        (
+            "ADDTIME(DATE'2021-01-01','01:01:01')",
+            "2021-01-01 01:01:01",
+        ),
+        (
+            "ADDTIME('2021-01-01 00:00:00','01:01:01')",
+            "2021-01-01 01:01:01",
+        ),
+        ("SUBTIME('2021-01-01','01:01:01')", "-00:40:40"),
+        ("ADDTIME('2021xyz','01:01:01')", "01:21:22"),
+        ("ADDTIME('123456-01-01','01:01:01')", "13:35:57"),
+        ("ADDTIME('20210101','01:01:01')", "838:59:59"),
+        ("ADDTIME('2021/01/01','01:01:01')", "01:21:22"),
+    ]);
+}
+
+#[test]
 fn decimal_integer_casts_round_and_saturate_at_integer_bounds() {
     assert_answers(&[
         (
