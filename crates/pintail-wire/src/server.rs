@@ -1417,11 +1417,11 @@ impl Backend {
                                 .0
                                 .into_iter()
                                 .take(MAX_LISTED_CONDITIONS.saturating_sub(listed.len()))
-                                .map(|message| Condition {
+                                .map(|warning| Condition {
                                     level: "Warning",
-                                    code: 1292,
-                                    sql_state: b"22007",
-                                    message,
+                                    code: warning.code,
+                                    sql_state: warning.sql_state,
+                                    message: warning.message,
                                 }),
                         );
                     }
@@ -3543,7 +3543,10 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         let seconds = micros as f64 / 1_000_000.0;
         ("@@timestamp", Value::float64(seconds))
     } else if normalized.contains("@@max_allowed_packet") {
-        ("@@max_allowed_packet", Value::UInt64(64 * 1024 * 1024))
+        (
+            "@@max_allowed_packet",
+            Value::UInt64(pintail_exec::DEFAULT_MAX_ALLOWED_PACKET as u64),
+        )
     } else if normalized.contains("@@lower_case_table_names") {
         // Catalog names retain their source spelling but resolve
         // case-insensitively, matching MySQL mode 2.

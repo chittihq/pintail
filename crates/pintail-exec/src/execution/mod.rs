@@ -64,8 +64,22 @@ use crate::{
 
 const DEFAULT_GROUP_CONCAT_MAX_LEN: usize = 1024;
 
+/// Default SQL string-result limit, also advertised by the wire session.
+pub const DEFAULT_MAX_ALLOWED_PACKET: usize = 64 * 1024 * 1024;
+
+/// One conversion warning retained by a statement's diagnostics area.
+#[derive(Clone, Debug)]
+pub struct ConversionWarning {
+    /// Numeric server condition code.
+    pub code: u16,
+    /// Five-character SQLSTATE.
+    pub sql_state: &'static [u8; 5],
+    /// Human-readable condition text.
+    pub message: String,
+}
+
 thread_local! {
-    static SESSION_CONVERSION_WARNINGS: std::cell::RefCell<(Vec<String>, u64)> =
+    static SESSION_CONVERSION_WARNINGS: std::cell::RefCell<(Vec<ConversionWarning>, u64)> =
         const { std::cell::RefCell::new((Vec::new(), 0)) };
 
     static SESSION_GROUP_CONCAT_MAX_LEN: std::cell::Cell<usize> =
@@ -111,18 +125,26 @@ pub fn set_session_group_concat_max_len(limit: Option<usize>) {
 }
 
 pub(crate) fn record_conversion_warning(message: String) {
+    record_statement_warning(ConversionWarning {
+        code: 1292,
+        sql_state: b"22007",
+        message,
+    });
+}
+
+pub(crate) fn record_statement_warning(warning: ConversionWarning) {
     SESSION_CONVERSION_WARNINGS.with(|warnings| {
         let mut warnings = warnings.borrow_mut();
         warnings.1 = warnings.1.saturating_add(1);
         if warnings.0.len() < 1024 {
-            warnings.0.push(message);
+            warnings.0.push(warning);
         }
     });
 }
 
 /// Takes conversion warning messages and their total count for this statement.
 #[must_use]
-pub fn take_session_conversion_warnings() -> (Vec<String>, u64) {
+pub fn take_session_conversion_warnings() -> (Vec<ConversionWarning>, u64) {
     SESSION_CONVERSION_WARNINGS.with(|warnings| std::mem::take(&mut *warnings.borrow_mut()))
 }
 

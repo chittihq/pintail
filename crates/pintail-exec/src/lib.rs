@@ -30,9 +30,9 @@ pub use counters::{ExecCounters, take_exec_counters};
 pub use execution::compare_collated_text;
 pub use execution::take_fold_phase_timings;
 pub use execution::{
-    BatchStream, DEFAULT_CTE_MAX_RECURSION_DEPTH, ExecError, Execution, ExecutionCancellation,
-    MemoryTracker, OutputField, PhysicalPlan, PhysicalPlanner, ScanProvider,
-    with_execution_cancellation,
+    BatchStream, ConversionWarning, DEFAULT_CTE_MAX_RECURSION_DEPTH, DEFAULT_MAX_ALLOWED_PACKET,
+    ExecError, Execution, ExecutionCancellation, MemoryTracker, OutputField, PhysicalPlan,
+    PhysicalPlanner, ScanProvider, with_execution_cancellation,
 };
 pub use execution::{
     MemoryBudget, MemoryScope, init_shared_memory_budget, session_cte_max_recursion_depth,

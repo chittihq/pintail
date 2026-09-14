@@ -266,6 +266,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oversized_binary_casts_leave_a_packet_limit_warning() {
+        let (_directory, backend) = local_backend();
+        let output = backend
+            .execute("SELECT CAST('a' AS BINARY(67108865)) IS NULL")
+            .await
+            .unwrap();
+        assert_eq!(output.rows[0][0], pintail_types::Value::Boolean(true));
+        let session = backend.session.lock().unwrap();
+        assert_eq!(session.condition_count, 1);
+        assert_eq!(session.conditions[0].code, 1301);
+        assert_eq!(
+            session.conditions[0].message,
+            "Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated"
+        );
+    }
+
+    #[tokio::test]
     async fn row_counts_follow_the_real_write_and_query_path() {
         use pintail_protocol::Handler;
         let (_directory, mut backend) = local_backend();

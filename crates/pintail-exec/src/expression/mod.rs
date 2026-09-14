@@ -2626,6 +2626,15 @@ fn evaluate_eager_scalar_inner(
             // BINARY(n) holds exactly n bytes: a shorter value is padded with
             // zero bytes and a longer one cut.
             if let (Some(bytes), Value::Binary(data)) = (characters, &mut value) {
+                let limit = crate::DEFAULT_MAX_ALLOWED_PACKET;
+                if bytes as usize > limit {
+                    crate::execution::record_statement_warning(crate::ConversionWarning {
+                        code: 1301,
+                        sql_state: b"HY000",
+                        message: format!("Result of cast_as_binary() was larger than max_allowed_packet ({limit}) - truncated"),
+                    });
+                    return Ok(Value::Null);
+                }
                 data.resize(bytes as usize, 0);
             }
             Ok(value)
