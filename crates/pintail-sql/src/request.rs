@@ -33,12 +33,15 @@ pub fn first_statement(sql: &[u8], mode: crate::ParseMode) -> Option<(&[u8], &[u
             }
             b'/' if sql.get(at + 1) == Some(&b'*') => {
                 at += 2;
+                let body_start = at;
                 while at + 1 < sql.len() && &sql[at..at + 2] != b"*/" {
                     at += 1;
                 }
                 if at + 1 >= sql.len() {
                     return Some((&sql[start..], &[]));
                 }
+                significant |= crate::executable_comment_body(&sql[body_start..at])
+                    .is_some_and(|body| body.iter().any(|byte| !byte.is_ascii_whitespace()));
                 at += 2;
             }
             quote @ (b'\'' | b'"' | b'`') => {

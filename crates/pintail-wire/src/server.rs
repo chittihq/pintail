@@ -4163,18 +4163,18 @@ fn sql_code_only(sql: &str) -> Vec<u8> {
                 }
             }
             b'/' if bytes.get(index + 1) == Some(&b'*') => {
-                let executable = bytes.get(index + 2) == Some(&b'!');
-                index += if executable { 3 } else { 2 };
+                index += 2;
+                let start = index;
                 while index < bytes.len() {
                     if bytes[index] == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                        index += 2;
                         break;
-                    }
-                    if executable {
-                        code[index] = bytes[index];
                     }
                     index += 1;
                 }
+                if let Some(body) = pintail_sql::executable_comment_body(&bytes[start..index]) {
+                    code[index - body.len()..index].copy_from_slice(body);
+                }
+                index = (index + 2).min(bytes.len());
             }
             byte => {
                 code[index] = byte;
@@ -5085,6 +5085,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         assert_eq!(placeholder_offsets("SELECT /* ? */ ? FROM t").len(), 1);
         // MySQL executes a version comment, so a parameter inside one counts.
         assert_eq!(placeholder_offsets("SELECT /*!40001 ? */ FROM t").len(), 1);
+        assert_eq!(placeholder_offsets("SELECT 1 /*!999999 + ? */").len(), 0);
 
         // "limit" inside a comment previously flipped the clause context and
         // produced an integer preview for an ordinary expression parameter.

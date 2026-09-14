@@ -1491,3 +1491,18 @@ fn partial_calendar_casts_accept_minute_precision_clocks() {
         }
     });
 }
+
+#[test]
+fn executable_comments_follow_mysql_version_prefix_rules() {
+    for (expression, expected) in [
+        ("1 /*!999999 +1 */", "1"),
+        ("1 + /*!800001+0 */ + 0", "2"),
+        ("1 /*!800001 +1 */", "1"),
+        ("1 /*!080400 +1 */", "2"),
+        ("1 /*!80400 +1 */", "2"),
+        ("1 /*!80499 +1 */", "1"),
+        ("1 /*! +1 */", "2"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

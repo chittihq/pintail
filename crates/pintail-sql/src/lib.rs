@@ -90,6 +90,66 @@ impl From<ParserError> for ParseError {
     }
 }
 
+/// The executable part of a block-comment body, excluding its version prefix.
+/// The compatibility grammar targets `MySQL` 8.4.0. A sixth version digit is
+/// consumed only when whitespace follows it; otherwise the prefix has five.
+#[must_use]
+pub fn executable_comment_body(comment: &[u8]) -> Option<&[u8]> {
+    let body = comment.strip_prefix(b"!")?;
+    let prefix = if body
+        .get(..5)
+        .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+    {
+        if body
+            .get(..6)
+            .is_some_and(|digits| digits.iter().all(u8::is_ascii_digit))
+            && body.get(6).is_some_and(u8::is_ascii_whitespace)
+        {
+            6
+        } else {
+            5
+        }
+    } else {
+        0
+    };
+    let version = body[..prefix]
+        .iter()
+        .fold(0_u32, |number, byte| number * 10 + u32::from(byte - b'0'));
+    (version <= 80_400).then_some(&body[prefix..])
+}
+
+fn tokenize_mysql(
+    sql: &str,
+    dialect: &PintailDialect,
+) -> Result<Vec<sqlparser::tokenizer::TokenWithSpan>, ParserError> {
+    use sqlparser::tokenizer::{Token, Tokenizer, Whitespace};
+    let tokens = Tokenizer::new(dialect, sql).tokenize_with_location()?;
+    let mut expanded = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let Token::Whitespace(Whitespace::MultiLineComment(comment)) = &token.token else {
+            expanded.push(token);
+            continue;
+        };
+        let Some(body) = executable_comment_body(comment.as_bytes()) else {
+            expanded.push(token);
+            continue;
+        };
+        let prefix = u64::try_from(comment.len() - body.len() + 2).unwrap_or(u64::MAX);
+        let body = std::str::from_utf8(body).expect("a comment prefix is ASCII");
+        let inner = Tokenizer::new(dialect, body).tokenize_with_location()?;
+        for mut inner in inner {
+            for location in [&mut inner.span.start, &mut inner.span.end] {
+                if location.line == 1 {
+                    location.column += token.span.start.column + prefix - 1;
+                }
+                location.line += token.span.start.line - 1;
+            }
+            expanded.push(inner);
+        }
+    }
+    Ok(expanded)
+}
+
 /// Parse every semicolon-delimited statement using `MySQL` lexical and grammar
 /// rules.
 ///
@@ -102,9 +162,7 @@ impl From<ParserError> for ParseError {
 /// Returns [`ParseError::InvalidSql`] when tokenization or parsing fails.
 pub fn parse_statements(sql: &str) -> Result<Vec<Statement>, ParseError> {
     let dialect = PintailDialect(MySqlDialect {}, session_parse_mode());
-    let mut tokens = sqlparser::tokenizer::Tokenizer::new(&dialect, sql)
-        .tokenize_with_location()
-        .map_err(ParserError::from)?;
+    let mut tokens = tokenize_mysql(sql, &dialect)?;
     if !dialect.1.pipes_as_concat {
         for token in &mut tokens {
             if token.token == sqlparser::tokenizer::Token::StringConcat {
@@ -318,8 +376,8 @@ fn rebalance_integer_divide(expr: &mut sqlparser::ast::Expr) {
 pub(crate) fn parse_expression(sql: &str) -> Result<sqlparser::ast::Expr, ParseError> {
     let dialect = PintailDialect(MySqlDialect {}, session_parse_mode());
     Parser::new(&dialect)
-        .try_with_sql(sql)
-        .and_then(|mut parser| parser.parse_expr())
+        .with_tokens_with_locations(tokenize_mysql(sql, &dialect)?)
+        .parse_expr()
         .map_err(ParseError::from)
 }
 
@@ -455,7 +513,8 @@ impl Dialect for PintailDialect {
         self.0.supports_bitwise_shift_operators()
     }
     fn supports_multiline_comment_hints(&self) -> bool {
-        self.0.supports_multiline_comment_hints()
+        // Version checks and source spans are handled by tokenize_mysql.
+        false
     }
     fn prec_value(&self, precedence: sqlparser::dialect::Precedence) -> u8 {
         if self.1.high_not_precedence
