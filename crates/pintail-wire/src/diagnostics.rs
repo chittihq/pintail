@@ -266,6 +266,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sql_mode_assignments_evaluate_expressions_and_session_references() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend
+                .query(b"SET sql_mode=CONCAT(@@session.sql_mode, ',NO_BACKSLASH_ESCAPES')")
+                .await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        assert!(
+            backend
+                .session
+                .lock()
+                .unwrap()
+                .sql_mode
+                .contains("NO_BACKSLASH_ESCAPES")
+        );
+        let output = backend
+            .execute(r"SELECT 'a\bc' LIKE 'a\%' AS matches")
+            .await
+            .unwrap();
+        assert_eq!(output.rows[0][0], pintail_types::Value::Boolean(true));
+        assert!(matches!(
+            backend.query(b"SET sql_mode=@@global.sql_mode").await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.session.lock().unwrap().sql_mode,
+            backend.default_sql_mode
+        );
+    }
+
+    #[tokio::test]
     async fn short_identifiers_increment_across_statement_assignments() {
         use pintail_protocol::Handler;
         let (_directory, mut backend) = local_backend();

@@ -1,5 +1,7 @@
 #[path = "diagnostics.rs"]
 mod diagnostics;
+#[path = "session_expression.rs"]
+mod session_expression;
 
 use std::{
     collections::BTreeMap,
@@ -1612,27 +1614,41 @@ impl Backend {
         Ok(())
     }
 
-    /// Numeric clock assignments evaluate expressions in the current session
-    /// before changing its clock. Reuse query evaluation for SQL coercion,
-    /// time zones and user variables, then apply the same range/type checks.
+    /// Clock and SQL mode assignments evaluate expressions against the
+    /// current session before applying their normal range and mode checks.
     async fn evaluate_session_command(&self, sql: &str) -> Result<(), String> {
         let command = sql.trim().trim_end_matches(';').trim();
         if let Some((target, expression)) = command.split_once('=') {
             let target = normalized_command(target);
-            if matches!(
-                target.as_str(),
-                "set timestamp"
-                    | "set session timestamp"
-                    | "set local timestamp"
-                    | "set @@timestamp"
-                    | "set @@session.timestamp"
-            ) && !expression.trim().eq_ignore_ascii_case("default")
+            let variable = target
+                .trim_start_matches("set ")
+                .trim_start_matches("session ")
+                .trim_start_matches("local ")
+                .trim_start_matches("@@session.")
+                .trim_start_matches("@@");
+            let bare_mode = variable == "sql_mode"
+                && expression
+                    .trim()
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_');
+            if matches!(variable, "timestamp" | "sql_mode")
+                && !expression.trim().eq_ignore_ascii_case("default")
+                && !bare_mode
             {
-                let output = Backend::execute(self, &format!("SELECT {expression}"))
+                let session = self
+                    .session
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .clone();
+                let select = pintail_sql::with_parse_mode(
+                    pintail_sql::ParseMode::from_sql_mode(&session.sql_mode),
+                    || session_expression::select(expression, &session),
+                )?;
+                let output = Backend::execute(self, &select)
                     .await
                     .map_err(|error| error.to_string())?;
                 if output.fields.len() != 1 || output.rows.len() != 1 {
-                    return Err("timestamp assignment requires one scalar value".to_owned());
+                    return Err(format!("{variable} assignment requires one scalar value"));
                 }
                 let data_type = output.fields[0].data_type;
                 let value = output
@@ -1648,7 +1664,7 @@ impl Backend {
                     }
                     value => user_variable_literal(value, data_type),
                 };
-                return self.apply_session_command(&format!("SET timestamp = {literal}"));
+                return self.apply_session_command(&format!("SET {variable} = {literal}"));
             }
         }
         self.apply_session_command(sql)
