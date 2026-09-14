@@ -1652,3 +1652,29 @@ fn regex_line_boundaries_preserve_positions_and_captures() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn union_text_coercion_preserves_bytes_and_numeric_text() {
+    assert_answers(&[
+        (
+            "(SELECT GROUP_CONCAT(HEX(payload) ORDER BY HEX(payload)) FROM (SELECT 'é' AS payload UNION ALL SELECT _binary 'x') AS parts)",
+            "78,C3A9",
+        ),
+        (
+            "(SELECT GROUP_CONCAT(HEX(payload) ORDER BY HEX(payload)) FROM (SELECT _binary 'x' AS payload UNION ALL SELECT 'é') AS parts)",
+            "78,C3A9",
+        ),
+        (
+            "(SELECT GROUP_CONCAT(HEX(payload) ORDER BY HEX(payload)) FROM (SELECT _latin1 X'E9' AS payload UNION ALL SELECT _binary 'x') AS parts)",
+            "78,E9",
+        ),
+        (
+            "(SELECT GROUP_CONCAT(payload ORDER BY payload) FROM (SELECT 'x' AS payload UNION ALL SELECT 12) AS parts)",
+            "12,x",
+        ),
+        (
+            "(SELECT GROUP_CONCAT(payload ORDER BY payload) FROM (SELECT 12 AS payload UNION ALL SELECT 'x') AS parts)",
+            "12,x",
+        ),
+    ]);
+}

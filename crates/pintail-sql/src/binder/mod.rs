@@ -2324,6 +2324,9 @@ fn coerce_union_projection(
 ) {
     let expression = &mut query.projection[index].expr;
     if let Some(target) = target {
+        if target == DataType::Binary && expression.data_type == Some(DataType::Utf8) {
+            *expression = crate::text_charset::encoded(expression.clone());
+        }
         wrap_in_cast(expression, target);
     }
     expression.data_type = target;
@@ -2365,8 +2368,8 @@ fn wrap_in_cast(expr: &mut BoundExpr, unified: DataType) {
 /// through; numeric families widen, with branch values coerced by the caller. Mixed
 /// signed/UInt64 and integer/decimal pairs unify to a decimal wide enough
 /// for both sides, exactly as `MySQL` does (`BIGINT` with `BIGINT UNSIGNED`
-/// is `DECIMAL(20,0)`). Cross-kind pairs (text vs number, temporal vs
-/// number) stay rejected.
+/// is `DECIMAL(20,0)`). Text absorbs numbers; binary text absorbs character
+/// text while preserving its encoded bytes. Temporal/numeric pairs stay rejected.
 // Outer None = incompatible pair; inner None = still untyped (NULL literals
 // on both branches). A dedicated enum would just restate Option twice.
 #[allow(clippy::option_option, clippy::too_many_lines)]
@@ -2416,6 +2419,17 @@ fn unify_union_types(left: Option<DataType>, right: Option<DataType>) -> Option<
     };
     if left == right {
         return Some(Some(left));
+    }
+    if matches!(
+        (left, right),
+        (DataType::Utf8, DataType::Binary) | (DataType::Binary, DataType::Utf8)
+    ) {
+        return Some(Some(DataType::Binary));
+    }
+    if (left == DataType::Utf8 && is_numeric(right))
+        || (right == DataType::Utf8 && is_numeric(left))
+    {
+        return Some(Some(DataType::Utf8));
     }
     if let (Some(l), Some(r)) = (unsigned_rank(left), unsigned_rank(right)) {
         return Some(Some(if l >= r { left } else { right }));
@@ -9385,10 +9399,9 @@ mod tests {
         // literals instead: UInt vs Int literals unify to Int64.
         let query = bind("SELECT 1 AS v UNION ALL SELECT -2 ORDER BY v").expect("unified union");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Int64));
-        assert!(matches!(
-            bind("SELECT Name AS v FROM Events UNION ALL SELECT id FROM users"),
-            Err(BindError::IncompatibleSetOperation(_))
-        ));
+        let text = bind("SELECT Name AS v FROM Events UNION ALL SELECT id FROM users")
+            .expect("text absorbs numeric branches");
+        assert_eq!(text.projection[0].expr.data_type, Some(DataType::Utf8));
     }
 
     #[test]
@@ -9425,8 +9438,11 @@ mod tests {
         .expect("branch-local order and limit remain scoped");
         bind("SELECT 1 AS n EXCEPT SELECT 1 UNION ALL SELECT 2")
             .expect("set precedence remains representable");
+        let text = bind("SELECT id FROM Events UNION ALL SELECT email FROM users")
+            .expect("numbers widen to text");
+        assert_eq!(text.projection[0].expr.data_type, Some(DataType::Utf8));
         assert!(matches!(
-            bind("SELECT id FROM Events UNION ALL SELECT email FROM users"),
+            bind("SELECT id FROM Events UNION ALL SELECT id, email FROM users"),
             Err(BindError::IncompatibleSetOperation(_))
         ));
     }
