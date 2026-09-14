@@ -442,6 +442,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn date_column_bounds_accept_mixed_separators() {
+        let (_directory, backend) = local_backend();
+        let equal = backend.execute("SELECT day FROM (SELECT DATE'2001-01-01' AS day) AS dates WHERE day < '2001-01/01'").await.unwrap();
+        assert!(equal.rows.is_empty());
+        let later = backend
+            .execute(
+                "SELECT day FROM (SELECT DATE'2001-01-01' AS day) AS dates WHERE day < '01-4:15'",
+            )
+            .await
+            .unwrap();
+        assert_eq!(later.rows.len(), 1);
+    }
+
+    #[tokio::test]
     async fn temporal_literals_accept_relaxed_separators() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

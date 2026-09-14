@@ -6642,11 +6642,15 @@ impl TemporalLiteral {
             Some(split) => (&text[..split], Some(text[split + 1..].trim_start())),
             None => (text, None),
         };
-        let separator = date.chars().find(|character| !character.is_ascii_digit())?;
-        if !separator.is_ascii_punctuation() {
+        if !date.as_bytes().first().is_some_and(u8::is_ascii_digit)
+            || !date.as_bytes().last().is_some_and(u8::is_ascii_digit)
+        {
             return None;
         }
-        let parts = date.split(separator).collect::<Vec<_>>();
+        let parts = date
+            .split(|character: char| character.is_ascii_punctuation())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
         let number = |part: &str, widths: std::ops::RangeInclusive<usize>| {
             (widths.contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_digit()))
                 .then(|| part.parse::<u32>().ok())
@@ -6655,8 +6659,14 @@ impl TemporalLiteral {
         let [year, month, day] = parts.as_slice() else {
             return None;
         };
+        let parsed_year = number(year, 1..=4)?;
+        let parsed_year = if year.len() <= 2 {
+            parsed_year + if parsed_year < 70 { 2000 } else { 1900 }
+        } else {
+            parsed_year
+        };
         let mut literal = Self {
-            year: number(year, 4..=4)?,
+            year: parsed_year,
             month: number(month, 1..=2)?,
             day: number(day, 1..=2)?,
             hour: 0,
