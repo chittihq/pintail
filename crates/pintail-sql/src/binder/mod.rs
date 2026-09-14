@@ -763,6 +763,24 @@ impl<'catalog> Binder<'catalog> {
             if let Some(predicate) = &mut having {
                 rewrite_group_references(predicate, &group_by, &determined, &mut aggregates)?;
             }
+            if crate::session_parse_mode().permissive_grouping {
+                for item in &mut projection {
+                    outer_aggregate::retain_correlated_inputs(
+                        &mut item.expr,
+                        &mut aggregates,
+                        &expression_tables,
+                        &group_by,
+                    );
+                }
+                if let Some(predicate) = &mut having {
+                    outer_aggregate::retain_correlated_inputs(
+                        predicate,
+                        &mut aggregates,
+                        &expression_tables,
+                        &group_by,
+                    );
+                }
+            }
             // Windows evaluate above the aggregation, so their arguments,
             // PARTITION BY, and ORDER BY re-express in terms of group keys
             // and aggregate outputs (q07's share-of-category shape).

@@ -869,6 +869,40 @@ pub(super) mod tests {
         assert_eq!(result.rows[1][0], Value::Int64(3));
     }
 
+    #[tokio::test]
+    async fn grouped_subqueries_keep_outer_filter_inputs() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET sql_mode=''").await;
+        for sql in [
+            "CREATE TABLE numbers (n INT, grp INT)",
+            "CREATE TABLE lookup (v INT)",
+            "INSERT INTO numbers VALUES (1,1),(2,2)",
+            "INSERT INTO lookup VALUES (1),(2)",
+        ] {
+            backend.execute(sql).await.unwrap();
+        }
+        let result = backend.execute("SELECT v, v IN (SELECT COUNT(*) FROM numbers GROUP BY grp HAVING grp=lookup.v) FROM lookup ORDER BY v").await.unwrap();
+        assert_eq!(result.rows.len(), 2);
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Int64(1),
+                pintail_types::Value::Boolean(true)
+            ]
+        );
+        assert_eq!(
+            result.rows[1],
+            vec![
+                pintail_types::Value::Int64(2),
+                pintail_types::Value::Boolean(false)
+            ]
+        );
+        let result = backend.execute("SELECT (SELECT SUM(lookup.v) FROM numbers WHERE numbers.n=lookup.v GROUP BY numbers.n) FROM lookup").await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], pintail_types::Value::Int64(3));
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

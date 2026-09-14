@@ -1,7 +1,8 @@
 use std::cell::Cell;
 
 use super::{
-    BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundQuery, BoundTable, WindowFunction,
+    AggregateFunction, BoundAggregate, BoundColumn, BoundExpr, BoundExprKind, BoundQuery,
+    BoundTable, WindowFunction,
 };
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_types::DataType;
@@ -37,7 +38,10 @@ fn lift_query(
     let mut replacements = Vec::new();
     let mut identities = Vec::new();
     for mut aggregate in std::mem::take(&mut query.aggregates) {
-        if aggregate.expr.as_ref().and_then(outer_only) == Some(true) {
+        if aggregate.declared
+            && aggregate.function != AggregateFunction::AnyValue
+            && aggregate.expr.as_ref().and_then(outer_only) == Some(true)
+        {
             if let Some(expr) = &mut aggregate.expr {
                 rebase(expr, tables);
             }
@@ -269,4 +273,63 @@ fn rewrite_identities(query: &mut BoundQuery, identities: &[(BoundColumn, BoundC
     for (_, branch) in &mut query.set_ops {
         rewrite_identities(branch, identities);
     }
+}
+
+/// Correlated predicates still read representative input columns after grouping.
+/// Retain their identities alongside the explicitly requested aggregate values.
+pub(super) fn retain_correlated_inputs(
+    expression: &mut BoundExpr,
+    aggregates: &mut Vec<BoundAggregate>,
+    tables: &[BoundTable],
+    groups: &[BoundExpr],
+) {
+    fn retain(
+        expr: &mut BoundExpr,
+        aggregates: &mut Vec<BoundAggregate>,
+        tables: &[BoundTable],
+        groups: &[BoundExpr],
+        nested: bool,
+    ) {
+        match &mut expr.kind {
+            BoundExprKind::Column(column) if nested && column.outer => {
+                let Some(parent) = tables
+                    .iter()
+                    .flat_map(|table| &table.columns)
+                    .find(|parent| !parent.outer && same_column(parent, column))
+                else {
+                    return;
+                };
+                if groups.iter().any(|group| matches!(&group.kind, BoundExprKind::Column(key) if same_column(key, parent)))
+                    || aggregates.iter().any(|aggregate| aggregate.output_column.as_deref().is_some_and(|output| same_column(output, parent))) {
+                    return;
+                }
+                aggregates.push(BoundAggregate {
+                    output_column: Some(Box::new(parent.clone())),
+                    declared: false,
+                    function: AggregateFunction::AnyValue,
+                    data_type: Some(parent.data_type),
+                    expr: Some(BoundExpr::column(parent.clone())),
+                    distinct: false,
+                    nullable: true,
+                    separator: None,
+                    order_within: Vec::new(),
+                });
+            }
+            BoundExprKind::ScalarSubquery(query) | BoundExprKind::ExistsSubquery { query, .. } => {
+                query_expressions(query, &mut |expr| {
+                    retain(expr, aggregates, tables, groups, true);
+                });
+            }
+            BoundExprKind::InSubquery { expr, query, .. } => {
+                retain(expr, aggregates, tables, groups, nested);
+                query_expressions(query, &mut |expr| {
+                    retain(expr, aggregates, tables, groups, true);
+                });
+            }
+            _ => children(expr, &mut |child| {
+                retain(child, aggregates, tables, groups, nested);
+            }),
+        }
+    }
+    retain(expression, aggregates, tables, groups, false);
 }
