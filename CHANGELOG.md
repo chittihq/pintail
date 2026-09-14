@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Chained `BETWEEN` expressions bind the upper comparison using MySQL
+  precedence while preserving explicit parentheses and negation.
+
 - Calendar casts capture SQL-mode rules for zero components and invalid
   dates; accepted temporal values retain their fields in date consumers.
 

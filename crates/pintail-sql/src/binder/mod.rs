@@ -2990,9 +2990,33 @@ fn bind_expr_inner(
             negated,
             low,
             high,
-        } => bind_between(
-            expr, low, high, *negated, tables, aggregates, windows, subqueries,
-        ),
+        } => {
+            // Without parentheses, another BETWEEN belongs to the upper
+            // bound. Nested expressions retain the grouping the user wrote.
+            if let Expr::Between {
+                expr: inner,
+                negated: inner_negated,
+                low: inner_low,
+                high: inner_high,
+            } = expr.as_ref()
+            {
+                let reassociated = Expr::Between {
+                    expr: inner.clone(),
+                    negated: *inner_negated,
+                    low: inner_low.clone(),
+                    high: Box::new(Expr::Between {
+                        expr: inner_high.clone(),
+                        negated: *negated,
+                        low: low.clone(),
+                        high: high.clone(),
+                    }),
+                };
+                return bind_expr_inner(&reassociated, tables, aggregates, windows, subqueries);
+            }
+            bind_between(
+                expr, low, high, *negated, tables, aggregates, windows, subqueries,
+            )
+        }
         Expr::Like {
             negated,
             any: false,

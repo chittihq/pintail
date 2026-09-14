@@ -1083,3 +1083,19 @@ fn accepted_invalid_calendar_values_keep_their_fields() {
         },
     );
 }
+
+#[test]
+fn chained_between_binds_its_upper_bound_before_the_outer_comparison() {
+    for (expression, expected) in [
+        ("5 BETWEEN 0 AND 10 BETWEEN 0 AND 1", "Boolean(false)"),
+        ("(5 BETWEEN 0 AND 10) BETWEEN 0 AND 1", "Boolean(true)"),
+        ("5 NOT BETWEEN 0 AND 10 BETWEEN 0 AND 1", "Boolean(true)"),
+        ("5 BETWEEN 0 AND 10 NOT BETWEEN 0 AND 1", "Boolean(false)"),
+        (
+            "id BETWEEN 0 AND 2 BETWEEN 0 AND 1 BETWEEN 0 AND 1",
+            "Boolean(false)",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
