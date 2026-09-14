@@ -575,7 +575,10 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
         } else {
             ""
         };
-        return typed_value(&format!("{sign}{number}"), column);
+        return typed_value(
+            &number_literal_text(&format!("{sign}{number}"), column),
+            column,
+        );
     }
     let Expr::Value(ValueWithSpan { value, .. }) = expr else {
         // A local INSERT takes literals only: an expression would need the
@@ -589,7 +592,7 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
         SqlValue::Null => return Ok(Value::Null),
         // TRUE and FALSE are the numbers 1 and 0 to whatever column takes them.
         SqlValue::Boolean(flag) => u8::from(*flag).to_string(),
-        SqlValue::Number(number, _) => number.clone(),
+        SqlValue::Number(number, _) => number_literal_text(number, column),
         SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) => text.clone(),
         SqlValue::HexStringLiteral(digits) => return hex_literal(digits, column),
         other => {
@@ -599,6 +602,28 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
         }
     };
     typed_value(&text, column)
+}
+
+fn number_literal_text(text: &str, column: &SourceColumn) -> String {
+    if !matches!(column.mysql_data_type.as_str(), "char" | "varchar") || !text.contains(['e', 'E'])
+    {
+        return text.to_owned();
+    }
+    let Some(number) = text.parse::<f64>().ok().filter(|number| number.is_finite()) else {
+        return text.to_owned();
+    };
+    let width = column
+        .mysql_column_type
+        .split_once('(')
+        .and_then(|(_, tail)| tail.split_once(')'))
+        .and_then(|(width, _)| width.trim().parse::<usize>().ok())
+        .unwrap_or(1);
+    let fixed = number.to_string();
+    if fixed.len() <= width {
+        fixed
+    } else {
+        format!("{number:e}")
+    }
 }
 
 /// Timestamp storage uses UTC; DATETIME keeps the written wall clock.

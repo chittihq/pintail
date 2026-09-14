@@ -314,3 +314,20 @@ fn float_bit_precision_selects_single_or_double_storage() {
     );
     assert_eq!(catalog[0].columns[1].mysql_data_type, "double");
 }
+
+#[test]
+fn scientific_number_literals_choose_text_that_fits_the_column() {
+    let fixture = fixture();
+    run(&fixture, "CREATE TABLE readings (label CHAR(6))").unwrap();
+    run(
+        &fixture,
+        "INSERT INTO readings VALUES (2e5),(2e6),(2e-4),(2e-5)",
+    )
+    .unwrap();
+    assert_eq!(
+        stored_rows(&fixture, "readings"),
+        ["0.0002", "200000", "2e-5", "2e6"]
+            .map(|text| vec![Value::Utf8(text.into())])
+            .to_vec()
+    );
+}
