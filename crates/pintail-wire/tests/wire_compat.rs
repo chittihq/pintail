@@ -560,6 +560,28 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore Unicode defaults");
+    let folded: Option<String> = connection
+        .query_first("SELECT HEX(BIT_AND(_binary'abc'))")
+        .await
+        .expect("binary aggregate wire value");
+    assert_eq!(folded.as_deref(), Some("616263"));
+    for (sql, code) in [
+        ("SELECT BIT_AND(CAST(NULL AS BINARY(512)))", 3514),
+        (
+            "SELECT BIT_AND(IF(id=1, CAST('a' AS BINARY(1)), CAST('b' AS BINARY(2)))) FROM events",
+            3513,
+        ),
+    ] {
+        let error = connection
+            .query_drop(sql)
+            .await
+            .expect_err("invalid binary aggregate width");
+        let mysql_async::Error::Server(error) = error else {
+            panic!("wire error expected: {error}")
+        };
+        assert_eq!(error.code, code, "{sql}");
+        assert_eq!(error.state, "HY000");
+    }
     connection
         .query_drop("SET @saved_locale = @@lc_time_names")
         .await

@@ -4783,6 +4783,7 @@ fn bind_aggregate(
     } else {
         numeric_aggregate_input(aggregate_function, expr)
     };
+    let expr = bit_aggregate_input(aggregate_function, expr, arguments.args.first());
     let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
     let charset = expr
         .as_ref()
@@ -4848,6 +4849,44 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
         "BIT_XOR" => Some(AggregateFunction::BitXor),
         _ => None,
     }
+}
+
+fn bit_aggregate_input(
+    function: AggregateFunction,
+    expr: Option<BoundExpr>,
+    written: Option<&FunctionArg>,
+) -> Option<BoundExpr> {
+    if !matches!(
+        function,
+        AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
+    ) {
+        return expr;
+    }
+    let Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(written))) = written else {
+        return expr;
+    };
+    let mut written = written;
+    while let Expr::Nested(inner) = written {
+        written = inner;
+    }
+    if matches!(written, Expr::Value(value) if matches!(value.value, SqlValue::HexStringLiteral(_) | SqlValue::SingleQuotedByteStringLiteral(_)))
+        && let Some(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Binary(bytes)),
+            ..
+        }) = &expr
+    {
+        // Unintroduced hex/bit literals take the numeric aggregate domain,
+        // retaining their low 64 bits. Explicit binary strings keep bytes.
+        let number = bytes.iter().fold(0_u64, |number, byte| {
+            number.wrapping_shl(8) | u64::from(*byte)
+        });
+        return Some(BoundExpr {
+            kind: BoundExprKind::Literal(Value::UInt64(number)),
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+        });
+    }
+    expr
 }
 
 fn numeric_aggregate_input(
@@ -4949,7 +4988,14 @@ fn aggregate_result_type(
         AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
             if is_numeric(input_type) =>
         {
-            Ok((Some(DataType::UInt64), false))
+            Ok((
+                Some(if input_type == Some(DataType::Binary) {
+                    DataType::Binary
+                } else {
+                    DataType::UInt64
+                }),
+                false,
+            ))
         }
         _ => Err(BindError::InvalidAggregateType {
             function,

@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Binary `BIT_AND`, `BIT_OR` and `BIT_XOR` retain byte values and declared
+  identities across groups, windows, spill and merges, with MySQL length
+  errors. Unintroduced hex and bit literals keep numeric aggregate semantics.
+
 - Decimal `DIV` reads internal division precision in runtime evaluation and
   constant folding; explicit text casts remain display boundaries.
 

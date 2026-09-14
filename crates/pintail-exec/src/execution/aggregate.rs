@@ -46,6 +46,7 @@ pub(super) struct CompiledAggregate {
     pub(super) function: AggregateFunction,
     pub(super) expr: Option<CompiledExpr>,
     pub(super) input_type: Option<DataType>,
+    pub(super) binary_width: Option<u32>,
     pub(super) distinct: bool,
     pub(super) data_type: Option<DataType>,
     /// `GROUP_CONCAT` separator (`MySQL` defaults to a comma).
@@ -95,6 +96,10 @@ impl CompiledAggregate {
                 .map(|expression| CompiledExpr::compile(expression, columns, collation))
                 .transpose()?,
             input_type,
+            binary_width: aggregate
+                .expr
+                .as_ref()
+                .and_then(pintail_sql::BoundExpr::binary_width),
             distinct: aggregate.distinct,
             data_type: aggregate.data_type,
             separator: aggregate
@@ -711,6 +716,11 @@ enum AggregateValue {
         accumulator: u64,
         seen: bool,
     },
+    BinaryBitFold {
+        accumulator: Option<Vec<u8>>,
+        width: u32,
+        identity: u8,
+    },
     GroupConcat {
         /// Collected `(order keys, rendered value, original value)` rows.
         /// The original value preserves DISTINCT identity when runs merge.
@@ -769,6 +779,19 @@ impl AggregateState {
                 sample,
                 stddev: false,
             },
+            AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
+                if aggregate.data_type == Some(DataType::Binary) =>
+            {
+                AggregateValue::BinaryBitFold {
+                    accumulator: None,
+                    width: aggregate.binary_width.unwrap_or(u32::MAX),
+                    identity: if aggregate.function == AggregateFunction::BitAnd {
+                        0xff
+                    } else {
+                        0
+                    },
+                }
+            }
             AggregateFunction::BitAnd => AggregateValue::BitFold {
                 accumulator: u64::MAX,
                 seen: false,
@@ -925,6 +948,17 @@ impl AggregateState {
                 if !mean.is_finite() || !m2.is_finite() {
                     return Err(ExecError::NumericOverflow);
                 }
+            }
+            AggregateValue::BinaryBitFold {
+                accumulator, width, ..
+            } => {
+                if *width > 511 {
+                    return Err(ExecError::BinaryBitwiseAggregateWidth);
+                }
+                let Value::Binary(bytes) = value else {
+                    return Err(ExecError::InvalidExpressionType);
+                };
+                update_binary_bit_fold(accumulator, bytes, aggregate.function, memory)?;
             }
             AggregateValue::BitFold { accumulator, seen } => {
                 // MySQL coerces the argument to BIGINT UNSIGNED before
@@ -1221,6 +1255,21 @@ impl AggregateState {
                     && let Some(value) = right
                 {
                     replace_retained_value(left, value, memory)?;
+                }
+            }
+            (
+                AggregateValue::BinaryBitFold {
+                    accumulator, width, ..
+                },
+                AggregateValue::BinaryBitFold {
+                    accumulator: other, ..
+                },
+            ) => {
+                if *width > 511 {
+                    return Err(ExecError::BinaryBitwiseAggregateWidth);
+                }
+                if let Some(other) = other {
+                    update_binary_bit_fold(accumulator, &other, aggregate.function, memory)?;
                 }
             }
             (
@@ -1530,6 +1579,21 @@ impl AggregateState {
                 crate::expression::mysql_json_text(&serde_json::Value::Object(members)),
             ),
             AggregateValue::BitFold { accumulator, .. } => Value::UInt64(accumulator),
+            AggregateValue::BinaryBitFold {
+                accumulator,
+                width,
+                identity,
+            } => {
+                if width > 511 {
+                    return Err(ExecError::BinaryBitwiseAggregateWidth);
+                }
+                Value::Binary(if let Some(bytes) = accumulator {
+                    bytes
+                } else {
+                    memory.reserve(width as usize)?;
+                    vec![identity; width as usize]
+                })
+            }
             AggregateValue::Moments {
                 count,
                 m2,
@@ -1718,8 +1782,12 @@ fn settled_signature(
         };
         write!(
             signature,
-            "a:{:?}:{}:{};",
-            aggregate.function, aggregate.distinct, expr
+            "a:{:?}:{}:{:?}:{:?}:{};",
+            aggregate.function,
+            aggregate.distinct,
+            aggregate.data_type,
+            aggregate.binary_width,
+            expr
         )
         .ok()?;
     }
@@ -1782,6 +1850,33 @@ fn make_room_for_one<K: Clone + Eq + std::hash::Hash, V>(cache: &mut HashMap<K, 
     }
 }
 
+fn update_binary_bit_fold(
+    accumulator: &mut Option<Vec<u8>>,
+    bytes: &[u8],
+    function: AggregateFunction,
+    memory: &MemoryTracker,
+) -> Result<(), ExecError> {
+    if bytes.len() > 511 {
+        return Err(ExecError::BinaryBitwiseAggregateWidth);
+    }
+    if let Some(accumulator) = accumulator {
+        if accumulator.len() != bytes.len() {
+            return Err(ExecError::BinaryBitwiseLength);
+        }
+        for (left, right) in accumulator.iter_mut().zip(bytes) {
+            *left = match function {
+                AggregateFunction::BitAnd => *left & right,
+                AggregateFunction::BitXor => *left ^ right,
+                _ => *left | right,
+            };
+        }
+    } else {
+        memory.reserve(bytes.len())?;
+        *accumulator = Some(bytes.to_vec());
+    }
+    Ok(())
+}
+
 /// Whether an aggregate's finished value can be merged with another
 /// computed over a disjoint set of rows.
 ///
@@ -1795,10 +1890,10 @@ fn mergeable_across_disjoint_rows(aggregate: &CompiledAggregate) -> bool {
             AggregateFunction::Count
             | AggregateFunction::Minimum
             | AggregateFunction::Maximum
-            | AggregateFunction::AnyValue
-            | AggregateFunction::BitAnd
-            | AggregateFunction::BitOr
-            | AggregateFunction::BitXor => true,
+            | AggregateFunction::AnyValue => true,
+            AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor => {
+                aggregate.data_type != Some(DataType::Binary)
+            }
             AggregateFunction::Sum => matches!(
                 aggregate.data_type,
                 Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
@@ -2289,6 +2384,11 @@ fn merge_finished_value(
         // the bit folds are associative, so both merge exactly.
         AggregateFunction::AnyValue => Ok(current),
         AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor => {
+            if aggregate.data_type == Some(DataType::Binary) {
+                return Err(ExecError::InvalidPhysicalPlan(
+                    "binary bit folds require accumulator state when merging",
+                ));
+            }
             let left = mysql_u64(&current).unwrap_or(0);
             let right = mysql_u64(delta).unwrap_or(0);
             Ok(Value::UInt64(match aggregate.function {
@@ -2445,32 +2545,7 @@ pub(super) fn build_hash_aggregate(
         && let Some(PullOperator::Scan { stream, .. }) = settled_scan(input)
         && let Some(delta) = stream.insert_only_delta()
         && let Some(signature) = settled_signature(group_by, aggregates)
-        && aggregates.iter().all(|aggregate| {
-            !aggregate.distinct
-                && match aggregate.function {
-                    // COUNT/MIN/MAX, plus the associative folds, all merge
-                    // exactly over the disjoint rows an insert-only delta
-                    // contributes.
-                    AggregateFunction::Count
-                    | AggregateFunction::Minimum
-                    | AggregateFunction::Maximum
-                    | AggregateFunction::AnyValue
-                    | AggregateFunction::BitAnd
-                    | AggregateFunction::BitOr
-                    | AggregateFunction::BitXor => true,
-                    AggregateFunction::Sum => matches!(
-                        aggregate.data_type,
-                        Some(DataType::Int64 | DataType::UInt64 | DataType::Float64)
-                    ),
-                    AggregateFunction::Average
-                    | AggregateFunction::GroupConcat
-                    | AggregateFunction::JsonArrayAgg
-                    | AggregateFunction::JsonObjectAgg
-                    // Needs the moments, not the finished value.
-                    | AggregateFunction::StdDev { .. }
-                    | AggregateFunction::Variance { .. } => false,
-                }
-        })
+        && aggregates.iter().all(mergeable_across_disjoint_rows)
     {
         // Spelled exactly as the settled entry above spells its own key,
         // or the delta never finds the base it is meant to extend.
@@ -3764,6 +3839,11 @@ enum SpilledAggregateValue {
         accumulator: u64,
         seen: bool,
     },
+    BinaryBitFold {
+        accumulator: Option<Vec<u8>>,
+        width: u32,
+        identity: u8,
+    },
 }
 
 fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState, ExecError> {
@@ -3809,6 +3889,15 @@ fn spill_aggregate_state(state: AggregateState) -> Result<SpilledAggregateState,
         AggregateValue::BitFold { accumulator, seen } => {
             SpilledAggregateValue::BitFold { accumulator, seen }
         }
+        AggregateValue::BinaryBitFold {
+            accumulator,
+            width,
+            identity,
+        } => SpilledAggregateValue::BinaryBitFold {
+            accumulator,
+            width,
+            identity,
+        },
         AggregateValue::GroupConcat { items, .. } => SpilledAggregateValue::GroupConcat(
             items
                 .into_iter()
@@ -3891,6 +3980,18 @@ fn revive_aggregate_state(
         },
         SpilledAggregateValue::BitFold { accumulator, seen } => {
             AggregateValue::BitFold { accumulator, seen }
+        }
+        SpilledAggregateValue::BinaryBitFold {
+            accumulator,
+            width,
+            identity,
+        } => {
+            memory.reserve(accumulator.as_ref().map_or(0, Vec::len))?;
+            AggregateValue::BinaryBitFold {
+                accumulator,
+                width,
+                identity,
+            }
         }
         SpilledAggregateValue::Sum(sum) => AggregateValue::Sum(sum),
         SpilledAggregateValue::DecimalSum {
@@ -3997,7 +4098,10 @@ const AGGREGATE_MOMENTS: u8 = 8;
 const AGGREGATE_BIT_FOLD: u8 = 9;
 const AGGREGATE_GROUP_CONCAT: u8 = 10;
 const AGGREGATE_JSON_ARRAY: u8 = 11;
+const AGGREGATE_BINARY_BIT_FOLD: u8 = 12;
 
+// Keep each spill tag beside its payload layout.
+#[allow(clippy::too_many_lines)]
 fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregateState) {
     match &state.value {
         SpilledAggregateValue::GroupConcat(items) => {
@@ -4033,6 +4137,19 @@ fn encode_aggregate_state(encoder: &mut spill::Encoder, state: &SpilledAggregate
             encoder.f64(*m2);
             encoder.bool(*sample);
             encoder.bool(*stddev);
+        }
+        SpilledAggregateValue::BinaryBitFold {
+            accumulator,
+            width,
+            identity,
+        } => {
+            encoder.u8(AGGREGATE_BINARY_BIT_FOLD);
+            encoder.u32(*width);
+            encoder.u8(*identity);
+            encoder.bool(accumulator.is_some());
+            if let Some(bytes) = accumulator {
+                encoder.bytes(bytes);
+            }
         }
         SpilledAggregateValue::BitFold { accumulator, seen } => {
             encoder.u8(AGGREGATE_BIT_FOLD);
@@ -4119,6 +4236,20 @@ fn decode_aggregate_state(
             sample: decoder.bool()?,
             stddev: decoder.bool()?,
         },
+        AGGREGATE_BINARY_BIT_FOLD => {
+            let width = decoder.u32()?;
+            let identity = decoder.u8()?;
+            let accumulator = if decoder.bool()? {
+                Some(decoder.bytes()?.to_vec())
+            } else {
+                None
+            };
+            SpilledAggregateValue::BinaryBitFold {
+                accumulator,
+                width,
+                identity,
+            }
+        }
         AGGREGATE_BIT_FOLD => SpilledAggregateValue::BitFold {
             accumulator: decoder.u64()?,
             seen: decoder.bool()?,
@@ -6120,5 +6251,75 @@ mod distinct_bitmap_tests {
                 .expect("re-insert"),
             "a key already in the bitmap must report itself as not new"
         );
+    }
+}
+
+#[cfg(test)]
+mod binary_fold_tests {
+    use super::*;
+
+    fn aggregate(function: AggregateFunction) -> CompiledAggregate {
+        CompiledAggregate {
+            function,
+            expr: None,
+            input_type: Some(DataType::Binary),
+            binary_width: Some(6),
+            distinct: false,
+            data_type: Some(DataType::Binary),
+            separator: ",".to_owned(),
+            order_within: Vec::new(),
+            collation: Collation::default(),
+        }
+    }
+
+    fn round_trip(
+        state: AggregateState,
+        aggregate: &CompiledAggregate,
+        memory: &MemoryTracker,
+    ) -> AggregateState {
+        let state = spill_aggregate_state(state).unwrap();
+        let mut encoder = spill::Encoder::new();
+        encode_aggregate_state(&mut encoder, &state);
+        let bytes = encoder.finish();
+        let state = decode_aggregate_state(&mut spill::Decoder::new(&bytes)).unwrap();
+        revive_aggregate_state(state, aggregate, memory).unwrap()
+    }
+
+    #[test]
+    fn binary_bit_state_survives_spill_and_empty_partition_merges() {
+        for (function, expected) in [
+            (AggregateFunction::BitAnd, vec![0xc0, 0x00, 0x0c]),
+            (AggregateFunction::BitOr, vec![0xfc, 0xff, 0xcf]),
+            (AggregateFunction::BitXor, vec![0x3c, 0xff, 0xc3]),
+        ] {
+            let aggregate = aggregate(function);
+            assert!(!mergeable_across_disjoint_rows(&aggregate));
+            let memory = MemoryTracker::new(1024 * 1024);
+            let mut left = round_trip(AggregateState::new(&aggregate), &aggregate, &memory);
+            let mut right = AggregateState::new(&aggregate);
+            right
+                .update(&aggregate, &Value::Binary(vec![0xf0, 0x0f, 0xcc]), &memory)
+                .unwrap();
+            left.merge(&aggregate, round_trip(right, &aggregate, &memory), &memory)
+                .unwrap();
+            left.update(&aggregate, &Value::Binary(vec![0xcc, 0xf0, 0x0f]), &memory)
+                .unwrap();
+            let mut left = round_trip(left, &aggregate, &memory);
+            left.merge(&aggregate, AggregateState::new(&aggregate), &memory)
+                .unwrap();
+            assert_eq!(left.finish(&memory).unwrap(), Value::Binary(expected));
+            let empty = round_trip(AggregateState::new(&aggregate), &aggregate, &memory);
+            assert_eq!(
+                empty.finish(&memory).unwrap(),
+                Value::Binary(vec![
+                    if function == AggregateFunction::BitAnd {
+                        0xff
+                    } else {
+                        0
+                    };
+                    6
+                ])
+            );
+        }
     }
 }

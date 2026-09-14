@@ -213,20 +213,18 @@ impl SourceTable {
                         ))
                         .with_timestamp(column.mysql_data_type.eq_ignore_ascii_case("timestamp"))
                         .with_binary_width(
-                            matches!(
-                                column.mysql_data_type.to_ascii_lowercase().as_str(),
-                                "binary" | "varbinary"
-                            )
-                            .then(|| {
-                                column
+                            match column.mysql_data_type.to_ascii_lowercase().as_str() {
+                                "binary" | "varbinary" => column
                                     .mysql_column_type
-                                    .split_once('(')?
-                                    .1
-                                    .strip_suffix(')')?
-                                    .parse::<u32>()
-                                    .ok()
-                            })
-                            .flatten(),
+                                    .split_once('(')
+                                    .and_then(|(_, width)| width.strip_suffix(')'))
+                                    .and_then(|width| width.parse::<u32>().ok()),
+                                "tinyblob" => Some(255),
+                                "blob" => Some(65_535),
+                                "mediumblob" => Some(16_777_215),
+                                "longblob" => Some(u32::MAX),
+                                _ => None,
+                            },
                         )
                         // A SET sorts by its member bitmask; the members and
                         // their declaration order are that mask's bits.

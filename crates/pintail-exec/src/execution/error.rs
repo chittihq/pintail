@@ -33,6 +33,10 @@ pub enum ExecError {
     },
     /// An expression operation received an impossible bound type.
     InvalidExpressionType,
+    /// Binary bitwise arguments differ in byte length.
+    BinaryBitwiseLength,
+    /// Aggregate bitwise arguments exceed the supported 511-byte width.
+    BinaryBitwiseAggregateWidth,
     /// A JSON path expression does not parse; `position` is where `MySQL`'s
     /// parser stood when it stopped.
     InvalidJsonPath {
@@ -139,6 +143,8 @@ impl fmt::Display for ExecError {
             Self::InvalidExpressionType => {
                 formatter.write_str("bound expression has an invalid physical type")
             }
+            Self::BinaryBitwiseLength => formatter.write_str("Binary operands of bitwise operators must be of equal length"),
+            Self::BinaryBitwiseAggregateWidth => formatter.write_str("Aggregate bitwise functions cannot accept arguments longer than 511 bytes; consider using the SUBSTRING() function"),
             Self::InvalidJsonPath { position } => write!(
                 formatter,
                 "Invalid JSON path expression. The error is around character position {position}."

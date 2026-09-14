@@ -210,6 +210,10 @@ pub enum SqlRejection {
     SubqueryRows,
     /// 3143: a JSON path expression does not parse.
     InvalidJsonPath,
+    /// 3513: binary bitwise operands have unequal lengths.
+    BinaryBitwiseLength,
+    /// 3514: aggregate binary width exceeds 511 bytes.
+    BinaryBitwiseAggregateWidth,
 }
 
 /// The metadata files a database's signature was last read against, and
@@ -1532,6 +1536,14 @@ fn query_execution_error(error: ExecError) -> QueryError {
         ExecError::ScalarSubqueryRows { .. } => QueryError::Rejected {
             rejection: SqlRejection::SubqueryRows,
             message: "Subquery returns more than 1 row".to_owned(),
+        },
+        ExecError::BinaryBitwiseLength => QueryError::Rejected {
+            rejection: SqlRejection::BinaryBitwiseLength,
+            message: error.to_string(),
+        },
+        ExecError::BinaryBitwiseAggregateWidth => QueryError::Rejected {
+            rejection: SqlRejection::BinaryBitwiseAggregateWidth,
+            message: error.to_string(),
         },
         ExecError::InvalidJsonPath { .. } => QueryError::Rejected {
             rejection: SqlRejection::InvalidJsonPath,

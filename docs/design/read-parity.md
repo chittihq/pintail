@@ -175,3 +175,15 @@ MONTHNAME and LAST_DAY consumers under captured zero-date policies.
 DIV joins the internal decimal arithmetic path, so its quotient reads a
 nested division's guard digits. An explicit text cast remains a display
 boundary and therefore can produce a different integer quotient.
+
+### Binary bitwise aggregates
+
+Declared binary byte widths survive source schemas, binding, derived tables
+and window layouts. Binary bit folds keep a separate unseen state, so an
+empty partition's declared-width identity does not corrupt a populated
+partition whose values are shorter. Spill records preserve that distinction.
+Finished-value segment/delta merges decline binary folds because those
+values cannot distinguish an unseen identity from actual input bytes.
+Arguments wider than 511 bytes and unequal non-NULL lengths return MySQL's
+3514 and 3513 errors. Hex and bit literals without an introducer retain the
+numeric aggregate domain.

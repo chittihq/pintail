@@ -274,6 +274,10 @@ pub enum ErrorKind {
     ErSubqueryNo1Row = 1242,
     /// 3143: a JSON path expression does not parse.
     ErInvalidJsonPath = 3143,
+    /// 3513: binary bitwise operands have unequal lengths.
+    ErInvalidBitwiseOperandsSize = 3513,
+    /// 3514: aggregate binary arguments exceed 511 bytes.
+    ErInvalidBitwiseAggregateOperandsSize = 3514,
 }
 
 impl ErrorKind {
@@ -309,7 +313,9 @@ impl ErrorKind {
             Self::ErWrongArguments
             | Self::ErUnknownStmtHandler
             | Self::ErUnknownError
-            | Self::ErInvalidGroupFuncUse => b"HY000",
+            | Self::ErInvalidGroupFuncUse
+            | Self::ErInvalidBitwiseOperandsSize
+            | Self::ErInvalidBitwiseAggregateOperandsSize => b"HY000",
         }
     }
 }

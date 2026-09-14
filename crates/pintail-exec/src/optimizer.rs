@@ -981,6 +981,17 @@ fn fold_expr(expr: BoundExpr) -> BoundExpr {
 
 fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
     match &expr.kind {
+        // A binary declaration carries the identity width for downstream
+        // bit folds, including CAST(NULL AS BINARY(n)). A literal alone
+        // cannot preserve it, so retain the declaration during planning.
+        BoundExprKind::Scalar {
+            function:
+                ScalarFunction::DeclaredCast {
+                    target: DataType::Binary,
+                    characters: Some(_),
+                },
+            ..
+        } => None,
         BoundExprKind::Scalar {
             function:
                 ScalarFunction::DateInterval { .. }
