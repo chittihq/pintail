@@ -730,20 +730,44 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
 }
 
 fn expanded_sql_mode(value: &str) -> String {
-    if !sql_mode_has(value, "ANSI") {
+    // A composite mode is a name for a set, and the set is what takes effect.
+    // TRADITIONAL carries NO_ZERO_IN_DATE and NO_ZERO_DATE, and reading only
+    // its name for strictness left zero dates permitted under it - so
+    // `SET sql_mode='TRADITIONAL'` then
+    // `UNIX_TIMESTAMP(STR_TO_DATE('201506', '%Y%m'))` answered 0 where MySQL
+    // answers NULL. Both composites keep their own name in the expansion,
+    // where MySQL puts it, because `SELECT @@sql_mode` reports the whole list.
+    let (leading, trailing) = if sql_mode_has(value, "ANSI") {
+        (
+            vec![
+                "REAL_AS_FLOAT",
+                "PIPES_AS_CONCAT",
+                "ANSI_QUOTES",
+                "IGNORE_SPACE",
+                "ONLY_FULL_GROUP_BY",
+            ],
+            Vec::new(),
+        )
+    } else if sql_mode_has(value, "TRADITIONAL") {
+        (
+            vec![
+                "STRICT_TRANS_TABLES",
+                "STRICT_ALL_TABLES",
+                "NO_ZERO_IN_DATE",
+                "NO_ZERO_DATE",
+                "ERROR_FOR_DIVISION_BY_ZERO",
+            ],
+            vec!["NO_ENGINE_SUBSTITUTION"],
+        )
+    } else {
         return value.to_owned();
-    }
-    let mut members = vec![
-        "REAL_AS_FLOAT",
-        "PIPES_AS_CONCAT",
-        "ANSI_QUOTES",
-        "IGNORE_SPACE",
-        "ONLY_FULL_GROUP_BY",
-    ];
+    };
+    let mut members = leading;
     for member in value
         .split(',')
         .map(str::trim)
         .filter(|member| !member.is_empty())
+        .chain(trailing)
     {
         if !members
             .iter()
@@ -5787,6 +5811,32 @@ mod result_ceiling_tests {
         assert_eq!(max_result_rows_from(Some("0")), usize::MAX);
         assert_eq!(max_result_rows_from(Some("not a number")), usize::MAX);
         assert_eq!(max_result_rows_from(Some(" 250000 ")), 250_000);
+    }
+
+    /// A composite mode names a set of members, and both the set and the
+    /// reported list are `MySQL` 8.4's own, captured from the server.
+    #[test]
+    fn a_composite_sql_mode_expands_to_the_members_it_names() {
+        assert_eq!(
+            super::expanded_sql_mode("TRADITIONAL"),
+            "STRICT_TRANS_TABLES,STRICT_ALL_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,TRADITIONAL,NO_ENGINE_SUBSTITUTION"
+        );
+        // The members it names are the ones that take effect - reading only
+        // the composite's name for strictness left zero dates permitted.
+        let mode = pintail_sql::ParseMode::from_sql_mode(&super::expanded_sql_mode("TRADITIONAL"));
+        assert!(mode.strict && mode.no_zero_date && mode.no_zero_in_date);
+        // A mode naming no composite is passed through as written.
+        assert_eq!(
+            super::expanded_sql_mode("NO_ENGINE_SUBSTITUTION"),
+            "NO_ENGINE_SUBSTITUTION"
+        );
+        assert_eq!(super::expanded_sql_mode(""), "");
+        // ANSI keeps its own expansion, and its name, unchanged.
+        assert_eq!(
+            super::expanded_sql_mode("ANSI"),
+            "REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ONLY_FULL_GROUP_BY,ANSI"
+        );
     }
 
     #[test]

@@ -49,7 +49,7 @@ fn run(
 /// Runs `sql` on a session that sets no `sql_mode` at all.
 ///
 /// Storing an over-long value by truncating it is what a non-strict session
-/// does; a strict one refuses it with "Data too long", and MySQL 8.4 ships
+/// does; a strict one refuses it with "Data too long", and `MySQL` 8.4 ships
 /// strict by default. Tests that measure truncation therefore have to name
 /// the session that truncates instead of inheriting whatever an unset one
 /// carries - which is the whole defect this helper exists beside.
