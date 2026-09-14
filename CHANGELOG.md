@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Decimal `DIV` reads internal division precision in runtime evaluation and
+  constant folding; explicit text casts remain display boundaries.
+
 - Result labels use the server metadata character repertoire independently
   of values. Connection collation changes also update the literal charset.
 

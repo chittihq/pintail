@@ -1022,6 +1022,22 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         BoundExprKind::Binary { op, left, right } => {
             let left = evaluate_constant(left)?;
             let right = evaluate_constant(right)?;
+            if *op == BinaryOp::IntegerDivide {
+                // DIV reads a decimal subtree's internal digits. Evaluating
+                // each child to its display value would round them away.
+                let compiled = crate::expression::CompiledExpr::compile(
+                    expr,
+                    &[],
+                    crate::collation::Collation::from_mysql_name(
+                        pintail_sql::session_default_collation(),
+                    )
+                    .unwrap_or_default(),
+                )
+                .ok()?;
+                return compiled
+                    .evaluate(&crate::RecordBatch::new(1, Vec::new()).ok()?, 0)
+                    .ok();
+            }
             // Constant folding sees only literals, never a column, so the
             // CONNECTION collation is the one that applies - exactly as it
             // does in MySQL, where 'x' = 'x   ' answers differently under a

@@ -1195,8 +1195,16 @@ impl CompiledExpr {
                         Err(error) => return Err(error),
                     }
                 }
-                let left = left.evaluate(batch, row)?;
-                let right = right.evaluate(batch, row)?;
+                let operand = |expression: &Self| {
+                    if *op == BinaryOp::IntegerDivide
+                        && let Some(value) = expression.internal_decimal_value(batch, row)?
+                    {
+                        return Ok(value);
+                    }
+                    expression.evaluate(batch, row)
+                };
+                let left = operand(left)?;
+                let right = operand(right)?;
                 evaluate_binary(*op, &left, &right, *data_type, *collation)
                     .map_err(|error| out_of_range(error, overflow.as_ref()))
             }

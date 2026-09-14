@@ -972,3 +972,19 @@ fn time_calendar_conversions_capture_the_statement_date() {
         assert_eq!(answer, expected, "{expression}");
     }
 }
+
+#[test]
+fn integer_division_reads_internal_decimal_digits() {
+    for (expression, expected) in [
+        ("27 DIV (1 / 97)", "2619"),
+        ("27 DIV (id / 97)", "2619"),
+        ("27 DIV (id / 97) / 17", "154.0588"),
+        ("27 DIV CAST(id / 97 AS CHAR)", "2621"),
+        ("27 DIV CAST(id / 97 AS DOUBLE)", "2619"),
+        ("-27 DIV (id / 97)", "-2619"),
+        ("1 DIV (1 / 3)", "3"),
+        ("3 DIV (1 / 3)", "9"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

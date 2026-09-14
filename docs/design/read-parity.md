@@ -149,10 +149,10 @@ code units remain available to byte consumers.
 ### Statement clocks and temporal casts
 
 `SET timestamp` captures a fixed clock alongside the session time zone.
-Planning captures the calendar year for TIME-to-YEAR casts before execution
-moves to workers. Query sharing includes the fixed clock and calendar year,
-so both changing a session override and crossing a real year boundary
-separate answers. Compact numeric `TIME_TO_SEC` inputs share the TIME parser;
+Planning captures the calendar year for TIME-to-YEAR casts and the date for
+TIME-to-calendar casts and calendar intervals before execution moves to
+workers. Query sharing includes the fixed clock and calendar date, so
+changing a session override or crossing midnight separates answers. Compact numeric `TIME_TO_SEC` inputs share the TIME parser;
 YEAR casts apply their domain range and JSON's integer conversion rules.
 
 ### Floating-point casts
@@ -164,3 +164,14 @@ the FLOAT display width. Text-protocol result cells and binary-protocol
 values have separate rendering tests, including a stored FLOAT column and
 NULL. Floating casts join the decimal guard-digit path in both scalar and
 vector execution so division is not rounded prematurely.
+
+### Duration and decimal consumers
+
+Clock intervals retain signed TIME durations and reject range overflow.
+EXTRACT preserves duration signs, folds day prefixes into hours, and keeps
+calendar days for datetime inputs. Partial parsed dates survive DATE, TIME,
+MONTHNAME and LAST_DAY consumers under captured zero-date policies.
+
+DIV joins the internal decimal arithmetic path, so its quotient reads a
+nested division's guard digits. An explicit text cast remains a display
+boundary and therefore can produce a different integer quotient.
