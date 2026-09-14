@@ -206,6 +206,8 @@ pub enum SqlRejection {
     DuplicateKey,
     /// 1048: a `NOT NULL` column received no value.
     NotNull,
+    /// 1406: a character value exceeds its declared width.
+    DataTooLong,
     /// 1242: a scalar subquery produced more than one row.
     SubqueryRows,
     /// 3143: a JSON path expression does not parse.
@@ -1987,6 +1989,7 @@ fn write_error(error: &pintail_write::WriteError) -> QueryError {
         1050 => SqlRejection::TableExists,
         1062 => SqlRejection::DuplicateKey,
         1048 => SqlRejection::NotNull,
+        1406 => SqlRejection::DataTooLong,
         1146 => SqlRejection::UnknownTable,
         1054 => SqlRejection::UnknownColumn,
         // Everything else is a statement Pintail understood and refused,

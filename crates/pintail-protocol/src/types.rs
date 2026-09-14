@@ -268,6 +268,8 @@ pub enum ErrorKind {
     ErDupEntry = 1062,
     /// 1048: a `NOT NULL` column received no value.
     ErBadNullError = 1048,
+    /// 1406: a character value exceeds its declared width.
+    ErDataTooLong = 1406,
     /// 1461: the session holds as many prepared statements as it may.
     ErMaxPreparedStmtCountReached = 1461,
     /// 1242: a scalar subquery produced more than one row.
@@ -308,6 +310,7 @@ impl ErrorKind {
             // MySQL reports integrity violations in class 23.
             Self::ErNonUniqError | Self::ErDupEntry | Self::ErBadNullError => b"23000",
             Self::ErDataOutOfRange => b"22003",
+            Self::ErDataTooLong => b"22001",
             Self::ErSubqueryNo1Row => b"21000",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",

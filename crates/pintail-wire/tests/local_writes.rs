@@ -561,3 +561,50 @@ fn fixed_floating_declarations_reach_projection_and_aggregate_metadata() {
         assert_eq!(decimals, expected, "{sql}");
     }
 }
+
+#[test]
+fn character_columns_enforce_width_in_characters_and_strip_char_padding() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE labels(id INT PRIMARY KEY, c CHAR(2), v VARCHAR(2))",
+    )
+    .unwrap();
+    run(
+        &fixture,
+        "INSERT INTO labels VALUES(1,'é😀z','é😀z'),(2,'a  ','a  ')",
+    )
+    .unwrap();
+    let output = run(&fixture, "SELECT HEX(c),HEX(v) FROM labels ORDER BY id").unwrap();
+    assert_eq!(
+        output.rows[0],
+        vec![pintail_types::Value::Utf8("C3A9F09F9880".into()); 2]
+    );
+    assert_eq!(
+        output.rows[1],
+        vec![
+            pintail_types::Value::Utf8("61".into()),
+            pintail_types::Value::Utf8("6120".into())
+        ]
+    );
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("STRICT_ALL_TABLES"),
+        || {
+            assert!(
+                run(
+                    &fixture,
+                    "INSERT INTO labels VALUES(3,'ok','ok'),(4,'abc','abc')"
+                )
+                .is_err()
+            );
+            run(&fixture, "INSERT INTO labels VALUES(5,'a  ','a  ')").unwrap();
+        },
+    );
+    assert_eq!(
+        run(&fixture, "SELECT id FROM labels ORDER BY id")
+            .unwrap()
+            .rows
+            .len(),
+        3
+    );
+}

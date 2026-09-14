@@ -54,6 +54,9 @@ pub enum WriteError {
     /// A `NOT NULL` column received no value (`MySQL` 1048).
     #[error("Column '{0}' cannot be null")]
     NotNull(String),
+    /// A character value exceeds its declared width (`MySQL` 1406).
+    #[error("Data too long for column '{column}' at row {row}")]
+    DataTooLong { column: String, row: usize },
 }
 
 impl WriteError {
@@ -70,6 +73,7 @@ impl WriteError {
             Self::UnknownColumn(_) => 1054,
             Self::DuplicateKey(_) => 1062,
             Self::NotNull(_) => 1048,
+            Self::DataTooLong { .. } => 1406,
         }
     }
 
@@ -83,6 +87,7 @@ impl WriteError {
             Self::UnknownColumn(_) => "42S22",
             Self::DuplicateKey(_) => "23000",
             Self::NotNull(_) => "23000",
+            Self::DataTooLong { .. } => "22001",
         }
     }
 }
@@ -411,7 +416,13 @@ pub fn bind_insert_from(
                 .iter()
                 .position(|candidate| candidate.name.eq_ignore_ascii_case(&column.name))
                 .ok_or_else(|| WriteError::UnknownColumn(column.name.clone()))?;
-            values_by_id[position] = literal_value(expr, column)?;
+            values_by_id[position] = literal_value(expr, column).map_err(|error| match error {
+                WriteError::DataTooLong { column, .. } => WriteError::DataTooLong {
+                    column,
+                    row: ordinal + 1,
+                },
+                other => other,
+            })?;
         }
         for (column, value) in table.columns.iter().zip(&values_by_id) {
             if !column.nullable && matches!(value, Value::Null) {
@@ -692,7 +703,7 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("set") => {
             Value::Utf8(set_labels(text, column).ok_or_else(|| wrong("Data truncated"))?)
         }
-        DataType::Utf8 => Value::Utf8(text.to_owned()),
+        DataType::Utf8 => Value::Utf8(character_value(text, column)?),
         DataType::Binary => Value::Binary(text.as_bytes().to_vec()),
         other => {
             return Err(WriteError::Unsupported(format!(
@@ -702,6 +713,39 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         }
     };
     Ok(value)
+}
+
+/// Character widths count code points; only CHAR removes trailing spaces.
+fn character_value(text: &str, column: &SourceColumn) -> Result<String, WriteError> {
+    let is_char = column.mysql_data_type.eq_ignore_ascii_case("char");
+    if !is_char && !column.mysql_data_type.eq_ignore_ascii_case("varchar") {
+        return Ok(text.to_owned());
+    }
+    let width = column
+        .mysql_column_type
+        .split_once('(')
+        .and_then(|(_, tail)| tail.split_once(')'))
+        .and_then(|(width, _)| width.trim().parse::<usize>().ok())
+        .unwrap_or(1);
+    let end = text
+        .char_indices()
+        .nth(width)
+        .map_or(text.len(), |(index, _)| index);
+    // Excess spaces are permitted even in strict mode. VARCHAR retains the
+    // spaces that fit; CHAR's read representation strips all padding.
+    if pintail_sql::session_parse_mode().strict && !text[end..].trim_matches(' ').is_empty() {
+        return Err(WriteError::DataTooLong {
+            column: column.name.clone(),
+            row: 1,
+        });
+    }
+    let retained = &text[..end];
+    Ok(if is_char {
+        retained.trim_end_matches(' ')
+    } else {
+        retained
+    }
+    .to_owned())
 }
 
 /// The declared label an ENUM value names: a label matched regardless of
