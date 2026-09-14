@@ -267,6 +267,23 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn packed_datetime_casts_keep_fractional_seconds() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        backend
+            .query(b"SET sql_mode='TIME_TRUNCATE_FRACTIONAL'")
+            .await;
+        let result = backend.execute("SELECT CAST(20010101101010.9999994 AS DATETIME), CAST(20010101101010.9999995 AS DATETIME(6))").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Utf8("2001-01-01 10:10:10".into()),
+                pintail_types::Value::Utf8("2001-01-01 10:10:10.999999".into())
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

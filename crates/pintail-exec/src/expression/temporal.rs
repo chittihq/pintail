@@ -34,6 +34,24 @@ pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecErr
         };
         return numeric_datetime(number).ok_or(ExecError::InvalidDateTime);
     }
+    if let Some((whole, fraction)) = trimmed.split_once('.')
+        && matches!(whole.len(), 12 | 14)
+        && whole.bytes().all(|byte| byte.is_ascii_digit())
+        && !fraction.is_empty()
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        let nanos = fraction
+            .bytes()
+            .take(9)
+            .fold(0_u32, |value, digit| value * 10 + u32::from(digit - b'0'))
+            * 10_u32.pow(
+                u32::try_from(9_usize.saturating_sub(fraction.len()))
+                    .map_err(|_| ExecError::InvalidDateTime)?,
+            );
+        return parse_mysql_datetime(whole)?
+            .with_nanosecond(nanos)
+            .ok_or(ExecError::InvalidDateTime);
+    }
     // Any punctuation may separate the date's parts: 2006.1.1 and 98/02/03
     // are dates.
     if let Some(rewritten) = dashed_date(value) {
