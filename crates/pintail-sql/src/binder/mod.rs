@@ -6902,7 +6902,7 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
     let encoded;
     let bytes = match value {
         Value::Utf8(text) => {
-            encoded = crate::text_charset::client_character_set().encode(text);
+            encoded = crate::text_charset::session_client_character_set().encode(text);
             encoded.as_slice()
         }
         Value::Binary(bytes) => bytes.as_slice(),

@@ -81,6 +81,7 @@ pub(crate) struct SharedQueryKey {
     pub(crate) timestamp_micros: Option<i64>,
     pub(crate) statement_date: i32,
     pub(crate) character_set: pintail_types::CharacterSet,
+    pub(crate) client_character_set: pintail_types::CharacterSet,
     pub(crate) calendar_locale: &'static str,
     pub(crate) default_week_format: u8,
     pub(crate) collation: &'static str,
@@ -108,6 +109,7 @@ impl SharedQueryKey {
             timestamp_micros: pintail_exec::session_timestamp_micros(),
             statement_date: pintail_exec::session_statement_date(),
             character_set: pintail_sql::session_character_set(),
+            client_character_set: pintail_sql::session_client_character_set(),
             calendar_locale: pintail_exec::session_calendar_locale(),
             default_week_format: pintail_exec::session_default_week_format(),
             collation: pintail_sql::session_default_collation(),
@@ -417,6 +419,7 @@ mod tests {
             timestamp_micros: None,
             statement_date: 737_607,
             character_set: pintail_types::CharacterSet::Utf8Mb4,
+            client_character_set: pintail_types::CharacterSet::Utf8Mb4,
             calendar_locale: "en_US",
             default_week_format: 0,
             collation: "utf8mb4_0900_ai_ci",
@@ -516,6 +519,10 @@ mod tests {
             },
             SharedQueryKey {
                 character_set: pintail_types::CharacterSet::Ucs2,
+                ..base.clone()
+            },
+            SharedQueryKey {
+                client_character_set: pintail_types::CharacterSet::Latin1,
                 ..base.clone()
             },
             SharedQueryKey {

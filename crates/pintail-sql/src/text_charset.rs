@@ -16,7 +16,9 @@ pub fn set_session_client_character_set(charset: Option<CharacterSet>) {
     CLIENT.set(charset.unwrap_or_default());
 }
 
-pub(crate) fn client_character_set() -> CharacterSet {
+/// The client encoding used to recover introduced literal bytes.
+#[must_use]
+pub fn session_client_character_set() -> CharacterSet {
     CLIENT.get()
 }
 
