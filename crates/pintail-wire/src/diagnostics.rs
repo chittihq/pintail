@@ -237,6 +237,21 @@ pub(super) mod tests {
             Value::SingleQuotedString("Division by 0".into())
         );
     }
+    #[tokio::test]
+    async fn time_conversion_bounds_hours_and_keeps_numeric_fractions() {
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT TIME('1000009000:10:10.1999999999999'), TIME('10000090000:10:10'), CAST(1800000000 AS TIME), TIME(154559.616 + 0e0)").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Utf8("838:59:59.000000".into()),
+                pintail_types::Value::Null,
+                pintail_types::Value::Null,
+                pintail_types::Value::Utf8("15:45:59.616000".into()),
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -12,7 +12,7 @@ use std::{cmp::Ordering, sync::Arc};
 
 use crate::collation::Collation;
 
-use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
+use chrono::{Datelike, Local, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc};
 use md5::{Digest as _, Md5};
 use pintail_sql::{BinaryOp, BoundExpr, BoundExprKind, ScalarFunction, UnaryOp};
 use pintail_sql::{DatePart, IntervalUnit};
@@ -3446,32 +3446,10 @@ fn evaluate_eager_scalar_inner(
             ) {
                 return Ok(value);
             }
-            // The time of a datetime, or a bare time kept as it was written;
-            // fractional seconds survive when present.
-            let text = scalar_string(&values[0])?;
-            if let Ok(value) = parse_mysql_datetime(&text) {
-                let time = value.time();
-                let rendered = if time.nanosecond() == 0 {
-                    time.format("%H:%M:%S").to_string()
-                } else {
-                    time.format("%H:%M:%S%.6f").to_string()
-                };
-                return Ok(Value::Utf8(rendered));
-            }
-            let trimmed = text.trim();
-            let time_only = NaiveTime::parse_from_str(trimmed, "%H:%M:%S%.f")
-                .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M:%S"))
-                .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M"));
-            match time_only {
-                Ok(_) => Ok(Value::Utf8(trimmed.to_owned())),
-                // A duration past a day, or a negative one, is still a TIME.
-                Err(_) => Ok(parse_temporal_micros(trimmed)
-                    .filter(|parsed| !parsed.datetime)
-                    .map_or(Value::Null, |parsed| {
-                        Value::Utf8(render_time_micros(parsed.micros, parsed.fsp))
-                    })),
-            }
+            let fsp = match data_type { Some(DataType::Time64 { fsp }) => fsp, _ => 0 };
+            Ok(cast_mysql_time(&scalar_string(&values[0])?, fsp).map_or(Value::Null, Value::Utf8))
         }
+
         ScalarFunction::DatePart(part) => {
             if matches!(
                 argument_types.first().copied().flatten(),
@@ -4436,6 +4414,30 @@ fn cast_temporal_carrier(
     target: DataType,
     statement_date: Option<&Value>,
 ) -> Option<Value> {
+    if matches!(target, DataType::Time64 { .. })
+        && matches!(
+            source,
+            Some(
+                DataType::Int8
+                    | DataType::Int16
+                    | DataType::Int32
+                    | DataType::Int64
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+                    | DataType::Float32
+                    | DataType::Float64
+                    | DataType::Decimal { .. }
+            )
+        )
+    {
+        let text = scalar_string(value).ok()?;
+        let whole = text.trim_start_matches(['-', '+']).split('.').next()?;
+        if whole.parse::<u64>().ok()? > 8_385_959 && parse_mysql_datetime(&text).is_err() {
+            return Some(Value::Null);
+        }
+    }
     if matches!(source, Some(DataType::Time64 { .. }))
         && matches!(target, DataType::Date32 | DataType::DateTime64 { .. })
     {
@@ -4881,7 +4883,7 @@ fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
         }
         _ => return None,
     };
-    if minutes > 59 || seconds > 59 || days == u64::MAX {
+    if minutes > 59 || seconds > 59 || days == u64::MAX || hours > u64::from(u32::MAX) {
         return None;
     }
     format_mysql_time(

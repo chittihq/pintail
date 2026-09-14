@@ -1795,11 +1795,8 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Time => (
-            Some(DataType::Time64 { fsp: match args[0].data_type {
-                Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
-                _ => 0,
-            } }),
-            args.iter().any(|argument| argument.nullable),
+            Some(DataType::Time64 { fsp: temporal_argument_precision(&args[0]) }),
+            true,
         ),
         ScalarFunction::FromUnixTime => (
             Some(DataType::DateTime64 { fsp: unix_argument_precision(&args[0], false) }),
