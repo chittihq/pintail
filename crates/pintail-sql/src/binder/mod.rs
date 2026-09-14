@@ -105,6 +105,32 @@ impl<'catalog> Binder<'catalog> {
         result
     }
 
+    fn bind_subquery_outputs(
+        &self,
+        query: &Query,
+        ctes: &[BoundCte],
+        visible_tables: &[BoundTable],
+        columns: &[BoundColumn],
+    ) -> Result<BoundQuery, BindError> {
+        let mut scope = visible_tables.to_vec();
+        for column in columns {
+            scope.push(BoundTable {
+                database_id: column.database_id,
+                table_id: column.table_id,
+                database_name: String::new(),
+                table_name: column.relation_name.clone(),
+                relation_name: column.relation_name.clone(),
+                schema_version: 0,
+                columns: vec![column.clone()],
+                row_count: None,
+                estimated_rows: None,
+                key_column_ids: Vec::new(),
+                input: None,
+            });
+        }
+        self.bind_subquery(query, ctes, &scope)
+    }
+
     /// Resolves and type-checks a parsed query statement.
     ///
     /// # Errors
@@ -195,7 +221,17 @@ impl<'catalog> Binder<'catalog> {
         {
             bound = self.wrap_set_operand(bound);
         }
-        bind_order_by(self.source, query, &mut bound)?;
+        let scope = expression_scope(&bound.tables, &self.outer_tables);
+        let resolve_subquery = |query: &Query, columns: &[BoundColumn]| {
+            self.bind_subquery_outputs(query, &ctes, &scope, columns)
+        };
+        bind_order_by(
+            self.source,
+            query,
+            &mut bound,
+            &resolve_subquery,
+            &self.next_derived_id,
+        )?;
         bound.limit = query.limit_clause.as_ref().map(bind_limit).transpose()?;
         Ok(bound)
     }
@@ -597,23 +633,7 @@ impl<'catalog> Binder<'catalog> {
         let expression_tables = expression_scope(&tables, &self.outer_tables);
         let resolve_subquery = |query: &Query| self.bind_subquery(query, ctes, &expression_tables);
         let resolve_projection_subquery = |query: &Query, columns: &[BoundColumn]| {
-            let mut scope = expression_tables.clone();
-            for column in columns {
-                scope.push(BoundTable {
-                    database_id: column.database_id,
-                    table_id: column.table_id,
-                    database_name: String::new(),
-                    table_name: column.relation_name.clone(),
-                    relation_name: column.relation_name.clone(),
-                    schema_version: 0,
-                    columns: vec![column.clone()],
-                    row_count: None,
-                    estimated_rows: None,
-                    key_column_ids: Vec::new(),
-                    input: None,
-                });
-            }
-            self.bind_subquery(query, ctes, &scope)
+            self.bind_subquery_outputs(query, ctes, &expression_tables, columns)
         };
         let mut projection = bind_projection(
             self.source,
@@ -2673,21 +2693,15 @@ fn bind_projection(
             std::ops::ControlFlow::Continue(())
         });
         debug_assert!(flow.is_continue());
-        let mut outputs = Vec::new();
-        if has_subquery && let Some(aggregates) = aggregates.as_deref_mut() {
-            for aggregate in aggregates {
-                if aggregate.function == AggregateFunction::AnyValue {
-                    continue;
-                }
-                if aggregate.output_column.is_none() {
-                    let id = next_id.get();
-                    next_id.set(id.saturating_sub(1));
-                    aggregate.output_column =
-                        Some(Box::new(outer_aggregate::output_column(aggregate, id)));
-                }
-                outputs.push(aggregate.clone());
-            }
-        }
+        let outputs = if has_subquery {
+            aggregates
+                .as_deref_mut()
+                .map_or_else(Vec::new, |aggregates| {
+                    register_aggregate_outputs(aggregates, next_id)
+                })
+        } else {
+            Vec::new()
+        };
         let columns = outputs
             .iter()
             .filter_map(|aggregate| aggregate.output_column.as_deref().cloned())
@@ -2757,6 +2771,25 @@ fn bind_projection(
         }
     }
     Ok(projection)
+}
+
+fn register_aggregate_outputs(
+    aggregates: &mut [BoundAggregate],
+    next_id: &Cell<u64>,
+) -> Vec<BoundAggregate> {
+    let mut outputs = Vec::new();
+    for aggregate in aggregates {
+        if aggregate.function == AggregateFunction::AnyValue {
+            continue;
+        }
+        if aggregate.output_column.is_none() {
+            let id = next_id.get();
+            next_id.set(id.saturating_sub(1));
+            aggregate.output_column = Some(Box::new(outer_aggregate::output_column(aggregate, id)));
+        }
+        outputs.push(aggregate.clone());
+    }
+    outputs
 }
 
 /// A table-free child HAVING can refer to earlier items in the parent's
@@ -7258,10 +7291,13 @@ fn bind_limit(limit: &LimitClause) -> Result<BoundLimit, BindError> {
     }
 }
 
+#[allow(clippy::too_many_lines)] // resolve output names, grouped expressions, then sort metadata
 fn bind_order_by(
     source: Option<&str>,
     query: &Query,
     bound: &mut BoundQuery,
+    resolve_subquery: &ProjectionSubqueryResolver<'_>,
+    next_id: &Cell<u64>,
 ) -> Result<(), BindError> {
     let Some(order_by) = &query.order_by else {
         return Ok(());
@@ -7271,6 +7307,33 @@ fn bind_order_by(
     }
     let OrderByKind::Expressions(expressions) = &order_by.kind else {
         return Err(BindError::InvalidOrderBy(order_by.to_string()));
+    };
+    let mut has_subquery = false;
+    let flow: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions(expressions, |expr| {
+        has_subquery |= matches!(
+            expr,
+            Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. }
+        );
+        std::ops::ControlFlow::Continue(())
+    });
+    debug_assert!(flow.is_continue());
+    let outputs = if has_subquery {
+        register_aggregate_outputs(&mut bound.aggregates, next_id)
+    } else {
+        Vec::new()
+    };
+    let columns = outputs
+        .iter()
+        .filter_map(|aggregate| aggregate.output_column.as_deref().cloned())
+        .collect::<Vec<_>>();
+    let scope = bound.tables.clone();
+    let aliases = match query.body.as_ref() {
+        SetExpr::Select(select) => select.projection.as_slice(),
+        _ => &[],
+    };
+    let resolve = |query: &Query| {
+        let query = projection_subquery_aliases(query, aliases, &scope, &outputs);
+        resolve_subquery(&query, &columns)
     };
     // MySQL lets ORDER BY reach source columns that never made it into the
     // select list. That needs a hidden trailing projection column (trimmed
@@ -7288,6 +7351,11 @@ fn bind_order_by(
             if order.with_fill.is_some() {
                 return Err(BindError::InvalidOrderBy(order.to_string()));
             }
+            let expression = if has_subquery {
+                order.expr.clone()
+            } else {
+                substitute_projection_aliases(&order.expr, aliases, &bound.group_by)
+            };
             let index = match resolve_order_index(
                 source,
                 &order.expr,
@@ -7311,10 +7379,10 @@ fn bind_order_by(
                     if !bound.group_by.is_empty() || !bound.aggregates.is_empty() =>
                 {
                     let mut expr = bind_aggregate_expr(
-                        &order.expr,
+                        &expression,
                         &bound.tables,
                         &mut bound.aggregates,
-                        None,
+                        Some(&resolve),
                     )?;
                     // Same rule the select list obeys: every column in the
                     // expression must be grouped or aggregated. `ORDER BY id`
@@ -7348,7 +7416,7 @@ fn bind_order_by(
                 // sound for the same reason - the projection is still a
                 // row-per-row mapping of one scope.
                 Err(BindError::InvalidOrderBy(_)) if allow_hidden => {
-                    let expr = bind_expr(&order.expr, &bound.tables, None)?;
+                    let expr = bind_expr(&expression, &bound.tables, Some(&resolve))?;
                     bound.projection.push(BoundProjection {
                         name: format!("<order-{}>", bound.projection.len()),
                         expr,

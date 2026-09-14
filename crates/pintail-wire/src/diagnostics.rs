@@ -1057,6 +1057,34 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn order_subqueries_read_outer_aggregate_aliases() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE numbers (grp INT, n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO numbers VALUES (1,10),(1,20),(2,40)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT COUNT(*) AS amount FROM numbers ORDER BY (SELECT 1 HAVING amount)")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::UInt64(3)]);
+        let result = backend
+            .execute("SELECT COUNT(*) AS amount FROM numbers ORDER BY amount+1,amount+amount")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::UInt64(3)]);
+
+        let result = backend.execute("SELECT grp,COUNT(*) AS amount FROM numbers GROUP BY grp ORDER BY (SELECT 1 HAVING amount>1),grp").await.unwrap();
+        assert_eq!(result.rows[0], vec![Value::Int64(2), Value::UInt64(1)]);
+        assert_eq!(result.rows[1], vec![Value::Int64(1), Value::UInt64(2)]);
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
