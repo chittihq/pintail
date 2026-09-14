@@ -2016,3 +2016,64 @@ fn binary_operands_answer_as_mysql_does() {
         ("_binary'42' IN (41, 42, 43)", "Boolean(true)"),
     ]);
 }
+
+/// A run of digits read as a temporal names its parts by how many there are.
+///
+/// The short widths carry a two-digit year, pivoting at 70, and they are not
+/// a curiosity: `200012010000` reads as `2020-00-12 01:00:00`, a zero month,
+/// because twelve digits mean `YYMMDDHHMMSS` and not the `YYYYMMDDHHMM` the
+/// digits suggest to a reader. Ten digits name nothing and stay NULL. Every
+/// answer here is `MySQL` 8.4's, measured across several values so the rule
+/// is the widths and the pivot rather than one example.
+#[test]
+fn a_numeric_temporal_reads_its_parts_from_its_digit_count() {
+    assert_answers(&[
+        // Fourteen and eight: a four-digit year.
+        ("CAST(20001201000000 AS DATETIME)", "2000-12-01 00:00:00"),
+        ("CAST(20001201 AS DATETIME)", "2000-12-01 00:00:00"),
+        ("CAST(20001201 AS DATE)", "2000-12-01"),
+        // Twelve and six: a two-digit year, and 99 is 1999, not 0099.
+        ("CAST(991201123456 AS DATETIME)", "1999-12-01 12:34:56"),
+        ("CAST(991201123456 AS DATE)", "1999-12-01"),
+        ("CAST(991201 AS DATE)", "1999-12-01"),
+        // The pivot: 69 is this century, 70 the last one.
+        ("CAST(690101000000 AS DATETIME)", "2069-01-01 00:00:00"),
+        ("CAST(700101000000 AS DATETIME)", "1970-01-01 00:00:00"),
+        ("CAST(690101 AS DATE)", "2069-01-01"),
+        ("CAST(700101 AS DATE)", "1970-01-01"),
+        // Ten digits name no temporal at all.
+        ("CAST(2000120100 AS DATETIME)", "NULL"),
+        // A zero month is refused here, as a fresh MySQL 8.4 connection
+        // refuses it - the session below is where it survives.
+        ("CAST(200012010000 AS DATETIME)", "NULL"),
+        ("CAST(200012010000 AS DATE)", "NULL"),
+    ]);
+}
+
+/// The width is read now; the zero month it produces is still refused.
+///
+/// `200012010000` is twelve digits, so a two-digit year - and the month it
+/// names is zero. A session that permits a zero month reads it as
+/// `2020-00-12 01:00:00`, which is what the suite replay asks for and what
+/// `MySQL` answers there. Pintail's temporal validity check refuses a zero
+/// month whatever the session says, so these still answer NULL.
+///
+/// Recorded rather than fixed: that check also decides when an invalid date
+/// against a column is refused outright, so loosening it is a change to
+/// validity semantics rather than to this parse, and wants its own
+/// measurement.
+#[test]
+#[ignore = "a zero month is refused regardless of the session's zero-date policy"]
+fn a_permissive_session_reads_a_zero_month_from_a_numeric_temporal() {
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        assert_answers(&[
+            ("CAST(200012010000 AS DATETIME)", "2020-00-12 01:00:00"),
+            ("CAST(200012010000 AS DATE)", "2020-00-12"),
+            (
+                "EXTRACT(HOUR_SECOND FROM CAST(200012010000 AS DATETIME))",
+                "10000",
+            ),
+            ("EXTRACT(HOUR_SECOND FROM CAST(200012010000 AS DATE))", "0"),
+        ]);
+    });
+}

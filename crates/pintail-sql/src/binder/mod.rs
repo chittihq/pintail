@@ -7162,7 +7162,22 @@ impl TemporalLiteral {
         let text = text.trim();
         if text.bytes().all(|byte| byte.is_ascii_digit()) {
             let digits = |range: std::ops::Range<usize>| text.get(range)?.parse::<u32>().ok();
+            // A run of digits names its parts by how many there are, and the
+            // short forms carry a two-digit year on the same 70 pivot the
+            // rest of this file uses. Reading only the four-digit-year widths
+            // refused every short one: `CAST(200012010000 AS DATETIME)` is
+            // `2020-00-12 01:00:00` to MySQL - a zero month, which is legal
+            // where no zero-date mode forbids it - and answered NULL here.
             return match text.len() {
+                6 | 12 => Some(Self {
+                    year: digits(0..2).map(|year| year + if year < 70 { 2000 } else { 1900 })?,
+                    month: digits(2..4)?,
+                    day: digits(4..6)?,
+                    hour: if text.len() == 12 { digits(6..8)? } else { 0 },
+                    minute: if text.len() == 12 { digits(8..10)? } else { 0 },
+                    second: if text.len() == 12 { digits(10..12)? } else { 0 },
+                    fraction: String::new(),
+                }),
                 8 | 14 => Some(Self {
                     year: digits(0..4)?,
                     month: digits(4..6)?,
