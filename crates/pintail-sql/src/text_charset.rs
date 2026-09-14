@@ -7,8 +7,20 @@ use pintail_types::{CharacterSet, DataType, Value};
 use crate::{BoundExpr, BoundExprKind, ScalarFunction};
 
 thread_local! {
+    static BINARY_LITERALS: Cell<bool> = const { Cell::new(false) };
     static CLIENT: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
     static CONNECTION: Cell<CharacterSet> = const { Cell::new(CharacterSet::Utf8Mb4) };
+}
+
+/// Whether unintroduced string literals retain client bytes as binary strings.
+#[must_use]
+pub fn session_binary_literals() -> bool {
+    BINARY_LITERALS.get()
+}
+
+/// Install the connection's binary-literal mode for binding.
+pub fn set_session_binary_literals(binary: bool) {
+    BINARY_LITERALS.set(binary);
 }
 
 /// Install the encoding used to reconstruct literal bytes from decoded SQL.

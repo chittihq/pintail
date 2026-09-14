@@ -1086,6 +1086,35 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn binary_connection_literals_keep_the_client_encoding() {
+        use pintail_protocol::{Handler, Response};
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        for (client, expected) in [("utf8mb4", vec![0xc3, 0xa9]), ("latin1", vec![0xe9])] {
+            assert!(matches!(
+                backend
+                    .query(format!("SET NAMES {client}").as_bytes())
+                    .await,
+                Response::Ok(..)
+            ));
+            assert!(matches!(
+                backend.query(b"SET character_set_connection=binary").await,
+                Response::Ok(..)
+            ));
+            let result = backend.execute("SELECT 'é'").await.unwrap();
+            assert_eq!(result.rows[0], vec![Value::Binary(expected)]);
+            let result = backend.execute("SELECT _utf8mb4 'plain'").await.unwrap();
+            assert_eq!(result.rows[0], vec![Value::Utf8("plain".into())]);
+        }
+        assert!(matches!(
+            backend.query(b"SET NAMES utf8mb4").await,
+            Response::Ok(..)
+        ));
+        let result = backend.execute("SELECT 'é'").await.unwrap();
+        assert_eq!(result.rows[0], vec![Value::Utf8("é".into())]);
+    }
+
+    #[tokio::test]
     async fn set_names_default_restores_default_comparisons() {
         use pintail_protocol::{Handler, Response};
         use pintail_types::Value;

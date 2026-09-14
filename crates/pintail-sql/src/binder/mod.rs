@@ -3753,6 +3753,17 @@ fn bind_column(identifiers: &[Ident], tables: &[BoundTable]) -> Result<BoundExpr
 }
 
 fn bind_literal(value: &SqlValue) -> Result<BoundExpr, BindError> {
+    if crate::session_binary_literals()
+        && let SqlValue::SingleQuotedString(text) | SqlValue::DoubleQuotedString(text) = value
+    {
+        return Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Binary(
+                crate::session_client_character_set().encode(text),
+            )),
+            data_type: Some(DataType::Binary),
+            nullable: false,
+        });
+    }
     Ok(crate::text_charset::annotate(
         bind_literal_raw(value)?,
         crate::session_character_set(),

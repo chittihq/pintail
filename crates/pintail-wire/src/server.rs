@@ -1445,6 +1445,9 @@ impl Backend {
                     pintail_sql::set_session_client_character_set(
                         pintail_types::CharacterSet::from_name(&session.charset_client),
                     );
+                    pintail_sql::set_session_binary_literals(
+                        session.charset_connection == "binary",
+                    );
                     pintail_sql::set_session_character_set(pintail_types::CharacterSet::from_name(
                         &session.charset_connection,
                     ));
@@ -1491,6 +1494,7 @@ impl Backend {
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
+                    pintail_sql::set_session_binary_literals(false);
                     pintail_sql::set_session_character_set(None);
                     pintail_sql::set_session_client_character_set(None);
                     pintail_sql::set_session_div_precision_increment(None);

@@ -5,8 +5,8 @@ mod bound;
 mod hints;
 mod text_charset;
 pub use text_charset::{
-    session_character_set, session_client_character_set, set_session_character_set,
-    set_session_client_character_set,
+    session_binary_literals, session_character_set, session_client_character_set,
+    set_session_binary_literals, set_session_character_set, set_session_client_character_set,
 };
 mod interval;
 mod metadata;
