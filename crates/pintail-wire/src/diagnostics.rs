@@ -1474,6 +1474,31 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn unordered_row_frames_can_reuse_a_final_column_sort() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE samples (n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO samples VALUES (1),(4),(3)")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT n,MIN(n) OVER(ROWS UNBOUNDED PRECEDING),SUM(n) OVER() FROM samples ORDER BY n DESC").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![
+                vec![Value::Int64(4), Value::Int64(4), Value::Int64(8)],
+                vec![Value::Int64(3), Value::Int64(3), Value::Int64(8)],
+                vec![Value::Int64(1), Value::Int64(1), Value::Int64(8)],
+            ]
+        );
+        let result = backend.execute("SELECT n,MIN(n) OVER(ORDER BY n ROWS UNBOUNDED PRECEDING) FROM samples ORDER BY n DESC").await.unwrap();
+        assert!(result.rows.iter().all(|row| row[1] == Value::Int64(1)));
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

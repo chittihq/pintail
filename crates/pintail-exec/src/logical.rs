@@ -261,6 +261,44 @@ fn grouped_window_order(
     keys
 }
 
+/// Reuse an available column sort for explicitly positional aggregate frames.
+/// The default whole-partition frame keeps its unordered peer semantics.
+fn reuse_unordered_row_sort(
+    windows: &mut [BoundWindow],
+    projection: &[BoundProjection],
+    order_by: &[BoundOrderKey],
+) {
+    if windows.iter().any(|window| !window.order_by.is_empty()) {
+        return;
+    }
+    let keys: Option<Vec<_>> = order_by
+        .iter()
+        .map(|key| {
+            let expr = &projection.get(key.index)?.expr;
+            if !matches!(&expr.kind, BoundExprKind::Column(column) if !column.outer) {
+                return None;
+            }
+            Some(pintail_sql::BoundWindowOrderKey {
+                expr: expr.clone(),
+                ascending: key.ascending,
+                nulls_first: key.nulls_first,
+            })
+        })
+        .collect();
+    let Some(keys) = keys else { return };
+    for window in windows {
+        if window.frame.is_some_and(|frame| !frame.range)
+            && matches!(
+                window.function,
+                pintail_sql::WindowFunction::Aggregate(_)
+                    | pintail_sql::WindowFunction::Extreme { .. }
+            )
+        {
+            window.order_by.clone_from(&keys);
+        }
+    }
+}
+
 impl LogicalPlanner {
     /// Builds an unoptimized logical plan.
     #[must_use]
@@ -281,7 +319,7 @@ impl LogicalPlanner {
             union_all,
             union_distinct,
             set_ops,
-            windows,
+            mut windows,
             limit,
             recursive,
         } = query;
@@ -304,6 +342,9 @@ impl LogicalPlanner {
                     };
                 }
             }
+        }
+        if group_by.is_empty() && aggregates.is_empty() {
+            reuse_unordered_row_sort(&mut windows, &projection, &order_by);
         }
         let window_input_order = grouped_window_order(&group_by, &windows, &projection, &order_by);
         let mut plan = source_plan(from);

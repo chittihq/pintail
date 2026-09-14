@@ -1771,3 +1771,9 @@ This is a deterministic execution choice, not an additional SQL ordering
 guarantee. Queries that require a particular numbering or frame must declare
 `ORDER BY` inside the window. The cost is sorting the surviving groups, using the
 existing memory and spill controls.
+
+For ungrouped queries whose windows all omit ordering, an explicit `ROWS`
+aggregate or value frame may reuse a final sort made entirely of source columns.
+Whole-partition default frames keep their original peer semantics, and an
+explicitly ordered window prevents this choice. Queries requiring a particular
+frame sequence still need to put that ordering inside `OVER`.
