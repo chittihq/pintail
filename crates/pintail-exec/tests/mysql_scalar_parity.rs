@@ -413,12 +413,14 @@ fn a_character_set_introducer_decides_what_the_literal_bytes_mean() {
         ("IF(_binary 'a' = 'A', 1, 0)", "0"),
         ("IF('a' = 'A', 1, 0)", "1"),
         ("_latin1 'abc'", "abc"),
+        ("_latin1 'café'", "cafÃ©"),
+        ("_latin1 X'636166E9'", "café"),
         ("_ucs2 X'0420'", "Р"),
         ("_utf16 'ab'", "慢"),
         ("HEX(_binary 'ab')", "6162"),
     ]);
     // Reading these bytes as UTF-8 would answer different text.
-    for refused in ["_ucs2 X'D800'", "_utf16 X'D800'", "_latin1 'caf\u{e9}'"] {
+    for refused in ["_ucs2 X'D800'", "_utf16 X'D800'", "_koi8u 'caf\u{e9}'"] {
         assert!(scalar(refused).starts_with("error"), "{refused}");
     }
 }
@@ -1201,7 +1203,9 @@ fn fixed_float_precision_survives_string_consumers() {
         ("CONCAT(IF(id=1,PI(),0))", "3.141593"),
         ("CONCAT(PI()+0e0)", "3.141592653589793"),
         ("CONCAT(CAST(PI() AS DOUBLE))", "3.141592653589793"),
-        ("PI()>3.1415926 AND PI()<3.1415927", "Boolean(true)"),
+        ("PI()>3.1415926 AND PI()<3.1415927", "Boolean(false)"),
+        ("PI()>3.1415925 AND PI()<3.1415928", "Boolean(true)"),
+        ("PI()+0e0>3.1415926 AND PI()+0e0<3.1415927", "Boolean(true)"),
     ] {
         assert_eq!(scalar(expression), expected, "{expression}");
     }

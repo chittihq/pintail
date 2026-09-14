@@ -402,7 +402,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         "unknown time zones must error"
     );
     assert!(
-        connection.query_drop("SET NAMES latin1").await.is_err(),
+        connection.query_drop("SET NAMES koi8u").await.is_err(),
         "unsupported charsets must error"
     );
     connection
