@@ -1270,3 +1270,18 @@ fn numeric_consumers_reselect_temporal_extrema_without_changing_explicit_casts()
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn datediff_accepts_invalid_calendar_days_only_under_the_captured_mode() {
+    let expression = "DATEDIFF('1997-11-31 23:59:59.000001','1997-12-31')";
+    assert_eq!(scalar(expression), "NULL");
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("ALLOW_INVALID_DATES"),
+        || {
+            assert_eq!(scalar(expression), "-30");
+            assert_eq!(scalar("DATEDIFF('2000-02-31','2000-03-02')"), "0");
+            assert_eq!(scalar("DATEDIFF('2000-02-32','2000-03-02')"), "NULL");
+            assert_eq!(scalar("DATEDIFF('2000-00-01','2000-01-01')"), "NULL");
+        },
+    );
+}

@@ -3469,11 +3469,10 @@ fn evaluate_eager_scalar_inner(
             )))
         }
         ScalarFunction::DateDiff => {
-            let left = parse_mysql_datetime(&scalar_string(&values[0])?)?;
-            let right = parse_mysql_datetime(&scalar_string(&values[1])?)?;
-            Ok(Value::Int64(
-                left.date().signed_duration_since(right.date()).num_days(),
-            ))
+            let allow_invalid = matches!(values.get(2), Some(Value::Boolean(true)));
+            let left = datediff_date(&scalar_string(&values[0])?, allow_invalid)?;
+            let right = datediff_date(&scalar_string(&values[1])?, allow_invalid)?;
+            Ok(Value::Int64(left.signed_duration_since(right).num_days()))
         }
         ScalarFunction::DayName => {
             let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
@@ -4225,6 +4224,27 @@ fn canonical_temporal_parts_policy(
         _ => false,
     };
     (clock && fraction).then(|| (&text[..10], Some(&text[11..])))
+}
+
+/// Invalid day-of-month combinations contribute their nominal day number
+/// only when the statement opted into `ALLOW_INVALID_DATES`.
+fn datediff_date(text: &str, allow_invalid: bool) -> Result<chrono::NaiveDate, ExecError> {
+    match parse_mysql_datetime(text) {
+        Ok(value) => Ok(value.date()),
+        Err(error) if !allow_invalid => Err(error),
+        Err(_) => {
+            let (date, _) = canonical_temporal_parts_policy(text, false, true)
+                .ok_or(ExecError::InvalidDateTime)?;
+            let year = date[..4].parse().map_err(|_| ExecError::InvalidDateTime)?;
+            let month = date[5..7].parse().map_err(|_| ExecError::InvalidDateTime)?;
+            let day = date[8..10]
+                .parse::<i64>()
+                .map_err(|_| ExecError::InvalidDateTime)?;
+            chrono::NaiveDate::from_ymd_opt(year, month, 1)
+                .and_then(|first| first.checked_add_signed(chrono::Duration::days(day - 1)))
+                .ok_or(ExecError::InvalidDateTime)
+        }
+    }
 }
 
 fn mysql_month_days(year: u32, month: u32) -> Option<u32> {

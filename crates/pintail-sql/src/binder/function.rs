@@ -1801,6 +1801,15 @@ pub(super) fn bind_scalar(
             kind: BoundExprKind::Literal(Value::UInt64(policy)),
         });
     }
+    if function == ScalarFunction::DateDiff {
+        args.push(BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+            kind: BoundExprKind::Literal(Value::Boolean(
+                crate::session_parse_mode().allow_invalid_dates,
+            )),
+        });
+    }
     if function == ScalarFunction::StrToDate {
         let mode = crate::session_parse_mode();
         let policy = u64::from(mode.no_zero_date) | (u64::from(mode.no_zero_in_date) << 1);
