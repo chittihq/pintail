@@ -98,7 +98,7 @@ pub(crate) fn annotate(expression: BoundExpr, charset: CharacterSet) -> BoundExp
             );
         }
         if matches!(function, ScalarFunction::Lower | ScalarFunction::Upper)
-            && (charset == CharacterSet::Latin2
+            && (matches!(charset, CharacterSet::Latin2 | CharacterSet::Tis620)
                 || matches!(
                     args[0].kind,
                     BoundExprKind::Scalar {

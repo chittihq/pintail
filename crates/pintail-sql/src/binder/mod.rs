@@ -6935,6 +6935,17 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
         _ => return refuse(),
     };
     if let Some(encoding) = pintail_types::CharacterSet::from_name(&charset) {
+        if encoding == pintail_types::CharacterSet::Tis620 {
+            return Ok(crate::text_charset::wrap(
+                BoundExpr {
+                    data_type: Some(DataType::Binary),
+                    nullable: false,
+                    kind: BoundExprKind::Literal(Value::Binary(bytes.to_vec())),
+                },
+                ScalarFunction::RawText(encoding, crate::bound::NamedCollation::Tis620ThaiCi),
+                DataType::Utf8,
+            ));
+        }
         if encoding.minimum_width() == 1 {
             let Some(text) = encoding.decode(bytes) else {
                 return refuse();

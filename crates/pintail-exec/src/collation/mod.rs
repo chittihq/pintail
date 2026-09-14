@@ -15,6 +15,7 @@
 //! `JOIN`, `GROUP BY` and `ORDER BY` on its text columns was refused.
 
 mod general_ci_table;
+mod thai;
 mod unicode_ci_table;
 
 use general_ci_table::GENERAL_CI_EXCEPTIONS;
@@ -33,6 +34,10 @@ pub enum Collation {
     Latin2GeneralCi,
     /// Central European encoded byte order.
     Latin2Bin,
+    /// Thai encoded positional weights.
+    Tis620ThaiCi,
+    /// Thai encoded byte order.
+    Tis620Bin,
     /// Cyrillic single-byte case-insensitive weights.
     Koi8RGeneralCi,
     /// Cyrillic encoded byte order.
@@ -74,6 +79,8 @@ impl Collation {
         match pintail_sql::comparison_collation(name).unwrap_or(name) {
             "latin1_swedish_ci" => Some(Self::Latin1SwedishCi),
             "latin1_bin" => Some(Self::Latin1Bin),
+            "tis620_thai_ci" => Some(Self::Tis620ThaiCi),
+            "tis620_bin" => Some(Self::Tis620Bin),
             "latin2_general_ci" => Some(Self::Latin2GeneralCi),
             "latin2_bin" => Some(Self::Latin2Bin),
             "koi8r_general_ci" => Some(Self::Koi8RGeneralCi),
@@ -93,6 +100,8 @@ impl Collation {
         match self {
             Self::Latin1SwedishCi => "latin1_swedish_ci",
             Self::Latin1Bin => "latin1_bin",
+            Self::Tis620ThaiCi => "tis620_thai_ci",
+            Self::Tis620Bin => "tis620_bin",
             Self::Latin2GeneralCi => "latin2_general_ci",
             Self::Latin2Bin => "latin2_bin",
             Self::Koi8RGeneralCi => "koi8r_general_ci",
@@ -710,6 +719,33 @@ pub fn compare_latin2(left: &str, right: &str, binary: bool) -> std::cmp::Orderi
     compare_padded(
         latin2_weights(left, binary),
         latin2_weights(right, binary),
+        u16::from(b' '),
+    )
+}
+
+fn tis620_weights(text: &str, binary: bool) -> impl Iterator<Item = u16> {
+    let bytes = pintail_types::CharacterSet::Tis620.encode(text);
+    if binary {
+        bytes
+    } else {
+        thai::positional_weights(&bytes)
+    }
+    .into_iter()
+    .map(u16::from)
+}
+
+/// Thai byte weights with insignificant trailing spaces.
+#[must_use]
+pub fn tis620_sort_key(text: &str, binary: bool) -> Vec<u8> {
+    padded_sort_key(tis620_weights(text, binary), u16::from(b' '))
+}
+
+/// Compare Thai byte weights, including embedded bytes below the space weight.
+#[must_use]
+pub fn compare_tis620(left: &str, right: &str, binary: bool) -> std::cmp::Ordering {
+    compare_padded(
+        tis620_weights(left, binary),
+        tis620_weights(right, binary),
         u16::from(b' '),
     )
 }

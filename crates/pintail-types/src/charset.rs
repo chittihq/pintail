@@ -11,6 +11,8 @@ pub enum CharacterSet {
     Latin1,
     /// Central European single-byte text.
     Latin2,
+    /// Thai single-byte text.
+    Tis620,
     /// Cyrillic single-byte text.
     Koi8R,
     /// UTF-8 restricted to the basic multilingual plane.
@@ -40,6 +42,7 @@ impl CharacterSet {
             "utf8mb4" => Some(Self::Utf8Mb4),
             "latin1" => Some(Self::Latin1),
             "latin2" => Some(Self::Latin2),
+            "tis620" => Some(Self::Tis620),
             "koi8r" => Some(Self::Koi8R),
             "utf8" | "utf8mb3" => Some(Self::Utf8Mb3),
             "ucs2" => Some(Self::Ucs2),
@@ -57,6 +60,7 @@ impl CharacterSet {
             Self::Utf8Mb4 => "utf8mb4_0900_ai_ci",
             Self::Latin1 => "latin1_swedish_ci",
             Self::Latin2 => "latin2_general_ci",
+            Self::Tis620 => "tis620_thai_ci",
             Self::Koi8R => "koi8r_general_ci",
             Self::Utf8Mb3 => "utf8mb3_general_ci",
             Self::Ucs2 => "ucs2_general_ci",
@@ -70,7 +74,12 @@ impl CharacterSet {
     #[must_use]
     pub const fn minimum_width(self) -> usize {
         match self {
-            Self::Utf8Mb4 | Self::Utf8Mb3 | Self::Latin1 | Self::Latin2 | Self::Koi8R => 1,
+            Self::Utf8Mb4
+            | Self::Utf8Mb3
+            | Self::Latin1
+            | Self::Latin2
+            | Self::Tis620
+            | Self::Koi8R => 1,
             Self::Ucs2 | Self::Utf16 | Self::Utf16Le => 2,
             Self::Utf32 => 4,
         }
@@ -79,6 +88,20 @@ impl CharacterSet {
     /// Apply a fixed-width case map when an encoding defines one.
     #[must_use]
     pub fn single_byte_case(self, bytes: &[u8], upper: bool) -> Option<Vec<u8>> {
+        if self == Self::Tis620 {
+            return Some(
+                bytes
+                    .iter()
+                    .map(|byte| {
+                        if upper {
+                            byte.to_ascii_uppercase()
+                        } else {
+                            byte.to_ascii_lowercase()
+                        }
+                    })
+                    .collect(),
+            );
+        }
         if self != Self::Latin2 {
             return None;
         }
@@ -101,6 +124,13 @@ impl CharacterSet {
             }
             match self {
                 Self::Latin1 => bytes.push(latin1_byte(character).unwrap_or(b'?')),
+                Self::Tis620 => bytes.push(match u32::from(character) {
+                    value @ 0..=0x9f => u8::try_from(value).unwrap_or(b'?'),
+                    value @ (0x0e01..=0x0e3a | 0x0e3f..=0x0e5b) => {
+                        u8::try_from(value - 0x0d60).unwrap_or(b'?')
+                    }
+                    _ => b'?',
+                }),
                 Self::Latin2 => bytes.push(if character.is_ascii() {
                     character as u8
                 } else {
@@ -164,6 +194,7 @@ impl CharacterSet {
             Self::Latin1 => bytes.iter().map(|byte| latin1_character(*byte)).collect(),
             Self::Koi8R => bytes.iter().map(|byte| koi8r_character(*byte)).collect(),
             Self::Latin2 => bytes.iter().map(|byte| latin2_character(*byte)).collect(),
+            Self::Tis620 => bytes.iter().map(|byte| tis620_character(*byte)).collect(),
             Self::Utf8Mb4 | Self::Utf8Mb3 => std::str::from_utf8(utf8_prefix(bytes))
                 .unwrap_or_default()
                 .chars()
@@ -201,6 +232,7 @@ impl CharacterSet {
             Self::Latin1 => Some(bytes.iter().map(|byte| latin1_character(*byte)).collect()),
             Self::Koi8R => Some(bytes.iter().map(|byte| koi8r_character(*byte)).collect()),
             Self::Latin2 => Some(bytes.iter().map(|byte| latin2_character(*byte)).collect()),
+            Self::Tis620 => Some(bytes.iter().map(|byte| tis620_character(*byte)).collect()),
             Self::Utf8Mb4 | Self::Utf8Mb3 => {
                 let text = std::str::from_utf8(bytes).ok()?;
                 if self == Self::Utf8Mb3 && text.chars().any(|c| u32::from(c) > 0xffff) {
@@ -403,3 +435,35 @@ const LATIN2_LOWER: [u8; 256] = [
     0xe0, 0xe1, 0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef,
     0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
 ];
+
+fn tis620_character(byte: u8) -> char {
+    match byte {
+        0..=0x9f => char::from(byte),
+        0xa1..=0xda | 0xdf..=0xfb => char::from_u32(u32::from(byte) + 0x0d60).expect("Thai scalar"),
+        _ => '\u{fffd}',
+    }
+}
+
+#[cfg(test)]
+mod tis620_tests {
+    use super::CharacterSet;
+
+    #[test]
+    fn thai_bytes_preserve_controls_and_replace_unassigned_codes() {
+        let charset = CharacterSet::Tis620;
+        assert_eq!(
+            charset.decode(&[0x80, 0x9f, 0xa0, 0xa1, 0xdb, 0xdf, 0xe0, 0xfb, 0xfc]),
+            Some("\u{80}\u{9f}�ก�฿เ๛�".into())
+        );
+        assert_eq!(
+            charset.encode("กข฿เ๛�😀"),
+            [0xa1, 0xa2, 0xdf, 0xe0, 0xfb, b'?', b'?']
+        );
+        for byte in 0..=255 {
+            if matches!(byte, 0xa0 | 0xdb..=0xde | 0xfc..=0xff) {
+                continue;
+            }
+            assert_eq!(charset.encode(&charset.decode(&[byte]).unwrap()), [byte]);
+        }
+    }
+}

@@ -1711,3 +1711,34 @@ fn latin2_reads_use_encoded_bytes_case_weights_and_space_padding() {
         ),
     ]);
 }
+
+#[test]
+fn thai_conversion_and_comparison_keep_the_encoded_rules() {
+    assert_answers(&[
+        (
+            "HEX(CONVERT(_tis620 X'809FA0A1DBDFE0FBFC' USING utf8mb4))",
+            "C280C29FEFBFBDE0B881EFBFBDE0B8BFE0B980E0B99BEFBFBD",
+        ),
+        ("HEX(UPPER(_tis620 X'6180FFA0'))", "4180FFA0"),
+        (
+            "CONVERT('เก' USING tis620) = CONVERT('กเ' USING tis620)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('ก่' USING tis620) > CONVERT('กข' USING tis620)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('เก' USING tis620) COLLATE tis620_bin > CONVERT('กเ' USING tis620)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('a\\0' USING tis620) < CONVERT('a' USING tis620)",
+            "Boolean(true)",
+        ),
+        (
+            "CONVERT('a ' USING tis620) = CONVERT('a' USING tis620)",
+            "Boolean(true)",
+        ),
+    ]);
+}

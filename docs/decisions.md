@@ -1816,3 +1816,14 @@ with PAD SPACE semantics; case conversion uses fixed-width byte maps rather
 than Unicode expansions. The full byte mapping and general weights were checked
 against the live oracle. Other Latin2 collation variants remain outside these
 profiles.
+
+### Thai encoded weights
+
+TIS620 conversion distinguishes unassigned byte codes, rendered as replacement
+characters, from Unicode characters that cannot be encoded, replaced by `?`.
+Introduced literals retain their original bytes for byte functions. The Thai
+comparison profile reorders leading vowels and carries positional tone weights
+in a fixed-width suffix, with wrapping byte positions and PAD SPACE comparison.
+The key builder scans once, including inputs with repeated marks. All non-NUL
+byte pairs were checked against the oracle's weights; embedded NUL comparison
+is tested directly because the weight diagnostic truncates at NUL.

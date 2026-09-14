@@ -5898,6 +5898,7 @@ fn locate_collated(
                 | Collation::Latin1Bin
                 | Collation::Koi8RBin
                 | Collation::Latin2Bin
+                | Collation::Tis620Bin
                 | Collation::Utf8mb40900AsCs
         )
     {
@@ -6022,6 +6023,7 @@ fn compile_regex(
             | Collation::Latin1Bin
             | Collation::Koi8RBin
             | Collation::Latin2Bin
+            | Collation::Tis620Bin
     );
     let mut multi_line = false;
     let mut dot_matches_new_line = false;

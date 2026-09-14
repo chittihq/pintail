@@ -1086,6 +1086,38 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn thai_sessions_group_by_positional_weights() {
+        use pintail_protocol::{Handler, Response};
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET NAMES tis620").await,
+            Response::Ok(..)
+        ));
+        backend
+            .execute("CREATE TABLE labels (label VARCHAR(20) CHARACTER SET tis620)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO labels VALUES ('เก'),('กเ'),('กข')")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT COUNT(*) FROM labels GROUP BY label ORDER BY label")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![vec![Value::UInt64(1)], vec![Value::UInt64(2)]]
+        );
+        let result = backend
+            .execute("SELECT @@character_set_client,@@character_set_results")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::Utf8("tis620".into()); 2]);
+    }
+
+    #[tokio::test]
     async fn latin2_sessions_preserve_text_and_group_by_declared_weights() {
         use pintail_protocol::{Handler, Response};
         use pintail_types::Value;
