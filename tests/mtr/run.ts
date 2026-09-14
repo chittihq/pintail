@@ -1145,14 +1145,23 @@ async function startPintail(binary: string) {
     [binary, '--data-dir', pintailDataDir, '--http-bind', `127.0.0.1:${pintailHttpPort}`, '--wire-bind', `127.0.0.1:${pintailWirePort}`],
     {
       cwd: repository,
-      // MTR_PINTAIL_LOG=<path> keeps the server's output for a reproduction.
-      stdout: process.env.MTR_PINTAIL_LOG ? Bun.file(process.env.MTR_PINTAIL_LOG) : 'ignore',
-      stderr: process.env.MTR_PINTAIL_LOG ? Bun.file(process.env.MTR_PINTAIL_LOG) : 'ignore',
+      // The server's own account of the run, kept beside its diffs rather
+      // than discarded. A replay that dies with "connection is in closed
+      // state" is the client noticing; the server is the only side that
+      // knows WHY it closed, and it says so now - but only if somebody
+      // kept the output. Twice in one day that was thrown away.
+      // MTR_PINTAIL_LOG=<path> still redirects it somewhere else.
+      stdout: Bun.file(process.env.MTR_PINTAIL_LOG ?? join(runDir, 'pintail.log')),
+      stderr: Bun.file(process.env.MTR_PINTAIL_LOG ?? join(runDir, 'pintail.log')),
       // A fast supervisor cadence: replica mode waits on it at every sync.
       // The oracle's host runs in UTC, and SYSTEM time zone means the host's
       // zone on both sides, so the server runs in UTC too. The startup SQL
       // mode also matches the oracle, including what SET sql_mode=DEFAULT restores.
-      env: { ...process.env, TZ: 'UTC', PINTAIL_SQL_MODE: 'NO_ENGINE_SUBSTITUTION', PINTAIL_LOG: process.env.MTR_PINTAIL_LOG_LEVEL ?? 'error', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
+      env: { ...process.env, TZ: 'UTC', PINTAIL_SQL_MODE: 'NO_ENGINE_SUBSTITUTION', // `info`, not `error`: a connection that ends because the peer went
+      // away while a command ran is reported at info, and that line is the
+      // whole answer to why a replay died mid-file. It goes to a file, so
+      // the volume costs nothing anyone reads.
+      PINTAIL_LOG: process.env.MTR_PINTAIL_LOG_LEVEL ?? 'info', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
     },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {
