@@ -895,7 +895,14 @@ mod tests {
     fn maps_bit_row_images_to_unsigned_values() {
         let mut bit_column = column("bit", "bit(64)");
         bit_column.pintail_type = DataType::UInt64;
-        for (bytes, expected) in [(vec![1, 0], 256), (vec![255; 8], u64::MAX), (vec![0], 0)] {
+        for (bytes, expected) in [
+            (vec![1, 0], 256),
+            (vec![255; 8], u64::MAX),
+            (vec![0], 0),
+            (b"0".to_vec(), 48),
+            (b"12".to_vec(), 12_594),
+            (b"12345678".to_vec(), 0x3132_3334_3536_3738),
+        ] {
             let decoded = super::decode_value(
                 "flags",
                 &bit_column,

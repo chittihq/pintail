@@ -1169,8 +1169,20 @@ pub fn map_mysql_value(
         | DataType::UInt32
         | DataType::UInt64
         | DataType::Year => {
-            let value = mysql_u64(&value)
-                .ok_or_else(|| mapping_error(table, column, "expected an unsigned integer"))?;
+            let value = if column.mysql_data_type.eq_ignore_ascii_case("bit")
+                && let MysqlValue::Bytes(bytes) = &value
+            {
+                // BIT payloads are big-endian bytes even when every byte
+                // happens to spell an ASCII decimal digit.
+                (bytes.len() <= 8).then(|| {
+                    bytes
+                        .iter()
+                        .fold(0_u64, |bits, byte| (bits << 8) | u64::from(*byte))
+                })
+            } else {
+                mysql_u64(&value)
+            }
+            .ok_or_else(|| mapping_error(table, column, "expected an unsigned integer"))?;
             validate_unsigned_range(column.pintail_type, value)
                 .map_err(|reason| mapping_error(table, column, reason))?;
             Value::UInt64(value)
