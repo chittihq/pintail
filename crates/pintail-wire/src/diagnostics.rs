@@ -618,6 +618,32 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn time_arithmetic_recognizes_packed_numeric_datetimes() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT SUBTIME(20120519090607, '1 1:1:1.000002'), SUBTIME(20120519090607 | 20120519090607, '1 1:1:1.000002'), SUBTIME(120120519090607, '1 1:1:1.000002'), SUBTIME(123456, '00:00:01')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("2012-05-18 08:05:05.999998".into()),
+                Value::Utf8("2012-05-18 08:05:05.999998".into()),
+                Value::Null,
+                Value::Utf8("12:34:55".into())
+            ]
+        );
+        let result = backend.execute("SELECT SUBTIME('120519090607','00:00:01'), SUBTIME(123456.1,'00:00:01'), SUBTIME(9000000,'00:00:01'), SUBTIME('9000000','00:00:01')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("2012-05-19 09:06:06".into()),
+                Value::Utf8("12:34:55.100000".into()),
+                Value::Null,
+                Value::Utf8("838:59:58".into())
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -3724,13 +3724,13 @@ fn evaluate_eager_scalar_inner(
             let total = left.micros + sign * right.micros;
             let fsp = if matches!(
                 argument_types.first(),
-                Some(Some(DataType::Utf8 | DataType::Binary))
+                Some(Some(DataType::Time64 { .. } | DataType::Date32 | DataType::DateTime64 { .. }))
             ) {
-                // Text arguments produce variable-width temporal text: a
+                left.fsp.max(right.fsp)
+            } else {
+                // Untyped temporal arguments produce variable-width text: a
                 // nonzero fraction has six digits, an exact second has none.
                 if total % 1_000_000 == 0 { 0 } else { 6 }
-            } else {
-                left.fsp.max(right.fsp)
             };
             Ok(if left.datetime {
                 render_datetime_micros(total, fsp).map_or(Value::Null, Value::Utf8)
@@ -5094,10 +5094,39 @@ fn temporal_argument(
         scalar_string(value)?
     };
     let parsed = parse_temporal_micros(&text);
+    if matches!(
+        data_type,
+        Some(
+            DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+        )
+    ) && !parsed.as_ref().is_some_and(|value| value.datetime)
+        && text
+            .trim_start_matches(['-', '+'])
+            .split('.')
+            .next()
+            .and_then(|whole| whole.parse::<u128>().ok())
+            .is_some_and(|whole| whole > 8_385_959)
+    {
+        return Ok(None);
+    }
     if matches!(data_type, Some(DataType::Utf8 | DataType::Binary)) {
         let trimmed = text.trim();
-        let date_only =
-            parsed.as_ref().is_some_and(|value| value.datetime) && !trimmed.contains([' ', 'T']);
+        let whole = trimmed.split('.').next().unwrap_or(trimmed);
+        let packed_datetime =
+            matches!(whole.len(), 12 | 14) && whole.bytes().all(|byte| byte.is_ascii_digit());
+        let date_only = parsed.as_ref().is_some_and(|value| value.datetime)
+            && !trimmed.contains([' ', 'T'])
+            && !packed_datetime;
         if date_only || (parsed.is_none() && !trimmed.contains(':')) {
             // An untyped date without a clock is read as a TIME numeric
             // prefix; a typed DATE retains its calendar interpretation.
@@ -5121,8 +5150,9 @@ fn parse_temporal_micros(text: &str) -> Option<TemporalMicros> {
             u8::try_from(fraction.len().min(6)).unwrap_or(6)
         })
     };
-    // Digits alone are a packed TIME here (HHMMSS), not a packed date.
-    if !text.bytes().all(|byte| byte.is_ascii_digit())
+    // Short digit sequences are HHMMSS; a full packed datetime has a calendar.
+    let whole = text.split('.').next().unwrap_or(text);
+    if !(whole.len() < 12 && whole.bytes().all(|byte| byte.is_ascii_digit()))
         && let Ok(datetime) = parse_mysql_datetime(text)
     {
         return Some(TemporalMicros {
