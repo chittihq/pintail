@@ -706,6 +706,18 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         await pt.query(sql).catch(() => {})
         continue
       }
+      // Named prepared statements can mutate fixture tables. Replay their
+      // commands on both connections, including table epochs inside SQL text.
+      if (/^\s*(?:prepare|execute|deallocate|drop\s+prepare)\b/i.test(sql)) {
+        counts.session += 1
+        const rewritten = epochs.rewrite(sql)
+        await my.query(rewritten).catch(() => {})
+        await pt.query(rewritten).catch((error) => {
+          const cls = `PREPARED: ${errorClass(String(error))}`
+          errorClasses[cls] = (errorClasses[cls] ?? 0) + 1
+        })
+        continue
+      }
       // SELECT INTO assigns connection variables from the same epoch's rows.
       if (/^\s*(?:select|with)\b/i.test(sql) && /\binto\s+@/i.test(sql)) {
         counts.session += 1
