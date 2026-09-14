@@ -55,6 +55,21 @@ fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
     unix_argument_precision(argument, false)
 }
 
+// Strip the offset only for result precision inference. Value conversion
+// still resolves it against the connection zone in the execution plan.
+fn literal_datetime_without_offset(text: &str) -> &str {
+    let text = text.trim();
+    let bytes = text.as_bytes();
+    if bytes.len() >= 25
+        && matches!(bytes[bytes.len() - 6], b'+' | b'-')
+        && bytes[bytes.len() - 3] == b':'
+    {
+        &text[..text.len() - 6]
+    } else {
+        text
+    }
+}
+
 fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
     match argument.data_type {
         Some(DataType::Decimal { scale, .. }) => scale.min(6),
@@ -63,11 +78,13 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
             if parses_datetime
                 && let Some(value) = crate::text_charset::literal_value(argument)
                 && let Value::Utf8(text) = value.as_ref()
-                && super::TemporalLiteral::parse(text).is_some()
             {
-                return text.rsplit_once('.').map_or(0, |(_, fraction)| {
-                    u8::try_from(fraction.len().min(6)).unwrap_or(6)
-                });
+                let text = literal_datetime_without_offset(text);
+                if super::TemporalLiteral::parse(text).is_some() {
+                    return text.rsplit_once('.').map_or(0, |(_, fraction)| {
+                        u8::try_from(fraction.len().min(6)).unwrap_or(6)
+                    });
+                }
             }
             6
         }

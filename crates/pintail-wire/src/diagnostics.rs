@@ -463,6 +463,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.rows[0][0], Value::Utf8("2015-01-01 04:40:10".into()));
+        let epoch = backend
+            .execute("SELECT UNIX_TIMESTAMP('2015-11-13 23:59:59+02:00')")
+            .await
+            .unwrap();
+        assert_eq!(epoch.rows[0][0], Value::UInt64(1_447_451_999));
     }
 
     #[tokio::test]
