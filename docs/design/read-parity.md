@@ -187,3 +187,11 @@ values cannot distinguish an unseen identity from actual input bytes.
 Arguments wider than 511 bytes and unequal non-NULL lengths return MySQL's
 3514 and 3513 errors. Hex and bit literals without an introducer retain the
 numeric aggregate domain.
+
+### Accent- and case-sensitive text
+
+The `utf8mb4_0900_as_cs` profile uses tertiary Unicode weights consistently
+for comparisons, sort keys and grouping, with NO PAD semantics. Searches
+retain exact source characters even when canonical forms compare equal.
+Regex defaults follow the expression collation; explicit match flags still
+override that default. Connection collation updates the literal charset.

@@ -375,6 +375,11 @@ fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
                 .write_sort_key_to(text, out)
                 .expect("Vec-backed collation keys cannot fail");
         }),
+        Collation::Utf8mb40900AsCs => MYSQL_AS_CS_COLLATOR.with(|collator| {
+            collator
+                .write_sort_key_to(text, out)
+                .expect("Vec-backed collation keys cannot fail");
+        }),
     }
 }
 
@@ -3005,6 +3010,11 @@ pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
                 .write_sort_key_to(text, &mut key)
                 .expect("Vec-backed collation keys cannot fail");
         }),
+        Collation::Utf8mb40900AsCs => MYSQL_AS_CS_COLLATOR.with(|collator| {
+            collator
+                .write_sort_key_to(text, &mut key)
+                .expect("Vec-backed collation keys cannot fail");
+        }),
     }
     key
 }
@@ -3024,6 +3034,9 @@ pub fn compare_collated_text(left: &str, right: &str, collation: Collation) -> s
         Collation::Utf8mb40900AiCi => {
             MYSQL_DEFAULT_COLLATOR.with(|collator| collator.compare(left, right))
         }
+        Collation::Utf8mb40900AsCs => {
+            MYSQL_AS_CS_COLLATOR.with(|collator| collator.compare(left, right))
+        }
     }
 }
 
@@ -3031,6 +3044,12 @@ thread_local! {
     static MYSQL_DEFAULT_COLLATOR: icu_collator::CollatorBorrowed<'static> = {
         let mut options = icu_collator::options::CollatorOptions::default();
         options.strength = Some(icu_collator::options::Strength::Primary);
+        icu_collator::Collator::try_new(icu_collator::CollatorPreferences::default(), options)
+            .expect("compiled ICU root collation data is available")
+    };
+    static MYSQL_AS_CS_COLLATOR: icu_collator::CollatorBorrowed<'static> = {
+        let mut options = icu_collator::options::CollatorOptions::default();
+        options.strength = Some(icu_collator::options::Strength::Tertiary);
         icu_collator::Collator::try_new(icu_collator::CollatorPreferences::default(), options)
             .expect("compiled ICU root collation data is available")
     };

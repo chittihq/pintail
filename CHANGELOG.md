@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `utf8mb4_0900_as_cs` preserves accents and case in comparisons, grouping,
+  ordering and searches, including connection collation and regex defaults.
+
 - Binary `BIT_AND`, `BIT_OR` and `BIT_XOR` retain byte values and declared
   identities across groups, windows, spill and merges, with MySQL length
   errors. Unintroduced hex and bit literals keep numeric aggregate semantics.

@@ -548,7 +548,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("basic-plane connection");
     connection
-        .query_drop("SET collation_connection = utf8mb4_0900_ai_ci")
+        .query_drop("SET collation_connection = utf8mb4_0900_as_cs")
         .await
         .expect("collation updates charset");
     let encoded: Option<String> = connection
@@ -556,6 +556,11 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("supplementary value");
     assert_eq!(encoded.as_deref(), Some("F09D8C86"));
+    let case_sensitive: Option<u8> = connection
+        .query_first("SELECT 'a' = 'A'")
+        .await
+        .expect("connection comparison collation");
+    assert_eq!(case_sensitive, Some(0));
     connection
         .query_drop("SET NAMES utf8mb4")
         .await

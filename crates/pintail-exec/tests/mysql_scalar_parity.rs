@@ -988,3 +988,41 @@ fn integer_division_reads_internal_decimal_digits() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn accent_and_case_sensitive_collation_keeps_comparison_and_search_domains() {
+    for (expression, expected) in [
+        ("('a' COLLATE utf8mb4_0900_as_cs) = 'A'", "Boolean(false)"),
+        ("('a' COLLATE utf8mb4_0900_as_cs) = 'á'", "Boolean(false)"),
+        ("('a' COLLATE utf8mb4_0900_as_cs) < 'A'", "Boolean(true)"),
+        ("('é' COLLATE utf8mb4_0900_as_cs) < 'f'", "Boolean(true)"),
+        (
+            "('é' COLLATE utf8mb4_0900_as_cs) = 'e\u{301}'",
+            "Boolean(true)",
+        ),
+        ("('a' COLLATE utf8mb4_0900_as_cs) = 'a '", "Boolean(false)"),
+        ("LOCATE('a', 'A' COLLATE utf8mb4_0900_as_cs)", "0"),
+        ("LOCATE('é', 'e\u{301}' COLLATE utf8mb4_0900_as_cs)", "0"),
+        (
+            "('a' COLLATE utf8mb4_0900_as_cs) LIKE 'A'",
+            "Boolean(false)",
+        ),
+        (
+            "REGEXP_LIKE('a' COLLATE utf8mb4_0900_as_cs, 'A')",
+            "Boolean(false)",
+        ),
+        (
+            "REGEXP_LIKE('a' COLLATE utf8mb4_0900_as_cs, 'A', 'i')",
+            "Boolean(true)",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+    assert_eq!(
+        evaluate_rows(
+            "COUNT(DISTINCT (CASE WHEN id=1 THEN 'a' WHEN id=2 THEN 'A' ELSE 'á' END) COLLATE utf8mb4_0900_as_cs)",
+            3
+        ),
+        "3"
+    );
+}

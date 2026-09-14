@@ -1,7 +1,7 @@
 use pintail_catalog::{DatabaseId, TableId};
 use pintail_types::{DataType, Value};
 
-/// The one text collation Pintail currently executes rather than rejecting.
+/// The default text collation.
 pub const DEFAULT_TEXT_COLLATION: &str = "utf8mb4_0900_ai_ci";
 
 /// The older `MySQL` 5.x default, which most existing schemas still carry
@@ -31,8 +31,10 @@ pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
 /// rather than inheriting. It expands and ignores where `general_ci` does
 /// neither, so it is its own profile and not an alias for one.
 pub const UNICODE_CI_TEXT_COLLATION: &str = "utf8mb4_unicode_ci";
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 4] = [
+pub const AS_CS_TEXT_COLLATION: &str = "utf8mb4_0900_as_cs";
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 5] = [
     DEFAULT_TEXT_COLLATION,
+    AS_CS_TEXT_COLLATION,
     GENERAL_CI_TEXT_COLLATION,
     UNICODE_CI_TEXT_COLLATION,
     BIN_TEXT_COLLATION,
@@ -473,6 +475,8 @@ pub fn session_default_collation() -> &'static str {
 pub enum NamedCollation {
     /// `utf8mb4_0900_ai_ci`.
     Default,
+    /// `utf8mb4_0900_as_cs`.
+    AccentCaseSensitive,
     /// `utf8mb4_general_ci`.
     GeneralCi,
     /// `utf8mb4_unicode_ci`.
@@ -488,6 +492,8 @@ impl NamedCollation {
         let lower = name.to_ascii_lowercase();
         if lower == DEFAULT_TEXT_COLLATION {
             Some(Self::Default)
+        } else if lower == AS_CS_TEXT_COLLATION {
+            Some(Self::AccentCaseSensitive)
         } else if lower == GENERAL_CI_TEXT_COLLATION {
             Some(Self::GeneralCi)
         } else if lower == UNICODE_CI_TEXT_COLLATION {
@@ -518,6 +524,7 @@ impl NamedCollation {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Default => DEFAULT_TEXT_COLLATION,
+            Self::AccentCaseSensitive => AS_CS_TEXT_COLLATION,
             Self::GeneralCi => GENERAL_CI_TEXT_COLLATION,
             Self::UnicodeCi => UNICODE_CI_TEXT_COLLATION,
             Self::Bin => BIN_TEXT_COLLATION,

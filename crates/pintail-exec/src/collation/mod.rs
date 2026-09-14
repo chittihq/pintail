@@ -28,6 +28,8 @@ pub enum Collation {
     /// `MySQL` 8's default: UCA 9.0.0, accent- and case-insensitive.
     #[default]
     Utf8mb40900AiCi,
+    /// Accent- and case-sensitive Unicode comparison with NO PAD semantics.
+    Utf8mb40900AsCs,
     /// `MySQL` 5.x's default: a flat per-character weight, no expansions or
     /// contractions.
     Utf8mb4GeneralCi,
@@ -59,6 +61,7 @@ impl Collation {
     pub fn from_mysql_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
+            "utf8mb4_0900_as_cs" => Some(Self::Utf8mb40900AsCs),
             // utf8mb3 holds only characters of the basic plane, and over those
             // its general_ci, unicode_ci and bin collations weigh every
             // character exactly as their utf8mb4 twins do.
@@ -79,6 +82,7 @@ impl Collation {
     pub const fn mysql_name(self) -> &'static str {
         match self {
             Self::Utf8mb40900AiCi => "utf8mb4_0900_ai_ci",
+            Self::Utf8mb40900AsCs => "utf8mb4_0900_as_cs",
             Self::Utf8mb4GeneralCi => "utf8mb4_general_ci",
             Self::Utf8mb4UnicodeCi => "utf8mb4_unicode_ci",
             Self::Utf8mb4Bin => "utf8mb4_bin",

@@ -1966,6 +1966,7 @@ fn collation_byte(collation: &str, charset: &str) -> u16 {
         (_, "utf8mb4_general_ci") => 45,
         (_, "utf8mb4_bin") => 46,
         (_, "utf8mb4_unicode_ci") => 224,
+        (_, "utf8mb4_0900_as_cs") => 278,
         _ => 255,
     }
 }

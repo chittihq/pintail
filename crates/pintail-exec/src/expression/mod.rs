@@ -1041,7 +1041,11 @@ impl CompiledExpr {
                 negated: *negated,
             }),
             BoundExprKind::Scalar { function, args } => {
-                let literal_regex = compile_literal_regex(*function, args)?;
+                let scalar_collation = expr
+                    .text_collation()
+                    .and_then(Collation::from_mysql_name)
+                    .unwrap_or(collation);
+                let literal_regex = compile_literal_regex(*function, args, scalar_collation)?;
                 Ok(Self::Scalar {
                     function: *function,
                     argument_types: args.iter().map(|argument| argument.data_type).collect(),
@@ -1051,10 +1055,7 @@ impl CompiledExpr {
                         .collect::<Result<Vec<_>, _>>()?,
                     literal_regex,
                     data_type: expr.data_type,
-                    collation: expr
-                        .text_collation()
-                        .and_then(Collation::from_mysql_name)
-                        .unwrap_or(collation),
+                    collation: scalar_collation,
                     overflow: overflow_message(expr),
                 })
             }
@@ -3589,30 +3590,33 @@ fn evaluate_eager_scalar_inner(
                 literal_regex,
                 &scalar_string(&values[1])?,
                 match_type.as_deref().unwrap_or(""),
+                collation,
             )?;
             let matched = program.is_match(&text);
             Ok(Value::Boolean(matched != negated))
         }
         ScalarFunction::RegexpSubstr => {
             let text = scalar_string(&values[0])?;
-            let found = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
+            let found = regex_program(literal_regex, &scalar_string(&values[1])?, "", collation)?
                 .find(&text)
                 .map(|found| found.as_str().to_owned());
             Ok(found.map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::RegexpInstr => {
             let text = scalar_string(&values[0])?;
-            let position = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
-                .find(&text)
-                .map_or(0, |found| text[..found.start()].chars().count() as u64 + 1);
+            let position =
+                regex_program(literal_regex, &scalar_string(&values[1])?, "", collation)?
+                    .find(&text)
+                    .map_or(0, |found| text[..found.start()].chars().count() as u64 + 1);
             Ok(Value::UInt64(position))
         }
         ScalarFunction::RegexpReplace => {
             let text = scalar_string(&values[0])?;
             let replacement = scalar_string(&values[2])?;
-            let replaced = regex_program(literal_regex, &scalar_string(&values[1])?, "")?
-                .replace_all(&text, replacement.as_str())
-                .into_owned();
+            let replaced =
+                regex_program(literal_regex, &scalar_string(&values[1])?, "", collation)?
+                    .replace_all(&text, replacement.as_str())
+                    .into_owned();
             Ok(Value::Utf8(replaced))
         }
         ScalarFunction::JsonExtract { unquote } => {
@@ -5318,7 +5322,12 @@ fn locate_collated(
     binary: bool,
     collation: Collation,
 ) -> u64 {
-    if binary || collation == Collation::Utf8mb4Bin {
+    if binary
+        || matches!(
+            collation,
+            Collation::Utf8mb4Bin | Collation::Utf8mb40900AsCs
+        )
+    {
         return locate(needle, haystack, start);
     }
     if needle.is_ascii() && haystack.is_ascii() {
@@ -5425,11 +5434,15 @@ fn normalize_mysql_regex_line_endings(text: &str) -> String {
     normalized
 }
 
-fn compile_regex(pattern: &str, match_type: &str) -> Result<CompiledRegex, ExecError> {
+fn compile_regex(
+    pattern: &str,
+    match_type: &str,
+    collation: Collation,
+) -> Result<CompiledRegex, ExecError> {
     if pattern.len() > MAX_REGEX_PATTERN_BYTES {
         return Err(ExecError::InvalidExpressionType);
     }
-    let mut case_insensitive = true;
+    let mut case_insensitive = collation != Collation::Utf8mb40900AsCs;
     let mut multi_line = false;
     let mut dot_matches_new_line = false;
     for option in match_type.chars() {
@@ -5466,11 +5479,12 @@ fn compile_regex(pattern: &str, match_type: &str) -> Result<CompiledRegex, ExecE
 fn compile_literal_regex(
     function: ScalarFunction,
     args: &[BoundExpr],
+    collation: Collation,
 ) -> Result<Option<CompiledRegex>, ExecError> {
     let Some((pattern, match_type)) = literal_regex_arguments(function, args) else {
         return Ok(None);
     };
-    compile_regex(pattern, match_type).map(Some)
+    compile_regex(pattern, match_type, collation).map(Some)
 }
 
 fn literal_regex_arguments(function: ScalarFunction, args: &[BoundExpr]) -> Option<(&str, &str)> {
@@ -5530,16 +5544,17 @@ fn regex_program(
     literal: Option<&CompiledRegex>,
     pattern: &str,
     match_type: &str,
+    collation: Collation,
 ) -> Result<Arc<regex::Regex>, ExecError> {
     literal.map_or_else(
-        || compile_regex(pattern, match_type).map(|compiled| compiled.program),
+        || compile_regex(pattern, match_type, collation).map(|compiled| compiled.program),
         |compiled| Ok(Arc::clone(&compiled.program)),
     )
 }
 
 #[cfg(test)]
 fn compiled_regex(pattern: &str) -> Result<Arc<regex::Regex>, ExecError> {
-    compile_regex(pattern, "").map(|compiled| compiled.program)
+    compile_regex(pattern, "", Collation::default()).map(|compiled| compiled.program)
 }
 
 /// Exact CEIL/FLOOR of canonical decimal text: the integer part, adjusted
