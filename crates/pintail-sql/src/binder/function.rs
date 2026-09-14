@@ -44,7 +44,7 @@ pub(super) fn typed_temporal_precision(text: &str, time: bool) -> Option<u64> {
         .count();
     let compact = prefix.trim_start_matches(['-', '+']);
     let complete_clock = if time {
-        groups >= 3 || compact.bytes().all(|byte| byte.is_ascii_digit())
+        groups >= 2 || compact.bytes().all(|byte| byte.is_ascii_digit())
     } else {
         groups >= 6
             || (matches!(compact.len(), 12 | 14)

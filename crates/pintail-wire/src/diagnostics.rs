@@ -454,6 +454,13 @@ mod tests {
             ("TIMESTAMP'2021-07-15 23:01..02'", "2021-07-15 23:01:02"),
             ("TIMESTAMP'2021-07-17.18:45:00'", "2021-07-17 18:45:00"),
             ("TIMESTAMP'20211018.121000'", "2021-10-18 12:10:00"),
+            ("TIME'10:10:10.12'", "10:10:10.12"),
+            ("TIME'10:11.12'", "10:11:00.12"),
+            ("CAST(TIME'10:10:10.995' AS TIME(2))", "10:10:11.00"),
+            (
+                "CAST('2015-01-15 23-24:25' AS DATETIME)",
+                "2015-01-15 23:24:25",
+            ),
         ] {
             let result = backend.execute(&format!("SELECT {literal}")).await.unwrap();
             assert_eq!(result.rows[0][0], Value::Utf8(expected.into()), "{literal}");

@@ -104,10 +104,13 @@ fn temporal_separator(input: &mut &str, clock: bool) -> Option<()> {
 /// Date fields and clock fields accept mixed and repeated punctuation.
 /// In an untyped argument, a colon-only triple remains a TIME duration.
 fn parse_relaxed_datetime(text: &str, calendar_context: bool) -> Option<NaiveDateTime> {
+    let (clock, fraction) = text.split_once('.').unwrap_or((text, ""));
     if !calendar_context
-        && text
+        && clock.contains(':')
+        && clock
             .bytes()
             .all(|byte| byte.is_ascii_digit() || byte == b':')
+        && fraction.bytes().all(|byte| byte.is_ascii_digit())
     {
         return None;
     }
@@ -354,6 +357,11 @@ pub(crate) fn has_timestamp_offset(text: &str) -> bool {
         && matches!(bytes.get(bytes.len() - 6), Some(b'+' | b'-'))
         && bytes.get(bytes.len() - 3) == Some(&b':')
         && text[..text.len() - 6].contains([' ', 'T'])
+        && text[..text.len() - 6]
+            .split(|character: char| !character.is_ascii_digit())
+            .filter(|part| !part.is_empty())
+            .count()
+            >= 6
 }
 
 /// Explicit input offsets resolve before calendar or clock extraction. The
