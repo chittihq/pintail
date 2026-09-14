@@ -83,6 +83,39 @@ pub fn user_variable_assignments(statement: &Statement) -> Option<Vec<(String, E
         .collect()
 }
 
+/// Renders an assignment expression for evaluation under the current escape mode.
+/// The AST stores decoded strings; SQL rendering must restore backslash escapes
+/// without changing quoted identifiers or the expression's other tokens.
+#[must_use]
+pub fn user_variable_expression_sql(expression: &Expr) -> Option<String> {
+    use sqlparser::tokenizer::{Token, Tokenizer};
+    let rendered = expression.to_string();
+    let mut mode = crate::session_parse_mode();
+    if mode.no_backslash_escapes {
+        return Some(rendered);
+    }
+    mode.no_backslash_escapes = true;
+    let dialect = crate::PintailDialect(sqlparser::dialect::MySqlDialect {}, mode);
+    let tokens = Tokenizer::new(&dialect, &rendered)
+        .with_unescape(false)
+        .tokenize()
+        .ok()?;
+    Some(
+        tokens
+            .into_iter()
+            .map(|mut token| {
+                match &mut token {
+                    Token::SingleQuotedString(text)
+                    | Token::DoubleQuotedString(text)
+                    | Token::NationalStringLiteral(text) => *text = text.replace('\\', "\\\\"),
+                    _ => {}
+                }
+                token.to_string()
+            })
+            .collect(),
+    )
+}
+
 /// Separates a SELECT's user-variable targets from the query that supplies them.
 /// File output and table creation forms are left to ordinary statement binding.
 #[must_use]

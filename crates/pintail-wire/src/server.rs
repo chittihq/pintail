@@ -1647,10 +1647,15 @@ impl Backend {
             };
             assignments(sql)
                 .or_else(|| assignments(&sql.replace(":=", "=")))
-                .map(|pairs| {
+                .and_then(|pairs| {
                     pairs
                         .into_iter()
-                        .map(|(name, expression)| (name, expression.to_string()))
+                        .map(|(name, expression)| {
+                            Some((
+                                name,
+                                pintail_sql::user_variable_expression_sql(&expression)?,
+                            ))
+                        })
                         .collect()
                 })
                 .or_else(|| single_user_variable_assignment(sql))

@@ -779,6 +779,48 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn set_variable_expression_roundtrips_backslashes_once() {
+        use pintail_protocol::{Handler, Response};
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(br"SET @value=CONCAT('abcd\\ef','ghi')").await,
+            Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.execute("SELECT @value").await.unwrap().rows[0][0],
+            Value::Utf8(r"abcd\efghi".into())
+        );
+        assert!(matches!(
+            backend.query(br"SET @quoted=CONCAT('a\\b''c','')").await,
+            Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.execute("SELECT @quoted").await.unwrap().rows[0][0],
+            Value::Utf8(r"a\b'c".into())
+        );
+        assert!(matches!(
+            backend
+                .query(br"SET @matched='a%b' LIKE 'a\\%b' ESCAPE '\\'")
+                .await,
+            Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.execute("SELECT @matched").await.unwrap().rows[0][0],
+            Value::Int64(1)
+        );
+        backend.query(b"SET sql_mode='NO_BACKSLASH_ESCAPES'").await;
+        assert!(matches!(
+            backend.query(br"SET @value=CONCAT('abcd\ef','ghi')").await,
+            Response::Ok(..)
+        ));
+        assert_eq!(
+            backend.execute("SELECT @value").await.unwrap().rows[0][0],
+            Value::Utf8(r"abcd\efghi".into())
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
