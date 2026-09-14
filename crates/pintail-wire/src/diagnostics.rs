@@ -456,6 +456,41 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn variable_assignments_flow_through_union_branches() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT @counter:=1 UNION SELECT @counter:=@counter+1")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![pintail_types::Value::float64(1.0)],
+                vec![pintail_types::Value::float64(2.0)]
+            ]
+        );
+        let result = backend
+            .execute("SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT 3e0")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            [1.0, 2.0, 3.0]
+                .map(|value| vec![pintail_types::Value::float64(value)])
+                .to_vec()
+        );
+    }
+
+    #[tokio::test]
+    async fn comparisons_before_variables_need_no_whitespace() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET @a=1, @b=2").await;
+        let result = backend.execute("SELECT @a<@b, @b>@a").await.unwrap();
+        assert_eq!(result.rows[0], vec![pintail_types::Value::Boolean(true); 2]);
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

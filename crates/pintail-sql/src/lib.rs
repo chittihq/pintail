@@ -154,6 +154,24 @@ fn tokenize_mysql(
             expanded.push(inner);
         }
     }
+    // A less-than immediately followed by a user variable is two tokens.
+    for index in 0..expanded.len().saturating_sub(1) {
+        if expanded[index].token != Token::ArrowAt {
+            continue;
+        }
+        let end = expanded[index].span.end;
+        let next = &mut expanded[index + 1];
+        if next.span.start == end
+            && let Token::Word(word) = &mut next.token
+            && word.quote_style.is_none()
+        {
+            word.value.insert(0, '@');
+            word.keyword = sqlparser::keywords::Keyword::NoKeyword;
+            next.span.start.column -= 1;
+            expanded[index].token = Token::Lt;
+            expanded[index].span.end.column -= 1;
+        }
+    }
     Ok(expanded)
 }
 

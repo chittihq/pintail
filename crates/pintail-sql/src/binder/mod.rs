@@ -2192,39 +2192,48 @@ fn unify_union_layout(left: &mut BoundQuery, right: &mut BoundQuery) -> Result<(
             "UNION ALL branches have different column counts".to_owned(),
         ));
     }
-    for (index, (left, right)) in left
-        .projection
-        .iter_mut()
-        .zip(&mut right.projection)
-        .enumerate()
-    {
-        let Some(unified) = unify_union_types(left.expr.data_type, right.expr.data_type) else {
+    for index in 0..left.projection.len() {
+        let left_expr = &left.projection[index].expr;
+        let right_expr = &right.projection[index].expr;
+        let Some(unified) = unify_union_types(left_expr.data_type, right_expr.data_type) else {
             return Err(BindError::IncompatibleSetOperation(format!(
                 "UNION ALL column {} has types {:?} and {:?}",
                 index + 1,
-                left.expr.data_type,
-                right.expr.data_type
+                left_expr.data_type,
+                right_expr.data_type
             )));
         };
-        // A decimal-unified pair must coerce branch VALUES too: decimals
-        // execute as canonical text, so an integer branch reaching a
-        // decimal-typed consumer would surface as a raw integer.
-        if let Some(decimal @ DataType::Decimal { .. }) = unified {
-            wrap_in_decimal_cast(&mut left.expr, decimal);
-            wrap_in_decimal_cast(&mut right.expr, decimal);
-        }
-        left.expr.data_type = unified;
-        right.expr.data_type = unified;
-        let nullable = left.expr.nullable || right.expr.nullable;
-        left.expr.nullable = nullable;
-        right.expr.nullable = nullable;
+        let nullable = left_expr.nullable || right_expr.nullable;
+        coerce_union_projection(left, index, unified, nullable);
+        coerce_union_projection(right, index, unified, nullable);
     }
+
     Ok(())
 }
 
-/// Wraps a UNION branch expression in a CAST to the unified decimal type
+fn coerce_union_projection(
+    query: &mut BoundQuery,
+    index: usize,
+    target: Option<DataType>,
+    nullable: bool,
+) {
+    let expression = &mut query.projection[index].expr;
+    if let Some(target) = target {
+        wrap_in_cast(expression, target);
+    }
+    expression.data_type = target;
+    expression.nullable = nullable;
+    for branch in &mut query.union_all {
+        coerce_union_projection(branch, index, target, nullable);
+    }
+    for (_, branch) in &mut query.set_ops {
+        coerce_union_projection(branch, index, target, nullable);
+    }
+}
+
+/// Wraps an expression in a CAST to its common result type
 /// unless it already has it (or is a bare NULL, which any type absorbs).
-fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
+fn wrap_in_cast(expr: &mut BoundExpr, unified: DataType) {
     if expr.data_type == Some(unified) || matches!(expr.kind, BoundExprKind::Literal(Value::Null)) {
         return;
     }
@@ -2248,8 +2257,7 @@ fn wrap_in_decimal_cast(expr: &mut BoundExpr, unified: DataType) {
 }
 
 /// MySQL-style result type for a UNION column pair: equal types pass
-/// through; numeric families widen (values are already Int64/UInt64/Float64
-/// at execution, so widening only fixes the declared metadata). Mixed
+/// through; numeric families widen, with branch values coerced by the caller. Mixed
 /// signed/UInt64 and integer/decimal pairs unify to a decimal wide enough
 /// for both sides, exactly as `MySQL` does (`BIGINT` with `BIGINT UNSIGNED`
 /// is `DECIMAL(20,0)`). Cross-kind pairs (text vs number, temporal vs
@@ -4087,8 +4095,8 @@ fn bind_exact_decimal_comparison(
         // still extract equi-join keys. Casting both sides to one scale also
         // gives the text-backed DECIMAL carrier one canonical hash key.
         let unified = DataType::Decimal { precision, scale };
-        wrap_in_decimal_cast(&mut left, unified);
-        wrap_in_decimal_cast(&mut right, unified);
+        wrap_in_cast(&mut left, unified);
+        wrap_in_cast(&mut right, unified);
         return BoundExpr {
             nullable: left.nullable || right.nullable,
             data_type: Some(DataType::Boolean),
