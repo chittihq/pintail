@@ -731,6 +731,13 @@ impl<'catalog> Binder<'catalog> {
             // this is computed once and consulted by every rewrite below.
             let determined =
                 dependency::determined_columns(&group_by, &from, &tables, filter.as_ref());
+            if crate::session_parse_mode().permissive_grouping
+                && (from.len() > 1 || from.iter().any(|source| !source.joins.is_empty()))
+            {
+                for item in &mut projection {
+                    materialize_group_assignments(&mut item.expr, &mut aggregates);
+                }
+            }
             for item in &mut projection {
                 rewrite_group_references(&mut item.expr, &group_by, &determined, &mut aggregates)?;
             }
@@ -5519,6 +5526,60 @@ fn bind_window_frame(
         )));
     }
     Ok(Some(BoundWindowFrame { range, start, end }))
+}
+
+/// Joined grouping materializes assignment expressions while reading input rows.
+/// The representative value is projected later, without repeating the assignment.
+fn materialize_group_assignments(expr: &mut BoundExpr, aggregates: &mut Vec<BoundAggregate>) {
+    fn reads_input(expr: &BoundExpr) -> bool {
+        match &expr.kind {
+            BoundExprKind::Literal(_) | BoundExprKind::Column(_) => true,
+            BoundExprKind::Scalar { args, .. } => args.iter().all(reads_input),
+            BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+                reads_input(expr)
+            }
+            BoundExprKind::Binary { left, right, .. } => reads_input(left) && reads_input(right),
+            _ => false,
+        }
+    }
+    if matches!(
+        expr.kind,
+        BoundExprKind::Scalar {
+            function: ScalarFunction::UserVariableAssign,
+            ..
+        }
+    ) && reads_input(expr)
+    {
+        let index = aggregates.len();
+        aggregates.push(BoundAggregate {
+            declared: false,
+            function: AggregateFunction::AnyValue,
+            data_type: expr.data_type,
+            expr: Some(expr.clone()),
+            distinct: false,
+            nullable: true,
+            separator: None,
+            order_within: Vec::new(),
+        });
+        expr.kind = BoundExprKind::Aggregate(index);
+        expr.nullable = true;
+        return;
+    }
+    match &mut expr.kind {
+        BoundExprKind::Scalar { args, .. } => {
+            for argument in args {
+                materialize_group_assignments(argument, aggregates);
+            }
+        }
+        BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
+            materialize_group_assignments(expr, aggregates);
+        }
+        BoundExprKind::Binary { left, right, .. } => {
+            materialize_group_assignments(left, aggregates);
+            materialize_group_assignments(right, aggregates);
+        }
+        _ => {}
+    }
 }
 
 fn rewrite_group_references(

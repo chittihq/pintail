@@ -266,6 +266,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn grouped_join_assignments_observe_rows_before_group_materialization() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        for sql in [
+            "CREATE TABLE samples (bucket INT, label VARCHAR(20))",
+            "CREATE TABLE names (label VARCHAR(20), bucket INT)",
+            "INSERT INTO samples VALUES (1,'first'),(1,'second'),(2,'third'),(2,'fourth')",
+            "INSERT INTO names VALUES ('first',1),('second',1),('third',2),('fourth',2)",
+            "SET sql_mode=''",
+        ] {
+            assert!(
+                matches!(
+                    backend.query(sql.as_bytes()).await,
+                    pintail_protocol::Response::Ok(..)
+                ),
+                "{sql}"
+            );
+        }
+        for projection in ["@seen:=n.label", "CONCAT(@seen:=n.label)"] {
+            backend.execute(&format!("SELECT n.bucket,{projection},COUNT(DISTINCT n.label) FROM samples s LEFT JOIN names n ON s.label=n.label GROUP BY n.bucket HAVING COUNT(DISTINCT n.label)>1")).await.unwrap();
+            let result = backend.execute("SELECT @seen").await.unwrap();
+            assert_eq!(result.rows[0][0], Value::Utf8("fourth".to_owned()));
+        }
+    }
+
+    #[tokio::test]
     async fn sorted_join_materializes_decimal_projection_scale() {
         use pintail_protocol::Handler;
         use pintail_types::Value;
