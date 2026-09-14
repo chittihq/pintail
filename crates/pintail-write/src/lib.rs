@@ -223,6 +223,27 @@ pub fn bind_create_table(statement: &Statement) -> Result<CreateTablePlan, Write
                 declared.collation = collation;
             }
         }
+        if declared.character_set.as_deref() == Some("binary") {
+            let binary_type = match declared.mysql_data_type.as_str() {
+                "char" => Some("binary"),
+                "varchar" => Some("varbinary"),
+                "tinytext" => Some("tinyblob"),
+                "text" => Some("blob"),
+                "mediumtext" => Some("mediumblob"),
+                "longtext" => Some("longblob"),
+                _ => None,
+            };
+            if let Some(binary_type) = binary_type {
+                declared.mysql_column_type =
+                    declared
+                        .mysql_column_type
+                        .replacen(&declared.mysql_data_type, binary_type, 1);
+                declared.mysql_data_type = binary_type.to_owned();
+                declared.pintail_type = DataType::Binary;
+                declared.character_set = None;
+                declared.collation = None;
+            }
+        }
         if auto_increment {
             declared.extra = "auto_increment".to_owned();
         }

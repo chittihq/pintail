@@ -423,3 +423,29 @@ fn stored_text_obeys_column_repertoires_and_strict_inserts_are_atomic() {
         },
     );
 }
+
+#[test]
+fn binary_character_set_declarations_store_bytes_and_padding() {
+    let fixture = fixture();
+    run(&fixture, "CREATE TABLE labels (fixed_payload CHAR(4) CHARACTER SET binary, variable_payload VARCHAR(4) CHARACTER SET binary, large_payload TEXT CHARACTER SET binary)").unwrap();
+    run(&fixture, "INSERT INTO labels VALUES ('é ', 'é ', 'é ')").unwrap();
+    assert_eq!(
+        stored_rows(&fixture, "labels"),
+        vec![vec![
+            Value::Binary(vec![0xc3, 0xa9, b' ', 0]),
+            Value::Binary(vec![0xc3, 0xa9, b' ']),
+            Value::Binary(vec![0xc3, 0xa9, b' ']),
+        ]]
+    );
+    let catalog = fixture.database.catalog().unwrap();
+    for (column, expected_type) in catalog[0]
+        .columns
+        .iter()
+        .zip(["binary", "varbinary", "blob"])
+    {
+        assert_eq!(column.mysql_data_type, expected_type);
+        assert_eq!(column.pintail_type, pintail_types::DataType::Binary);
+        assert_eq!(column.character_set, None);
+        assert_eq!(column.collation, None);
+    }
+}
