@@ -6977,7 +6977,7 @@ mod tests {
             let provider = StaticProvider {
                 batches: Mutex::new(batches.clone()),
             };
-            let mut execution = Execution::start(physical("SELECT LEFT(name, 8) AS k, GROUP_CONCAT(name ORDER BY name DESC SEPARATOR '|'), GROUP_CONCAT(DISTINCT name ORDER BY name DESC), JSON_ARRAYAGG(name) FROM events GROUP BY k"), &provider, limit, Collation::default()).expect("execution");
+            let mut execution = Execution::start(physical("SELECT LEFT(name, 8) AS k, GROUP_CONCAT(name ORDER BY name DESC SEPARATOR '|'), GROUP_CONCAT(DISTINCT name ORDER BY name DESC), GROUP_CONCAT(name ORDER BY LEFT(name, 8)), JSON_ARRAYAGG(name) FROM events GROUP BY k"), &provider, limit, Collation::default()).expect("execution");
             let mut rows = Vec::new();
             while let Some(batch) = execution.next_batch().expect("pull") {
                 assert!(execution.memory().used() <= limit);
@@ -7740,7 +7740,7 @@ mod tests {
         );
         assert_eq!(
             batch.column(1).and_then(|column| column.value(0)),
-            Some(&Value::Utf8("1:Alpha|1:alpha|2:beta".to_owned()))
+            Some(&Value::Utf8("1:alpha|1:Alpha|2:beta".to_owned()))
         );
     }
 

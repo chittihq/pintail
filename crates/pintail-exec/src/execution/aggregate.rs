@@ -1680,6 +1680,9 @@ impl AggregateState {
                 order,
             } => {
                 if !order.is_empty() {
+                    // Equal explicit order keys put the most recently seen
+                    // item first, independently of ascending/descending keys.
+                    items.reverse();
                     items.sort_by(|left, right| {
                         for (position, (ascending, decimal)) in order.iter().enumerate() {
                             let ordering = compare_sort_values(

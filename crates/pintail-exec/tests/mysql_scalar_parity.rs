@@ -1199,3 +1199,16 @@ fn temporal_extrema_choose_the_comparison_domain_of_the_consumer() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn ordered_group_concat_places_later_equal_keys_first() {
+    for (expression, expected) in [
+        ("GROUP_CONCAT(id ORDER BY (id=3))", "4,2,1,3"),
+        ("GROUP_CONCAT(id ORDER BY (id=3) DESC)", "3,4,2,1"),
+        ("GROUP_CONCAT(DISTINCT id ORDER BY (id=3))", "4,2,1,3"),
+        ("GROUP_CONCAT(id ORDER BY (id=3),id)", "1,2,4,3"),
+        ("GROUP_CONCAT(id)", "1,2,3,4"),
+    ] {
+        assert_eq!(evaluate_rows(expression, 4), expected, "{expression}");
+    }
+}
