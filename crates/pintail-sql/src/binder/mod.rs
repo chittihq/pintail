@@ -6065,6 +6065,8 @@ fn time_as_number(expr: BoundExpr) -> BoundExpr {
 /// does not (`-100:00:00` sorted above `-00:00:01` as text), and a string
 /// compared with a TIME is read as a TIME first, as `MySQL` does.
 fn unify_time_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
+    let right = time_column_constant(&left, right);
+    let left = time_column_constant(&right, left);
     if is_time(&left) || is_time(&right) {
         (time_comparand(left), time_comparand(right))
     } else {
@@ -6074,10 +6076,52 @@ fn unify_time_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundEx
 
 /// The list form of [`unify_time_operands`], for IN and BETWEEN.
 fn unify_time_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    let target = args
+        .iter()
+        .find(|arg| is_time(arg) && matches!(arg.kind, BoundExprKind::Column(_)))
+        .cloned();
+    let args = if let Some(target) = target {
+        args.into_iter()
+            .map(|arg| time_column_constant(&target, arg))
+            .collect()
+    } else {
+        args
+    };
     if args.iter().any(is_time) {
         args.into_iter().map(time_comparand).collect()
     } else {
         args
+    }
+}
+
+/// A TIME column compares untyped constant bounds at its declared precision.
+/// A typed TIME operand retains its own precision, including fractions.
+fn time_column_constant(target: &BoundExpr, operand: BoundExpr) -> BoundExpr {
+    fn constant(expr: &BoundExpr) -> bool {
+        match &expr.kind {
+            BoundExprKind::Literal(_) => true,
+            BoundExprKind::Unary { expr, .. } => constant(expr),
+            BoundExprKind::Scalar {
+                function:
+                    ScalarFunction::Cast(_)
+                    | ScalarFunction::DeclaredCast { .. }
+                    | ScalarFunction::TextCharset(_, _)
+                    | ScalarFunction::DecodeText(_)
+                    | ScalarFunction::CoerceText(_)
+                    | ScalarFunction::Collate { .. },
+                args,
+            } => args.iter().all(constant),
+            _ => false,
+        }
+    }
+    if matches!(target.kind, BoundExprKind::Column(_))
+        && let Some(DataType::Time64 { fsp }) = target.data_type
+        && !is_time(&operand)
+        && constant(&operand)
+    {
+        cast_to(operand, DataType::Time64 { fsp })
+    } else {
+        operand
     }
 }
 

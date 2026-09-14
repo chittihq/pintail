@@ -1324,3 +1324,25 @@ fn floating_consumers_read_decimal_guard_digits_before_display_rounding() {
         "float 0.07407407414814815"
     );
 }
+
+#[test]
+fn time_columns_round_untyped_constant_bounds_to_their_declared_precision() {
+    for (expression, expected) in [
+        ("clock='11:11:11.001'", "Boolean(true)"),
+        ("clock=111111.001", "Boolean(true)"),
+        ("'11:11:11.001'=clock", "Boolean(true)"),
+        ("clock='11:11:11.9'", "Boolean(false)"),
+        ("clock<'11:11:11.001'", "Boolean(false)"),
+        ("clock<='11:11:11.001'", "Boolean(true)"),
+        ("clock IN('11:11:11.001')", "Boolean(true)"),
+        (
+            "clock BETWEEN '11:11:11.001' AND '11:11:11.9'",
+            "Boolean(true)",
+        ),
+        ("clock=TIME'11:11:11.001'", "Boolean(false)"),
+        ("TIME'11:11:11'='11:11:11.001'", "Boolean(false)"),
+        ("clock=CAST('11:11:11.001' AS CHAR)", "Boolean(true)"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
