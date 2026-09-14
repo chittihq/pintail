@@ -386,3 +386,40 @@ fn binary_enum_and_set_members_keep_case_distinct() {
         ]
     );
 }
+
+#[test]
+fn stored_text_obeys_column_repertoires_and_strict_inserts_are_atomic() {
+    let fixture = fixture();
+    run(&fixture, "CREATE TABLE labels (id INT PRIMARY KEY, western VARCHAR(20) CHARACTER SET latin1, plain TEXT CHARACTER SET ascii, basic CHAR(8) CHARACTER SET utf8mb3, full TEXT CHARACTER SET utf8mb4)").unwrap();
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        run(
+            &fixture,
+            "INSERT INTO labels VALUES (1, 'café €�😀', 'café😀', 'x😀  ', 'x😀')",
+        )
+        .unwrap();
+    });
+    let expected = vec![vec![
+        Value::Int64(1),
+        Value::Utf8("café €??".into()),
+        Value::Utf8("caf??".into()),
+        Value::Utf8("x?".into()),
+        Value::Utf8("x😀".into()),
+    ]];
+    assert_eq!(stored_rows(&fixture, "labels"), expected);
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("STRICT_TRANS_TABLES"),
+        || {
+            for values in [
+                "'bad�', 'ok', 'ok'",
+                "'ok', 'badé', 'ok'",
+                "'ok', 'ok', 'bad😀'",
+            ] {
+                let error = run(&fixture, &format!("INSERT INTO labels VALUES (2, 'café €', 'ok', 'ok', '😀'), (3, {values}, '😀')")).unwrap_err();
+                assert_eq!(error.mysql_code(), 1366);
+                assert_eq!(error.sqlstate(), "HY000");
+                assert!(error.to_string().ends_with("at row 2"));
+                assert_eq!(stored_rows(&fixture, "labels"), expected);
+            }
+        },
+    );
+}

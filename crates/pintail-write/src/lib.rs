@@ -19,7 +19,7 @@ mod engine;
 pub use engine::{LocalDatabase, WriteOutcome};
 
 use pintail_probe::{DeclaredColumn, SourceColumn, SourceKey, SourceTable, declared_column};
-use pintail_types::{DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
+use pintail_types::{CharacterSet, DataType, KeyMode, KeyPart, PrimaryKey, StoredRow, Value};
 use sqlparser::ast::{
     ColumnOption, CreateTable, DataType as SqlDataType, Expr, Insert, ObjectName, Statement,
     TableConstraint, Value as SqlValue, ValueWithSpan,
@@ -57,6 +57,9 @@ pub enum WriteError {
     /// A character value exceeds its declared width (`MySQL` 1406).
     #[error("Data too long for column '{column}' at row {row}")]
     DataTooLong { column: String, row: usize },
+    /// A character cannot be represented by the declared character set.
+    #[error("Incorrect string value for column '{column}' at row {row}")]
+    IncorrectStringValue { column: String, row: usize },
 }
 
 impl WriteError {
@@ -74,6 +77,7 @@ impl WriteError {
             Self::DuplicateKey(_) => 1062,
             Self::NotNull(_) => 1048,
             Self::DataTooLong { .. } => 1406,
+            Self::IncorrectStringValue { .. } => 1366,
         }
     }
 
@@ -88,6 +92,7 @@ impl WriteError {
             Self::DuplicateKey(_) => "23000",
             Self::NotNull(_) => "23000",
             Self::DataTooLong { .. } => "22001",
+            Self::IncorrectStringValue { .. } => "HY000",
         }
     }
 }
@@ -421,6 +426,12 @@ pub fn bind_insert_from(
                     column,
                     row: ordinal + 1,
                 },
+                WriteError::IncorrectStringValue { column, .. } => {
+                    WriteError::IncorrectStringValue {
+                        column,
+                        row: ordinal + 1,
+                    }
+                }
                 other => other,
             })?;
         }
@@ -924,6 +935,34 @@ fn binary_value(mut bytes: Vec<u8>, column: &SourceColumn) -> Result<Vec<u8>, Wr
 
 /// Character widths count code points; only CHAR removes trailing spaces.
 fn character_value(text: &str, column: &SourceColumn) -> Result<String, WriteError> {
+    let encoded = column.character_set.as_deref().and_then(|name| {
+        if text.is_ascii() {
+            return None;
+        }
+        if name.eq_ignore_ascii_case("ascii") {
+            return Some(
+                text.chars()
+                    .map(|c| if c.is_ascii() { c } else { '?' })
+                    .collect::<String>(),
+            );
+        }
+        let charset = CharacterSet::from_name(name)?;
+        if charset == CharacterSet::Utf8Mb4 {
+            return None;
+        }
+        charset.decode(&charset.encode(text))
+    });
+    if encoded
+        .as_deref()
+        .is_some_and(|converted| converted != text)
+        && pintail_sql::session_parse_mode().strict
+    {
+        return Err(WriteError::IncorrectStringValue {
+            column: column.name.clone(),
+            row: 1,
+        });
+    }
+    let text = encoded.as_deref().unwrap_or(text);
     let is_char = column.mysql_data_type.eq_ignore_ascii_case("char");
     if !is_char && !column.mysql_data_type.eq_ignore_ascii_case("varchar") {
         return Ok(text.to_owned());
