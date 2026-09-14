@@ -1412,6 +1412,11 @@ pub(super) fn bind_scalar(
         {
             (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
         }
+        ScalarFunction::Concat
+            if args.iter().any(|argument| argument.data_type == Some(DataType::Binary)) =>
+        {
+            (Some(DataType::Binary), args.iter().any(|argument| argument.nullable))
+        }
         ScalarFunction::ConcatWs
             if args
                 .iter()

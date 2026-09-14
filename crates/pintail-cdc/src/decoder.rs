@@ -892,6 +892,25 @@ mod tests {
     }
 
     #[test]
+    fn maps_bit_row_images_to_unsigned_values() {
+        let mut bit_column = column("bit", "bit(64)");
+        bit_column.pintail_type = DataType::UInt64;
+        for (bytes, expected) in [(vec![1, 0], 256), (vec![255; 8], u64::MAX), (vec![0], 0)] {
+            let decoded = super::decode_value(
+                "flags",
+                &bit_column,
+                super::BinlogValue::Value(MysqlValue::Bytes(bytes)),
+            )
+            .expect("BIT row image");
+            assert_eq!(decoded, super::Value::UInt64(expected));
+        }
+        assert_eq!(
+            adapt_binlog_value(&bit_column, MysqlValue::NULL).expect("null"),
+            MysqlValue::NULL
+        );
+    }
+
+    #[test]
     fn maps_enum_indexes_and_set_masks_to_labels() {
         let enum_column = column("enum", "enum('alpha','βeta','it\\'s')");
         assert_eq!(

@@ -488,15 +488,24 @@ fn bit_columns_keep_declared_bytes_when_concatenated() {
         "CREATE TABLE flag_values (id BIGINT PRIMARY KEY, bits BIT(64))",
     )
     .unwrap();
-    run(&fixture, "INSERT INTO flag_values VALUES (1,1)").unwrap();
+    run(
+        &fixture,
+        "INSERT INTO flag_values VALUES (1,1),(2,18446744073709551615)",
+    )
+    .unwrap();
     for sql in [
-        "SELECT HEX(CONCAT(bits)) FROM flag_values",
-        "SELECT HEX(CONCAT(payload)) FROM (SELECT bits AS payload FROM flag_values) AS derived",
+        "SELECT HEX(CONCAT(bits)) FROM flag_values ORDER BY id",
+        "SELECT HEX(CONCAT(payload)) FROM (SELECT id,bits AS payload FROM flag_values) AS derived ORDER BY id",
     ] {
         let result = run(&fixture, sql).unwrap();
         assert_eq!(
             result.rows[0][0],
             pintail_types::Value::Utf8("0000000000000001".to_owned()),
+            "{sql}"
+        );
+        assert_eq!(
+            result.rows[1][0],
+            pintail_types::Value::Utf8("FFFFFFFFFFFFFFFF".to_owned()),
             "{sql}"
         );
     }

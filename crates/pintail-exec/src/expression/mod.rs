@@ -2212,6 +2212,17 @@ fn evaluate_eager_scalar_inner(
         return Ok(Value::Null);
     }
     match function {
+        ScalarFunction::Concat if binary_operand(values) => {
+            let mut output = Vec::new();
+            for value in values {
+                if let Value::Binary(bytes) = value {
+                    output.extend_from_slice(bytes);
+                } else {
+                    output.extend_from_slice(scalar_string(value)?.as_bytes());
+                }
+            }
+            Ok(Value::Binary(output))
+        }
         ScalarFunction::Concat => Ok(Value::Utf8(
             values
                 .iter()
