@@ -54,6 +54,8 @@ struct BoundCte {
 }
 
 type SubqueryResolver<'resolver> = dyn Fn(&Query) -> Result<BoundQuery, BindError> + 'resolver;
+type ProjectionSubqueryResolver<'resolver> =
+    dyn Fn(&Query, &[BoundColumn]) -> Result<BoundQuery, BindError> + 'resolver;
 
 impl<'catalog> Binder<'catalog> {
     /// Constructs a binder with an optional current database.
@@ -594,6 +596,25 @@ impl<'catalog> Binder<'catalog> {
         let mut windows = Vec::new();
         let expression_tables = expression_scope(&tables, &self.outer_tables);
         let resolve_subquery = |query: &Query| self.bind_subquery(query, ctes, &expression_tables);
+        let resolve_projection_subquery = |query: &Query, columns: &[BoundColumn]| {
+            let mut scope = expression_tables.clone();
+            for column in columns {
+                scope.push(BoundTable {
+                    database_id: column.database_id,
+                    table_id: column.table_id,
+                    database_name: String::new(),
+                    table_name: column.relation_name.clone(),
+                    relation_name: column.relation_name.clone(),
+                    schema_version: 0,
+                    columns: vec![column.clone()],
+                    row_count: None,
+                    estimated_rows: None,
+                    key_column_ids: Vec::new(),
+                    input: None,
+                });
+            }
+            self.bind_subquery(query, ctes, &scope)
+        };
         let mut projection = bind_projection(
             self.source,
             &projection_items,
@@ -602,7 +623,8 @@ impl<'catalog> Binder<'catalog> {
             &wildcard_order,
             Some(&mut aggregates),
             Some(&mut windows),
-            Some(&resolve_subquery),
+            &resolve_projection_subquery,
+            &self.next_derived_id,
         )?;
         // A missing group leaves scalar COUNT at NULL through the LEFT
         // JOIN; MySQL returns 0 there.
@@ -2615,10 +2637,45 @@ fn bind_projection(
     wildcard_order: &[BoundColumn],
     mut aggregates: Option<&mut Vec<BoundAggregate>>,
     mut windows: Option<&mut Vec<BoundWindow>>,
-    subqueries: Option<&SubqueryResolver<'_>>,
+    resolve_subquery: &ProjectionSubqueryResolver<'_>,
+    next_id: &Cell<u64>,
 ) -> Result<Vec<BoundProjection>, BindError> {
-    let mut projection = Vec::new();
-    for item in items {
+    let mut projection: Vec<BoundProjection> = Vec::new();
+    for (position, item) in items.iter().enumerate() {
+        let mut has_subquery = false;
+        let flow: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions(item, |expr| {
+            has_subquery |= matches!(
+                expr,
+                Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. }
+            );
+            std::ops::ControlFlow::Continue(())
+        });
+        debug_assert!(flow.is_continue());
+        let mut outputs = Vec::new();
+        if has_subquery && let Some(aggregates) = aggregates.as_deref_mut() {
+            for aggregate in aggregates {
+                if aggregate.function == AggregateFunction::AnyValue {
+                    continue;
+                }
+                if aggregate.output_column.is_none() {
+                    let id = next_id.get();
+                    next_id.set(id.saturating_sub(1));
+                    aggregate.output_column =
+                        Some(Box::new(outer_aggregate::output_column(aggregate, id)));
+                }
+                outputs.push(aggregate.clone());
+            }
+        }
+        let columns = outputs
+            .iter()
+            .filter_map(|aggregate| aggregate.output_column.as_deref().cloned())
+            .collect::<Vec<_>>();
+        let resolve = |query: &Query| {
+            let query =
+                projection_subquery_aliases(query, &items[..position], expression_tables, &outputs);
+            resolve_subquery(&query, &columns)
+        };
+        let subqueries = Some(&resolve as &SubqueryResolver<'_>);
         match item {
             SelectItem::UnnamedExpr(expr) => {
                 let bound = bind_expr_inner(
@@ -2678,6 +2735,59 @@ fn bind_projection(
         }
     }
     Ok(projection)
+}
+
+/// A table-free child HAVING can refer to earlier items in the parent's
+/// select list. Aggregate aliases read stable parent outputs; other expressions
+/// resolve their columns in the parent scope before the child is bound.
+fn projection_subquery_aliases(
+    query: &Query,
+    projection: &[SelectItem],
+    tables: &[BoundTable],
+    aggregate_outputs: &[BoundAggregate],
+) -> Query {
+    let mut query = query.clone();
+    let SetExpr::Select(select) = query.body.as_mut() else {
+        return query;
+    };
+    if !select.from.is_empty() {
+        return query;
+    }
+    let Some(having) = &mut select.having else {
+        return query;
+    };
+    let aliases = projection.iter().filter_map(|item| {
+        let SelectItem::ExprWithAlias { expr, alias } = item else { return None; };
+        if select.projection.iter().any(|item| matches!(item, SelectItem::ExprWithAlias { alias: local, .. } if local.value.eq_ignore_ascii_case(&alias.value))) {
+            return None;
+        }
+        let mut expr = expr.clone();
+        let flow: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions_mut(&mut expr, |node| {
+            if matches!(node, Expr::Function(_)) {
+                let mut candidates = Vec::new();
+                if let Ok(BoundExpr { kind: BoundExprKind::Aggregate(index), .. }) = bind_expr_inner(node, tables, &mut Some(&mut candidates), &mut None, None)
+                    && let Some(candidate) = candidates.get(index)
+                    && let Some(column) = aggregate_outputs.iter().find_map(|aggregate| {
+                        let mut comparison = aggregate.clone();
+                        comparison.output_column = None;
+                        (&comparison == candidate).then_some(aggregate.output_column.as_deref()).flatten()
+                    }) {
+                    *node = Expr::CompoundIdentifier(vec![Ident::with_quote('`', &column.relation_name), Ident::with_quote('`', &column.name)]);
+                    return std::ops::ControlFlow::Continue(());
+                }
+            }
+
+            if let Expr::Identifier(identifier) = node
+                && let Ok(BoundExpr { kind: BoundExprKind::Column(column), .. }) = bind_column(std::slice::from_ref(identifier), tables) {
+                *node = Expr::CompoundIdentifier(vec![Ident::with_quote('`', column.relation_name), Ident::with_quote('`', column.name)]);
+            }
+            std::ops::ControlFlow::Continue(())
+        });
+        debug_assert!(flow.is_continue());
+        Some(SelectItem::ExprWithAlias { expr, alias: alias.clone() })
+    }).collect::<Vec<_>>();
+    *having = substitute_projection_aliases(having, &aliases, &[]);
+    query
 }
 
 /// Resolves HAVING names against grouping columns, then SELECT aliases.
@@ -3467,7 +3577,12 @@ fn bind_constant_subquery(query: &Query) -> Result<Vec<BoundExpr>, BindError> {
 
 fn bind_constant_set_expr(expression: &SetExpr) -> Result<Vec<BoundExpr>, BindError> {
     match expression {
-        SetExpr::Select(select) if select.from.is_empty() && select.selection.is_none() => {
+        SetExpr::Select(select)
+            if select.from.is_empty()
+                && select.selection.is_none()
+                && select.having.is_none()
+                && matches!(&select.group_by, GroupByExpr::Expressions(expressions, modifiers) if expressions.is_empty() && modifiers.is_empty()) =>
+        {
             validate_select_shape(select)?;
             if select.distinct.is_some() {
                 return Err(BindError::UnsupportedSubquery(select.to_string()));
@@ -5075,7 +5190,11 @@ fn bind_aggregate(
         .ok_or_else(|| BindError::UnsupportedExpression(function.to_string()))?;
     let index = aggregate_list
         .iter()
-        .position(|existing| existing == &aggregate)
+        .position(|existing| {
+            let mut candidate = existing.clone();
+            candidate.output_column = None;
+            candidate == aggregate
+        })
         .unwrap_or_else(|| {
             let index = aggregate_list.len();
             aggregate_list.push(aggregate);

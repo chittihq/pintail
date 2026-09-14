@@ -903,6 +903,54 @@ pub(super) mod tests {
         assert_eq!(result.rows[0][0], pintail_types::Value::Int64(3));
     }
 
+    #[tokio::test]
+    async fn scalar_having_filters_constants_and_reads_outer_aggregate_aliases() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute(
+                "SELECT (SELECT 1 HAVING FALSE), (SELECT 2 HAVING TRUE), (SELECT 3 HAVING NULL)",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Null, Value::Int64(2), Value::Null]
+        );
+        backend
+            .execute("CREATE TABLE numbers (n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO numbers VALUES (1),(2)")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT SUM(n) AS total, (SELECT 1 HAVING total IS NULL), COUNT(n) AS amount, (SELECT 1 HAVING amount=0) FROM numbers").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Int64(3), Value::Null, Value::UInt64(2), Value::Null]
+        );
+        let result = backend
+            .execute(
+                "SELECT COUNT(*) AS amount, (SELECT 1 HAVING amount=0) FROM numbers WHERE n>10",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::UInt64(0), Value::Int64(1)]);
+        let result = backend
+            .execute(
+                "SELECT COUNT(*)+1 AS amount, (SELECT 1 HAVING amount=1) FROM numbers WHERE n>10",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][1], Value::Int64(1));
+        let result = backend
+            .execute("SELECT SUM(n) AS total, (SELECT 7 AS total HAVING total=7) FROM numbers")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][1], Value::Int64(7));
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

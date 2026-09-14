@@ -77,7 +77,7 @@ fn lift_query(
     }
 }
 
-fn output_column(aggregate: &BoundAggregate, id: u64) -> BoundColumn {
+pub(super) fn output_column(aggregate: &BoundAggregate, id: u64) -> BoundColumn {
     let source = aggregate.expr.as_ref().and_then(|expr| match &expr.kind {
         BoundExprKind::Column(column) if expr.data_type == aggregate.data_type => Some(column),
         _ => None,
