@@ -108,6 +108,19 @@ fn integer(column: &Column) -> bool {
     )
 }
 
+fn extreme_flags(column: &Column, query: &BoundQuery) -> u16 {
+    let flags = if !query.group_by.is_empty() && !ordered_group(query) {
+        column.colflags.bits() & (32 | 4096)
+    } else {
+        (column.colflags.bits() & 32) | if column.character_set == 63 { 128 } else { 0 }
+    };
+    if !query.group_by.is_empty() && column.coltype == ColumnType::MysqlTypeYear {
+        flags | 64
+    } else {
+        flags
+    }
+}
+
 fn aggregate(
     aggregate: &BoundAggregate,
     query: &BoundQuery,
@@ -173,11 +186,7 @@ fn aggregate(
         AggregateFunction::Minimum | AggregateFunction::Maximum => {
             if let Some(input) = input {
                 column = input;
-                let flags = if !query.group_by.is_empty() && !ordered_group(query) {
-                    column.colflags.bits() & (32 | 4096)
-                } else {
-                    (column.colflags.bits() & 32) | if column.character_set == 63 { 128 } else { 0 }
-                };
+                let flags = extreme_flags(&column, query);
                 set_flags(&mut column, flags);
                 if column.character_set != 63 {
                     column.decimals = 31;
@@ -895,6 +904,10 @@ fn source_declaration(column: &mut Column, fact: &pintail_sql::ColumnFacts) {
         flags |= 8192;
     }
     match kind {
+        "year" => {
+            column.column_length = 4;
+            flags |= 32 | 64;
+        }
         "tinyint" => column.column_length = width.unwrap_or(if unsigned { 3 } else { 4 }),
         "smallint" => column.column_length = width.unwrap_or(if unsigned { 5 } else { 6 }),
         "mediumint" => column.column_length = width.unwrap_or(if unsigned { 8 } else { 9 }),

@@ -2886,11 +2886,9 @@ fn floating_text(value: pintail_types::Float64, field: &QueryField) -> String {
 }
 
 fn is_year_field(field: &QueryField) -> bool {
-    field.data_type == Some(DataType::Year)
-        || field
-            .wire_column
-            .as_ref()
-            .is_some_and(|column| column.coltype == ColumnType::MysqlTypeYear)
+    field.wire_column.as_ref().is_some_and(|column| {
+        column.coltype == ColumnType::MysqlTypeYear && column.colflags.bits() & 64 != 0
+    })
 }
 
 /// Writes one value as a text-protocol cell, straight into the row: the
@@ -5648,8 +5646,10 @@ mod result_ceiling_tests {
     }
     #[test]
     fn year_cells_use_four_text_digits_and_two_binary_bytes() {
+        let mut declaration = super::Column::new("year_value", super::ColumnType::MysqlTypeYear);
+        declaration.colflags = super::ColumnFlags::from_bits(32 | 64);
         let field = super::QueryField {
-            wire_column: None,
+            wire_column: Some(declaration),
             name: "year_value".into(),
             data_type: Some(super::DataType::Year),
             nullable: false,
@@ -5665,6 +5665,11 @@ mod result_ceiling_tests {
         for row in encoded.iter() {
             assert_eq!(&row[1..], b"0000");
         }
+        let mut computed = field.clone();
+        computed.wire_column.as_mut().unwrap().colflags = super::ColumnFlags::from_bits(32 | 128);
+        let mut plain = super::EncodedRows::with_capacity(1);
+        super::put_text_value(&mut plain.text_row(), &super::Value::UInt64(0), &computed);
+        assert_eq!(&plain.iter().next().unwrap()[1..], b"0");
         assert_eq!(
             super::binary_column_value(&field, &super::Value::UInt64(2001)).unwrap(),
             Some(2001_u16.to_le_bytes().to_vec())
