@@ -1946,6 +1946,17 @@ fn extremum_operands(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
 }
 
 fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindError> {
+    let time_count = args
+        .iter()
+        .filter(|arg| matches!(arg.data_type, Some(DataType::Time64 { .. })))
+        .count();
+    if time_count > 0
+        && args.iter().any(|arg| {
+            arg.data_type.is_some() && !matches!(arg.data_type, Some(DataType::Time64 { .. }))
+        })
+    {
+        return Ok(Some(DataType::Utf8));
+    }
     let types = args
         .iter()
         .filter_map(|arg| arg.data_type)

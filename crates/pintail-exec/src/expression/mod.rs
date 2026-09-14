@@ -2760,6 +2760,13 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Greatest { decimal } | ScalarFunction::Least { decimal } => {
             let greatest = matches!(function, ScalarFunction::Greatest { .. });
+            let has_time = argument_types
+                .iter()
+                .any(|ty| matches!(ty, Some(DataType::Time64 { .. })));
+            let all_time = has_time
+                && argument_types
+                    .iter()
+                    .all(|ty| ty.is_none() || matches!(ty, Some(DataType::Time64 { .. })));
             let mut best: Option<&Value> = None;
             for value in values {
                 if matches!(value, Value::Null) {
@@ -2769,7 +2776,18 @@ fn evaluate_eager_scalar_inner(
                 best = Some(match best {
                     None => value,
                     Some(current) => {
-                        let ordering = if decimal {
+                        let ordering = if all_time {
+                            compare_decimal_values(
+                                &time_as_number(value),
+                                &time_as_number(current),
+                            )?
+                        } else if has_time {
+                            compare_utf8_mysql(
+                                &scalar_string(value)?,
+                                &scalar_string(current)?,
+                                collation,
+                            )
+                        } else if decimal {
                             compare_decimal_values(value, current)?
                         } else {
                             compare_mysql(value, current, collation)?
@@ -2782,7 +2800,12 @@ fn evaluate_eager_scalar_inner(
                     }
                 });
             }
-            Ok(best.cloned().unwrap_or(Value::Null))
+            let best = best.cloned().unwrap_or(Value::Null);
+            if has_time && !all_time {
+                Ok(Value::Utf8(scalar_string(&best)?))
+            } else {
+                Ok(best)
+            }
         }
         ScalarFunction::ConcatWs => {
             if matches!(values[0], Value::Null) {

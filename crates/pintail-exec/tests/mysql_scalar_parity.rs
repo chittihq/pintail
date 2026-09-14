@@ -1172,3 +1172,30 @@ fn strict_utf8_conversion_rejects_invalid_bytes_instead_of_truncating() {
         });
     }
 }
+
+#[test]
+fn temporal_extrema_choose_the_comparison_domain_of_the_consumer() {
+    for (expression, expected) in [
+        ("LEAST(time '00:00:00',120000)", "00:00:00"),
+        ("GREATEST(time '20:00:00',120000)", "20:00:00"),
+        ("LEAST(time '20:00:00',120000)", "120000"),
+        ("GREATEST(time '-20:00:00',-120000)", "-20:00:00"),
+        ("GREATEST(time '100:00:00',200000)", "200000"),
+        ("GREATEST(time '100:00:00',time '20:00:00')", "100:00:00"),
+        ("GREATEST(time '-20:00:00',time '-12:00:00')", "-12:00:00"),
+        ("GREATEST(time '20:00:00',120000)+0", "float 200000"),
+        ("GREATEST(time '20:00:00',120000)+0.00", "float 200000"),
+        ("LEAST(time '-20:00:00',-120000)+0", "float -200000"),
+        ("GREATEST(time '100:00:00',200000)+0", "float 1000000"),
+        (
+            "GREATEST(date '1995-05-05',19910101,20050505,19930303)+0.00",
+            "float 20050505",
+        ),
+        (
+            "GREATEST('95-05-05',date '10-10-10')+0.00",
+            "float 20101010",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

@@ -5949,6 +5949,37 @@ fn implicit_day_number(expr: &BoundExpr) -> Option<BoundExpr> {
 /// An arithmetic operand read as a number: a TIME, DATE or DATETIME is its
 /// digits - HHMMSS, YYYYMMDD and YYYYMMDDHHMMSS[.fraction].
 fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+    // Temporal extrema choose again in a numeric context. Their displayed
+    // winner can differ: mixed TIME operands compare as strings for display.
+    if let BoundExprKind::Scalar { function, args } = &expr.kind
+        && matches!(
+            function,
+            ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
+        )
+        && args.iter().any(|arg| {
+            matches!(
+                arg.data_type,
+                Some(DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. })
+            )
+        })
+    {
+        return BoundExpr {
+            data_type: Some(DataType::Float64),
+            nullable: expr.nullable,
+            kind: BoundExprKind::Scalar {
+                function: if matches!(function, ScalarFunction::Greatest { .. }) {
+                    ScalarFunction::Greatest { decimal: false }
+                } else {
+                    ScalarFunction::Least { decimal: false }
+                },
+                args: args
+                    .iter()
+                    .cloned()
+                    .map(|arg| cast_to(temporal_as_number(arg), DataType::Float64))
+                    .collect(),
+            },
+        };
+    }
     if let Some(number) = implicit_day_number(&expr) {
         return number;
     }
