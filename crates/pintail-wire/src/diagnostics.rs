@@ -663,6 +663,28 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn final_union_into_assigns_the_complete_query_result() {
+        use pintail_protocol::{Handler, Response};
+        let (_directory, mut backend) = local_backend();
+        let response = backend
+            .query(b"(SELECT 1) UNION (SELECT 1 INTO @var)")
+            .await;
+        assert!(matches!(response, Response::Ok(..)));
+        assert_eq!(
+            backend.execute("SELECT @var").await.unwrap().rows[0][0],
+            pintail_types::Value::Int64(1)
+        );
+        let response = backend
+            .query(b"(SELECT 2 INTO @var) UNION (SELECT 2)")
+            .await;
+        assert!(matches!(response, Response::Error(..)));
+        assert_eq!(
+            backend.execute("SELECT @var").await.unwrap().rows[0][0],
+            pintail_types::Value::Int64(1)
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -110,18 +110,7 @@ pub fn select_variable_targets(sql: &str) -> Option<(String, Vec<String>)> {
     {
         return None;
     }
-    let mut depth = 0_usize;
-    let into = tokens.iter().position(|token| {
-        match &token.token {
-            Token::LParen => depth += 1,
-            Token::RParen => depth = depth.saturating_sub(1),
-            Token::Word(word) if depth == 0 && word.value.eq_ignore_ascii_case("INTO") => {
-                return true;
-            }
-            _ => {}
-        }
-        false
-    })?;
+    let into = query_output_into(&tokens)?;
     let mut at = into + 1;
     let mut names = Vec::new();
     loop {
@@ -172,6 +161,50 @@ pub fn select_variable_targets(sql: &str) -> Option<(String, Vec<String>)> {
     matches!(crate::parse_statement(&query).ok()?, Statement::Query(_)).then_some((query, names))
 }
 
+/// INTO belongs to query output, including its last parenthesized set operand,
+/// but never to a scalar subquery or a derived table's SELECT.
+fn query_output_into(tokens: &[&sqlparser::tokenizer::TokenWithSpan]) -> Option<usize> {
+    use sqlparser::tokenizer::Token;
+    let set_operator = |token: &Token| matches!(token, Token::Word(word) if ["UNION", "INTERSECT", "EXCEPT"].iter().any(|name| word.value.eq_ignore_ascii_case(name)));
+    let mut parentheses = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match &token.token {
+            Token::LParen => {
+                let previous = index.checked_sub(1).map(|at| &tokens[at].token);
+                let after_set = previous.is_some_and(set_operator)
+                    || (matches!(previous, Some(Token::Word(word)) if word.value.eq_ignore_ascii_case("ALL") || word.value.eq_ignore_ascii_case("DISTINCT"))
+                        && index
+                            .checked_sub(2)
+                            .is_some_and(|at| set_operator(&tokens[at].token)));
+                let query_operand = parentheses.iter().all(|query| *query)
+                    && (index == 0 || matches!(previous, Some(Token::LParen)) || after_set);
+                parentheses.push(query_operand);
+            }
+            Token::RParen => {
+                parentheses.pop()?;
+            }
+            Token::Word(word)
+                if word.value.eq_ignore_ascii_case("INTO")
+                    && parentheses.iter().all(|query| *query) =>
+            {
+                let into_depth = parentheses.len();
+                let mut depth = into_depth;
+                for trailing in &tokens[index + 1..] {
+                    match &trailing.token {
+                        Token::LParen => depth += 1,
+                        Token::RParen => depth = depth.checked_sub(1)?,
+                        token if depth <= into_depth && set_operator(token) => return None,
+                        _ => {}
+                    }
+                }
+                return Some(index);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +231,24 @@ mod tests {
             "SELECT 1 INTO table_name",
             "SELECT 1 INTO @@global.x",
             "SELECT 1 INTO @a; SELECT 2",
+        ] {
+            assert!(select_variable_targets(sql).is_none(), "{sql}");
+        }
+    }
+
+    #[test]
+    fn query_output_targets_may_follow_the_last_parenthesized_union_operand() {
+        for sql in [
+            "(SELECT 1 INTO @a)",
+            "(SELECT 1) UNION (SELECT 1 INTO @a)",
+            "(SELECT 1) UNION ALL ((SELECT 2 INTO @a))",
+        ] {
+            assert!(select_variable_targets(sql).is_some(), "{sql}");
+        }
+        for sql in [
+            "(SELECT 1 INTO @a) UNION (SELECT 1)",
+            "SELECT (SELECT 1 INTO @a)",
+            "SELECT * FROM (SELECT 1 INTO @a) AS derived",
         ] {
             assert!(select_variable_targets(sql).is_none(), "{sql}");
         }
