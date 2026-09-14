@@ -28,6 +28,9 @@ pub use admission::{has_bounded_admission_shape, has_bounded_planning_shape};
 mod repeatable;
 pub use repeatable::is_repeatable_statement;
 
+mod system_variables;
+pub use system_variables::{SystemVariables, with_system_variables};
+
 mod user_variables;
 pub use user_variables::{
     UserVariableWrites, UserVariables, select_variable_targets, user_variable_assignments,
@@ -684,7 +687,13 @@ pub fn connection_projection(sql: &str) -> Option<Vec<(String, String)>> {
     let SetExpr::Select(select) = query.body.as_ref() else {
         return None;
     };
-    if !select.from.is_empty() || select.selection.is_some() {
+    if !select.from.is_empty()
+        || select.selection.is_some()
+        || select.having.is_some()
+        || query.limit_clause.is_some()
+        || query.order_by.is_some()
+        || !matches!(&select.group_by, sqlparser::ast::GroupByExpr::Expressions(expressions, modifiers) if expressions.is_empty() && modifiers.is_empty())
+    {
         return None;
     }
     select

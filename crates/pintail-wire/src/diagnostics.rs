@@ -1303,6 +1303,53 @@ pub(super) mod tests {
         assert_eq!(rows, vec![vec![1, 0xfd]]);
     }
 
+    #[tokio::test]
+    async fn system_variables_participate_in_normal_select_expressions() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        assert!(
+            backend
+                .execute("SELECT @@character_set_client_typo")
+                .await
+                .is_err()
+        );
+        let result = backend
+            .execute("SELECT 'marker' AS label,@@character_set_client AS encoding")
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            ["label", "encoding"]
+        );
+        assert_eq!(
+            result.rows[0],
+            vec![
+                Value::Utf8("marker".to_owned()),
+                Value::Utf8("utf8mb4".to_owned())
+            ]
+        );
+        let result = backend.execute("SELECT @@session.auto_increment_increment+1 AS step WHERE @@character_set_client='utf8mb4'").await.unwrap();
+        assert_eq!(result.rows[0], vec![Value::Int64(2)]);
+        let result = backend
+            .execute("SELECT '@@character_set_client' AS label")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Utf8("@@character_set_client".to_owned())]
+        );
+        for sql in [
+            "SELECT @@character_set_client LIMIT 0",
+            "SELECT @@character_set_client HAVING FALSE",
+        ] {
+            assert!(backend.execute(sql).await.unwrap().rows.is_empty(), "{sql}");
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -1462,14 +1462,18 @@ impl Backend {
                         sql.contains(":=").then(|| variable_writes.clone()),
                         || {
                             pintail_sql::with_user_variables(session.user_variables.clone(), || {
-                                engine.execute_answer(
-                                    &database_id,
-                                    &sql,
-                                    max_result_rows(),
-                                    deadline,
-                                    sink.as_mut()
-                                        .map(|sink| sink as &mut dyn crate::engine::RowSink),
-                                )
+                                let system_variables =
+                                    session_expression::variables(&sql, &session);
+                                pintail_sql::with_system_variables(system_variables, || {
+                                    engine.execute_answer(
+                                        &database_id,
+                                        &sql,
+                                        max_result_rows(),
+                                        deadline,
+                                        sink.as_mut()
+                                            .map(|sink| sink as &mut dyn crate::engine::RowSink),
+                                    )
+                                })
                             })
                         },
                     );
@@ -3757,7 +3761,11 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         || pintail_sql::connection_projection(sql),
     );
     let Some(projection) = projection else {
-        return compatibility_single(sql, database, session);
+        return if sql.contains("@@") {
+            None
+        } else {
+            compatibility_single(sql, database, session)
+        };
     };
     let mut output = None;
     for (expression, alias) in projection {
@@ -3797,28 +3805,28 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
                 database.replace('`', "``")
             )),
         )
-    } else if normalized.contains("@@session_track_system_variables") {
+    } else if normalized == "select @@session_track_system_variables" {
         (
             "@@session_track_system_variables",
             Value::Utf8(session.tracked_system_variables.clone()),
         )
-    } else if normalized.contains("@@character_set_server") {
+    } else if normalized == "select @@character_set_server" {
         ("@@character_set_server", Value::Utf8("utf8mb4".to_owned()))
-    } else if normalized.contains("@@collation_server") {
+    } else if normalized == "select @@collation_server" {
         (
             "@@collation_server",
             Value::Utf8("utf8mb4_0900_ai_ci".to_owned()),
         )
-    } else if normalized.contains("@@init_connect") {
+    } else if normalized == "select @@init_connect" {
         ("@@init_connect", Value::Utf8(String::new()))
-    } else if normalized.contains("@@license") {
+    } else if normalized == "select @@license" {
         ("@@license", Value::Utf8("Apache-2.0".to_owned()))
-    } else if normalized.contains("@@performance_schema") {
+    } else if normalized == "select @@performance_schema" {
         ("@@performance_schema", Value::UInt64(0))
-    } else if normalized.contains("@@net_write_timeout") {
+    } else if normalized == "select @@net_write_timeout" {
         ("@@net_write_timeout", Value::UInt64(60))
-    } else if normalized.contains("@@transaction_isolation")
-        || normalized.contains("@@tx_isolation")
+    } else if normalized == "select @@transaction_isolation"
+        || normalized == "select @@tx_isolation"
     {
         (
             "@@transaction_isolation",
@@ -3830,28 +3838,28 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         ("VERSION()", Value::Utf8(mysql_compat_version()))
     } else if normalized.starts_with("select database()") {
         ("DATABASE()", Value::Utf8(database.to_owned()))
-    } else if normalized.contains("@@version_comment") {
+    } else if normalized == "select @@version_comment" {
         (
             "@@version_comment",
             Value::Utf8("Pintail analytical mirror".to_owned()),
         )
-    } else if normalized.contains("@@version") {
+    } else if normalized == "select @@version" {
         ("@@version", Value::Utf8(mysql_compat_version()))
-    } else if normalized.contains("@@wait_timeout") || normalized.contains("@@interactive_timeout")
+    } else if normalized == "select @@wait_timeout" || normalized == "select @@interactive_timeout"
     {
         (
             "@@wait_timeout",
             Value::UInt64(DEFAULT_WIRE_IDLE_TIMEOUT.as_secs()),
         )
-    } else if normalized.contains("@@socket") {
+    } else if normalized == "select @@socket" {
         ("@@socket", Value::Utf8(String::new()))
-    } else if normalized.contains("@@system_time_zone") {
+    } else if normalized == "select @@system_time_zone" {
         ("@@system_time_zone", Value::Utf8("UTC".to_owned()))
-    } else if normalized.contains("@@auto_increment_increment")
-        || normalized.contains("@@autocommit")
+    } else if normalized == "select @@auto_increment_increment"
+        || normalized == "select @@autocommit"
     {
         ("@@auto_increment_increment", Value::UInt64(1))
-    } else if normalized.contains("@@timestamp") {
+    } else if normalized == "select @@timestamp" {
         let micros = session
             .timestamp_micros
             .unwrap_or_else(|| chrono::Utc::now().timestamp_micros());
@@ -3859,21 +3867,21 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         #[allow(clippy::cast_precision_loss)]
         let seconds = micros as f64 / 1_000_000.0;
         ("@@timestamp", Value::float64(seconds))
-    } else if normalized.contains("@@max_allowed_packet") {
+    } else if normalized == "select @@max_allowed_packet" {
         (
             "@@max_allowed_packet",
             Value::UInt64(pintail_exec::DEFAULT_MAX_ALLOWED_PACKET as u64),
         )
-    } else if normalized.contains("@@lower_case_table_names") {
+    } else if normalized == "select @@lower_case_table_names" {
         // Catalog names retain their source spelling but resolve
         // case-insensitively, matching MySQL mode 2.
         ("@@lower_case_table_names", Value::UInt64(2))
-    } else if normalized.contains("@@group_concat_max_len") {
+    } else if normalized == "select @@group_concat_max_len" {
         (
             "@@group_concat_max_len",
             Value::UInt64(u64::try_from(session.group_concat_max_len).unwrap_or(u64::MAX)),
         )
-    } else if normalized.contains("@@error_count") {
+    } else if normalized == "select @@error_count" {
         (
             "@@error_count",
             Value::UInt64(u64::from(
@@ -3883,53 +3891,53 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
                     .any(|condition| condition.level == "Error"),
             )),
         )
-    } else if normalized.contains("@@warning_count") {
+    } else if normalized == "select @@warning_count" {
         ("@@warning_count", Value::UInt64(session.condition_count))
-    } else if normalized.contains("@@sql_select_limit") {
+    } else if normalized == "select @@sql_select_limit" {
         (
             "@@sql_select_limit",
             Value::UInt64(session.sql_select_limit.unwrap_or(u64::MAX)),
         )
-    } else if normalized.contains("@@div_precision_increment") {
+    } else if normalized == "select @@div_precision_increment" {
         (
             "@@div_precision_increment",
             Value::UInt64(u64::from(session.div_precision_increment)),
         )
-    } else if normalized.contains("@@cte_max_recursion_depth") {
+    } else if normalized == "select @@cte_max_recursion_depth" {
         (
             "@@cte_max_recursion_depth",
             Value::UInt64(session.cte_max_recursion_depth),
         )
-    } else if normalized.contains("@@max_execution_time") {
+    } else if normalized == "select @@max_execution_time" {
         (
             "@@max_execution_time",
             Value::UInt64(session.max_execution_time_ms),
         )
-    } else if normalized.contains("@@default_week_format")
-        || normalized.contains("@@session.default_week_format")
+    } else if normalized == "select @@default_week_format"
+        || normalized == "select @@session.default_week_format"
     {
         (
             "@@default_week_format",
             Value::UInt64(u64::from(session.default_week_format)),
         )
-    } else if normalized.contains("@@lc_time_names")
-        || normalized.contains("@@session.lc_time_names")
+    } else if normalized == "select @@lc_time_names"
+        || normalized == "select @@session.lc_time_names"
     {
         (
             "@@lc_time_names",
             Value::Utf8(session.calendar_locale.to_owned()),
         )
-    } else if normalized.contains("@@session.time_zone") || normalized.contains("@@time_zone") {
+    } else if normalized == "select @@session.time_zone" || normalized == "select @@time_zone" {
         (
             "@@session.time_zone",
             Value::Utf8(session.time_zone.clone()),
         )
-    } else if normalized.contains("@@global.sql_mode") {
+    } else if normalized == "select @@global.sql_mode" {
         (
             "@@global.sql_mode",
             Value::Utf8(session.default_sql_mode.clone()),
         )
-    } else if normalized.contains("@@sql_mode") {
+    } else if normalized == "select @@sql_mode" {
         ("@@sql_mode", Value::Utf8(session.sql_mode.clone()))
     } else {
         compatibility_charset_query(&normalized, session)?
@@ -4023,21 +4031,21 @@ fn compatibility_charset_query(
     normalized: &str,
     session: &Session,
 ) -> Option<(&'static str, Value)> {
-    if normalized.contains("@@character_set_results")
+    if normalized == "select @@character_set_results"
         && session.charset_results.eq_ignore_ascii_case("null")
     {
         return Some(("@@character_set_results", Value::Null));
     }
-    let (name, value) = if normalized.contains("@@character_set_client") {
+    let (name, value) = if normalized == "select @@character_set_client" {
         ("@@character_set_client", session.charset_client.clone())
-    } else if normalized.contains("@@character_set_connection") {
+    } else if normalized == "select @@character_set_connection" {
         (
             "@@character_set_connection",
             session.charset_connection.clone(),
         )
-    } else if normalized.contains("@@character_set_results") {
+    } else if normalized == "select @@character_set_results" {
         ("@@character_set_results", session.charset_results.clone())
-    } else if normalized.contains("@@collation_connection") {
+    } else if normalized == "select @@collation_connection" {
         let collation = match session.charset_connection.as_str() {
             "utf8" | "utf8mb3" => "utf8mb3_general_ci",
             "binary" => "binary",

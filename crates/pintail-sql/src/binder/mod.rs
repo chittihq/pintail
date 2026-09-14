@@ -3029,6 +3029,9 @@ fn bind_expr_inner(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
+    if let Some(value) = crate::system_variables::literal(expr) {
+        return bind_literal(&value);
+    }
     match expr {
         Expr::Identifier(identifier)
             if identifier.quote_style.is_none()
