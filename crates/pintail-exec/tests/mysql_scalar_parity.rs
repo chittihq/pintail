@@ -1720,6 +1720,7 @@ fn thai_conversion_and_comparison_keep_the_encoded_rules() {
             "C280C29FEFBFBDE0B881EFBFBDE0B8BFE0B980E0B99BEFBFBD",
         ),
         ("HEX(UPPER(_tis620 X'6180FFA0'))", "4180FFA0"),
+        ("HEX(CONVERT('�' USING tis620))", "FF"),
         (
             "CONVERT('เก' USING tis620) = CONVERT('กเ' USING tis620)",
             "Boolean(true)",

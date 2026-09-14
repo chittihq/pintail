@@ -125,6 +125,7 @@ impl CharacterSet {
             match self {
                 Self::Latin1 => bytes.push(latin1_byte(character).unwrap_or(b'?')),
                 Self::Tis620 => bytes.push(match u32::from(character) {
+                    0xfffd => 0xff,
                     value @ 0..=0x9f => u8::try_from(value).unwrap_or(b'?'),
                     value @ (0x0e01..=0x0e3a | 0x0e3f..=0x0e5b) => {
                         u8::try_from(value - 0x0d60).unwrap_or(b'?')
@@ -457,7 +458,7 @@ mod tis620_tests {
         );
         assert_eq!(
             charset.encode("กข฿เ๛�😀"),
-            [0xa1, 0xa2, 0xdf, 0xe0, 0xfb, b'?', b'?']
+            [0xa1, 0xa2, 0xdf, 0xe0, 0xfb, 0xff, b'?']
         );
         for byte in 0..=255 {
             if matches!(byte, 0xa0 | 0xdb..=0xde | 0xfc..=0xff) {
