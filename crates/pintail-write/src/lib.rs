@@ -601,6 +601,41 @@ fn literal_value(expr: &Expr, column: &SourceColumn) -> Result<Value, WriteError
     typed_value(&text, column)
 }
 
+/// Timestamp storage uses UTC; DATETIME keeps the written wall clock.
+fn timestamp_to_utc(micros: i64, zone: &str) -> Option<i64> {
+    use chrono::{LocalResult, TimeZone};
+    let naive = chrono::DateTime::from_timestamp_micros(micros)?.naive_utc();
+    let utc = if zone.starts_with(['+', '-']) {
+        let (hours, minutes) = zone[1..].split_once(':')?;
+        let seconds = hours
+            .parse::<i32>()
+            .ok()?
+            .checked_mul(3600)?
+            .checked_add(minutes.parse::<i32>().ok()?.checked_mul(60)?)?;
+        let seconds = if zone.starts_with('-') {
+            seconds.checked_neg()?
+        } else {
+            seconds
+        };
+        let offset = chrono::FixedOffset::east_opt(seconds)?;
+        match offset.from_local_datetime(&naive) {
+            LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
+                value.with_timezone(&chrono::Utc)
+            }
+            LocalResult::None => return None,
+        }
+    } else {
+        let zone = chrono_tz::Tz::from_str_insensitive(zone).ok()?;
+        match zone.from_local_datetime(&naive) {
+            LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
+                value.with_timezone(&chrono::Utc)
+            }
+            LocalResult::None => return None,
+        }
+    };
+    Some(utc.timestamp_micros())
+}
+
 /// Converts one literal's text into the physical value the column stores.
 ///
 /// `DataType::storage_type` decides the variant: a `TINYINT` column stores
@@ -630,7 +665,14 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             let micros = pintail_types::parse_datetime_lenient_micros(text)
                 .ok_or_else(|| wrong("expected a datetime"))?;
             let rounded = pintail_types::round_micros_to_fsp(micros, fsp);
-            return pintail_types::format_datetime_micros(rounded, fsp)
+            let stored = if column.mysql_data_type.eq_ignore_ascii_case("timestamp")
+                && let Some(zone) = pintail_sql::session_timestamp_zone()
+            {
+                timestamp_to_utc(rounded, &zone).ok_or_else(|| wrong("invalid local timestamp"))?
+            } else {
+                rounded
+            };
+            return pintail_types::format_datetime_micros(stored, fsp)
                 .map(Value::Utf8)
                 .ok_or_else(|| wrong("datetime out of range"));
         }

@@ -2746,6 +2746,8 @@ dependencies = [
 name = "pintail-write"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "pintail-meta",
  "pintail-probe",
  "pintail-sql",

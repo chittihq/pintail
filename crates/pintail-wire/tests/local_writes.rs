@@ -738,3 +738,35 @@ fn text_columns_compare_with_calendar_columns_as_datetimes() {
         vec![Boolean(false), Boolean(false), Boolean(true)]
     );
 }
+
+#[test]
+fn local_timestamp_writes_store_utc_and_reads_apply_the_session_zone() {
+    use pintail_types::Value;
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE moments(id INT PRIMARY KEY, instant TIMESTAMP(3), wall DATETIME(3))",
+    )
+    .unwrap();
+    assert!(pintail_exec::set_session_time_zone(Some("+03:00")));
+    run(
+        &fixture,
+        "INSERT INTO moments VALUES(1,'2002-01-02 03:04:05.123','2002-01-02 03:04:05.123')",
+    )
+    .unwrap();
+    let local = run(&fixture, "SELECT instant, wall FROM moments").unwrap();
+    assert!(pintail_exec::set_session_time_zone(Some("+00:00")));
+    let utc = run(&fixture, "SELECT instant, wall FROM moments").unwrap();
+    assert_eq!(
+        local.rows[0],
+        vec![Value::Utf8("2002-01-02 03:04:05.123".into()); 2]
+    );
+    assert_eq!(
+        utc.rows[0],
+        vec![
+            Value::Utf8("2002-01-02 00:04:05.123".into()),
+            Value::Utf8("2002-01-02 03:04:05.123".into())
+        ]
+    );
+    assert!(pintail_exec::set_session_time_zone(None));
+}
