@@ -252,6 +252,21 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn spring_forward_gaps_resolve_to_the_transition() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET time_zone='Europe/Moscow'").await;
+        let result = backend.execute("SELECT CONVERT_TZ('2003-03-30 02:30:00', 'MET', 'UTC'), UNIX_TIMESTAMP('2003-03-30 02:30:00')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Utf8("2003-03-30 01:00:00".into()),
+                pintail_types::Value::UInt64(1_048_978_800)
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

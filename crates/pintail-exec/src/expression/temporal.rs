@@ -413,8 +413,8 @@ pub(super) fn normalize_timestamp_offset(text: &str, zone: &str) -> Option<Strin
 }
 
 /// `CONVERT_TZ` on the canonical datetime text carrier. Ambiguous local
-/// times (DST fall-back) take the earlier offset like `MySQL`; nonexistent
-/// local times (spring-forward gap) return None, a documented divergence.
+/// times (DST fall-back) take the earlier offset; nonexistent local times
+/// resolve to the first instant after the gap.
 pub(super) fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
     convert_tz_impl(text, from, to, false)
 }
@@ -447,7 +447,9 @@ fn convert_tz_impl(text: &str, from: &str, to: &str, bounded: bool) -> Option<St
             LocalResult::Single(value) | LocalResult::Ambiguous(value, _) => {
                 value.with_timezone(&Utc)
             }
-            LocalResult::None => return None,
+            LocalResult::None => chrono_tz::GapInfo::new(&naive, &zone)?
+                .end?
+                .with_timezone(&Utc),
         },
     };
     // CONVERT_TZ leaves an out-of-range input unchanged after resolving its
