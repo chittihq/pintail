@@ -4760,6 +4760,7 @@ fn build_operator_inner(
                 timestamp: false,
                 binary_width,
                 bit_width: None,
+                float_decimals: None,
                 outer: false,
                 using_shadowed: false,
             };
@@ -4851,6 +4852,7 @@ fn build_operator_inner(
                         timestamp: false,
                         binary_width: projection.expr.binary_width(),
                         bit_width: projection.expr.bit_width(),
+                        float_decimals: projection.expr.numeric_decimals(&[]),
                         outer: false,
                         using_shadowed: false,
                     },

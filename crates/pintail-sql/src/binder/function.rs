@@ -1750,7 +1750,7 @@ pub(super) fn bind_scalar(
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::RegexpLike { .. } | ScalarFunction::DecimalComparison { .. } => (
+        ScalarFunction::RegexpLike { .. } | ScalarFunction::DecimalComparison { .. } | ScalarFunction::FixedFloatComparison { .. } => (
             Some(DataType::Boolean),
             args.iter().any(|argument| argument.nullable),
         ),
@@ -2406,74 +2406,7 @@ pub(super) fn float_string_argument(expression: BoundExpr) -> BoundExpr {
 /// Fixed display precision follows numeric expressions until an approximate
 /// operand or explicit floating cast makes the precision unspecified.
 fn fixed_float_decimals(expression: &BoundExpr) -> Option<u8> {
-    use crate::BinaryOp;
-    match &expression.kind {
-        BoundExprKind::Scalar {
-            function: ScalarFunction::Pi,
-            ..
-        } => Some(6),
-        BoundExprKind::Binary { op, left, right }
-            if matches!(
-                op,
-                BinaryOp::Add
-                    | BinaryOp::Subtract
-                    | BinaryOp::Multiply
-                    | BinaryOp::Divide
-                    | BinaryOp::Modulo
-            ) =>
-        {
-            let left = fixed_float_decimals(left)?;
-            let right = fixed_float_decimals(right)?;
-            Some(if *op == BinaryOp::Divide {
-                left.saturating_add(crate::session_div_precision_increment())
-                    .min(30)
-            } else {
-                left.max(right)
-            })
-        }
-        BoundExprKind::Scalar {
-            function: ScalarFunction::If,
-            args,
-        } => Some(fixed_float_decimals(&args[1])?.max(fixed_float_decimals(&args[2])?)),
-        BoundExprKind::Scalar {
-            function: ScalarFunction::Coalesce,
-            args,
-        } => args
-            .iter()
-            .try_fold(0, |scale, arg| Some(scale.max(fixed_float_decimals(arg)?))),
-        BoundExprKind::Scalar {
-            function: ScalarFunction::Round { .. },
-            args,
-        } => {
-            fixed_float_decimals(&args[0])?;
-            match args.get(1).map(|arg| &arg.kind) {
-                None => Some(0),
-                Some(BoundExprKind::Literal(Value::Int64(value))) => {
-                    Some(u8::try_from((*value).clamp(0, 30)).ok()?)
-                }
-                Some(BoundExprKind::Literal(Value::UInt64(value))) => {
-                    Some(u8::try_from((*value).min(30)).ok()?)
-                }
-                _ => None,
-            }
-        }
-        _ => match expression.data_type {
-            Some(DataType::Decimal { scale, .. }) => Some(scale),
-            Some(
-                DataType::Boolean
-                | DataType::Int8
-                | DataType::Int16
-                | DataType::Int32
-                | DataType::Int64
-                | DataType::UInt8
-                | DataType::UInt16
-                | DataType::UInt32
-                | DataType::UInt64
-                | DataType::Year,
-            ) => Some(0),
-            _ => None,
-        },
-    }
+    expression.numeric_decimals(&[])
 }
 
 fn float_string_arguments(function: ScalarFunction, args: Vec<BoundExpr>) -> Vec<BoundExpr> {

@@ -99,6 +99,8 @@ pub struct Column {
     binary_width: Option<u32>,
     /// Source BIT width, recovered from the durable declaration.
     bit_width: Option<u8>,
+    /// Declared fractional digits for fixed-decimal floating columns.
+    float_decimals: Option<u8>,
 }
 
 impl Column {
@@ -117,7 +119,21 @@ impl Column {
             timestamp: false,
             binary_width: None,
             bit_width: None,
+            float_decimals: None,
         }
+    }
+
+    /// Attaches fixed-decimal floating comparison precision from source metadata.
+    #[must_use]
+    pub fn with_float_decimals(mut self, decimals: Option<u8>) -> Self {
+        self.float_decimals = decimals;
+        self
+    }
+
+    /// Returns the declared fractional digits of a floating column.
+    #[must_use]
+    pub fn float_decimals(&self) -> Option<u8> {
+        self.float_decimals
     }
 
     /// Attaches the source text collation used for query semantics. Storage

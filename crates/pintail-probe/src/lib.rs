@@ -222,6 +222,21 @@ impl SourceTable {
                                     .unwrap_or(1)
                             },
                         ))
+                        .with_float_decimals(
+                            matches!(
+                                column.mysql_data_type.to_ascii_lowercase().as_str(),
+                                "float" | "double" | "real"
+                            )
+                            .then(|| {
+                                column
+                                    .mysql_column_type
+                                    .split_once('(')
+                                    .and_then(|(_, shape)| shape.split_once(')'))
+                                    .and_then(|(shape, _)| shape.split_once(','))
+                                    .and_then(|(_, decimals)| decimals.trim().parse::<u8>().ok())
+                            })
+                            .flatten(),
+                        )
                         .with_binary_width(
                             match column.mysql_data_type.to_ascii_lowercase().as_str() {
                                 "binary" | "varbinary" => column

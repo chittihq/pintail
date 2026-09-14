@@ -1635,6 +1635,7 @@ impl CompiledExpr {
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::DecimalComparison { .. }
+                    | ScalarFunction::FixedFloatComparison { .. }
                     | ScalarFunction::InList { .. }
                     | ScalarFunction::Between { .. }
                     | ScalarFunction::DatePart(_)
@@ -1842,6 +1843,7 @@ impl CompiledExpr {
                     ScalarFunction::Length
                     | ScalarFunction::CharLength
                     | ScalarFunction::DecimalComparison { .. }
+                    | ScalarFunction::FixedFloatComparison { .. }
                     | ScalarFunction::Locate
                     | ScalarFunction::Like { .. }
                     | ScalarFunction::InList { .. }
@@ -2637,6 +2639,23 @@ fn evaluate_eager_scalar_inner(
             exact_decimal_arguments(argument_types, values.len()),
             collation,
         ),
+        ScalarFunction::FixedFloatComparison { op, decimals } => {
+            let left = mysql_f64(&values[0])?;
+            let right = mysql_f64(&values[1])?;
+            let threshold = 0.5 * 10_f64.powi(-i32::from(decimals));
+            // Equal values compare equal even when subtraction is not finite.
+            #[allow(clippy::float_cmp)]
+            let equal = left == right || (left - right).abs() < threshold;
+            Ok(Value::Boolean(match op {
+                BinaryOp::Equal => equal,
+                BinaryOp::NotEqual => !equal,
+                BinaryOp::Less => !equal && left < right,
+                BinaryOp::LessOrEqual => equal || left < right,
+                BinaryOp::Greater => !equal && left > right,
+                BinaryOp::GreaterOrEqual => equal || left > right,
+                _ => return Err(ExecError::InvalidExpressionType),
+            }))
+        }
         ScalarFunction::DecimalComparison { op } => {
             let ordering = compare_decimal_values(&values[0], &values[1])?;
             Ok(Value::Boolean(match op {

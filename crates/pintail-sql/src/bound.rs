@@ -131,6 +131,8 @@ pub struct BoundColumn {
     pub binary_width: Option<u32>,
     /// Source BIT width for binary string consumers.
     pub bit_width: Option<u8>,
+    /// Declared fractional digits of a floating source column.
+    pub float_decimals: Option<u8>,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.
@@ -208,6 +210,111 @@ fn binary_branch_width(args: &[BoundExpr]) -> Option<u32> {
 }
 
 impl BoundExpr {
+    /// Fractional digits used by numeric comparison; absent for unrestricted floats.
+    #[must_use]
+    pub fn numeric_decimals(&self, aggregates: &[BoundAggregate]) -> Option<u8> {
+        match &self.kind {
+            BoundExprKind::Column(column)
+                if matches!(column.data_type, DataType::Float32 | DataType::Float64) =>
+            {
+                column.float_decimals
+            }
+            BoundExprKind::Aggregate(index) => {
+                let aggregate = aggregates.get(*index)?;
+                match aggregate.function {
+                    AggregateFunction::Count
+                    | AggregateFunction::BitAnd
+                    | AggregateFunction::BitOr
+                    | AggregateFunction::BitXor => Some(0),
+                    AggregateFunction::Sum
+                    | AggregateFunction::Minimum
+                    | AggregateFunction::Maximum
+                    | AggregateFunction::AnyValue => {
+                        aggregate.expr.as_ref()?.numeric_decimals(aggregates)
+                    }
+                    AggregateFunction::Average => Some(
+                        aggregate
+                            .expr
+                            .as_ref()?
+                            .numeric_decimals(aggregates)?
+                            .saturating_add(crate::session_div_precision_increment())
+                            .min(30),
+                    ),
+                    _ => None,
+                }
+            }
+            BoundExprKind::Scalar {
+                function: ScalarFunction::Pi,
+                ..
+            } => Some(6),
+            BoundExprKind::Binary { op, left, right }
+                if matches!(
+                    op,
+                    BinaryOp::Add
+                        | BinaryOp::Subtract
+                        | BinaryOp::Multiply
+                        | BinaryOp::Divide
+                        | BinaryOp::Modulo
+                ) =>
+            {
+                let left = left.numeric_decimals(aggregates)?;
+                let right = right.numeric_decimals(aggregates)?;
+                Some(if *op == BinaryOp::Divide {
+                    left.saturating_add(crate::session_div_precision_increment())
+                        .min(30)
+                } else {
+                    left.max(right)
+                })
+            }
+            BoundExprKind::Scalar {
+                function: ScalarFunction::If,
+                args,
+            } => Some(
+                args[1]
+                    .numeric_decimals(aggregates)?
+                    .max(args[2].numeric_decimals(aggregates)?),
+            ),
+            BoundExprKind::Scalar {
+                function: ScalarFunction::Coalesce,
+                args,
+            } => args.iter().try_fold(0, |scale, arg| {
+                Some(scale.max(arg.numeric_decimals(aggregates)?))
+            }),
+            BoundExprKind::Scalar {
+                function: ScalarFunction::Round { .. },
+                args,
+            } => {
+                args[0].numeric_decimals(aggregates)?;
+                match args.get(1).map(|arg| &arg.kind) {
+                    None => Some(0),
+                    Some(BoundExprKind::Literal(Value::Int64(value))) => {
+                        Some(u8::try_from((*value).clamp(0, 30)).ok()?)
+                    }
+                    Some(BoundExprKind::Literal(Value::UInt64(value))) => {
+                        Some(u8::try_from((*value).min(30)).ok()?)
+                    }
+                    _ => None,
+                }
+            }
+            _ => match self.data_type {
+                Some(DataType::Decimal { scale, .. }) => Some(scale),
+                Some(
+                    DataType::Boolean
+                    | DataType::Int8
+                    | DataType::Int16
+                    | DataType::Int32
+                    | DataType::Int64
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+                    | DataType::Year,
+                ) => Some(0),
+                _ => None,
+            },
+        }
+    }
+
     /// Source BIT identity survives direct projections without changing numeric use.
     #[must_use]
     pub fn bit_width(&self) -> Option<u8> {
@@ -966,6 +1073,13 @@ pub enum ScalarFunction {
     Coalesce,
     /// Return NULL when two arguments compare equal.
     NullIf,
+    /// Compare floating values at their declared fractional precision.
+    FixedFloatComparison {
+        /// Relational comparison to apply.
+        op: BinaryOp,
+        /// Common fractional precision of the operands.
+        decimals: u8,
+    },
     /// Exact comparison of two canonical DECIMAL operands.
     DecimalComparison {
         /// Relational comparison to apply after exact scale alignment.

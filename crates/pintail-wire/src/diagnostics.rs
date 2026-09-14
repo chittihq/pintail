@@ -523,6 +523,64 @@ pub(super) mod tests {
         assert_eq!(result.rows[0][3], pintail_types::Value::Null);
     }
 
+    #[tokio::test]
+    async fn fixed_decimal_float_comparisons_use_declared_precision() {
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE amounts (v DOUBLE(8,2))")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO amounts VALUES (0.1),(0.2),(-0.3)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT SUM(v)=0, SUM(v)<>0, SUM(v)<=>0, SUM(v)=0e0 FROM amounts")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            [true, false, true, false].map(pintail_types::Value::Boolean)
+        );
+        let derived = backend
+            .execute(
+                "SELECT s=0, s<>0, s<=>0, s=0e0 FROM (SELECT SUM(v) AS s FROM amounts) AS totals",
+            )
+            .await
+            .unwrap();
+        assert_eq!(derived.rows, result.rows);
+        assert_eq!(
+            backend
+                .execute("SELECT SUM(v) AS s FROM amounts HAVING s<>0")
+                .await
+                .unwrap()
+                .rows
+                .len(),
+            0
+        );
+        assert_eq!(
+            backend
+                .execute("SELECT SUM(v) AS s FROM amounts HAVING s<=>0")
+                .await
+                .unwrap()
+                .rows
+                .len(),
+            1
+        );
+        let nulls = backend
+            .execute("SELECT SUM(v)=0, SUM(v)<=>0, SUM(v)<=>NULL FROM amounts WHERE FALSE")
+            .await
+            .unwrap();
+        assert_eq!(
+            nulls.rows[0],
+            vec![
+                pintail_types::Value::Null,
+                pintail_types::Value::Boolean(false),
+                pintail_types::Value::Boolean(true)
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -261,6 +261,7 @@ impl<'catalog> Binder<'catalog> {
                 timestamp: false,
                 binary_width: anchor.result_binary_width(&projection.expr),
                 bit_width: anchor.result_bit_width(&projection.expr),
+                float_decimals: projection.expr.numeric_decimals(&anchor.aggregates),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2071,6 +2072,7 @@ impl<'catalog> Binder<'catalog> {
                 timestamp: column.is_timestamp(),
                 binary_width: column.binary_width(),
                 bit_width: column.bit_width(),
+                float_decimals: column.float_decimals(),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2131,6 +2133,7 @@ impl<'catalog> Binder<'catalog> {
                 timestamp: false,
                 binary_width: input.result_binary_width(&projection.expr),
                 bit_width: input.result_bit_width(&projection.expr),
+                float_decimals: projection.expr.numeric_decimals(&input.aggregates),
                 outer: false,
                 using_shadowed: false,
             })
@@ -3869,7 +3872,15 @@ fn bind_binary(
                 }),
             },
         };
-        let equal = function::equality_expr(left, right)?;
+        let equal = if let Some(decimals) = fixed_float_comparison_decimals(
+            &left,
+            &right,
+            aggregates.as_deref().map_or(&[], Vec::as_slice),
+        ) {
+            fixed_float_comparison(BinaryOp::Equal, left, right, decimals)
+        } else {
+            function::equality_expr(left, right)?
+        };
         let either = BoundExpr {
             data_type: Some(DataType::Boolean),
             nullable: equal.nullable,
@@ -4024,6 +4035,21 @@ fn bind_binary(
             });
         }
     };
+    if matches!(
+        op,
+        BinaryOp::Equal
+            | BinaryOp::NotEqual
+            | BinaryOp::Less
+            | BinaryOp::LessOrEqual
+            | BinaryOp::Greater
+            | BinaryOp::GreaterOrEqual
+    ) && let Some(decimals) = fixed_float_comparison_decimals(
+        &left,
+        &right,
+        aggregates.as_deref().map_or(&[], Vec::as_slice),
+    ) {
+        return Ok(fixed_float_comparison(op, left, right, decimals));
+    }
     if is_exact_decimal_comparison(op, &left, &right) {
         return Ok(bind_exact_decimal_comparison(op, left, right));
     }
@@ -4036,6 +4062,39 @@ fn bind_binary(
             right: Box::new(right),
         },
     })
+}
+
+fn fixed_float_comparison_decimals(
+    left: &BoundExpr,
+    right: &BoundExpr,
+    aggregates: &[BoundAggregate],
+) -> Option<u8> {
+    if ![left, right]
+        .iter()
+        .any(|expr| matches!(expr.data_type, Some(DataType::Float32 | DataType::Float64)))
+    {
+        return None;
+    }
+    Some(
+        left.numeric_decimals(aggregates)?
+            .max(right.numeric_decimals(aggregates)?),
+    )
+}
+
+fn fixed_float_comparison(
+    op: BinaryOp,
+    left: BoundExpr,
+    right: BoundExpr,
+    decimals: u8,
+) -> BoundExpr {
+    BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(DataType::Boolean),
+        kind: BoundExprKind::Scalar {
+            function: ScalarFunction::FixedFloatComparison { op, decimals },
+            args: vec![left, right],
+        },
+    }
 }
 
 fn is_collation_sensitive_binary(operator: &BinaryOperator) -> bool {

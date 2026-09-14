@@ -289,6 +289,7 @@ impl LogicalPlanner {
                     geometry: false,
                     timestamp: false,
                     bit_width: None,
+                    float_decimals: None,
                     binary_width: match &window.function {
                         pintail_sql::WindowFunction::Aggregate(aggregate) => {
                             aggregate.expr.as_ref().and_then(BoundExpr::binary_width)
