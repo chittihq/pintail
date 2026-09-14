@@ -527,3 +527,37 @@ fn explicit_text_encoding_rejects_invalid_binary_concat() {
         }
     ));
 }
+
+#[test]
+fn fixed_floating_declarations_reach_projection_and_aggregate_metadata() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE measurements(id INT PRIMARY KEY, reading DOUBLE(35,30), amount DOUBLE(10,2))",
+    )
+    .unwrap();
+    run(
+        &fixture,
+        "INSERT INTO measurements VALUES(1,10.34999,50.15)",
+    )
+    .unwrap();
+    for (sql, expected) in [
+        ("SELECT reading FROM measurements", vec![30]),
+        (
+            "SELECT SUM(amount),AVG(amount) FROM measurements",
+            vec![2, 6],
+        ),
+        (
+            "SELECT reading FROM (SELECT reading FROM measurements) AS derived",
+            vec![30],
+        ),
+    ] {
+        let output = run(&fixture, sql).unwrap();
+        let decimals = output
+            .fields
+            .iter()
+            .map(|field| field.wire_column.as_ref().unwrap().decimals)
+            .collect::<Vec<_>>();
+        assert_eq!(decimals, expected, "{sql}");
+    }
+}

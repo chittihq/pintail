@@ -133,6 +133,31 @@ impl Float64 {
         }
     }
 
+    /// Fixed floating-point display precision pads the shortest decimal
+    /// representation, avoiding binary expansion artifacts at wide scales.
+    #[must_use]
+    pub fn mysql_fixed_text(self, decimals: u8) -> String {
+        let decimals = usize::from(decimals.min(30));
+        let value = self.get();
+        if !value.is_finite() {
+            return self.mysql_text();
+        }
+        let mut text = value.to_string();
+        let fraction = text
+            .split_once('.')
+            .map_or(0, |(_, fraction)| fraction.len());
+        if fraction > decimals {
+            return format!("{value:.decimals$}");
+        }
+        if decimals > 0 {
+            if fraction == 0 {
+                text.push('.');
+            }
+            text.extend(std::iter::repeat_n('0', decimals - fraction));
+        }
+        text
+    }
+
     /// FLOAT's six significant digits in a result cell.
     #[must_use]
     pub fn mysql_float_text(self) -> String {

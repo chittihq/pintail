@@ -131,6 +131,21 @@ fn aggregate(
             set_flags(&mut column, 129);
         }
         AggregateFunction::Sum | AggregateFunction::Average => {
+            if let Some(input) = &input
+                && matches!(
+                    input.coltype,
+                    ColumnType::MysqlTypeFloat | ColumnType::MysqlTypeDouble
+                )
+                && input.decimals < 31
+            {
+                let extra = if aggregate.function == AggregateFunction::Average {
+                    pintail_sql::session_div_precision_increment()
+                } else {
+                    0
+                };
+                column.decimals = input.decimals.saturating_add(extra).min(30);
+                column.column_length = input.column_length.saturating_add(9 + u32::from(extra));
+            }
             if let Some(input) = input
                 && (integer(&input) || input.coltype == ColumnType::MysqlTypeNewdecimal)
             {
@@ -885,6 +900,23 @@ fn source_declaration(column: &mut Column, fact: &pintail_sql::ColumnFacts) {
         "mediumint" => column.column_length = width.unwrap_or(if unsigned { 8 } else { 9 }),
         "int" | "integer" => column.column_length = width.unwrap_or(if unsigned { 10 } else { 11 }),
         "bigint" => column.column_length = width.unwrap_or(20),
+        "float" | "double" | "real" => {
+            if let Some((width, decimals)) = declaration
+                .split_once('(')
+                .and_then(|(_, tail)| tail.split(')').next())
+                .and_then(|shape| shape.split_once(','))
+                .and_then(|(width, decimals)| {
+                    Some((
+                        width.trim().parse::<u32>().ok()?,
+                        decimals.trim().parse::<u8>().ok()?,
+                    ))
+                })
+                && decimals <= 30
+            {
+                column.column_length = width;
+                column.decimals = decimals;
+            }
+        }
         "varchar" | "char" => {
             column.column_length = width.unwrap_or(256).saturating_mul(4);
             if kind == "char" {

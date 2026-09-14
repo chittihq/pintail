@@ -2530,7 +2530,7 @@ fn encode_rows(
                     } else {
                         let mut text = into.text_row();
                         for (field, value) in fields.iter().zip(row) {
-                            put_text_value(&mut text, value, field.data_type);
+                            put_text_value(&mut text, value, field);
                         }
                     }
                     after_row(into)?;
@@ -2549,7 +2549,7 @@ fn encode_rows(
                         let mut text = into.text_row();
                         for (field, column) in fields.iter().zip(batch.columns()) {
                             column.with_cell(row, |cell| {
-                                put_text_cell(&mut text, cell, field.data_type);
+                                put_text_cell(&mut text, cell, field);
                             });
                         }
                     }
@@ -2693,22 +2693,31 @@ impl crate::engine::RowSink for WireSink {
     }
 }
 
+fn floating_text(value: pintail_types::Float64, field: &QueryField) -> String {
+    if let Some(column) = &field.wire_column
+        && matches!(
+            column.coltype,
+            ColumnType::MysqlTypeFloat | ColumnType::MysqlTypeDouble
+        )
+        && column.decimals < 31
+    {
+        value.mysql_fixed_text(column.decimals)
+    } else if field.data_type == Some(DataType::Float32) {
+        value.mysql_float_text()
+    } else {
+        value.mysql_text()
+    }
+}
+
 /// Writes one value as a text-protocol cell, straight into the row: the
 /// same bytes [`text_column_value`] renders, without a buffer per cell.
-fn put_text_value(row: &mut TextRow<'_>, value: &Value, data_type: Option<DataType>) {
+fn put_text_value(row: &mut TextRow<'_>, value: &Value, field: &QueryField) {
     match value {
         Value::Null => row.null(),
         Value::Boolean(value) => row.signed(i64::from(*value)),
         Value::Int64(value) => row.signed(*value),
         Value::UInt64(value) => row.unsigned(*value),
-        Value::Float64(value) => row.bytes(
-            if data_type == Some(DataType::Float32) {
-                value.mysql_float_text()
-            } else {
-                value.mysql_text()
-            }
-            .as_bytes(),
-        ),
+        Value::Float64(value) => row.bytes(floating_text(*value, field).as_bytes()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => row.bytes(value.as_bytes()),
         Value::DecimalAverage(average) => row.bytes(average.label.as_bytes()),
         Value::Binary(value) => row.bytes(value),
@@ -2717,24 +2726,17 @@ fn put_text_value(row: &mut TextRow<'_>, value: &Value, data_type: Option<DataTy
 
 /// Writes one batch cell as a text-protocol cell: the bytes its value would
 /// render as, read from the column without materializing it.
-fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, data_type: Option<DataType>) {
+fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, field: &QueryField) {
     match cell {
         Cell::Null => row.null(),
         Cell::Signed(value) => row.signed(value),
         Cell::Unsigned(value) => row.unsigned(value),
         Cell::Float(value) => {
             let value = pintail_types::Float64::new(value);
-            row.bytes(
-                if data_type == Some(DataType::Float32) {
-                    value.mysql_float_text()
-                } else {
-                    value.mysql_text()
-                }
-                .as_bytes(),
-            );
+            row.bytes(floating_text(value, field).as_bytes());
         }
         Cell::Text(bytes) => row.bytes(bytes),
-        Cell::Value(value) => put_text_value(row, value, data_type),
+        Cell::Value(value) => put_text_value(row, value, field),
     }
 }
 
@@ -5361,5 +5363,33 @@ mod result_ceiling_tests {
         ] {
             assert!(!super::may_answer_compatibly(engine), "{engine}");
         }
+    }
+    #[test]
+    fn fixed_float_text_keeps_declared_zeros_without_changing_binary_values() {
+        let mut declaration = super::Column::new("reading", super::ColumnType::MysqlTypeDouble);
+        declaration.decimals = 30;
+        let field = super::QueryField {
+            wire_column: Some(declaration),
+            name: "reading".to_owned(),
+            data_type: Some(super::DataType::Float64),
+            nullable: false,
+            collation: None,
+            group_concat: false,
+            geometry: false,
+            timestamp: false,
+            wire_hint: None,
+        };
+        let number = 10.34999_f64;
+        let value = super::Value::float64(number);
+        let mut encoded = super::EncodedRows::with_capacity(2);
+        super::put_text_value(&mut encoded.text_row(), &value, &field);
+        super::put_text_cell(&mut encoded.text_row(), super::Cell::Float(number), &field);
+        for row in encoded.iter() {
+            assert_eq!(&row[1..], b"10.349990000000000000000000000000");
+        }
+        assert_eq!(
+            super::binary_column_value(&field, &value).unwrap(),
+            Some(number.to_le_bytes().to_vec())
+        );
     }
 }
