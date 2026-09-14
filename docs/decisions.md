@@ -1790,3 +1790,20 @@ The setting is captured when a window is compiled and participates in the shared
 query key. Default whole-partition and cumulative frames keep their existing
 calculation. This makes the precision/performance choice explicit instead of
 silently changing the final floating-point digits for every connection.
+
+### Regex line assertions preserve the original match spans
+
+Line-sensitive regular expressions use ordered finite-state execution with
+explicit SQL line assertions. A dollar assertion can match before the final line
+terminator, a strict end assertion cannot, and a multiline start does not create
+a new line after the input's final terminator. Match spans and capture slots
+continue to refer to the input, including when a replacement expands captures.
+Patterns that do not need these assertions keep the existing fast matcher.
+Line-sensitive patterns also retain a fast representation for single-line input,
+where the assertions agree.
+
+Each compiled representation is capped at 1 MiB; line-sensitive patterns reserve
+the combined ceiling for both representations. Capture-state workspace is estimated
+from the automaton before matching and capped at 4 MiB; each evaluation charges
+that workspace separately from the retained compiled program. Execution tracks
+visited states at each input offset and does not use recursive backtracking.

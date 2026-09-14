@@ -1630,3 +1630,25 @@ fn regular_expressions_honor_binary_collation_case_sensitivity() {
         ),
     ]);
 }
+
+#[test]
+fn regex_line_boundaries_preserve_positions_and_captures() {
+    for (expression, expected) in [
+        (r"REGEXP_LIKE('b\na\n','a$')", "Boolean(true)"),
+        (r"REGEXP_LIKE('a\nb\n','(?m)b\\s^')", "Boolean(false)"),
+        (r"REGEXP_LIKE('a\n','a$\\n')", "Boolean(true)"),
+        (r"REGEXP_LIKE('a\nb','a$')", "Boolean(false)"),
+        (r"REGEXP_LIKE('a\n','a\\z')", "Boolean(false)"),
+        (r"REGEXP_LIKE('a\n','a\\Z')", "Boolean(true)"),
+        (r"REGEXP_SUBSTR('x\nab\n','(a)(b)$')", "ab"),
+        (r"REGEXP_INSTR('é\nab\n','ab$')", "3"),
+        (r"REGEXP_REPLACE('ab\n','(a)(b)$','$2$1')", "ba\n"),
+        (r"REGEXP_LIKE('a\r','a$','u')", "Boolean(false)"),
+        (
+            "REGEXP_SUBSTR(CONVERT(X'61E280A8' USING utf8mb4),'a$')",
+            "a",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

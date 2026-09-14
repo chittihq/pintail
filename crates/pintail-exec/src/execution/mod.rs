@@ -6552,7 +6552,7 @@ mod tests {
             batches: Mutex::new(Vec::new()),
         };
         let plan = physical("SELECT REGEXP_REPLACE(REPEAT('a', 1000), 'a', 'replacement')");
-        let program_memory = crate::expression::REGEX_PROGRAM_MEMORY_UPPER_BOUND;
+        let program_memory = super::plan_regex_memory_upper_bound(&plan);
         assert!(matches!(
             Execution::start(
                 plan.clone(),
@@ -6570,6 +6570,24 @@ mod tests {
             Err(ExecError::MemoryLimitExceeded {
                 limit: actual,
                 .. }) if actual == limit
+        ));
+    }
+
+    #[test]
+    fn anchored_regex_workspace_obeys_the_query_memory_cap() {
+        let provider = StaticProvider {
+            batches: Mutex::new(Vec::new()),
+        };
+        let pattern = format!("{}$", "(a?)".repeat(16));
+        let plan = physical(&format!("SELECT REGEXP_REPLACE('a\\n', '{pattern}', 'x')"));
+        let program_memory = super::plan_regex_memory_upper_bound(&plan);
+        assert!(program_memory > 0);
+        let mut execution =
+            Execution::start(plan, &provider, program_memory + 1024, Collation::default())
+                .expect("compiled program fits");
+        assert!(matches!(
+            execution.next_batch(),
+            Err(ExecError::MemoryLimitExceeded { .. })
         ));
     }
 

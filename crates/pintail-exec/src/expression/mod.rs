@@ -1,3 +1,4 @@
+mod sql_regex;
 mod str_to_date;
 mod temporal;
 mod vector;
@@ -449,7 +450,7 @@ fn text_membership_mask(
 #[derive(Clone)]
 pub(crate) struct CompiledRegex {
     signature: String,
-    program: Arc<regex::Regex>,
+    program: Arc<sql_regex::Program>,
 }
 
 impl std::fmt::Debug for CompiledRegex {
@@ -1688,9 +1689,15 @@ impl CompiledExpr {
                         first.saturating_mul(2).saturating_add(24)
                     }
                 };
-                let dynamic_regex_memory =
-                    usize::from(is_regex_function(*function) && literal_regex.is_none())
-                        .saturating_mul(REGEX_PROGRAM_MEMORY_UPPER_BOUND);
+                let dynamic_regex_memory = if is_regex_function(*function) {
+                    literal_regex
+                        .as_ref()
+                        .map_or(REGEX_PROGRAM_MEMORY_UPPER_BOUND, |compiled| {
+                            compiled.program.workspace_upper_bound()
+                        })
+                } else {
+                    0
+                };
                 argument_memory
                     .saturating_add(output)
                     .saturating_add(dynamic_regex_memory)
@@ -5851,8 +5858,10 @@ const MAX_COMPILED_REGEX_BYTES: usize = 1 << 20;
 // in `CompiledRegex::signature`. Leave a small fixed allowance for the
 // `Regex`, `Arc`, `String`, and enum/container metadata as well.
 const REGEX_PROGRAM_METADATA_BYTES: usize = 4 * 1024;
-pub(crate) const REGEX_PROGRAM_MEMORY_UPPER_BOUND: usize =
+const REGEX_COMPILED_MEMORY_UPPER_BOUND: usize =
     MAX_COMPILED_REGEX_BYTES + 2 * MAX_REGEX_PATTERN_BYTES + REGEX_PROGRAM_METADATA_BYTES;
+pub(crate) const REGEX_PROGRAM_MEMORY_UPPER_BOUND: usize =
+    2 * REGEX_COMPILED_MEMORY_UPPER_BOUND + sql_regex::WORKSPACE_LIMIT;
 
 pub(crate) const fn is_regex_function(function: ScalarFunction) -> bool {
     matches!(
@@ -6024,21 +6033,24 @@ fn compile_regex(
         }
     }
     let signature = format!(
-        "{}{}{}\0{pattern}",
+        "{}{}{}{}\0{pattern}",
         u8::from(case_insensitive),
         u8::from(multi_line),
-        u8::from(dot_matches_new_line)
+        u8::from(dot_matches_new_line),
+        u8::from(match_type.contains('u'))
     );
     let translated = unicode_posix_classes(pattern);
-    let program = Arc::new(
-        regex::RegexBuilder::new(&translated)
-            .case_insensitive(case_insensitive)
-            .multi_line(multi_line)
-            .dot_matches_new_line(dot_matches_new_line)
-            .size_limit(MAX_COMPILED_REGEX_BYTES)
-            .build()
-            .map_err(|_| ExecError::InvalidExpressionType)?,
-    );
+    let program = Arc::new(sql_regex::Program::new(
+        &translated,
+        case_insensitive,
+        multi_line,
+        dot_matches_new_line,
+        if match_type.contains('u') {
+            sql_regex::LineEndings::Unix
+        } else {
+            sql_regex::LineEndings::Unicode
+        },
+    )?);
     Ok(CompiledRegex { signature, program })
 }
 
@@ -6091,10 +6103,16 @@ pub(crate) fn bound_regex_memory_upper_bound(expr: &BoundExpr) -> usize {
             let nested = args.iter().fold(0_usize, |bytes, argument| {
                 bytes.saturating_add(bound_regex_memory_upper_bound(argument))
             });
-            nested.saturating_add(
-                usize::from(literal_regex_arguments(*function, args).is_some())
-                    .saturating_mul(REGEX_PROGRAM_MEMORY_UPPER_BOUND),
-            )
+            nested.saturating_add(literal_regex_arguments(*function, args).map_or(
+                0,
+                |(pattern, match_type)| {
+                    let copies = 1 + usize::from(sql_regex::needs_boundaries(
+                        pattern,
+                        match_type.contains('m'),
+                    ));
+                    copies * REGEX_COMPILED_MEMORY_UPPER_BOUND
+                },
+            ))
         }
         BoundExprKind::Column(_)
         | BoundExprKind::GroupKey(_)
@@ -6111,7 +6129,7 @@ fn regex_program(
     pattern: &str,
     match_type: &str,
     collation: Collation,
-) -> Result<Arc<regex::Regex>, ExecError> {
+) -> Result<Arc<sql_regex::Program>, ExecError> {
     literal.map_or_else(
         || compile_regex(pattern, match_type, collation).map(|compiled| compiled.program),
         |compiled| Ok(Arc::clone(&compiled.program)),
@@ -6119,7 +6137,7 @@ fn regex_program(
 }
 
 #[cfg(test)]
-fn compiled_regex(pattern: &str) -> Result<Arc<regex::Regex>, ExecError> {
+fn compiled_regex(pattern: &str) -> Result<Arc<sql_regex::Program>, ExecError> {
     compile_regex(pattern, "", Collation::default()).map(|compiled| compiled.program)
 }
 
