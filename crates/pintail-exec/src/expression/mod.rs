@@ -3587,7 +3587,16 @@ fn evaluate_eager_scalar_inner(
                 1
             };
             let total = left.micros + sign * right.micros;
-            let fsp = left.fsp.max(right.fsp);
+            let fsp = if matches!(
+                argument_types.first(),
+                Some(Some(DataType::Utf8 | DataType::Binary))
+            ) {
+                // Text arguments produce variable-width temporal text: a
+                // nonzero fraction has six digits, an exact second has none.
+                if total % 1_000_000 == 0 { 0 } else { 6 }
+            } else {
+                left.fsp.max(right.fsp)
+            };
             Ok(if left.datetime {
                 render_datetime_micros(total, fsp).map_or(Value::Null, Value::Utf8)
             } else {

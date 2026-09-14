@@ -1229,3 +1229,28 @@ fn find_in_set_uses_bytes_when_either_operand_is_binary() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn time_arithmetic_preserves_typed_precision_and_renders_dynamic_fractions() {
+    for (expression, expected) in [
+        ("SUBTIME('02:01:01.999999','01:01:01.999999')", "01:00:00"),
+        ("ADDTIME('-01:01:01.01','-23:59:59.1')", "-25:01:00.110000"),
+        ("ADDTIME('01:00:00.1','00:00:00.1')", "01:00:00.200000"),
+        ("ADDTIME(time '01:00:00.1','00:00:00.1')", "01:00:00.2"),
+        (
+            "SUBTIME(time '02:01:01.999999',time '01:01:01.999999')",
+            "01:00:00.000000",
+        ),
+        ("TIMEDIFF('01:00:00.1','00:00:00.1')", "01:00:00.0"),
+        (
+            "TIMEDIFF('2000:01:01 00:00:00','2000:01:01 00:00:00.000001')",
+            "-00:00:00.000001",
+        ),
+        (
+            "TIMEDIFF('20:01:01 00:00:00','20:01:01 00:00:01')",
+            "-00:00:01",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

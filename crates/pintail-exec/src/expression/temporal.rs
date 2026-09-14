@@ -670,10 +670,12 @@ fn dashed_date(value: &str) -> Option<String> {
     let value = value.trim_start();
     let year_end = value.find(|character: char| !character.is_ascii_digit())?;
     let separator = value[year_end..].chars().next()?;
-    // A colon separates the parts of a time, never of a date.
+    // A colon-only triple is a TIME here. A separate clock disambiguates
+    // a date whose punctuation also happens to be colons.
     if year_end == 0
         || year_end > 4
-        || matches!(separator, '-' | ':')
+        || separator == '-'
+        || (separator == ':' && !value.contains([' ', 'T']))
         || !separator.is_ascii_punctuation()
     {
         return None;
