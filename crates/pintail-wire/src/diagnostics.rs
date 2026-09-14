@@ -266,6 +266,16 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn having_prefers_a_group_key_over_a_conflicting_projection_alias() {
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT v*0 AS v FROM (SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3) AS numbers GROUP BY v HAVING v<>0").await.unwrap();
+        assert_eq!(result.rows.len(), 3);
+        let result = backend.execute("SELECT COUNT(*) AS v FROM (SELECT 1 AS v UNION ALL SELECT 1 UNION ALL SELECT 3) AS numbers GROUP BY v HAVING v>1").await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], pintail_types::Value::UInt64(1));
+    }
+
+    #[tokio::test]
     async fn grouped_join_assignments_observe_rows_before_group_materialization() {
         use pintail_protocol::Handler;
         use pintail_types::Value;

@@ -629,19 +629,12 @@ impl<'catalog> Binder<'catalog> {
             &expression_tables,
             Some(&resolve_subquery),
         )?;
-        // HAVING may name a SELECT alias - `HAVING days_of_cover < 7` where
-        // the select list computes it. MySQL allows this and applications use
-        // it constantly, because repeating the whole expression in HAVING is
-        // both verbose and a place for the two copies to drift apart.
-        //
-        // Substituted before binding, and only for identifiers that are NOT
-        // columns, so a real column always keeps its meaning. That ordering
-        // matters here: one of these queries aliases a count as `orders`
-        // while a table of that name is in scope.
+        // HAVING resolves grouping columns before SELECT aliases; an alias
+        // still outranks an unrelated source column with the same name.
         let having_expr = select
             .having
             .as_ref()
-            .map(|expr| substitute_projection_aliases(expr, &select.projection));
+            .map(|expr| substitute_projection_aliases(expr, &select.projection, &group_by));
         let mut having = having_expr
             .as_ref()
             .map(|expr| {
@@ -2579,22 +2572,31 @@ fn bind_projection(
     Ok(projection)
 }
 
-/// Rewrites SELECT aliases appearing in an expression into the expressions
-/// they name.
-///
-/// Only identifiers that do not resolve as a column are replaced, so a column
-/// and an alias sharing a name keeps the column's meaning and nothing that
-/// bound before binds differently now.
-///
-/// That precedence is the conservative choice rather than a verified one:
-/// `MySQL`'s own order when a column and an alias collide in HAVING has not been
-/// checked against a live server, and this way round cannot change a query
-/// that already bound. Worth settling differentially before anyone leans on
-/// it.
-fn substitute_projection_aliases(expr: &Expr, projection: &[SelectItem]) -> Expr {
+/// Resolves HAVING names against grouping columns, then SELECT aliases.
+fn substitute_projection_aliases(
+    expr: &Expr,
+    projection: &[SelectItem],
+    group_by: &[BoundExpr],
+) -> Expr {
     let mut rewritten = expr.clone();
     let flow: std::ops::ControlFlow<()> =
         sqlparser::ast::visit_expressions_mut(&mut rewritten, |node| {
+            if let Expr::Identifier(identifier) = node
+                && let Some(column) = group_by.iter().find_map(|group| match &group.kind {
+                    BoundExprKind::Column(column)
+                        if column.name.eq_ignore_ascii_case(&identifier.value) =>
+                    {
+                        Some(column)
+                    }
+                    _ => None,
+                })
+            {
+                *node = Expr::CompoundIdentifier(vec![
+                    Ident::with_quote('`', &column.relation_name),
+                    Ident::with_quote('`', &column.name),
+                ]);
+                return std::ops::ControlFlow::Continue(());
+            }
             if let Expr::Identifier(identifier) = node
                 && let Some(aliased) = projection.iter().find_map(|item| match item {
                     SelectItem::ExprWithAlias { expr, alias }
@@ -2654,6 +2656,12 @@ fn bind_group_by(
             let Expr::Identifier(identifier) = expr else {
                 return bind_expr(expr, tables, subqueries);
             };
+            // GROUP BY resolves a source column before a SELECT alias.
+            match bind_expr(expr, tables, subqueries) {
+                Ok(column) => return Ok(column),
+                Err(BindError::UnknownColumn(_)) => {}
+                Err(error) => return Err(error),
+            }
             let aliases = projection
                 .iter()
                 .filter_map(|item| match item {
