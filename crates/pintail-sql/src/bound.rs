@@ -917,6 +917,8 @@ pub enum ScalarFunction {
     },
     /// Render a single-precision value in a string context.
     FloatString,
+    /// Render fixed floating-point display precision without rounding arithmetic inputs.
+    FixedFloatString(u8),
     /// Convert a BIT value to its declared big-endian byte string.
     BitBytes(u8),
     /// Retain complete UTF-8 before the first malformed byte sequence.

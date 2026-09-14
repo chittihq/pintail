@@ -1540,7 +1540,7 @@ pub(super) fn bind_scalar(
             extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::FloatString | ScalarFunction::RawText(_, _) | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
+        ScalarFunction::FloatString | ScalarFunction::FixedFloatString(_) | ScalarFunction::RawText(_, _) | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse
@@ -2190,13 +2190,91 @@ pub(super) fn equality_expr(left: BoundExpr, right: BoundExpr) -> Result<BoundEx
 
 /// A floating value retains its binary precision until a string consumer.
 pub(super) fn float_string_argument(expression: BoundExpr) -> BoundExpr {
-    if expression.data_type != Some(DataType::Float32) {
-        return expression;
-    }
+    let function = match expression.data_type {
+        Some(DataType::Float32) => ScalarFunction::FloatString,
+        Some(DataType::Float64) => match fixed_float_decimals(&expression) {
+            Some(decimals) => ScalarFunction::FixedFloatString(decimals),
+            None => return expression,
+        },
+        _ => return expression,
+    };
     crate::text_charset::annotate(
-        crate::text_charset::wrap(expression, ScalarFunction::FloatString, DataType::Utf8),
+        crate::text_charset::wrap(expression, function, DataType::Utf8),
         crate::session_character_set(),
     )
+}
+
+/// Fixed display precision follows numeric expressions until an approximate
+/// operand or explicit floating cast makes the precision unspecified.
+fn fixed_float_decimals(expression: &BoundExpr) -> Option<u8> {
+    use crate::BinaryOp;
+    match &expression.kind {
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Pi,
+            ..
+        } => Some(6),
+        BoundExprKind::Binary { op, left, right }
+            if matches!(
+                op,
+                BinaryOp::Add
+                    | BinaryOp::Subtract
+                    | BinaryOp::Multiply
+                    | BinaryOp::Divide
+                    | BinaryOp::Modulo
+            ) =>
+        {
+            let left = fixed_float_decimals(left)?;
+            let right = fixed_float_decimals(right)?;
+            Some(if *op == BinaryOp::Divide {
+                left.saturating_add(crate::session_div_precision_increment())
+                    .min(30)
+            } else {
+                left.max(right)
+            })
+        }
+        BoundExprKind::Scalar {
+            function: ScalarFunction::If,
+            args,
+        } => Some(fixed_float_decimals(&args[1])?.max(fixed_float_decimals(&args[2])?)),
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Coalesce,
+            args,
+        } => args
+            .iter()
+            .try_fold(0, |scale, arg| Some(scale.max(fixed_float_decimals(arg)?))),
+        BoundExprKind::Scalar {
+            function: ScalarFunction::Round { .. },
+            args,
+        } => {
+            fixed_float_decimals(&args[0])?;
+            match args.get(1).map(|arg| &arg.kind) {
+                None => Some(0),
+                Some(BoundExprKind::Literal(Value::Int64(value))) => {
+                    Some(u8::try_from((*value).clamp(0, 30)).ok()?)
+                }
+                Some(BoundExprKind::Literal(Value::UInt64(value))) => {
+                    Some(u8::try_from((*value).min(30)).ok()?)
+                }
+                _ => None,
+            }
+        }
+        _ => match expression.data_type {
+            Some(DataType::Decimal { scale, .. }) => Some(scale),
+            Some(
+                DataType::Boolean
+                | DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Year,
+            ) => Some(0),
+            _ => None,
+        },
+    }
 }
 
 fn float_string_arguments(function: ScalarFunction, args: Vec<BoundExpr>) -> Vec<BoundExpr> {

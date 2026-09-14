@@ -1511,6 +1511,7 @@ impl CompiledExpr {
                     ScalarFunction::JsonDepth
                     | ScalarFunction::JsonOverlaps
                     | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
+                    ScalarFunction::FixedFloatString(_) => 342,
                     ScalarFunction::Lower | ScalarFunction::Upper => first.saturating_mul(12),
                     ScalarFunction::Locate | ScalarFunction::Instr => string_arguments.saturating_mul(32).saturating_add(8),
                     ScalarFunction::Replace | ScalarFunction::RegexpReplace => {
@@ -1804,6 +1805,7 @@ impl CompiledExpr {
                     | ScalarFunction::JsonDepth
                     | ScalarFunction::JsonOverlaps
                     | ScalarFunction::JsonMemberOf | ScalarFunction::FloatString => 24,
+                    ScalarFunction::FixedFloatString(_) => 342,
                     ScalarFunction::Repeat
                     | ScalarFunction::Insert
                     | ScalarFunction::Space
@@ -2274,6 +2276,11 @@ fn evaluate_eager_scalar_inner(
                 .ok_or(ExecError::InvalidExpressionType)?;
             Ok(Value::Binary(bytes[first..].to_vec()))
         }
+        ScalarFunction::FixedFloatString(decimals) => Ok(Value::Utf8(format!(
+            "{:.*}",
+            usize::from(decimals),
+            mysql_f64(&values[0])?
+        ))),
         ScalarFunction::FloatString => Ok(Value::Utf8(
             pintail_types::Float64::new(mysql_f64(&values[0])?).mysql_float_string(),
         )),

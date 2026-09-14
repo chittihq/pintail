@@ -1137,3 +1137,23 @@ fn base_digits_keep_raw_bytes_under_a_wide_connection_encoding() {
     }
     pintail_sql::set_session_character_set(None);
 }
+
+#[test]
+fn fixed_float_precision_survives_string_consumers() {
+    for (expression, expected) in [
+        ("CRC32(PI())", "2969982827"),
+        ("CONCAT(PI())", "3.141593"),
+        ("CONCAT(PI()+0)", "3.141593"),
+        ("CONCAT(PI()+0.0000001)", "3.1415928"),
+        ("CONCAT(PI()*PI())", "9.869604"),
+        ("CONCAT(PI()/2)", "1.5707963268"),
+        ("CONCAT(ROUND(PI(),2))", "3.14"),
+        ("CONCAT(COALESCE(PI(),0))", "3.141593"),
+        ("CONCAT(IF(id=1,PI(),0))", "3.141593"),
+        ("CONCAT(PI()+0e0)", "3.141592653589793"),
+        ("CONCAT(CAST(PI() AS DOUBLE))", "3.141592653589793"),
+        ("PI()>3.1415926 AND PI()<3.1415927", "Boolean(true)"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
