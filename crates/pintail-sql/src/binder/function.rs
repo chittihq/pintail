@@ -1099,7 +1099,7 @@ pub(super) fn bind_convert(
     {
         let argument = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
         return if argument.data_type == Some(DataType::Binary) {
-            let argument = if encoding.minimum_width() == 1 {
+            let argument = if encoding.minimum_width() == 1 && !crate::session_parse_mode().strict {
                 crate::text_charset::wrap(argument, ScalarFunction::Utf8Prefix, DataType::Binary)
             } else {
                 argument

@@ -22,6 +22,8 @@ pub struct ParseMode {
     pub no_zero_in_date: bool,
     /// Calendar casts accept day-of-month combinations outside the civil calendar.
     pub allow_invalid_dates: bool,
+    /// Invalid character conversion returns NULL instead of a valid prefix.
+    pub strict: bool,
 }
 
 impl ParseMode {
@@ -42,6 +44,7 @@ impl ParseMode {
             no_zero_date: has("NO_ZERO_DATE"),
             no_zero_in_date: has("NO_ZERO_IN_DATE"),
             allow_invalid_dates: has("ALLOW_INVALID_DATES"),
+            strict: has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES") || has("TRADITIONAL"),
         }
     }
 }

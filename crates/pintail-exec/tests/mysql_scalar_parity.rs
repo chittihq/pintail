@@ -1157,3 +1157,18 @@ fn fixed_float_precision_survives_string_consumers() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn strict_utf8_conversion_rejects_invalid_bytes_instead_of_truncating() {
+    for mode in ["STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "TRADITIONAL"] {
+        pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+            for expression in [
+                "HEX(CONVERT(0xFF USING utf8mb4))",
+                "HEX(CONVERT(0x41FF42 USING utf8mb3))",
+            ] {
+                assert_eq!(scalar(expression), "NULL", "{mode}: {expression}");
+            }
+            assert_eq!(scalar("HEX(CONVERT(0x41 USING utf8mb4))"), "41");
+        });
+    }
+}
