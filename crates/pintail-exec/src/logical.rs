@@ -233,6 +233,25 @@ impl LogicalPlanner {
             recursive,
         } = query;
 
+        // Sorting a joined result materializes projected decimal values in
+        // fields with their declared scale. String consumers have already
+        // read their operands before this boundary and keep their text.
+        if !order_by.is_empty()
+            && (from.len() > 1 || from.iter().any(|source| !source.joins.is_empty()))
+        {
+            for item in &mut projection {
+                if let Some(target @ DataType::Decimal { .. }) = item.expr.data_type {
+                    item.expr = BoundExpr {
+                        kind: BoundExprKind::Scalar {
+                            function: pintail_sql::ScalarFunction::Cast(target),
+                            args: vec![item.expr.clone()],
+                        },
+                        data_type: Some(target),
+                        nullable: item.expr.nullable,
+                    };
+                }
+            }
+        }
         let mut plan = source_plan(from);
         if let Some(predicate) = filter {
             plan = LogicalPlan::Filter {

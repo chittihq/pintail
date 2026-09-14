@@ -266,6 +266,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sorted_join_materializes_decimal_projection_scale() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        for sql in [
+            "CREATE TABLE metrics (id INT, amount INT)",
+            "CREATE TABLE details (id INT)",
+            "INSERT INTO metrics VALUES (1,1),(2,2)",
+            "INSERT INTO details VALUES (1),(1),(2)",
+        ] {
+            assert!(
+                matches!(
+                    backend.query(sql.as_bytes()).await,
+                    pintail_protocol::Response::Ok(..)
+                ),
+                "{sql}"
+            );
+        }
+        let derived =
+            "(SELECT id, IF(amount > 5000, 1 / amount, 5000) AS n FROM metrics) AS values_by_id";
+        for (sql, expected) in [
+            (
+                format!("SELECT n FROM {derived} JOIN details USING (id) ORDER BY 1"),
+                "5000.0000",
+            ),
+            (
+                format!("SELECT CONCAT(n) FROM {derived} JOIN details USING (id) ORDER BY 1"),
+                "5000",
+            ),
+            (
+                format!("SELECT n FROM {derived} JOIN details USING (id)"),
+                "5000",
+            ),
+            (format!("SELECT n FROM {derived} ORDER BY 1"), "5000"),
+        ] {
+            let result = backend.execute(&sql).await.unwrap();
+            for row in result.rows.into_values() {
+                let text = match &row[0] {
+                    Value::Int64(value) => value.to_string(),
+                    Value::DecimalAverage(value) => value.label.clone(),
+                    Value::Utf8(text) => text.clone(),
+                    other => panic!("unexpected {other:?}"),
+                };
+                assert_eq!(text, expected, "{sql}");
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn permissive_grouping_selects_a_representative_row() {
         use pintail_protocol::Handler;
         let (_directory, mut backend) = local_backend();
