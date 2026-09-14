@@ -1050,20 +1050,15 @@ impl Backend {
         }
     }
 
-    fn client_uses_latin1(&self) -> Result<bool, String> {
-        Ok(self
-            .session
-            .lock()
-            .map_err(|error| error.to_string())?
-            .charset_client
-            == "latin1")
+    fn client_single_byte_charset(&self) -> Result<Option<pintail_types::CharacterSet>, String> {
+        let session = self.session.lock().map_err(|error| error.to_string())?;
+        Ok(single_byte_charset(&session.charset_client))
     }
 
     fn decode_statement<'a>(&self, sql: &'a [u8]) -> Result<std::borrow::Cow<'a, str>, String> {
-        let latin1 = self.client_uses_latin1()?;
-        if latin1 {
+        if let Some(charset) = self.client_single_byte_charset()? {
             Ok(std::borrow::Cow::Owned(
-                pintail_types::CharacterSet::Latin1
+                charset
                     .decode(sql)
                     .expect("single-byte input always decodes"),
             ))
@@ -1802,6 +1797,18 @@ impl Backend {
                 self.apply_session_command(&format!("SET {setting}"))
             });
         }
+        if let Some(rest) = lowered
+            .strip_prefix("set character set ")
+            .or_else(|| lowered.strip_prefix("set charset "))
+        {
+            let (charset, _) = set_names_target(rest)?;
+            session.charset_client.clone_from(&charset);
+            session.charset_results = charset;
+            "utf8mb4".clone_into(&mut session.charset_connection);
+            session.collation_connection = "utf8mb4_0900_ai_ci";
+            session.charset_byte = 255;
+            return Ok(());
+        }
         if let Some(rest) = lowered.strip_prefix("kill ") {
             return apply_kill_command(rest);
         }
@@ -1911,11 +1918,13 @@ impl Backend {
                 {
                     session.charset_connection = charset;
                     session.collation_connection = encoding.default_collation();
+                    session.charset_byte =
+                        collation_byte(session.collation_connection, &session.charset_connection);
                     return Ok(());
                 }
                 if matches!(
                     charset.as_str(),
-                    "utf8" | "utf8mb3" | "utf8mb4" | "binary" | "latin1"
+                    "utf8" | "utf8mb3" | "utf8mb4" | "binary" | "latin1" | "koi8r"
                 ) || (name == "character_set_results" && charset == "null")
                 {
                     match name {
@@ -2124,6 +2133,7 @@ fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
     let default = match charset.as_str() {
         "utf8mb4" => "utf8mb4_0900_ai_ci",
         "latin1" => "latin1_swedish_ci",
+        "koi8r" => "koi8r_general_ci",
         "utf8" | "utf8mb3" => "utf8mb4_general_ci",
         "binary" => "utf8mb4_bin",
         _ => return Err(format!("Unknown character set: '{charset}'")),
@@ -2132,7 +2142,10 @@ fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
         (None, _, _) => Ok((charset, default)),
         (Some("collate"), Some(name), None) => {
             let collation = connection_collation(name)?;
-            if (charset == "latin1") != collation.starts_with("latin1_") {
+            if ["latin1", "koi8r"]
+                .iter()
+                .any(|name| (charset == *name) != collation.starts_with(&format!("{name}_")))
+            {
                 return Err(format!(
                     "COLLATION '{name}' is not valid for CHARACTER SET '{charset}'"
                 ));
@@ -2168,6 +2181,8 @@ fn connection_collation(name: &str) -> Result<&'static str, String> {
 /// The collation id stamped on text results for a connection collation.
 fn collation_byte(collation: &str, charset: &str) -> u16 {
     match (charset, collation) {
+        ("koi8r", "koi8r_bin") => 74,
+        ("koi8r", _) => 7,
         ("latin1", "latin1_bin") => 47,
         ("latin1", _) => 8,
         ("binary", _) => 63,
@@ -2490,7 +2505,7 @@ impl Handler for Backend {
                 "Incorrect arguments to mysqld_stmt_execute".to_owned(),
             );
         }
-        let client_latin1 = self.client_uses_latin1().unwrap_or(false);
+        let client_charset = self.client_single_byte_charset().unwrap_or(None);
         let literals = match values
             .iter()
             .enumerate()
@@ -2503,7 +2518,8 @@ impl Handler for Backend {
                 value => pintail_sql::with_parse_mode(statement.parse_mode, || {
                     encoded_parameter_literal(
                         value,
-                        client_latin1 && matches!(types[index].column_type, 15 | 253 | 254),
+                        client_charset
+                            .filter(|_| matches!(types[index].column_type, 15 | 253 | 254)),
                     )
                 }),
             })
@@ -2734,13 +2750,12 @@ fn query_output_to_response(
     }))
 }
 
-fn result_uses_latin1(field: &QueryField, charset: &str) -> bool {
-    charset == "latin1"
-        || (charset == "null"
-            && field
-                .collation
-                .as_deref()
-                .is_some_and(|collation| collation.starts_with("latin1_")))
+fn single_byte_charset(name: &str) -> Option<pintail_types::CharacterSet> {
+    match name {
+        "latin1" => Some(pintail_types::CharacterSet::Latin1),
+        "koi8r" => Some(pintail_types::CharacterSet::Koi8R),
+        _ => None,
+    }
 }
 
 fn wire_text_value<'a>(
@@ -2748,31 +2763,30 @@ fn wire_text_value<'a>(
     field: &QueryField,
     charset: &str,
 ) -> std::borrow::Cow<'a, Value> {
-    if result_uses_latin1(field, charset) {
+    if let Some(charset) = single_byte_charset(result_charset_name(field, charset)) {
         let text = match value {
             Value::Utf8(text) if field.data_type == Some(DataType::Utf8) => Some(text),
             Value::Enum { label, .. } => Some(label),
             _ => None,
         };
         if let Some(text) = text {
-            return std::borrow::Cow::Owned(Value::Binary(
-                pintail_types::CharacterSet::Latin1.encode(text),
-            ));
+            return std::borrow::Cow::Owned(Value::Binary(charset.encode(text)));
         }
     }
     std::borrow::Cow::Borrowed(value)
 }
 
 fn put_encoded_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, field: &QueryField, charset: &str) {
-    if result_uses_latin1(field, charset) {
+    let charset_name = charset;
+    if let Some(charset) = single_byte_charset(result_charset_name(field, charset)) {
         match cell {
             Cell::Text(bytes) if field.data_type == Some(DataType::Utf8) => {
                 let text = std::str::from_utf8(bytes).expect("text columns contain Unicode");
-                row.bytes(&pintail_types::CharacterSet::Latin1.encode(text));
+                row.bytes(&charset.encode(text));
                 return;
             }
             Cell::Value(value) => {
-                put_text_value(row, &wire_text_value(value, field, charset), field);
+                put_text_value(row, &wire_text_value(value, field, charset_name), field);
                 return;
             }
             _ => {}
@@ -3278,6 +3292,13 @@ impl MysqlTimeValue {
 
 fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     match charset {
+        "koi8r" => {
+            if negotiated == 74 {
+                74
+            } else {
+                7
+            }
+        }
         "latin1" => {
             if negotiated == 47 {
                 47
@@ -3285,7 +3306,7 @@ fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
                 8
             }
         }
-        "utf8mb4" if matches!(negotiated, 8 | 47 | 33 | 63) => 255,
+        "utf8mb4" if matches!(negotiated, 7 | 8 | 47 | 33 | 63 | 74) => 255,
         "utf8" | "utf8mb3" => 33,
         "binary" => 63,
         // The connection's negotiated collation id: measured, MySQL stamps
@@ -3310,8 +3331,8 @@ fn mysql_metadata_name(name: &str) -> String {
 
 fn encode_metadata_names(column: &mut Column, charset: &str) {
     column.encoded_names = None;
-    if charset == "latin1" {
-        column.encode_names(|name| pintail_types::CharacterSet::Latin1.encode(name));
+    if let Some(charset) = single_byte_charset(charset) {
+        column.encode_names(|name| charset.encode(name));
     }
 }
 
@@ -3361,7 +3382,7 @@ fn negotiated_column(
     }
     // Expression declarations use four-byte Unicode widths. Result conversion
     // to a single-byte character set changes the maximum encoded byte count.
-    if matches!(column.character_set, 8 | 47) {
+    if matches!(column.character_set, 7 | 8 | 47 | 74) {
         column.column_length /= 4;
     }
     encode_metadata_names(&mut column, charset);
@@ -4512,9 +4533,14 @@ fn placeholder_offsets(sql: &str) -> Vec<usize> {
         .collect()
 }
 
-fn encoded_parameter_literal(value: &BinaryValue, latin1: bool) -> Result<String, String> {
-    if latin1 && let BinaryValue::Bytes(bytes) = value {
-        let text = pintail_types::CharacterSet::Latin1
+fn encoded_parameter_literal(
+    value: &BinaryValue,
+    charset: Option<pintail_types::CharacterSet>,
+) -> Result<String, String> {
+    if let Some(charset) = charset
+        && let BinaryValue::Bytes(bytes) = value
+    {
+        let text = charset
             .decode(bytes)
             .expect("single-byte parameter decodes");
         parameter_literal(&BinaryValue::Bytes(text.into_bytes()))
@@ -4832,7 +4858,11 @@ mod tests {
         );
         assert!(set_names_target("latin1 collate utf8mb4_bin").is_err());
         assert!(set_names_target("utf8mb4 collate latin1_bin").is_err());
-        assert!(set_names_target("koi8r").is_err());
+        assert_eq!(
+            set_names_target("koi8r"),
+            Ok(("koi8r".to_owned(), "koi8r_general_ci"))
+        );
+        assert!(set_names_target("koi8u").is_err());
         assert!(set_names_target("utf8mb4 collate utf8mb4_de_pb_0900_ai_ci").is_err());
         assert!(set_names_target("utf8mb4 collate").is_err());
         assert_eq!(connection_collation("'UTF8MB4_BIN'"), Ok("utf8mb4_bin"));

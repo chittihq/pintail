@@ -29,6 +29,10 @@ pub enum Collation {
     Latin1SwedishCi,
     /// Single-byte code values with PAD SPACE semantics.
     Latin1Bin,
+    /// Cyrillic single-byte case-insensitive weights.
+    Koi8RGeneralCi,
+    /// Cyrillic encoded byte order.
+    Koi8RBin,
     /// `MySQL` 8's default: UCA 9.0.0, accent- and case-insensitive.
     #[default]
     Utf8mb40900AiCi,
@@ -66,6 +70,8 @@ impl Collation {
         match pintail_sql::comparison_collation(name).unwrap_or(name) {
             "latin1_swedish_ci" => Some(Self::Latin1SwedishCi),
             "latin1_bin" => Some(Self::Latin1Bin),
+            "koi8r_general_ci" => Some(Self::Koi8RGeneralCi),
+            "koi8r_bin" => Some(Self::Koi8RBin),
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
             "utf8mb4_0900_as_cs" => Some(Self::Utf8mb40900AsCs),
             "utf8mb4_general_ci" => Some(Self::Utf8mb4GeneralCi),
@@ -81,6 +87,8 @@ impl Collation {
         match self {
             Self::Latin1SwedishCi => "latin1_swedish_ci",
             Self::Latin1Bin => "latin1_bin",
+            Self::Koi8RGeneralCi => "koi8r_general_ci",
+            Self::Koi8RBin => "koi8r_bin",
             Self::Utf8mb40900AiCi => "utf8mb4_0900_ai_ci",
             Self::Utf8mb40900AsCs => "utf8mb4_0900_as_cs",
             Self::Utf8mb4GeneralCi => "utf8mb4_general_ci",
@@ -376,6 +384,48 @@ pub fn unicode_ci_group_key(text: &str) -> Vec<u8> {
     bytes
 }
 
+fn koi8r_weights(text: &str, binary: bool) -> impl Iterator<Item = u16> {
+    const WEIGHTS: [u8; 128] = [
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e,
+        0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d,
+        0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xe5, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab,
+        0xac, 0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xe5, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9,
+        0xba, 0xbb, 0xbc, 0xbd, 0xfe, 0xdf, 0xe0, 0xf6, 0xe3, 0xe4, 0xf4, 0xe2, 0xf5, 0xe8, 0xe9,
+        0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xff, 0xf0, 0xf1, 0xf2, 0xf3, 0xe6, 0xe1, 0xfc, 0xfb,
+        0xe7, 0xf8, 0xfd, 0xf9, 0xf7, 0xfa, 0xfe, 0xdf, 0xe0, 0xf6, 0xe3, 0xe4, 0xf4, 0xe2, 0xf5,
+        0xe8, 0xe9, 0xea, 0xeb, 0xec, 0xed, 0xee, 0xef, 0xff, 0xf0, 0xf1, 0xf2, 0xf3, 0xe6, 0xe1,
+        0xfc, 0xfb, 0xe7, 0xf8, 0xfd, 0xf9, 0xf7, 0xfa,
+    ];
+    pintail_types::CharacterSet::Koi8R
+        .encode(text)
+        .into_iter()
+        .map(move |byte| {
+            u16::from(if binary {
+                byte
+            } else if byte < 128 {
+                byte.to_ascii_uppercase()
+            } else {
+                WEIGHTS[usize::from(byte - 128)]
+            })
+        })
+}
+
+/// Compares Cyrillic single-byte values with insignificant trailing spaces.
+#[must_use]
+pub fn compare_koi8r(left: &str, right: &str, binary: bool) -> std::cmp::Ordering {
+    compare_padded(
+        koi8r_weights(left, binary),
+        koi8r_weights(right, binary),
+        u16::from(b' '),
+    )
+}
+
+/// A Cyrillic byte collation key with the same padding rules as comparison.
+#[must_use]
+pub fn koi8r_sort_key(text: &str, binary: bool) -> Vec<u8> {
+    padded_sort_key(koi8r_weights(text, binary), u16::from(b' '))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -583,5 +633,27 @@ mod latin1_tests {
                 "{left:?} versus {right:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod koi8r_tests {
+    use super::{compare_koi8r, koi8r_sort_key};
+    use std::cmp::Ordering;
+    #[test]
+    fn weights_agree_with_keys_and_cyrillic_case() {
+        for (left, right, expected) in [
+            ("Р", "р ", Ordering::Equal),
+            ("Е", "Ё", Ordering::Less),
+            ("Я", "Ю", Ordering::Greater),
+            ("а\0", "а", Ordering::Less),
+        ] {
+            assert_eq!(compare_koi8r(left, right, false), expected);
+            assert_eq!(
+                koi8r_sort_key(left, false).cmp(&koi8r_sort_key(right, false)),
+                expected
+            );
+        }
+        assert_eq!(compare_koi8r("а", "А", true), Ordering::Less);
     }
 }

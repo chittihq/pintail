@@ -9,6 +9,8 @@ pub enum CharacterSet {
     Utf8Mb4,
     /// Western European single-byte text, including the Windows extensions.
     Latin1,
+    /// Cyrillic single-byte text.
+    Koi8R,
     /// UTF-8 restricted to the basic multilingual plane.
     Utf8Mb3,
     /// Big-endian basic-plane code units.
@@ -35,6 +37,7 @@ impl CharacterSet {
         match name.to_ascii_lowercase().as_str() {
             "utf8mb4" => Some(Self::Utf8Mb4),
             "latin1" => Some(Self::Latin1),
+            "koi8r" => Some(Self::Koi8R),
             "utf8" | "utf8mb3" => Some(Self::Utf8Mb3),
             "ucs2" => Some(Self::Ucs2),
             "utf16" => Some(Self::Utf16),
@@ -50,6 +53,7 @@ impl CharacterSet {
         match self {
             Self::Utf8Mb4 => "utf8mb4_0900_ai_ci",
             Self::Latin1 => "latin1_swedish_ci",
+            Self::Koi8R => "koi8r_general_ci",
             Self::Utf8Mb3 => "utf8mb3_general_ci",
             Self::Ucs2 => "ucs2_general_ci",
             Self::Utf16 => "utf16_general_ci",
@@ -62,7 +66,7 @@ impl CharacterSet {
     #[must_use]
     pub const fn minimum_width(self) -> usize {
         match self {
-            Self::Utf8Mb4 | Self::Utf8Mb3 | Self::Latin1 => 1,
+            Self::Utf8Mb4 | Self::Utf8Mb3 | Self::Latin1 | Self::Koi8R => 1,
             Self::Ucs2 | Self::Utf16 | Self::Utf16Le => 2,
             Self::Utf32 => 4,
         }
@@ -78,6 +82,15 @@ impl CharacterSet {
             }
             match self {
                 Self::Latin1 => bytes.push(latin1_byte(character).unwrap_or(b'?')),
+                Self::Koi8R => bytes.push(if character.is_ascii() {
+                    character as u8
+                } else {
+                    KOI8R_EXTENDED
+                        .iter()
+                        .zip(128..=255)
+                        .find_map(|(value, byte)| (*value == character).then_some(byte))
+                        .unwrap_or(b'?')
+                }),
                 Self::Utf8Mb4 | Self::Utf8Mb3 => {
                     bytes.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
                 }
@@ -121,6 +134,7 @@ impl CharacterSet {
     pub fn decode_prefix(self, bytes: &[u8]) -> String {
         match self {
             Self::Latin1 => bytes.iter().map(|byte| latin1_character(*byte)).collect(),
+            Self::Koi8R => bytes.iter().map(|byte| koi8r_character(*byte)).collect(),
             Self::Utf8Mb4 | Self::Utf8Mb3 => std::str::from_utf8(utf8_prefix(bytes))
                 .unwrap_or_default()
                 .chars()
@@ -156,6 +170,7 @@ impl CharacterSet {
     pub fn decode(self, bytes: &[u8]) -> Option<String> {
         match self {
             Self::Latin1 => Some(bytes.iter().map(|byte| latin1_character(*byte)).collect()),
+            Self::Koi8R => Some(bytes.iter().map(|byte| koi8r_character(*byte)).collect()),
             Self::Utf8Mb4 | Self::Utf8Mb3 => {
                 let text = std::str::from_utf8(bytes).ok()?;
                 if self == Self::Utf8Mb3 && text.chars().any(|c| u32::from(c) > 0xffff) {
@@ -221,6 +236,33 @@ fn latin1_byte(character: char) -> Option<u8> {
     }
 }
 
+const KOI8R_EXTENDED: [char; 128] = [
+    '\u{2500}', '\u{2502}', '\u{250c}', '\u{2510}', '\u{2514}', '\u{2518}', '\u{251c}', '\u{2524}',
+    '\u{252c}', '\u{2534}', '\u{253c}', '\u{2580}', '\u{2584}', '\u{2588}', '\u{258c}', '\u{2590}',
+    '\u{2591}', '\u{2592}', '\u{2593}', '\u{2320}', '\u{25a0}', '\u{2219}', '\u{221a}', '\u{2248}',
+    '\u{2264}', '\u{2265}', '\u{a0}', '\u{2321}', '\u{b0}', '\u{b2}', '\u{b7}', '\u{f7}',
+    '\u{2550}', '\u{2551}', '\u{2552}', '\u{451}', '\u{2553}', '\u{2554}', '\u{2555}', '\u{2556}',
+    '\u{2557}', '\u{2558}', '\u{2559}', '\u{255a}', '\u{255b}', '\u{255c}', '\u{255d}', '\u{255e}',
+    '\u{255f}', '\u{2560}', '\u{2561}', '\u{401}', '\u{2562}', '\u{2563}', '\u{2564}', '\u{2565}',
+    '\u{2566}', '\u{2567}', '\u{2568}', '\u{2569}', '\u{256a}', '\u{256b}', '\u{256c}', '\u{a9}',
+    '\u{44e}', '\u{430}', '\u{431}', '\u{446}', '\u{434}', '\u{435}', '\u{444}', '\u{433}',
+    '\u{445}', '\u{438}', '\u{439}', '\u{43a}', '\u{43b}', '\u{43c}', '\u{43d}', '\u{43e}',
+    '\u{43f}', '\u{44f}', '\u{440}', '\u{441}', '\u{442}', '\u{443}', '\u{436}', '\u{432}',
+    '\u{44c}', '\u{44b}', '\u{437}', '\u{448}', '\u{44d}', '\u{449}', '\u{447}', '\u{44a}',
+    '\u{42e}', '\u{410}', '\u{411}', '\u{426}', '\u{414}', '\u{415}', '\u{424}', '\u{413}',
+    '\u{425}', '\u{418}', '\u{419}', '\u{41a}', '\u{41b}', '\u{41c}', '\u{41d}', '\u{41e}',
+    '\u{41f}', '\u{42f}', '\u{420}', '\u{421}', '\u{422}', '\u{423}', '\u{416}', '\u{412}',
+    '\u{42c}', '\u{42b}', '\u{417}', '\u{428}', '\u{42d}', '\u{429}', '\u{427}', '\u{42a}',
+];
+
+fn koi8r_character(byte: u8) -> char {
+    if byte < 128 {
+        char::from(byte)
+    } else {
+        KOI8R_EXTENDED[usize::from(byte - 128)]
+    }
+}
+
 #[cfg(test)]
 mod latin1_tests {
     use super::CharacterSet;
@@ -233,5 +275,17 @@ mod latin1_tests {
         assert_eq!(charset.encode(&decoded), bytes);
         assert_eq!(charset.encode("é€Ÿ🐬"), vec![0xe9, 0x80, 0x9f, b'?']);
         assert_eq!(charset.default_collation(), "latin1_swedish_ci");
+    }
+}
+
+#[cfg(test)]
+mod koi8r_tests {
+    use super::CharacterSet;
+    #[test]
+    fn all_single_byte_values_round_trip() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let text = CharacterSet::Koi8R.decode(&bytes).unwrap();
+        assert_eq!(CharacterSet::Koi8R.encode(&text), bytes);
+        assert_eq!(CharacterSet::Koi8R.encode("РС🐬"), vec![0xf2, 0xf3, b'?']);
     }
 }

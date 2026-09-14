@@ -1148,35 +1148,13 @@ pub(super) mod tests {
 
     #[tokio::test]
     async fn latin1_wire_decodes_statements_and_encodes_rows_and_names() {
-        use pintail_protocol::{Column, Handler, Response, RowChunk};
-        async fn collect(response: Response) -> (Vec<Column>, Vec<Vec<u8>>) {
-            match response {
-                Response::Rows(result) => (
-                    result.columns,
-                    result.rows.iter().map(<[u8]>::to_vec).collect(),
-                ),
-                Response::Stream(mut stream) => {
-                    let mut rows = Vec::new();
-                    while let Some(chunk) = stream.chunks.recv().await {
-                        match chunk {
-                            RowChunk::Rows(chunk) => rows.extend(chunk.iter().map(<[u8]>::to_vec)),
-                            RowChunk::Done => break,
-                            other @ RowChunk::Failed(..) => {
-                                panic!("unexpected stream result: {other:?}")
-                            }
-                        }
-                    }
-                    (stream.columns, rows)
-                }
-                other => panic!("unexpected query response: {other:?}"),
-            }
-        }
+        use pintail_protocol::{Handler, Response};
         let (_directory, mut backend) = local_backend();
         assert!(matches!(
             backend.query(b"SET NAMES latin1").await,
             Response::Ok(..)
         ));
-        let (columns, rows) = collect(
+        let (columns, rows) = collect_wire(
             backend
                 .query(b"SELECT '\xe9' AS '\xe9',HEX('\xe9'),'a\\0'<'a'")
                 .await,
@@ -1193,7 +1171,7 @@ pub(super) mod tests {
             backend.query(b"SET character_set_results=utf8mb4").await,
             Response::Ok(..)
         ));
-        let (columns, rows) = collect(backend.query(b"SELECT '\xe9' AS label").await).await;
+        let (columns, rows) = collect_wire(backend.query(b"SELECT '\xe9' AS label").await).await;
         assert_eq!(columns[0].character_set, 255);
         assert_eq!(rows, vec![vec![2, 0xc3, 0xa9]]);
         assert_eq!(columns[0].column_length, 4);
@@ -1201,7 +1179,7 @@ pub(super) mod tests {
             backend.query(b"SET character_set_results=NULL").await,
             Response::Ok(..)
         ));
-        let (columns, rows) = collect(backend.query(b"SELECT '\xe9' AS label").await).await;
+        let (columns, rows) = collect_wire(backend.query(b"SELECT '\xe9' AS label").await).await;
         assert_eq!(columns[0].character_set, 8);
         assert_eq!(columns[0].column_length, 1);
         assert_eq!(rows, vec![vec![1, 0xe9]]);
@@ -1212,7 +1190,7 @@ pub(super) mod tests {
         let prepared = Handler::prepare(&mut backend, b"SELECT ? AS '\xe9'")
             .await
             .unwrap();
-        let (columns, rows) = collect(
+        let (columns, rows) = collect_wire(
             Handler::execute(
                 &mut backend,
                 prepared.id,
@@ -1223,6 +1201,56 @@ pub(super) mod tests {
         .await;
         assert_eq!(columns[0].character_set, 8);
         assert_eq!(rows, vec![vec![0, 0, 1, 0xe9]]);
+    }
+
+    async fn collect_wire(
+        response: pintail_protocol::Response,
+    ) -> (Vec<pintail_protocol::Column>, Vec<Vec<u8>>) {
+        use pintail_protocol::{Response, RowChunk};
+        match response {
+            Response::Rows(result) => (
+                result.columns,
+                result.rows.iter().map(<[u8]>::to_vec).collect(),
+            ),
+            Response::Stream(mut stream) => {
+                let mut rows = Vec::new();
+                while let Some(chunk) = stream.chunks.recv().await {
+                    match chunk {
+                        RowChunk::Rows(chunk) => rows.extend(chunk.iter().map(<[u8]>::to_vec)),
+                        RowChunk::Done => break,
+                        other @ RowChunk::Failed(..) => {
+                            panic!("unexpected stream result: {other:?}")
+                        }
+                    }
+                }
+                (stream.columns, rows)
+            }
+            other => panic!("unexpected query response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn character_set_command_converts_ucs2_results_to_koi8r() {
+        use pintail_protocol::{Handler, Response};
+        let (_directory, mut backend) = local_backend();
+        for sql in [
+            "SET NAMES latin1",
+            "SET CHARACTER SET koi8r",
+            "SET character_set_connection=ucs2",
+        ] {
+            assert!(
+                matches!(backend.query(sql.as_bytes()).await, Response::Ok(..)),
+                "{sql}"
+            );
+        }
+        let (columns, rows) = collect_wire(
+            backend
+                .query(b"SELECT LPAD(_ucs2 X'0420',3,_ucs2 X'0421') AS letters")
+                .await,
+        )
+        .await;
+        assert_eq!(columns[0].character_set, 7);
+        assert_eq!(rows, vec![vec![3, 0xf3, 0xf3, 0xf2]]);
     }
 
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {

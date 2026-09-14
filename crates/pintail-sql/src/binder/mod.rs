@@ -9107,11 +9107,12 @@ mod tests {
     fn convert_using_rejects_charsets_it_cannot_transcode() {
         for charset in [
             "utf8", "utf8mb3", "utf8mb4", "binary", "ucs2", "utf16", "utf16le", "utf32", "latin1",
+            "koi8r",
         ] {
             bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events"))
                 .unwrap_or_else(|error| panic!("{charset} should bind: {error:?}"));
         }
-        for charset in ["ascii", "koi8r"] {
+        for charset in ["ascii", "koi8u"] {
             assert!(matches!(
                 bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events")),
                 Err(BindError::InvalidScalarFunction(_))
