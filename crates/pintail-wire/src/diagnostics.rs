@@ -491,6 +491,26 @@ pub(super) mod tests {
         assert_eq!(result.rows[0], vec![pintail_types::Value::Boolean(true); 2]);
     }
 
+    #[tokio::test]
+    async fn short_numeric_calendar_casts_use_numeric_date_rules() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT CAST(1111 AS DATE), CAST(011111 AS DATE), CAST('1111' AS DATE), CAST(1111 AS DATETIME), CAST('1111' AS DATETIME), CAST(1111.1234567 AS DATETIME(6))")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::Utf8("2000-11-11".into()),
+                pintail_types::Value::Utf8("2001-11-11".into()),
+                pintail_types::Value::Null,
+                pintail_types::Value::Utf8("2000-11-11 00:00:00".into()),
+                pintail_types::Value::Null,
+                pintail_types::Value::Utf8("2000-11-11 00:00:00.000000".into())
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

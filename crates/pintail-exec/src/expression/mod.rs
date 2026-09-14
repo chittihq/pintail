@@ -4430,6 +4430,39 @@ fn cast_temporal_carrier(
     target: DataType,
     statement_date: Option<&Value>,
 ) -> Option<Value> {
+    if matches!(target, DataType::Date32 | DataType::DateTime64 { .. })
+        && matches!(
+            source,
+            Some(
+                DataType::Int8
+                    | DataType::Int16
+                    | DataType::Int32
+                    | DataType::Int64
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+                    | DataType::Float32
+                    | DataType::Float64
+                    | DataType::Decimal { .. }
+            )
+        )
+    {
+        let text = scalar_string(value).ok()?;
+        let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+        if let Some(datetime) = whole.parse().ok().and_then(temporal::numeric_datetime) {
+            if target == DataType::Date32 {
+                return Some(Value::Utf8(datetime.format("%Y-%m-%d").to_string()));
+            }
+            let mut calendar = datetime.format("%Y-%m-%d %H:%M:%S").to_string();
+            // A numeric date has no clock to which a fraction can belong.
+            if !fraction.is_empty() && whole.parse::<i128>().ok()? >= 101_000_000 {
+                calendar.push('.');
+                calendar.push_str(fraction);
+            }
+            return cast_datetime_precision(&Value::Utf8(calendar), target, statement_date);
+        }
+    }
     if matches!(target, DataType::Time64 { .. })
         && matches!(
             source,
