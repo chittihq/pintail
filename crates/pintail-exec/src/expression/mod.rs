@@ -2915,6 +2915,24 @@ fn evaluate_eager_scalar_inner(
                 &needle, &haystack, 1, binary, collation,
             )))
         }
+        ScalarFunction::FindInSet if binary_operand(values) => {
+            let bytes = |value: &Value| -> Result<Vec<u8>, ExecError> {
+                match value {
+                    Value::Binary(bytes) => Ok(bytes.clone()),
+                    _ => Ok(scalar_string(value)?.into_bytes()),
+                }
+            };
+            let needle = bytes(&values[0])?;
+            let list = bytes(&values[1])?;
+            let position = if needle.contains(&b',') || list.is_empty() {
+                0
+            } else {
+                list.split(|byte| *byte == b',')
+                    .position(|entry| entry == needle)
+                    .map_or(0, |index| index as u64 + 1)
+            };
+            Ok(Value::UInt64(position))
+        }
         ScalarFunction::FindInSet => {
             let needle = scalar_string(&values[0])?;
             let list = scalar_string(&values[1])?;

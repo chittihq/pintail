@@ -1212,3 +1212,20 @@ fn ordered_group_concat_places_later_equal_keys_first() {
         assert_eq!(evaluate_rows(expression, 4), expected, "{expression}");
     }
 }
+
+#[test]
+fn find_in_set_uses_bytes_when_either_operand_is_binary() {
+    for (expression, expected) in [
+        ("FIND_IN_SET(BINARY 'a',BINARY 'A,B,C')", "0"),
+        ("FIND_IN_SET('a',BINARY 'A,B,C')", "0"),
+        ("FIND_IN_SET(BINARY 'a','A,B,C')", "0"),
+        ("FIND_IN_SET('a','A,B,C')", "1"),
+        ("FIND_IN_SET(_binary X'FF',_binary X'FE2CFF')", "2"),
+        ("FIND_IN_SET(_binary X'C3A9','a,é')", "2"),
+        ("FIND_IN_SET('é',_binary X'612CC3A9')", "2"),
+        ("FIND_IN_SET(_binary '',_binary ',a')", "1"),
+        ("FIND_IN_SET(_binary '',_binary '')", "0"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
