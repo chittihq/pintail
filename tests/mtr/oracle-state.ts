@@ -20,7 +20,21 @@ export async function captureOracleState(connection: mysql.Connection) {
   }
   return {
     async restore() {
-      const current = await globalVariables(connection)
+      let current = await globalVariables(connection)
+      if (['gtid_executed', 'gtid_purged'].some((name) => current.get(name) !== globals.get(name))) {
+        if (globals.get('gtid_executed') || globals.get('gtid_purged')) {
+          throw new Error('Oracle isolation requires an empty startup GTID history')
+        }
+        // GTID history is generated state, not a writable configuration variable.
+        // This reset affects only the fresh, disposable local-replay oracle.
+        try {
+          await connection.query('RESET BINARY LOGS AND GTIDS')
+        } catch (error) {
+          if ((error as { code?: string }).code !== 'ER_PARSE_ERROR') throw error
+          await connection.query('RESET MASTER')
+        }
+        current = await globalVariables(connection)
+      }
       // Restore write admission before restoring the grant tables.
       const names = ['super_read_only', 'read_only', ...globals.keys()]
       for (const name of new Set(names)) {
