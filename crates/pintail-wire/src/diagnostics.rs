@@ -442,6 +442,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn time_literals_accept_day_prefix_spacing_and_short_clocks() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT TIME'1  01:01:01', TIME'1  01:01', TIME'1  01', TIME'0  01', TIME'1 '")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("25:01:01".into()),
+                Value::Utf8("25:01:00".into()),
+                Value::Utf8("25:00:00".into()),
+                Value::Utf8("01:00:00".into()),
+                Value::Utf8("00:00:01".into())
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn date_column_bounds_accept_mixed_separators() {
         let (_directory, backend) = local_backend();
         let equal = backend.execute("SELECT day FROM (SELECT DATE'2001-01-01' AS day) AS dates WHERE day < '2001-01/01'").await.unwrap();

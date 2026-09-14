@@ -4847,8 +4847,9 @@ fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
         return None;
     }
 
+    let has_days = clock.contains(' ');
     let (days, clock) = clock.split_once(' ').map_or((0, clock), |(days, clock)| {
-        (days.parse::<u64>().unwrap_or(u64::MAX), clock)
+        (days.parse::<u64>().unwrap_or(u64::MAX), clock.trim_start())
     });
     let parts = clock.split(':').collect::<Vec<_>>();
     let (hours, minutes, seconds) = match parts.as_slice() {
@@ -4860,7 +4861,11 @@ fn cast_mysql_time(text: &str, fsp: u8) -> Option<String> {
         [hours, minutes] => (hours.parse::<u64>().ok()?, minutes.parse::<u64>().ok()?, 0),
         [compact] if !compact.is_empty() && compact.bytes().all(|digit| digit.is_ascii_digit()) => {
             let value = compact.parse::<u64>().ok()?;
-            (value / 10_000, value / 100 % 100, value % 100)
+            if has_days {
+                (value, 0, 0)
+            } else {
+                (value / 10_000, value / 100 % 100, value % 100)
+            }
         }
         _ => return None,
     };
