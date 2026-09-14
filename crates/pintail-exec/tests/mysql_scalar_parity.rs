@@ -609,7 +609,7 @@ fn encoded_constants_keep_temporal_and_binary_comparisons() {
         ("'a\\0' < 'a'", "Boolean(true)"),
         ("BINARY 'a\\0' > 'a'", "Boolean(true)"),
         ("HEX(CONVERT(0xAA USING ucs2))", "00AA"),
-        ("HEX(CONVERT(0xFF USING utf8mb4))", "NULL"),
+        ("HEX(CONVERT(0xFF USING utf8mb4))", ""),
         ("HEX(CONVERT(0xD800 USING utf16))", "NULL"),
     ] {
         pintail_sql::set_session_character_set(Some(pintail_types::CharacterSet::Ucs2));
@@ -1095,6 +1095,21 @@ fn chained_between_binds_its_upper_bound_before_the_outer_comparison() {
             "id BETWEEN 0 AND 2 BETWEEN 0 AND 1 BETWEEN 0 AND 1",
             "Boolean(false)",
         ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
+
+#[test]
+fn utf8_conversion_keeps_the_valid_prefix_before_invalid_bytes() {
+    for (expression, expected) in [
+        ("HEX(CONVERT(0xFF USING utf8mb4))", ""),
+        ("HEX(CONVERT(0x41FF42 USING utf8mb4))", "41"),
+        ("HEX(CONVERT(0x41E1 USING utf8mb4))", "41"),
+        ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb3))", "NULL"),
+        ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb4))", "41F09D8C8642"),
+        ("HEX(CONVERT(0xFF USING utf8mb3))", ""),
+        ("HEX(CONVERT(IF(id=1,0x41FF42,0x42) USING utf8mb4))", "41"),
     ] {
         assert_eq!(scalar(expression), expected, "{expression}");
     }

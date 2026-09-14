@@ -1473,6 +1473,7 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::Utf8Prefix
                     | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
@@ -1677,6 +1678,7 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::Utf8Prefix
                     | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
@@ -2249,6 +2251,10 @@ fn evaluate_eager_scalar_inner(
                 text.to_uppercase()
             }))
         }
+        ScalarFunction::Utf8Prefix => match &values[0] {
+            Value::Binary(bytes) => Ok(Value::Binary(pintail_types::utf8_prefix(bytes).to_vec())),
+            _ => Err(ExecError::InvalidExpressionType),
+        },
         ScalarFunction::BitBytes(width) => {
             let bytes = mysql_u64(&values[0])?.to_be_bytes();
             let first = bytes

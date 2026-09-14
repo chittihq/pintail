@@ -917,6 +917,8 @@ pub enum ScalarFunction {
     FloatString,
     /// Convert a BIT value to its declared big-endian byte string.
     BitBytes(u8),
+    /// Retain complete UTF-8 before the first malformed byte sequence.
+    Utf8Prefix,
     /// Normalize Unicode into a SQL character set and retain its identity.
     TextCharset(pintail_types::CharacterSet, NamedCollation),
     /// Read encoded bytes as Unicode, retaining the original character set.

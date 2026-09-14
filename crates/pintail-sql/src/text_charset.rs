@@ -188,6 +188,18 @@ pub(crate) fn literal_value(expression: &BoundExpr) -> Option<std::borrow::Cow<'
             )))
         }
         BoundExprKind::Scalar {
+            function: ScalarFunction::Utf8Prefix,
+            args,
+        } => {
+            let value = literal_value(&args[0])?;
+            let Value::Binary(bytes) = value.as_ref() else {
+                return None;
+            };
+            Some(Cow::Owned(Value::Binary(
+                pintail_types::utf8_prefix(bytes).to_vec(),
+            )))
+        }
+        BoundExprKind::Scalar {
             function: ScalarFunction::DecodeText(charset),
             args,
         } => {

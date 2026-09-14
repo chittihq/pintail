@@ -19,6 +19,13 @@ pub enum CharacterSet {
     Utf32,
 }
 
+/// The longest complete UTF-8 prefix before malformed or incomplete bytes.
+#[must_use]
+pub fn utf8_prefix(bytes: &[u8]) -> &[u8] {
+    let end = std::str::from_utf8(bytes).map_or_else(|error| error.valid_up_to(), str::len);
+    &bytes[..end]
+}
+
 impl CharacterSet {
     /// Resolve a SQL character-set name.
     #[must_use]

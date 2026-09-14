@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Binary-to-UTF-8 conversion keeps the well-formed prefix before malformed
+  bytes, including an empty result when the first byte is invalid.
+
 - `CONCAT` and `CONCAT_WS` retain declared BIT-column byte widths through
   direct and derived projections instead of formatting the numeric carrier.
 

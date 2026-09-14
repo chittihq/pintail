@@ -1099,6 +1099,11 @@ pub(super) fn bind_convert(
     {
         let argument = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
         return if argument.data_type == Some(DataType::Binary) {
+            let argument = if encoding.minimum_width() == 1 {
+                crate::text_charset::wrap(argument, ScalarFunction::Utf8Prefix, DataType::Binary)
+            } else {
+                argument
+            };
             let mut decoded = crate::text_charset::wrap(
                 argument,
                 ScalarFunction::DecodeText(encoding),
@@ -1557,7 +1562,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } | ScalarFunction::BitNot => (args[0].data_type, args[0].nullable),
-        ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::Utf8Prefix | ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.
