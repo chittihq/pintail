@@ -357,6 +357,9 @@ pub(super) struct JoinGroupPlan {
 /// caller's buffer avoids both.
 fn append_collation_key(text: &str, collation: Collation, out: &mut Vec<u8>) {
     match collation {
+        Collation::Latin1SwedishCi | Collation::Latin1Bin => out.extend_from_slice(
+            &crate::collation::latin1_sort_key(text, collation == Collation::Latin1Bin),
+        ),
         Collation::Utf8mb4Bin => {
             out.extend_from_slice(&crate::collation::bin_sort_key(text));
         }
@@ -2998,6 +3001,9 @@ pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
     // with the other collation's semantics.
     let mut key = Vec::new();
     match collation {
+        Collation::Latin1SwedishCi | Collation::Latin1Bin => {
+            key = crate::collation::latin1_sort_key(text, collation == Collation::Latin1Bin);
+        }
         Collation::Utf8mb4GeneralCi => key = crate::collation::general_ci_sort_key(text),
         Collation::Utf8mb4UnicodeCi => key = crate::collation::unicode_ci_sort_key(text),
         Collation::Utf8mb4Bin => key = crate::collation::bin_sort_key(text),
@@ -3023,6 +3029,9 @@ pub(crate) fn collation_sort_key(text: &str, collation: Collation) -> Vec<u8> {
 #[must_use]
 pub fn compare_collated_text(left: &str, right: &str, collation: Collation) -> std::cmp::Ordering {
     match collation {
+        Collation::Latin1SwedishCi | Collation::Latin1Bin => {
+            crate::collation::compare_latin1(left, right, collation == Collation::Latin1Bin)
+        }
         Collation::Utf8mb4GeneralCi => crate::collation::compare_general_ci(left, right),
         Collation::Utf8mb4UnicodeCi => crate::collation::compare_unicode_ci(left, right),
         Collation::Utf8mb4Bin => crate::collation::compare_bin(left, right),

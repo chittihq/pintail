@@ -25,6 +25,10 @@ use unicode_ci_table::{
 /// A text collation the executor can compare.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Default)]
 pub enum Collation {
+    /// Western European flat weights with PAD SPACE semantics.
+    Latin1SwedishCi,
+    /// Single-byte code values with PAD SPACE semantics.
+    Latin1Bin,
     /// `MySQL` 8's default: UCA 9.0.0, accent- and case-insensitive.
     #[default]
     Utf8mb40900AiCi,
@@ -60,6 +64,8 @@ impl Collation {
     #[must_use]
     pub fn from_mysql_name(name: &str) -> Option<Self> {
         match pintail_sql::comparison_collation(name).unwrap_or(name) {
+            "latin1_swedish_ci" => Some(Self::Latin1SwedishCi),
+            "latin1_bin" => Some(Self::Latin1Bin),
             "utf8mb4_0900_ai_ci" => Some(Self::Utf8mb40900AiCi),
             "utf8mb4_0900_as_cs" => Some(Self::Utf8mb40900AsCs),
             "utf8mb4_general_ci" => Some(Self::Utf8mb4GeneralCi),
@@ -73,6 +79,8 @@ impl Collation {
     #[must_use]
     pub const fn mysql_name(self) -> &'static str {
         match self {
+            Self::Latin1SwedishCi => "latin1_swedish_ci",
+            Self::Latin1Bin => "latin1_bin",
             Self::Utf8mb40900AiCi => "utf8mb4_0900_ai_ci",
             Self::Utf8mb40900AsCs => "utf8mb4_0900_as_cs",
             Self::Utf8mb4GeneralCi => "utf8mb4_general_ci",
@@ -81,6 +89,46 @@ impl Collation {
             Self::Json => "json",
         }
     }
+}
+
+fn latin1_weights(text: &str, binary: bool) -> impl Iterator<Item = u16> {
+    const ACCENT_WEIGHTS: [u8; 64] = [
+        0x41, 0x41, 0x41, 0x41, 0x5c, 0x5b, 0x5c, 0x43, 0x45, 0x45, 0x45, 0x45, 0x49, 0x49, 0x49,
+        0x49, 0x44, 0x4e, 0x4f, 0x4f, 0x4f, 0x4f, 0x5d, 0xd7, 0xd8, 0x55, 0x55, 0x55, 0x59, 0x59,
+        0xde, 0xdf, 0x41, 0x41, 0x41, 0x41, 0x5c, 0x5b, 0x5c, 0x43, 0x45, 0x45, 0x45, 0x45, 0x49,
+        0x49, 0x49, 0x49, 0x44, 0x4e, 0x4f, 0x4f, 0x4f, 0x4f, 0x5d, 0xf7, 0xd8, 0x55, 0x55, 0x55,
+        0x59, 0x59, 0xde, 0xff,
+    ];
+    pintail_types::CharacterSet::Latin1
+        .encode(text)
+        .into_iter()
+        .map(move |byte| {
+            u16::from(if binary {
+                byte
+            } else {
+                match byte {
+                    b'a'..=b'z' => byte.to_ascii_uppercase(),
+                    0xc0..=0xff => ACCENT_WEIGHTS[usize::from(byte - 0xc0)],
+                    _ => byte,
+                }
+            })
+        })
+}
+
+/// Compares encoded single-byte values, including insignificant trailing spaces.
+#[must_use]
+pub fn compare_latin1(left: &str, right: &str, binary: bool) -> std::cmp::Ordering {
+    compare_padded(
+        latin1_weights(left, binary),
+        latin1_weights(right, binary),
+        u16::from(b' '),
+    )
+}
+
+/// A single-byte collation key with the same padding rules as comparison.
+#[must_use]
+pub fn latin1_sort_key(text: &str, binary: bool) -> Vec<u8> {
+    padded_sort_key(latin1_weights(text, binary), u16::from(b' '))
 }
 
 /// The `general_ci` weight of one character.
@@ -507,6 +555,32 @@ mod tests {
             assert!(
                 unicode_ci_sort_key(left) <= unicode_ci_sort_key(right),
                 "{left:?} vs {right:?}",
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod latin1_tests {
+    use super::Collation;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn latin1_weights_preserve_padding_and_swedish_letters() {
+        let collation = Collation::from_mysql_name("latin1_swedish_ci").expect("Latin-1 collation");
+        for (left, right, expected) in [
+            ("a\0", "a", Ordering::Less),
+            ("a", "A ", Ordering::Equal),
+            ("a", "å", Ordering::Less),
+            ("å", "ä", Ordering::Less),
+            ("ä", "ö", Ordering::Less),
+            ("é", "e", Ordering::Equal),
+            ("ü", "y", Ordering::Equal),
+        ] {
+            assert_eq!(
+                crate::compare_collated_text(left, right, collation),
+                expected,
+                "{left:?} versus {right:?}"
             );
         }
     }

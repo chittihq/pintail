@@ -1116,6 +1116,36 @@ pub(super) mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn latin1_comparisons_and_grouping_use_encoded_weights() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend.execute("CREATE TABLE labels (label VARCHAR(10) CHARACTER SET latin1 COLLATE latin1_swedish_ci)").await.unwrap();
+        backend
+            .execute("INSERT INTO labels VALUES ('a'),('A'),('ä'),('å'),('z'),('é'),('e')")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT COUNT(*) FROM labels GROUP BY label ORDER BY label")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows,
+            vec![
+                vec![Value::UInt64(2)],
+                vec![Value::UInt64(2)],
+                vec![Value::UInt64(1)],
+                vec![Value::UInt64(1)],
+                vec![Value::UInt64(1)]
+            ]
+        );
+        let result = backend.execute("SELECT CONVERT('é' USING latin1) COLLATE latin1_bin > CONVERT('€' USING latin1) COLLATE latin1_bin,CONVERT('a\\0' USING latin1)<CONVERT('a' USING latin1)").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Boolean(true), Value::Boolean(true)]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

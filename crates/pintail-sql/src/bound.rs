@@ -32,12 +32,14 @@ pub const BIN_TEXT_COLLATION: &str = "utf8mb4_bin";
 /// neither, so it is its own profile and not an alias for one.
 pub const UNICODE_CI_TEXT_COLLATION: &str = "utf8mb4_unicode_ci";
 pub const AS_CS_TEXT_COLLATION: &str = "utf8mb4_0900_as_cs";
-pub const SUPPORTED_TEXT_COLLATIONS: [&str; 5] = [
+pub const SUPPORTED_TEXT_COLLATIONS: [&str; 7] = [
     DEFAULT_TEXT_COLLATION,
     AS_CS_TEXT_COLLATION,
     GENERAL_CI_TEXT_COLLATION,
     UNICODE_CI_TEXT_COLLATION,
     BIN_TEXT_COLLATION,
+    "latin1_swedish_ci",
+    "latin1_bin",
 ];
 const MIXED_COLLATION_PREFIX: &str = "mixed:";
 
@@ -605,6 +607,10 @@ pub fn session_default_collation() -> &'static str {
 /// One of the executable text collations, by name.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum NamedCollation {
+    /// `latin1_swedish_ci`.
+    Latin1SwedishCi,
+    /// `latin1_bin`.
+    Latin1Bin,
     /// `utf8mb4_0900_ai_ci`.
     Default,
     /// `utf8mb4_0900_as_cs`.
@@ -622,7 +628,11 @@ impl NamedCollation {
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
         let lower = name.to_ascii_lowercase();
-        if lower == DEFAULT_TEXT_COLLATION {
+        if lower == "latin1_swedish_ci" {
+            Some(Self::Latin1SwedishCi)
+        } else if lower == "latin1_bin" {
+            Some(Self::Latin1Bin)
+        } else if lower == DEFAULT_TEXT_COLLATION {
             Some(Self::Default)
         } else if lower == AS_CS_TEXT_COLLATION {
             Some(Self::AccentCaseSensitive)
@@ -655,6 +665,8 @@ impl NamedCollation {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Latin1SwedishCi => "latin1_swedish_ci",
+            Self::Latin1Bin => "latin1_bin",
             Self::Default => DEFAULT_TEXT_COLLATION,
             Self::AccentCaseSensitive => AS_CS_TEXT_COLLATION,
             Self::GeneralCi => GENERAL_CI_TEXT_COLLATION,

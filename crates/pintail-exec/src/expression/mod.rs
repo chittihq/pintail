@@ -5869,7 +5869,7 @@ fn locate_collated(
     if binary
         || matches!(
             collation,
-            Collation::Utf8mb4Bin | Collation::Utf8mb40900AsCs
+            Collation::Utf8mb4Bin | Collation::Latin1Bin | Collation::Utf8mb40900AsCs
         )
     {
         return locate(needle, haystack, start);
@@ -5988,7 +5988,7 @@ fn compile_regex(
     }
     let mut case_insensitive = !matches!(
         collation,
-        Collation::Utf8mb40900AsCs | Collation::Utf8mb4Bin
+        Collation::Utf8mb40900AsCs | Collation::Utf8mb4Bin | Collation::Latin1Bin
     );
     let mut multi_line = false;
     let mut dot_matches_new_line = false;

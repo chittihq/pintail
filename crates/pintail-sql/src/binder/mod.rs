@@ -8320,7 +8320,7 @@ mod tests {
                 1,
                 vec![
                     Column::new(1, "name", DataType::Utf8, false)
-                        .with_collation(Some("latin1_swedish_ci".to_owned())),
+                        .with_collation(Some("utf8mb4_polish_ci".to_owned())),
                     Column::new(2, "label", DataType::Utf8, false)
                         .with_collation(Some("utf8mb4_general_ci".to_owned())),
                 ],
@@ -8353,9 +8353,10 @@ mod tests {
         let literals = query
             .projection
             .iter()
-            .map(|item| match &item.expr.kind {
-                BoundExprKind::Literal(value) => value.clone(),
-                other => panic!("not a literal: {other:?}"),
+            .map(|item| {
+                crate::text_charset::literal_value(&item.expr)
+                    .expect("constant literal")
+                    .into_owned()
             })
             .collect::<Vec<_>>();
         assert_eq!(literals[0], Value::Utf8("dq".to_owned()));
@@ -8846,7 +8847,7 @@ mod tests {
         ] {
             let error = bind(sql).expect_err("unsupported collation must reject");
             assert!(
-                error.to_string().contains("latin1_swedish_ci"),
+                error.to_string().contains("utf8mb4_polish_ci"),
                 "{sql}: {error}"
             );
         }
@@ -8860,8 +8861,7 @@ mod tests {
             .expect("literal with declared collation");
         bind("SELECT Name COLLATE utf8mb4_bin FROM Events").expect("bin is a declared profile");
         // Replicated text is stored transcoded to UTF-8, so a supported
-        // override applies even over a latin1-sourced column (MySQL would
-        // raise a charset mismatch; documented divergence).
+        // override applies even over an unsupported source collation.
         bind("SELECT name COLLATE utf8mb4_0900_ai_ci FROM legacy")
             .expect("override over a transcoded profile");
 
@@ -9106,12 +9106,12 @@ mod tests {
     #[test]
     fn convert_using_rejects_charsets_it_cannot_transcode() {
         for charset in [
-            "utf8", "utf8mb3", "utf8mb4", "binary", "ucs2", "utf16", "utf16le", "utf32",
+            "utf8", "utf8mb3", "utf8mb4", "binary", "ucs2", "utf16", "utf16le", "utf32", "latin1",
         ] {
             bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events"))
                 .unwrap_or_else(|error| panic!("{charset} should bind: {error:?}"));
         }
-        for charset in ["latin1", "ascii", "koi8r"] {
+        for charset in ["ascii", "koi8r"] {
             assert!(matches!(
                 bind(&format!("SELECT CONVERT(Name USING {charset}) FROM Events")),
                 Err(BindError::InvalidScalarFunction(_))
