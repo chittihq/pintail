@@ -192,10 +192,18 @@ pub(super) fn bind_window_function(
             }) => *count,
             Some(_) => return Err(BindError::UnsupportedExpression(function.to_string())),
         };
-        let value_type = bound[0].data_type;
-        // MySQL coerces the default to the value's type. Without this a
-        // literal 0 defaulting a BIGINT UNSIGNED column yields a signed
-        // value, and the output column rejects the mixed types.
+        let value_type = if let Some(default) = bound.get(2) {
+            conditional_result_type(&[bound[0].clone(), default.clone()])?
+        } else {
+            bound[0].data_type
+        };
+        // Both the offset value and its default share one result domain.
+        // A text default widens numeric values instead of becoming numeric zero.
+        if let Some(target) = value_type
+            && bound[0].data_type != Some(target)
+        {
+            bound[0] = bind_scalar(ScalarFunction::Cast(target), vec![bound[0].clone()])?;
+        }
         let default = match (bound.get(2).cloned(), value_type) {
             (Some(expr), Some(target)) if expr.data_type != Some(target) => {
                 Some(bind_scalar(ScalarFunction::Cast(target), vec![expr])?)

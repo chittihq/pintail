@@ -715,6 +715,29 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn window_offset_text_defaults_preserve_both_value_domains() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE readings (v INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO readings VALUES (1),(2)")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT LEAD(v,1,'end') OVER (ORDER BY v), LAG(v,1,'start') OVER (ORDER BY v) FROM readings ORDER BY v").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Utf8("2".into()), Value::Utf8("start".into())]
+        );
+        assert_eq!(
+            result.rows[1],
+            vec![Value::Utf8("end".into()), Value::Utf8("1".into())]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
