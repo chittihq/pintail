@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Result labels use the server metadata character repertoire independently
+  of values. Connection collation changes also update the literal charset.
+
 - `SET sql_mode = DEFAULT` restores the default modes, including zero-date
   validation, instead of storing the keyword as a mode name.
 

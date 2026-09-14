@@ -1737,6 +1737,18 @@ impl Backend {
             "collation_connection" => {
                 let collation = connection_collation(&value)?;
                 session.collation_connection = collation;
+                // A collation belongs to one character set. Changing it also
+                // changes how new connection literals are converted to bytes.
+                let charset = value
+                    .split('_')
+                    .next()
+                    .unwrap_or(&value)
+                    .to_ascii_lowercase();
+                session.charset_connection = if charset == "utf8" {
+                    "utf8mb3".to_owned()
+                } else {
+                    charset
+                };
                 session.charset_byte = collation_byte(collation, &session.charset_connection);
                 Ok(())
             }
@@ -2961,6 +2973,20 @@ fn mysql_text_character_set(charset: &str, negotiated: u16) -> u16 {
     }
 }
 
+/// Metadata identifiers use the server's basic-plane Unicode repertoire,
+/// independently of the character set used to encode result values.
+fn mysql_metadata_name(name: &str) -> String {
+    name.chars()
+        .map(|character| {
+            if u32::from(character) > 0xffff {
+                '?'
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 fn negotiated_column(
     field: &QueryField,
     declared: &Column,
@@ -2969,7 +2995,7 @@ fn negotiated_column(
     negotiated: u16,
 ) -> Column {
     let mut column = declared.clone();
-    column.column.clone_from(&field.name);
+    column.column = mysql_metadata_name(&field.name);
     if column.character_set != 63 {
         column.character_set = mysql_text_character_set(charset, negotiated);
         if column.character_set == 63 {
@@ -3110,7 +3136,7 @@ pub(crate) fn mysql_column(
     } else {
         63
     };
-    let mut column = Column::new(field.name.clone(), coltype);
+    let mut column = Column::new(mysql_metadata_name(&field.name), coltype);
     column.column_length = column_length;
     column.character_set = character_set;
     column.colflags = colflags;
@@ -4009,7 +4035,7 @@ fn describe_parameters(fields: &mut [QueryField], statement: &Prepared, values: 
         } else {
             ColumnType::MysqlTypeLongBlob
         };
-        let mut wire = Column::new(field.name.clone(), coltype);
+        let mut wire = Column::new(mysql_metadata_name(&field.name), coltype);
         wire.column_length = u32::try_from(bytes).unwrap_or(u32::MAX);
         // Any text set: the connection's result charset replaces it.
         wire.character_set = 255;

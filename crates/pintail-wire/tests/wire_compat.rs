@@ -530,6 +530,37 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("widen division");
     connection
+        .query_drop("SET NAMES utf8mb4")
+        .await
+        .expect("Unicode connection");
+    let named = connection
+        .query_iter("SELECT HEX('𝌆'), '𝌆' AS `𝌆`")
+        .await
+        .expect("supplementary labels");
+    assert_eq!(named.columns_ref()[0].name_str(), "HEX('?')");
+    assert_eq!(named.columns_ref()[1].name_str(), "?");
+    named
+        .drop_result()
+        .await
+        .expect("drain supplementary labels");
+    connection
+        .query_drop("SET character_set_connection = utf8mb3")
+        .await
+        .expect("basic-plane connection");
+    connection
+        .query_drop("SET collation_connection = utf8mb4_0900_ai_ci")
+        .await
+        .expect("collation updates charset");
+    let encoded: Option<String> = connection
+        .query_first("SELECT HEX('𝌆')")
+        .await
+        .expect("supplementary value");
+    assert_eq!(encoded.as_deref(), Some("F09D8C86"));
+    connection
+        .query_drop("SET NAMES utf8mb4")
+        .await
+        .expect("restore Unicode defaults");
+    connection
         .query_drop("SET @saved_locale = @@lc_time_names")
         .await
         .expect("save locale");
