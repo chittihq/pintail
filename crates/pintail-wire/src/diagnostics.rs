@@ -1029,6 +1029,25 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn executable_comment_delimiters_bound_projection_names() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute(
+                "WITH values_cte AS (SELECT 0 /*! ) */ SELECT * FROM values_cte a, values_cte b",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result
+                .fields
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["0", "0"]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

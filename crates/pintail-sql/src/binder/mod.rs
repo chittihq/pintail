@@ -7557,7 +7557,7 @@ fn first_literal_name(sql: &str, expr: &Expr) -> Option<String> {
     let span = expr.span();
     let start = (span.start.line, span.start.column);
     let end = (span.end.line, span.end.column);
-    let tokens = source_tokens(sql)?;
+    let tokens = source_tokens(sql, false)?;
     let mut first = tokens.iter().position(|token| {
         let at = (token.span.start.line, token.span.start.column);
         at >= start && at <= end && text(&token.token).is_some()
@@ -7636,6 +7636,7 @@ struct SourceTokens {
     sql: String,
     mode: crate::ParseMode,
     tokens: LocatedTokens,
+    expanded: LocatedTokens,
 }
 
 std::thread_local! {
@@ -7646,7 +7647,7 @@ std::thread_local! {
 }
 
 /// `sql`'s tokens, tokenized once per statement text.
-fn source_tokens(sql: &str) -> Option<LocatedTokens> {
+fn source_tokens(sql: &str, expand: bool) -> Option<LocatedTokens> {
     SOURCE_TOKENS.with(|cache| {
         let mut cache = cache.borrow_mut();
         let mode = crate::session_parse_mode();
@@ -7654,22 +7655,26 @@ fn source_tokens(sql: &str) -> Option<LocatedTokens> {
             && cached.sql == sql
             && cached.mode == mode
         {
-            return Some(std::rc::Rc::clone(&cached.tokens));
+            return Some(std::rc::Rc::clone(if expand {
+                &cached.expanded
+            } else {
+                &cached.tokens
+            }));
         }
+        let dialect = crate::PintailDialect(sqlparser::dialect::MySqlDialect {}, mode);
         let tokens = std::rc::Rc::new(
-            sqlparser::tokenizer::Tokenizer::new(
-                &crate::PintailDialect(sqlparser::dialect::MySqlDialect {}, mode),
-                sql,
-            )
-            .tokenize_with_location()
-            .ok()?,
+            sqlparser::tokenizer::Tokenizer::new(&dialect, sql)
+                .tokenize_with_location()
+                .ok()?,
         );
+        let expanded = std::rc::Rc::new(crate::tokenize_mysql(sql, &dialect).ok()?);
         *cache = Some(SourceTokens {
             sql: sql.to_owned(),
             mode,
             tokens: std::rc::Rc::clone(&tokens),
+            expanded: std::rc::Rc::clone(&expanded),
         });
-        Some(tokens)
+        Some(if expand { expanded } else { tokens })
     })
 }
 
@@ -7735,7 +7740,7 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     if start.line == 0 {
         return None;
     }
-    let tokens = source_tokens(sql)?;
+    let tokens = source_tokens(sql, true)?;
     let offsets = line_offsets(sql);
     let offset_of = |location| source_offset(sql, &offsets, location);
     let mut at = tokens.iter().position(|token| {
@@ -7832,7 +7837,7 @@ fn source_text(sql: &str, expr: &Expr, clause: SourceClause) -> Option<String> {
     }
     let end = source_label_end(sql, last?, previous, end, clause, &offsets)?;
     let begin = offset_of(tokens[first].span.start)?;
-    source_comment_label(sql, begin, end, &tokens, &offsets)
+    source_comment_label(sql, begin, end, &source_tokens(sql, false)?, &offsets)
 }
 
 fn source_comment_label(
@@ -7860,14 +7865,20 @@ fn source_comment_label(
         }
         let start = offset_of(token.span.start)?;
         let stop = offset_of(token.span.end)?;
-        if start < copied || stop > end {
+        if stop <= copied || start >= end {
             continue;
         }
-        label.push_str(&sql[copied..start]);
+        label.push_str(&sql[copied..start.max(copied)]);
         if let Some(body) = crate::executable_comment_body(comment.as_bytes()) {
-            label.push_str(std::str::from_utf8(body).ok()?);
+            let body_start = start + 2 + comment.len() - body.len();
+            let body_end = body_start + body.len();
+            let left = body_start.max(copied);
+            let right = body_end.min(end);
+            if left < right {
+                label.push_str(&sql[left..right]);
+            }
         }
-        copied = stop;
+        copied = stop.min(end);
     }
     label.push_str(&sql[copied..end]);
     Some(label)
