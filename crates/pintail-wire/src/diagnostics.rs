@@ -442,6 +442,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn time_function_results_keep_temporal_comparison_types() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT CAST('10:00:00' AS TIME(6)) = MAKETIME(10,0,0), CAST('10:00:00' AS TIME(6)) = SEC_TO_TIME(36000)").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![Value::Boolean(true), Value::Boolean(true)]]
+        );
+        for function in ["ADDTIME", "TIMEDIFF"] {
+            let result = backend.execute(&format!("SELECT {function}(duration, '00:00:00') AS duration FROM (SELECT CAST('-24:00:00' AS TIME) AS duration UNION ALL SELECT CAST('-240:00:00' AS TIME)) AS durations ORDER BY duration")).await.unwrap();
+            assert_eq!(
+                result.rows.into_values(),
+                vec![
+                    vec![Value::Utf8("-240:00:00".into())],
+                    vec![Value::Utf8("-24:00:00".into())]
+                ]
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn maketime_rounds_or_truncates_fractional_seconds() {
         use pintail_protocol::Handler;
         use pintail_types::Value;

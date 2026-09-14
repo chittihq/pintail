@@ -36,6 +36,25 @@ fn signed_integer_constant(expression: &BoundExpr) -> Option<i64> {
     }
 }
 
+fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
+    if argument.data_type == Some(DataType::Utf8)
+        && let Some(value) = crate::text_charset::literal_value(argument)
+        && let Value::Utf8(text) = value.as_ref()
+    {
+        return text.rsplit_once('.').map_or(0, |(_, fraction)| {
+            u8::try_from(
+                fraction
+                    .bytes()
+                    .take_while(u8::is_ascii_digit)
+                    .count()
+                    .min(6),
+            )
+            .unwrap_or(6)
+        });
+    }
+    unix_argument_precision(argument, false)
+}
+
 fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
     match argument.data_type {
         Some(DataType::Decimal { scale, .. }) => scale.min(6),
@@ -1616,13 +1635,26 @@ pub(super) fn bind_scalar(
             Some(DataType::Utf8),
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::SecToTime
-        | ScalarFunction::AddTime
-        | ScalarFunction::SubTime
-        | ScalarFunction::TimeDiff => (
-            Some(DataType::Utf8),
-            args.iter().any(|argument| argument.nullable),
+        ScalarFunction::SecToTime => (
+            Some(DataType::Time64 { fsp: unix_argument_precision(&args[0], false) }),
+            args[0].nullable,
         ),
+        ScalarFunction::MakeTime => (
+            Some(DataType::Time64 { fsp: unix_argument_precision(&args[2], false) }),
+            true,
+        ),
+        ScalarFunction::TimeDiff => (
+            Some(DataType::Time64 { fsp: args.iter().map(temporal_argument_precision).max().unwrap_or(0) }),
+            true,
+        ),
+        ScalarFunction::AddTime | ScalarFunction::SubTime => {
+            let fsp = args.iter().map(temporal_argument_precision).max().unwrap_or(0);
+            (Some(match args[0].data_type {
+                Some(DataType::Time64 { .. }) => DataType::Time64 { fsp },
+                Some(DataType::Date32 | DataType::DateTime64 { .. }) => DataType::DateTime64 { fsp },
+                _ => DataType::Utf8,
+            }), true)
+        }
         // Rendered as canonical YYYY-MM-DD text - which is exactly the
         // Date32 carrier - so declaring the real type costs nothing at
         // evaluation and lets the wire advertise MYSQL_TYPE_DATE. Declared
@@ -1637,11 +1669,8 @@ pub(super) fn bind_scalar(
         // Dynamic formats have a DATETIME(6) result, including time-only
         // inputs; a known format retains its narrower date/time shape.
         ScalarFunction::StrToDate => (Some(str_to_date_result_type(&args)), true),
-        // MAKETIME and CONVERT_TZ stay strings for the same reason as
-        // SEC_TO_TIME: their fractional width follows the input value.
         ScalarFunction::Sha2
         | ScalarFunction::InetNtoa
-        | ScalarFunction::MakeTime
         | ScalarFunction::ConvertTz
         | ScalarFunction::Elt
         | ScalarFunction::RegexpSubstr
