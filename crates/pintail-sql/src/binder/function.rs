@@ -72,15 +72,7 @@ fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
     // under `SET NAMES binary` every unprefixed literal is binary too.
     if matches!(argument.data_type, Some(DataType::Utf8 | DataType::Binary))
         && let Some(value) = crate::text_charset::literal_value(argument)
-        && let Some(text) = match value.as_ref() {
-            Value::Utf8(text) => Some(std::borrow::Cow::Borrowed(text.as_str())),
-            // Not lossy: a temporal literal is ASCII, and bytes that are not
-            // valid UTF-8 are not one, so they fall through to the default.
-            Value::Binary(bytes) => std::str::from_utf8(bytes)
-                .ok()
-                .map(std::borrow::Cow::Borrowed),
-            _ => None,
-        }
+        && let Some(text) = literal_text(value.as_ref())
     {
         return text.rsplit_once('.').map_or(0, |(_, fraction)| {
             u8::try_from(
@@ -94,6 +86,21 @@ fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
         });
     }
     unix_argument_precision(argument, false)
+}
+
+/// The text a string literal spells, whether it was declared as characters or
+/// as bytes. Every site that reads a literal to decide a result type wants
+/// both: `SET NAMES binary` makes each unprefixed literal binary, so the same
+/// statement arrives one way on one connection and the other way on the next,
+/// and a declaration that differs between them is a parity bug. Bytes that are
+/// not valid UTF-8 spell neither a temporal literal nor a format, so they
+/// answer None and leave the caller on its own default.
+fn literal_text(value: &Value) -> Option<&str> {
+    match value {
+        Value::Utf8(text) => Some(text.as_str()),
+        Value::Binary(bytes) => std::str::from_utf8(bytes).ok(),
+        _ => None,
+    }
 }
 
 // Strip the offset only for result precision inference. Value conversion
@@ -115,10 +122,14 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
     match argument.data_type {
         Some(DataType::Decimal { scale, .. }) => scale.min(6),
         Some(DataType::DateTime64 { fsp } | DataType::Time64 { fsp }) => fsp,
-        Some(DataType::Utf8) => {
+        // Bytes carry a datetime's fraction exactly as characters do, so they
+        // read here rather than taking the six-digit default for unknown text.
+        // Answering six for `UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00')`
+        // appended `.000000` to a whole-second instant MySQL renders bare.
+        Some(DataType::Utf8 | DataType::Binary) => {
             if parses_datetime
                 && let Some(value) = crate::text_charset::literal_value(argument)
-                && let Value::Utf8(text) = value.as_ref()
+                && let Some(text) = literal_text(value.as_ref())
             {
                 let text = literal_datetime_without_offset(text);
                 if super::TemporalLiteral::parse(text).is_some() {
@@ -129,7 +140,7 @@ fn unix_argument_precision(argument: &BoundExpr, parses_datetime: bool) -> u8 {
             }
             6
         }
-        Some(DataType::Float32 | DataType::Float64 | DataType::Binary) => 6,
+        Some(DataType::Float32 | DataType::Float64) => 6,
         _ => 0,
     }
 }
@@ -1974,7 +1985,11 @@ fn str_to_date_result_type(args: &[BoundExpr]) -> DataType {
     let Some(value) = args.get(1).and_then(crate::text_charset::literal_value) else {
         return DataType::DateTime64 { fsp: 6 };
     };
-    let Value::Utf8(format) = value.as_ref() else {
+    // A format spelled in bytes is as known at bind time as one spelled in
+    // characters. Reading only Utf8 sent `_binary'%Y-%m-%d'` to the dynamic
+    // branch, which declares DATETIME(6) - so a date-only format answered
+    // `2001-01-01 00:00:00.000000` where MySQL answers `2001-01-01`.
+    let Some(format) = literal_text(value.as_ref()) else {
         return DataType::DateTime64 { fsp: 6 };
     };
     let time = str_to_date_has_specifier(

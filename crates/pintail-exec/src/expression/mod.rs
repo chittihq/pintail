@@ -7927,9 +7927,18 @@ pub(crate) fn mysql_i64(value: &Value) -> Result<i64, ExecError> {
             let value = &average.label;
             float_to_i64(parse_mysql_number(value))
         }
+        // Bytes spell a number the same way characters do, so they take the
+        // same exact-integer path. Routed straight through a double, every
+        // value above 2^53 lost digits and the ends of the integer range
+        // overflowed outright: `CAST(_binary'9223372036854775807' AS SIGNED)`
+        // refused its own maximum. Under `SET NAMES binary` every unprefixed
+        // literal is binary, so this was ordinary arithmetic, not a corner.
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
-            float_to_i64(parse_mysql_number(value))
+            exact_integer_prefix(value).map_or_else(
+                || float_to_i64(parse_mysql_number(value)),
+                |number| i64::try_from(number).map_err(|_| ExecError::NumericOverflow),
+            )
         }
         Value::Null => Err(ExecError::InvalidExpressionType),
     }
@@ -7949,9 +7958,12 @@ pub(crate) fn mysql_u64(value: &Value) -> Result<u64, ExecError> {
             let value = &average.label;
             float_to_u64(parse_mysql_number(value))
         }
+        // As above: bytes read exactly before they read approximately.
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
-            float_to_u64(parse_mysql_number(value))
+            exact_integer_prefix(value)
+                .and_then(|number| u64::try_from(number).ok())
+                .map_or_else(|| float_to_u64(parse_mysql_number(value)), Ok)
         }
         Value::Null => Err(ExecError::InvalidExpressionType),
     }

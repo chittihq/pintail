@@ -1791,3 +1791,111 @@ fn regular_expressions_accept_binary_operands() {
         ("REGEXP_SUBSTR(_binary'abc', _binary'b')", "b"),
     ]);
 }
+
+/// Binary-typed operands across the function families, with `MySQL` 8.4's own
+/// answers. `SET NAMES binary` makes every unprefixed literal binary, so
+/// these are ordinary statements on that connection rather than a corner of
+/// the language - which is why three separate defects hid here: a temporal
+/// literal taking the six-digit default for bytes, regular expressions
+/// refusing binary operands outright, and bytes reaching an integer through
+/// a double so the ends of the range overflowed.
+///
+/// The subtleties are the point of writing the whole family down:
+/// `UPPER` leaves binary alone, arithmetic still goes through a double while
+/// `CAST` is exact, and `SEC_TO_TIME` takes six fraction digits from a binary
+/// argument where `TIMEDIFF` takes none - so a fix that unifies them is wrong.
+#[test]
+fn binary_operands_answer_as_mysql_does() {
+    assert_answers(&[
+        // Exact integers: the full signed and unsigned range, and past 2^53
+        // where a double stops being able to hold every integer.
+        (
+            "CAST(_binary'18446744073709551615' AS UNSIGNED)",
+            "18446744073709551615",
+        ),
+        (
+            "CAST(_binary'9223372036854775807' AS SIGNED)",
+            "9223372036854775807",
+        ),
+        (
+            "CAST(_binary'-9223372036854775808' AS SIGNED)",
+            "-9223372036854775808",
+        ),
+        (
+            "CAST(_binary'9007199254740993' AS SIGNED)",
+            "9007199254740993",
+        ),
+        (
+            "CAST(CONCAT(_binary'184467440', _binary'73709551615') AS UNSIGNED)",
+            "18446744073709551615",
+        ),
+        ("CAST(_binary'42' AS UNSIGNED)", "42"),
+        ("CAST(_binary'42abc' AS UNSIGNED)", "42"),
+        ("CAST(_binary'42.7' AS SIGNED)", "42"),
+        // Temporal: TIMEDIFF keeps the fraction its text carries, and none
+        // when the text carries none.
+        (
+            "TIMEDIFF(_binary'2001-01-02 00:00:00', _binary'2001-01-01 00:00:00')",
+            "24:00:00",
+        ),
+        (
+            "TIMEDIFF(_binary'2001-01-02 00:00:00.5', _binary'2001-01-01 00:00:00')",
+            "24:00:00.5",
+        ),
+        // SEC_TO_TIME does NOT: a binary argument takes six digits there.
+        ("SEC_TO_TIME(_binary'3661')", "01:01:01.000000"),
+        ("TIME_TO_SEC(_binary'01:01:01')", "3661"),
+        (
+            "DATE_ADD(_binary'2001-01-01', INTERVAL 1 DAY)",
+            "2001-01-02",
+        ),
+        (
+            "STR_TO_DATE(_binary'2001-01-01', _binary'%Y-%m-%d')",
+            "2001-01-01",
+        ),
+        ("EXTRACT(YEAR FROM _binary'2001-02-03')", "2001"),
+        (
+            "DATE_FORMAT(_binary'2001-02-03', _binary'%Y/%m/%d')",
+            "2001/02/03",
+        ),
+        // UNIX_TIMESTAMP's absolute answer moves with the session zone, which
+        // this in-process harness does not set, so the parity claim here is
+        // the SHAPE: bytes declare the same whole-second result characters do.
+        // Declared six digits for bytes, it appended `.000000` to an instant
+        // MySQL renders bare.
+        (
+            "UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00') = UNIX_TIMESTAMP('2001-01-01 00:00:00')",
+            "Boolean(true)",
+        ),
+        (
+            "CAST(UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00') AS CHAR) = CAST(UNIX_TIMESTAMP('2001-01-01 00:00:00') AS CHAR)",
+            "Boolean(true)",
+        ),
+        // Regular expressions match binary operands.
+        ("_binary'abc' RLIKE _binary'b'", "Boolean(true)"),
+        ("_binary'abc' RLIKE _binary'z'", "Boolean(false)"),
+        ("REGEXP_SUBSTR(_binary'abc', _binary'b')", "b"),
+        // Strings: UPPER leaves binary alone, which is the whole reason a
+        // binary column is not just a text column with a different name. The
+        // result stays binary through all of these, which this harness renders
+        // as its bytes where MySQL's client renders them as the text they
+        // spell - so `Binary([97, 98, 99])` here IS MySQL's `abc`.
+        ("UPPER(_binary'abc')", "Binary([97, 98, 99])"),
+        ("LENGTH(_binary'abc')", "3"),
+        ("SUBSTRING(_binary'abcdef', 2, 3)", "Binary([98, 99, 100])"),
+        ("CONCAT(_binary'1', 2)", "Binary([49, 50])"),
+        // Numeric functions. Bytes reach these through a double, as MySQL's
+        // own string-to-number coercion does, and the harness marks a double.
+        ("ABS(_binary'-42')", "float 42"),
+        ("ROUND(_binary'42.55', 1)", "float 42.6"),
+        // Comparison still goes through a double, so the two sides of this
+        // are EQUAL to MySQL even though the integers differ by one. An
+        // exact comparison here would answer 1 and be wrong.
+        (
+            "_binary'9223372036854775807' > 9223372036854775806",
+            "Boolean(false)",
+        ),
+        ("_binary'42' = 42", "Boolean(true)"),
+        ("_binary'42' IN (41, 42, 43)", "Boolean(true)"),
+    ]);
+}
