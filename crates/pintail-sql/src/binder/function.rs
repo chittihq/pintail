@@ -1879,7 +1879,8 @@ pub(super) fn bind_scalar(
         let mode = crate::session_parse_mode();
         let policy = u64::from(mode.no_zero_date)
             | (u64::from(mode.no_zero_in_date) << 1)
-            | (u64::from(mode.allow_invalid_dates) << 2);
+            | (u64::from(mode.allow_invalid_dates) << 2)
+            | (u64::from(mode.time_truncate_fractional) << 3);
         args.push(BoundExpr {
             data_type: Some(DataType::UInt64),
             nullable: false,

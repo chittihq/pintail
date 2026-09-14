@@ -304,6 +304,26 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn datetime_casts_round_once_or_truncate_by_session_mode() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        for (mode, expected) in [
+            ("", "2001-01-01 10:10:11.000000"),
+            ("TIME_TRUNCATE_FRACTIONAL", "2001-01-01 10:10:10.999999"),
+        ] {
+            backend
+                .query(format!("SET sql_mode='{mode}'").as_bytes())
+                .await;
+            let result = backend.execute("SELECT CAST(20010101101010.9999995 AS DATETIME(6)), CAST('2001-01-01 10:10:10.9999995' AS DATETIME(6))").await.unwrap();
+            assert_eq!(
+                result.rows[0],
+                vec![pintail_types::Value::Utf8(expected.into()); 2],
+                "{mode}"
+            );
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

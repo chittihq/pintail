@@ -2660,6 +2660,9 @@ fn evaluate_eager_scalar_inner(
             ) {
                 return Ok(value);
             }
+            if let Some(value) = cast_datetime_precision(&values[0], target, values.get(1)) {
+                return Ok(value);
+            }
             cast_scalar(
                 &numeric_cast_operand(&values[0], argument_types, target),
                 Some(target),
@@ -2681,6 +2684,9 @@ fn evaluate_eager_scalar_inner(
                 target,
                 values.get(1),
             ) {
+                return Ok(value);
+            }
+            if let Some(value) = cast_datetime_precision(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
             let mut value = cast_scalar(
@@ -4695,6 +4701,25 @@ fn narrower_decimal_label(value: &Value, scale: u8) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn cast_datetime_precision(
+    value: &Value,
+    target: DataType,
+    policy: Option<&Value>,
+) -> Option<Value> {
+    let DataType::DateTime64 { fsp } = target else {
+        return None;
+    };
+    let text = scalar_string(value).ok()?;
+    let parsed = temporal::parse_calendar_cast(&text).ok()?.and_utc();
+    let nanos = i128::from(parsed.timestamp()) * 1_000_000_000
+        + i128::from(parsed.timestamp_subsec_nanos());
+    let quantum = 10_i128.pow(u32::from(9 - fsp.min(6)));
+    let truncate = matches!(policy, Some(Value::UInt64(bits)) if bits & 8 != 0);
+    let rounded = (nanos + if truncate { 0 } else { quantum / 2 }).div_euclid(quantum) * quantum;
+    let micros = i64::try_from(rounded / 1_000).ok()?;
+    Some(pintail_types::format_datetime_micros(micros, fsp).map_or(Value::Null, Value::Utf8))
 }
 
 fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, ExecError> {
