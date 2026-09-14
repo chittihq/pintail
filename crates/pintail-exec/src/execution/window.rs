@@ -27,6 +27,7 @@ pub(super) struct CompiledWindow {
     order: Vec<(CompiledExpr, bool, bool, bool)>,
     /// Explicit `ROWS`/`RANGE` frame; `None` keeps `MySQL`'s default frame.
     frame: Option<pintail_sql::BoundWindowFrame>,
+    high_precision: bool,
     /// The declared type of each of [`Self::key_exprs`], where one is known.
     key_types: Vec<Option<DataType>>,
 }
@@ -146,6 +147,7 @@ impl CompiledWindow {
                 })
                 .collect::<Result<Vec<_>, _>>()?,
             frame: window.frame,
+            high_precision: super::session_window_high_precision(),
             key_types,
         })
     }
@@ -1419,6 +1421,20 @@ fn compute_window_column(
                     let trailing = !running
                         && matches!(frame.end, Edge::UnboundedFollowing)
                         && order_insensitive(aggregate);
+                    let moving = if !window.high_precision
+                        && !frame.range
+                        && !running
+                        && !aggregate.distinct
+                    {
+                        match aggregate.function {
+                            AggregateFunction::Variance { sample } => Some((sample, false)),
+                            AggregateFunction::StdDev { sample } => Some((sample, true)),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let mut moments = super::window_moments::MovingMoments::default();
                     let mut state = AggregateState::new(aggregate);
                     let mut accumulated = if trailing { partition.len() } else { 0 };
                     // A row whose frame is the previous row's shares its
@@ -1438,6 +1454,11 @@ fn compute_window_column(
                         let value = match &previous {
                             Some((first, last, value)) if (*first, *last) == (start, end) => {
                                 value.clone()
+                            }
+                            _ if moving.is_some() => {
+                                moments.advance(keys, partition, argument_position, start..end)?;
+                                let (sample, stddev) = moving.expect("moving moments selected");
+                                moments.finish(sample, stddev)
                             }
                             _ if running => {
                                 while accumulated < end {

@@ -1777,3 +1777,16 @@ aggregate or value frame may reuse a final sort made entirely of source columns.
 Whole-partition default frames keep their original peer semantics, and an
 explicitly ordered window prevents this choice. Queries requiring a particular
 frame sequence still need to put that ordering inside `OVER`.
+
+### Moving variance can use inverse updates when precision mode is disabled
+
+`windowing_use_high_precision` defaults to ON. With it OFF, variance and standard
+deviation over bounded `ROWS` frames maintain first and second moments relative
+to the first non-NULL value. Expired values are subtracted and incoming values
+added; an empty frame resets the reference. Population and sample denominators
+remain distinct, and undersized sample frames return NULL.
+
+The setting is captured when a window is compiled and participates in the shared
+query key. Default whole-partition and cumulative frames keep their existing
+calculation. This makes the precision/performance choice explicit instead of
+silently changing the final floating-point digits for every connection.

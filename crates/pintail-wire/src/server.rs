@@ -821,6 +821,7 @@ struct Session {
     /// the charset's default - so column metadata must echo it.
     charset_byte: u16,
     group_concat_max_len: usize,
+    window_high_precision: bool,
     /// The connection's default collation, from the handshake charset byte:
     /// literal-only comparisons follow it, as they do in `MySQL`. `mysql2`
     /// negotiates `utf8mb4_unicode_ci`, approximated by `general_ci` (both
@@ -902,6 +903,7 @@ impl Default for Session {
             tracked_system_variables: "time_zone,autocommit,character_set_client,character_set_results,character_set_connection".to_owned(),
             charset_byte: 255,
             group_concat_max_len: 1024,
+            window_high_precision: true,
             collation_connection: "utf8mb4_0900_ai_ci",
             conditions: Vec::new(),
             condition_count: 0,
@@ -1451,6 +1453,9 @@ impl Backend {
                         session.div_precision_increment,
                     ));
                     pintail_sql::set_session_select_limit(session.sql_select_limit);
+                    pintail_exec::set_session_window_high_precision(Some(
+                        session.window_high_precision,
+                    ));
                     pintail_exec::set_session_group_concat_max_len(Some(
                         session.group_concat_max_len,
                     ));
@@ -1482,6 +1487,7 @@ impl Backend {
                         pintail_exec::take_session_division_warnings(),
                         pintail_exec::take_session_conversion_warnings(),
                     );
+                    pintail_exec::set_session_window_high_precision(None);
                     pintail_exec::set_session_group_concat_max_len(None);
                     pintail_exec::set_session_cte_max_recursion_depth(None);
                     pintail_sql::set_session_default_collation(None);
@@ -2005,6 +2011,18 @@ impl Backend {
                 };
                 session.charset_byte = collation_byte(collation, &session.charset_connection);
                 session.track_variable("character_set_connection");
+                Ok(())
+            }
+            "windowing_use_high_precision" => {
+                session.window_high_precision = match value.to_ascii_lowercase().as_str() {
+                    "on" | "1" | "default" => true,
+                    "off" | "0" => false,
+                    _ => {
+                        return Err(format!(
+                            "Variable 'windowing_use_high_precision' can't be set to the value of '{value}'"
+                        ));
+                    }
+                };
                 Ok(())
             }
             "session_track_system_variables" => {
@@ -3804,6 +3822,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
                 "GRANT SELECT ON `{}`.* TO CURRENT_USER()",
                 database.replace('`', "``")
             )),
+        )
+    } else if normalized == "select @@windowing_use_high_precision" {
+        (
+            "@@windowing_use_high_precision",
+            Value::UInt64(u64::from(session.window_high_precision)),
         )
     } else if normalized == "select @@session_track_system_variables" {
         (

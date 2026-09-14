@@ -15,7 +15,9 @@ mod sort;
 mod two_pass;
 mod watchdog;
 mod window;
+mod window_moments;
 pub use watchdog::{ExecutionCancellation, cancel_query_under_memory_pressure};
+pub use window_moments::{session_window_high_precision, set_session_window_high_precision};
 
 pub(crate) use aggregate::compare_decimal_text;
 /// Test-only accessor for the SMA fold-hit counter the storage tests assert on.

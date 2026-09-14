@@ -1499,6 +1499,81 @@ pub(super) mod tests {
         assert!(result.rows.iter().all(|row| row[1] == Value::Int64(1)));
     }
 
+    #[tokio::test]
+    async fn moving_variance_honors_the_session_precision_mode() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE samples (n DOUBLE)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO samples VALUES (2),(2),(3),(1),(1.2),(NULL)")
+            .await
+            .unwrap();
+        backend
+            .apply_session_command("SET windowing_use_high_precision=OFF")
+            .unwrap();
+        let sql = "SELECT n,VAR_POP(n) OVER(ORDER BY n ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),STDDEV_POP(n) OVER(ORDER BY n ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),VAR_POP(n) OVER() FROM samples ORDER BY n";
+        let result = backend.execute(sql).await.unwrap();
+        for (row, expected) in result.rows.iter().zip([
+            0.0,
+            0.009_999_999_999_999_995,
+            0.186_666_666_666_666_68,
+            0.207_499_999_999_999_96,
+            0.4075,
+            0.222_222_222_222_222_32,
+        ]) {
+            assert_eq!(row[1], Value::float64(expected));
+            assert_eq!(row[2], Value::float64(expected.sqrt()));
+            assert_eq!(row[3], Value::float64(0.5024));
+        }
+        let result = backend.execute("SELECT n,VAR_SAMP(n) OVER(ORDER BY n ROWS BETWEEN 2 PRECEDING AND 1 FOLLOWING),VAR_POP(n) OVER(ORDER BY n ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) FROM samples ORDER BY n").await.unwrap();
+        for (row, (sample, following)) in result.rows.iter().zip([
+            (None, Some(0.009_999_999_999_999_995)),
+            (
+                Some(0.019_999_999_999_999_99),
+                Some(0.160_000_000_000_000_03),
+            ),
+            (Some(0.28), Some(0.0)),
+            (Some(0.276_666_666_666_666_6), Some(0.25)),
+            (Some(0.543_333_333_333_333_3), Some(0.0)),
+            (Some(0.333_333_333_333_333_5), None),
+        ]) {
+            assert_eq!(row[1], sample.map_or(Value::Null, Value::float64));
+            assert_eq!(row[2], following.map_or(Value::Null, Value::float64));
+        }
+        backend
+            .execute("CREATE TABLE gaps (id INT,n DOUBLE)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO gaps VALUES (1,1.2),(2,NULL),(3,NULL),(4,2.3),(5,3.4),(6,8.9)")
+            .await
+            .unwrap();
+        let result=backend.execute("SELECT VAR_POP(n) OVER(ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM gaps ORDER BY id").await.unwrap();
+        for (row, expected) in result.rows.iter().zip([
+            Some(0.0),
+            Some(0.0),
+            None,
+            Some(0.0),
+            Some(0.302_500_000_000_000_05),
+            Some(7.562_500_000_000_002),
+        ]) {
+            assert_eq!(row[0], expected.map_or(Value::Null, Value::float64));
+        }
+        backend
+            .apply_session_command("SET windowing_use_high_precision=DEFAULT")
+            .unwrap();
+        let result = backend.execute(sql).await.unwrap();
+        assert_eq!(result.rows[1][1], Value::float64(0.009_999_999_999_999_985));
+        assert!(
+            backend
+                .apply_session_command("SET windowing_use_high_precision=2")
+                .is_err()
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

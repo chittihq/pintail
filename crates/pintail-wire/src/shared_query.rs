@@ -86,6 +86,7 @@ pub(crate) struct SharedQueryKey {
     pub(crate) default_week_format: u8,
     pub(crate) collation: &'static str,
     pub(crate) group_concat_max_len: usize,
+    pub(crate) window_high_precision: bool,
     pub(crate) cte_max_recursion_depth: u64,
     /// Fraction digits division and `AVG` add, which change the answer's scale.
     pub(crate) div_precision_increment: u8,
@@ -114,6 +115,7 @@ impl SharedQueryKey {
             default_week_format: pintail_exec::session_default_week_format(),
             collation: pintail_sql::session_default_collation(),
             group_concat_max_len: pintail_exec::session_group_concat_max_len(),
+            window_high_precision: pintail_exec::session_window_high_precision(),
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
             div_precision_increment: pintail_sql::session_div_precision_increment(),
             select_limit: pintail_sql::session_select_limit(),
@@ -424,6 +426,7 @@ mod tests {
             default_week_format: 0,
             collation: "utf8mb4_0900_ai_ci",
             group_concat_max_len: 1024,
+            window_high_precision: true,
             cte_max_recursion_depth: 1000,
             div_precision_increment: 4,
             select_limit: None,
@@ -535,6 +538,10 @@ mod tests {
             },
             SharedQueryKey {
                 collation: "utf8mb4_bin",
+                ..base.clone()
+            },
+            SharedQueryKey {
+                window_high_precision: false,
                 ..base.clone()
             },
             SharedQueryKey {
