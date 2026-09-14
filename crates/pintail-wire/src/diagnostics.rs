@@ -266,6 +266,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn permissive_grouping_selects_a_representative_row() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        for sql in [
+            "CREATE TABLE samples (bucket INT, label VARCHAR(20))",
+            "INSERT INTO samples VALUES (1, 'first'), (1, 'second'), (2, 'third')",
+            "SET sql_mode=''",
+        ] {
+            assert!(
+                matches!(
+                    backend.query(sql.as_bytes()).await,
+                    pintail_protocol::Response::Ok(..)
+                ),
+                "{sql}"
+            );
+        }
+        let result = backend
+            .execute("SELECT bucket, label, COUNT(*) FROM samples GROUP BY bucket ORDER BY bucket")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0][1],
+            pintail_types::Value::Utf8("first".to_owned())
+        );
+        assert_eq!(
+            result.rows[1][1],
+            pintail_types::Value::Utf8("third".to_owned())
+        );
+        backend.query(b"SET sql_mode='ONLY_FULL_GROUP_BY'").await;
+        assert!(
+            backend
+                .execute("SELECT bucket, label, COUNT(*) FROM samples GROUP BY bucket")
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
     async fn date_text_variables_keep_dynamic_fractional_metadata() {
         let (_directory, backend) = local_backend();
         backend

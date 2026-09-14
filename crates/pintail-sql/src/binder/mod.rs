@@ -5532,13 +5532,14 @@ fn rewrite_group_references(
         return Ok(());
     }
     // A column the grouping keys determine holds one value per group, which
-    // is what ANY_VALUE reads. Adding it to the grouping keys instead would
+    // is what ANY_VALUE reads. Permissive grouping also reads a representative
+    // value through this aggregate. Adding it to the grouping keys instead would
     // be wrong for the outer-join case: a group whose join matched for some
     // rows and not others would split in two and the counts alongside it
     // would split with it, where MySQL returns one row.
     if let BoundExprKind::Column(column) = &expr.kind
         && !column.relation_name.starts_with(SCALAR_TABLE_PREFIX)
-        && determined.contains(column)
+        && (determined.contains(column) || crate::session_parse_mode().permissive_grouping)
         && is_mysql_scalar(expr.data_type)
     {
         let argument = expr.clone();

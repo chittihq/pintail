@@ -10,6 +10,8 @@ pub struct ParseMode {
     pub ansi_quotes: bool,
     /// REAL declarations and casts use single precision.
     pub real_as_float: bool,
+    /// Ungrouped columns may read a representative row when full grouping is disabled.
+    pub permissive_grouping: bool,
     /// Double pipes concatenate strings instead of evaluating OR.
     pub pipes_as_concat: bool,
     /// Backslashes in strings remain literal characters.
@@ -44,6 +46,7 @@ impl ParseMode {
         Self {
             ansi_quotes: has("ANSI_QUOTES") || has("ANSI"),
             real_as_float: has("REAL_AS_FLOAT") || has("ANSI"),
+            permissive_grouping: !has("ONLY_FULL_GROUP_BY") && !has("ANSI"),
             pipes_as_concat: has("PIPES_AS_CONCAT") || has("ANSI"),
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
             no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
