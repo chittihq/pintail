@@ -581,6 +581,43 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn grouped_variable_reads_use_group_input_values() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        backend
+            .execute("CREATE TABLE buckets (n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO buckets VALUES (1),(2),(2),(3),(3),(3)")
+            .await
+            .unwrap();
+        for sql in [
+            "SELECT @a, @a:=@a+COUNT(*), COUNT(*), @a FROM buckets GROUP BY n ORDER BY n",
+            "SELECT @a+0, @a:=@a+0+COUNT(*), COUNT(*), @a+0 FROM buckets GROUP BY n ORDER BY n",
+        ] {
+            backend.query(b"SET @a=0").await;
+            let result = backend.execute(sql).await.unwrap();
+            assert_eq!(result.rows.len(), 3);
+            for row in &result.rows {
+                assert_eq!(row[0], Value::Int64(0));
+                assert_eq!(row[3], Value::Int64(0));
+                assert_eq!(row[1], row[2]);
+            }
+        }
+        backend.query(b"SET @a=0").await;
+        for initial in [Value::Int64(0), Value::Utf8("hello again".into())] {
+            let result = backend.execute("SELECT @a, @a:='hello', @a, @a:=3, @a, @a:='hello again' FROM buckets GROUP BY n").await.unwrap();
+            for row in &result.rows {
+                for index in [0, 2, 4] {
+                    assert_eq!(row[index], initial);
+                }
+            }
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

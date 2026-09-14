@@ -730,12 +730,15 @@ impl<'catalog> Binder<'catalog> {
             // this is computed once and consulted by every rewrite below.
             let determined =
                 dependency::determined_columns(&group_by, &from, &tables, filter.as_ref());
-            if crate::session_parse_mode().permissive_grouping
-                && (from.len() > 1 || from.iter().any(|source| !source.joins.is_empty()))
-            {
-                for item in &mut projection {
-                    materialize_group_assignments(&mut item.expr, &mut aggregates);
-                }
+            let materialize_assignments = crate::session_parse_mode().permissive_grouping
+                && (from.len() > 1 || from.iter().any(|source| !source.joins.is_empty()));
+            for item in &mut projection {
+                materialize_group_variables(
+                    &mut item.expr,
+                    &mut aggregates,
+                    materialize_assignments,
+                    !group_by.is_empty(),
+                );
             }
             for item in &mut projection {
                 rewrite_group_references(&mut item.expr, &group_by, &determined, &mut aggregates)?;
@@ -5675,9 +5678,14 @@ fn bind_window_frame(
     Ok(Some(BoundWindowFrame { range, start, end }))
 }
 
-/// Joined grouping materializes assignment expressions while reading input rows.
-/// The representative value is projected later, without repeating the assignment.
-fn materialize_group_assignments(expr: &mut BoundExpr, aggregates: &mut Vec<BoundAggregate>) {
+/// Grouped variable reads retain input values before result assignments execute.
+/// Joined grouping also materializes assignments that depend only on input rows.
+fn materialize_group_variables(
+    expr: &mut BoundExpr,
+    aggregates: &mut Vec<BoundAggregate>,
+    assignments: bool,
+    reads: bool,
+) {
     fn reads_input(expr: &BoundExpr) -> bool {
         match &expr.kind {
             BoundExprKind::Literal(_) | BoundExprKind::Column(_) => true,
@@ -5689,13 +5697,23 @@ fn materialize_group_assignments(expr: &mut BoundExpr, aggregates: &mut Vec<Boun
             _ => false,
         }
     }
-    if matches!(
-        expr.kind,
-        BoundExprKind::Scalar {
-            function: ScalarFunction::UserVariableAssign,
-            ..
-        }
-    ) && reads_input(expr)
+    if (reads
+        && matches!(
+            expr.kind,
+            BoundExprKind::Scalar {
+                function: ScalarFunction::UserVariableRead,
+                ..
+            }
+        ))
+        || (assignments
+            && matches!(
+                expr.kind,
+                BoundExprKind::Scalar {
+                    function: ScalarFunction::UserVariableAssign,
+                    ..
+                }
+            )
+            && reads_input(expr))
     {
         let index = aggregates.len();
         aggregates.push(BoundAggregate {
@@ -5715,15 +5733,15 @@ fn materialize_group_assignments(expr: &mut BoundExpr, aggregates: &mut Vec<Boun
     match &mut expr.kind {
         BoundExprKind::Scalar { args, .. } => {
             for argument in args {
-                materialize_group_assignments(argument, aggregates);
+                materialize_group_variables(argument, aggregates, assignments, reads);
             }
         }
         BoundExprKind::Unary { expr, .. } | BoundExprKind::IsNull { expr, .. } => {
-            materialize_group_assignments(expr, aggregates);
+            materialize_group_variables(expr, aggregates, assignments, reads);
         }
         BoundExprKind::Binary { left, right, .. } => {
-            materialize_group_assignments(left, aggregates);
-            materialize_group_assignments(right, aggregates);
+            materialize_group_variables(left, aggregates, assignments, reads);
+            materialize_group_variables(right, aggregates, assignments, reads);
         }
         _ => {}
     }
