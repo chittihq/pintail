@@ -1,7 +1,11 @@
 # Read-semantics scope
 
 The implementation target is agreement on read semantics. Fixture mutations,
-stored-routine effects and MySQL-specific diagnostics are reported separately.
+stored-routine effects, writes to session variables, storage-engine fixtures and
+MySQL-specific diagnostics are reported separately. A SELECT that assigns session
+variables has side effects; its status remains in the overall replay, but is not
+a pure read. Missing scalar functions remain in the read inventory even when
+a fixture calls them while preparing a variable.
 The full replay's selected files, statement identities, comparator, exact set,
 refusals and original agreement denominator remain unchanged.
 

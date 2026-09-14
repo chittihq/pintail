@@ -38,6 +38,12 @@
       "reason": "The observed variable is constructed by a stored procedure."
     },
     {
+      "file": "func_in_all",
+      "id": "0e2e1283a9c1317e",
+      "category": "session-side-effect",
+      "reason": "A derived query assigns session variables while an outer COUNT consumes its rows; the assertion observes those side effects."
+    },
+    {
       "file": "func_math",
       "id": "312a66cdf20b8225",
       "category": "routine",
@@ -132,6 +138,12 @@
       "id": "6d00f0a9d3f72a38",
       "category": "fixture-write",
       "reason": "The fixture depends on duplicate-key updates or writes through stored routines."
+    },
+    {
+      "file": "join",
+      "id": "a52c40e285dfa30e",
+      "category": "fixture-engine",
+      "reason": "The fixture declares a MERGE engine table over two MyISAM tables; its rows require storage-engine composition."
     },
     {
       "file": "max_statement_time",
@@ -272,6 +284,18 @@
       "reason": "The selected rows depend on prepared UPDATE statements in fixture setup."
     },
     {
+      "file": "sql_mode",
+      "id": "78b14bf2bab6eb11",
+      "category": "fixture-write",
+      "reason": "A prepared UPDATE changes the stored counter before this read."
+    },
+    {
+      "file": "subquery_all",
+      "id": "4e509f8dc626f81c",
+      "category": "session-side-effect",
+      "reason": "A DO statement assigns the variable from a subquery before the read."
+    },
+    {
       "file": "subquery_all",
       "id": "aec1528dc7c156c0",
       "category": "fixture-write",
@@ -315,6 +339,12 @@
     },
     {
       "file": "user_var",
+      "id": "2f47a3601576f83a",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns and reads ranking variables within the same projection."
+    },
+    {
+      "file": "user_var",
       "id": "3abef04fe203fd35",
       "category": "fixture-write",
       "reason": "The variable is assigned by an UPDATE statement in fixture setup."
@@ -333,9 +363,21 @@
     },
     {
       "file": "user_var",
+      "id": "d20b4a1ee3e4bc95",
+      "category": "session-side-effect",
+      "reason": "The SELECT assigns and reads the same variable while sorting the projected rows."
+    },
+    {
+      "file": "user_var",
       "id": "d776ba353101eaf6",
       "category": "fixture-write",
       "reason": "The variable is assigned by an UPDATE statement in fixture setup."
+    },
+    {
+      "file": "using_hypergraph_optimizer",
+      "id": "1ea62c33121a7e8d",
+      "category": "session-side-effect",
+      "reason": "The variable is assigned through prepared SET statements; the final SELECT only observes that session write."
     },
     {
       "file": "view",

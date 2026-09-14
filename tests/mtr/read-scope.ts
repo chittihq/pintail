@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-type Category = 'fixture-write' | 'routine' | 'diagnostic'
+type Category = 'fixture-write' | 'fixture-engine' | 'routine' | 'diagnostic' | 'session-side-effect'
 type Entry = { file: string; id: string; category: Category; reason: string }
 type Counts = Record<string, number>
 type Result = { file: string; counts: Counts }
@@ -20,7 +20,7 @@ const entries = new Map<string, Entry>()
 for (const entry of manifest.entries) {
   const key = `${entry.file}/${entry.id}`
   if (entries.has(key) || !/^[a-f0-9]{16}$/.test(entry.id) || !entry.reason.trim()
-      || !['fixture-write', 'routine', 'diagnostic'].includes(entry.category)) {
+      || !['fixture-write', 'fixture-engine', 'routine', 'diagnostic', 'session-side-effect'].includes(entry.category)) {
     throw new Error(`Invalid or duplicate scope entry: ${key}`)
   }
   entries.set(key, entry)
@@ -32,7 +32,7 @@ const provenance = JSON.parse(readFileSync(join(root, 'run.json'), 'utf8')) as {
   provenance: unknown
 }
 const groups: Record<Category | 'read-or-unresolved', Array<{ file: string; id: string; reason: string }>> = {
-  'read-or-unresolved': [], 'fixture-write': [], routine: [], diagnostic: [],
+  'read-or-unresolved': [], 'fixture-write': [], 'fixture-engine': [], routine: [], diagnostic: [], 'session-side-effect': [],
 }
 let failures = 0
 for (const file of result.results) {
