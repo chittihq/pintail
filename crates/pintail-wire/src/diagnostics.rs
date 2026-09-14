@@ -341,6 +341,23 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn arithmetic_hex_literals_use_their_unsigned_numeric_value() {
+        let (_directory, backend) = local_backend();
+        let result = backend
+            .execute("SELECT 2 * 0x40 | 0x0F, 0x65 - 0x0F ^ 0x55, (0x65 - 0x0F) ^ 0x55")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![
+                pintail_types::Value::UInt64(143),
+                pintail_types::Value::UInt64(11),
+                pintail_types::Value::UInt64(3)
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

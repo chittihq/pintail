@@ -3923,6 +3923,16 @@ fn bind_binary(
             | BinaryOperator::Modulo
             | BinaryOperator::MyIntegerDivide
     ) {
+        let left = if unintroduced_bit_literal(written_left) {
+            numeric_bit_input(left, written_left)?
+        } else {
+            left
+        };
+        let right = if unintroduced_bit_literal(written_right) {
+            numeric_bit_input(right, written_right)?
+        } else {
+            right
+        };
         (temporal_as_number(left), temporal_as_number(right))
     } else {
         (left, right)
