@@ -212,6 +212,16 @@ impl SourceTable {
                                 | "geometrycollection"
                         ))
                         .with_timestamp(column.mysql_data_type.eq_ignore_ascii_case("timestamp"))
+                        .with_bit_width(column.mysql_data_type.eq_ignore_ascii_case("bit").then(
+                            || {
+                                column
+                                    .mysql_column_type
+                                    .split_once('(')
+                                    .and_then(|(_, width)| width.strip_suffix(')'))
+                                    .and_then(|width| width.parse::<u8>().ok())
+                                    .unwrap_or(1)
+                            },
+                        ))
                         .with_binary_width(
                             match column.mysql_data_type.to_ascii_lowercase().as_str() {
                                 "binary" | "varbinary" => column

@@ -1558,6 +1558,7 @@ impl CompiledExpr {
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
                     | ScalarFunction::MakeTime => 64,
+                    ScalarFunction::BitBytes(_) => 8,
                     ScalarFunction::DateFormat => string(1).saturating_mul(64),
                     ScalarFunction::Like { .. } => args
                         .iter()
@@ -1655,6 +1656,7 @@ impl CompiledExpr {
                 };
                 let first = bound(0);
                 match function {
+                    ScalarFunction::BitBytes(_) => 8,
                     ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
@@ -2246,6 +2248,14 @@ fn evaluate_eager_scalar_inner(
             } else {
                 text.to_uppercase()
             }))
+        }
+        ScalarFunction::BitBytes(width) => {
+            let bytes = mysql_u64(&values[0])?.to_be_bytes();
+            let first = bytes
+                .len()
+                .checked_sub(usize::from(width))
+                .ok_or(ExecError::InvalidExpressionType)?;
+            Ok(Value::Binary(bytes[first..].to_vec()))
         }
         ScalarFunction::FloatString => Ok(Value::Utf8(
             pintail_types::Float64::new(mysql_f64(&values[0])?).mysql_float_string(),

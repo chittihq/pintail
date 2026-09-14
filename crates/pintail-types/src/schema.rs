@@ -97,6 +97,8 @@ pub struct Column {
     timestamp: bool,
     /// Declared BINARY/VARBINARY byte width, recovered from source metadata.
     binary_width: Option<u32>,
+    /// Source BIT width, recovered from the durable declaration.
+    bit_width: Option<u8>,
 }
 
 impl Column {
@@ -114,6 +116,7 @@ impl Column {
             geometry: false,
             timestamp: false,
             binary_width: None,
+            bit_width: None,
         }
     }
 
@@ -184,6 +187,19 @@ impl Column {
     #[must_use]
     pub fn binary_width(&self) -> Option<u32> {
         self.binary_width
+    }
+
+    /// Attaches a source BIT declaration without changing the storage fingerprint.
+    #[must_use]
+    pub fn with_bit_width(mut self, width: Option<u8>) -> Self {
+        self.bit_width = width.filter(|width| (1..=64).contains(width));
+        self
+    }
+
+    /// Declared bits in a BIT column, whose physical value remains unsigned.
+    #[must_use]
+    pub fn bit_width(&self) -> Option<u8> {
+        self.bit_width
     }
 
     /// Returns the declared SET members, when the column is a SET.

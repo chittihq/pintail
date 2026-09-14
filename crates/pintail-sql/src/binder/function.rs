@@ -1281,6 +1281,17 @@ pub(super) fn bind_scalar(
             },
         };
     }
+    if matches!(function, ScalarFunction::Concat | ScalarFunction::ConcatWs) {
+        for argument in &mut args {
+            if let Some(bits) = argument.bit_width() {
+                *argument = crate::text_charset::wrap(
+                    argument.clone(),
+                    ScalarFunction::BitBytes(bits.div_ceil(8)),
+                    DataType::Binary,
+                );
+            }
+        }
+    }
     let args = if matches!(
         function,
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
@@ -1546,7 +1557,7 @@ pub(super) fn bind_scalar(
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
         ScalarFunction::Collate { .. } | ScalarFunction::BitNot => (args[0].data_type, args[0].nullable),
-        ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
+        ScalarFunction::BitBytes(_) | ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
         // nullable regardless of their inputs.

@@ -615,6 +615,7 @@ mod tests {
             geometry: false,
             timestamp: false,
             binary_width: None,
+            bit_width: None,
             outer: false,
             using_shadowed: false,
         }

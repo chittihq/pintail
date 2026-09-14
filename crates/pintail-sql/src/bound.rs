@@ -129,6 +129,8 @@ pub struct BoundColumn {
     pub timestamp: bool,
     /// Declared BINARY/VARBINARY bytes, including empty/all-NULL inputs.
     pub binary_width: Option<u32>,
+    /// Source BIT width for binary string consumers.
+    pub bit_width: Option<u8>,
     /// Whether this reference resolves in an enclosing query scope rather
     /// than the query that owns the expression. Dependent execution replaces
     /// it with the current outer-row value before compiling the inner plan.
@@ -206,6 +208,15 @@ fn binary_branch_width(args: &[BoundExpr]) -> Option<u32> {
 }
 
 impl BoundExpr {
+    /// Source BIT identity survives direct projections without changing numeric use.
+    #[must_use]
+    pub fn bit_width(&self) -> Option<u8> {
+        match &self.kind {
+            BoundExprKind::Column(column) => column.bit_width,
+            _ => None,
+        }
+    }
+
     /// Maximum binary result bytes when the declaration determines them.
     #[must_use]
     pub fn binary_width(&self) -> Option<u32> {
@@ -904,6 +915,8 @@ pub enum ScalarFunction {
     },
     /// Render a single-precision value in a string context.
     FloatString,
+    /// Convert a BIT value to its declared big-endian byte string.
+    BitBytes(u8),
     /// Normalize Unicode into a SQL character set and retain its identity.
     TextCharset(pintail_types::CharacterSet, NamedCollation),
     /// Read encoded bytes as Unicode, retaining the original character set.
@@ -1674,6 +1687,15 @@ impl BoundExpr {
 }
 
 impl BoundQuery {
+    /// Preserve a BIT declaration across direct derived and grouping projections.
+    #[must_use]
+    pub fn result_bit_width(&self, expr: &BoundExpr) -> Option<u8> {
+        match &expr.kind {
+            BoundExprKind::GroupKey(index) => self.result_bit_width(self.group_by.get(*index)?),
+            _ => expr.bit_width(),
+        }
+    }
+
     /// Resolve binary width across grouping, aggregate and derived layouts.
     #[must_use]
     pub fn result_binary_width(&self, expr: &BoundExpr) -> Option<u32> {

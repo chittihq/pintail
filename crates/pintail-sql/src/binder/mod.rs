@@ -255,6 +255,7 @@ impl<'catalog> Binder<'catalog> {
                 geometry: false,
                 timestamp: false,
                 binary_width: anchor.result_binary_width(&projection.expr),
+                bit_width: anchor.result_bit_width(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2052,6 +2053,7 @@ impl<'catalog> Binder<'catalog> {
                 geometry: column.is_geometry(),
                 timestamp: column.is_timestamp(),
                 binary_width: column.binary_width(),
+                bit_width: column.bit_width(),
                 outer: false,
                 using_shadowed: false,
             })
@@ -2111,6 +2113,7 @@ impl<'catalog> Binder<'catalog> {
                 geometry: false,
                 timestamp: false,
                 binary_width: input.result_binary_width(&projection.expr),
+                bit_width: input.result_bit_width(&projection.expr),
                 outer: false,
                 using_shadowed: false,
             })

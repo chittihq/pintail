@@ -4717,6 +4717,7 @@ fn build_operator_inner(
                 geometry: false,
                 timestamp: false,
                 binary_width,
+                bit_width: None,
                 outer: false,
                 using_shadowed: false,
             };
@@ -4807,6 +4808,7 @@ fn build_operator_inner(
                         geometry: false,
                         timestamp: false,
                         binary_width: projection.expr.binary_width(),
+                        bit_width: projection.expr.bit_width(),
                         outer: false,
                         using_shadowed: false,
                     },

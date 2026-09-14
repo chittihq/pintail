@@ -1621,6 +1621,7 @@ fn build_prewhere_spec(
             geometry: false,
             timestamp: false,
             binary_width: column.binary_width(),
+            bit_width: column.bit_width(),
             outer: false,
             using_shadowed: false,
         });

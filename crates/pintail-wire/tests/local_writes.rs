@@ -479,3 +479,25 @@ fn temporal_columns_store_canonical_text_at_their_precision() {
         ]
     );
 }
+
+#[test]
+fn bit_columns_keep_declared_bytes_when_concatenated() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE flag_values (id BIGINT PRIMARY KEY, bits BIT(64))",
+    )
+    .unwrap();
+    run(&fixture, "INSERT INTO flag_values VALUES (1,1)").unwrap();
+    for sql in [
+        "SELECT HEX(CONCAT(bits)) FROM flag_values",
+        "SELECT HEX(CONCAT(payload)) FROM (SELECT bits AS payload FROM flag_values) AS derived",
+    ] {
+        let result = run(&fixture, sql).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            pintail_types::Value::Utf8("0000000000000001".to_owned()),
+            "{sql}"
+        );
+    }
+}

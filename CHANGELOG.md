@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `CONCAT` and `CONCAT_WS` retain declared BIT-column byte widths through
+  direct and derived projections instead of formatting the numeric carrier.
+
 - Chained `BETWEEN` expressions bind the upper comparison using MySQL
   precedence while preserving explicit parentheses and negation.
 
