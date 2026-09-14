@@ -6984,6 +6984,7 @@ impl TemporalLiteral {
         let mut remaining = text.trim();
         let year_digits = remaining.bytes().take_while(u8::is_ascii_digit).count();
         if year_digits == 0
+            || year_digits > 4
             || !remaining
                 .as_bytes()
                 .get(year_digits)
