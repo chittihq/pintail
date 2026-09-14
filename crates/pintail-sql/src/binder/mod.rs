@@ -6061,13 +6061,14 @@ fn time_as_number(expr: BoundExpr) -> BoundExpr {
     }
 }
 
-/// A TIME compares as its number, which keeps the time order where the text
-/// does not (`-100:00:00` sorted above `-00:00:01` as text), and a string
-/// compared with a TIME is read as a TIME first, as `MySQL` does.
+/// Typed TIME operands compare numerically. A remaining text operand uses
+/// lexical comparison; only a column's constant bounds convert to TIME.
 fn unify_time_operands(left: BoundExpr, right: BoundExpr) -> (BoundExpr, BoundExpr) {
     let right = time_column_constant(&left, right);
     let left = time_column_constant(&right, left);
-    if is_time(&left) || is_time(&right) {
+    if (is_time(&left) && is_plain_text(&right)) || (is_time(&right) && is_plain_text(&left)) {
+        (time_as_text(left), time_as_text(right))
+    } else if is_time(&left) || is_time(&right) {
         (time_comparand(left), time_comparand(right))
     } else {
         (left, right)
@@ -6087,7 +6088,14 @@ fn unify_time_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
     } else {
         args
     };
-    if args.iter().any(is_time) {
+    if args.iter().any(is_time)
+        && args.iter().any(is_plain_text)
+        && args
+            .iter()
+            .all(|arg| is_time(arg) || is_plain_text(arg) || arg.data_type.is_none())
+    {
+        args.into_iter().map(time_as_text).collect()
+    } else if args.iter().any(is_time) {
         args.into_iter().map(time_comparand).collect()
     } else {
         args
@@ -6127,6 +6135,14 @@ fn time_column_constant(target: &BoundExpr, operand: BoundExpr) -> BoundExpr {
 
 fn is_time(expr: &BoundExpr) -> bool {
     matches!(expr.data_type, Some(DataType::Time64 { .. }))
+}
+
+fn time_as_text(expr: BoundExpr) -> BoundExpr {
+    if is_time(&expr) {
+        cast_to(expr, DataType::Utf8)
+    } else {
+        expr
+    }
 }
 
 fn time_comparand(expr: BoundExpr) -> BoundExpr {

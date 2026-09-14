@@ -1360,3 +1360,22 @@ fn nullif_year_returns_text_to_numeric_aggregates() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn time_expressions_compare_with_strings_as_text() {
+    for (expression, expected) in [
+        ("CAST('1:2:3' AS TIME)='1:02:03'", "Boolean(false)"),
+        ("CAST('1:2:3' AS TIME)='01:02:03'", "Boolean(true)"),
+        ("CAST('1:2:3' AS TIME)='01:02:03.000000'", "Boolean(false)"),
+        ("CAST('1:2:3' AS TIME)<> 'x'", "Boolean(true)"),
+        ("CAST('1:2:3' AS TIME)=10203", "Boolean(true)"),
+        ("CAST('1:2:3' AS TIME) IN ('1:02:03')", "Boolean(false)"),
+        ("CAST('1:2:3' AS TIME) IN (TIME'1:02:03')", "Boolean(true)"),
+        (
+            "CAST('1:2:3' AS TIME) BETWEEN '1:00:00' AND '2:00:00'",
+            "Boolean(false)",
+        ),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
