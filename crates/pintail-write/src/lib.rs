@@ -827,7 +827,12 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
                 if precision < scale || !(0..=30).contains(&scale) {
                     return Err(wrong("invalid floating-point declaration"));
                 }
-                maximum = maximum.min(10_f64.powi(precision - scale) - 10_f64.powi(-scale));
+                let power = |exponent: i32| {
+                    format!("1e{exponent}")
+                        .parse::<f64>()
+                        .unwrap_or(f64::INFINITY)
+                };
+                maximum = maximum.min(power(precision - scale) - power(-scale));
             }
             let minimum = if column
                 .mysql_column_type

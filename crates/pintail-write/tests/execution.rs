@@ -360,3 +360,15 @@ fn permissive_float_writes_clamp_to_declared_ranges() {
         },
     );
 }
+
+#[test]
+fn wide_fixed_float_bounds_use_correctly_rounded_decimal_powers() {
+    let fixture = fixture();
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        run(&fixture, "CREATE TABLE readings (reading DOUBLE(200,0))").unwrap();
+        run(&fixture, "INSERT INTO readings VALUES (2e200),(-2e200)").unwrap();
+    });
+    let rows = stored_rows(&fixture, "readings");
+    assert!(rows.contains(&vec![Value::float64(1e200)]));
+    assert!(rows.contains(&vec![Value::float64(-1e200)]));
+}
