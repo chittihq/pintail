@@ -923,6 +923,17 @@ fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
             nullable: false,
         });
     }
+    if function == ScalarFunction::DateFormat
+        && args.len() == 3
+        && matches!(args[0].data_type, Some(DataType::Time64 { .. }))
+        && let Some(now) = STATEMENT_NOW.get()
+    {
+        args.push(BoundExpr {
+            kind: BoundExprKind::Literal(Value::Utf8(now.local.format("%Y-%m-%d").to_string())),
+            data_type: Some(DataType::Date32),
+            nullable: false,
+        });
+    }
     // Capture the connection's zone in the plan: execution may run
     // on workers that do not carry the caller's thread-local state.
     if matches!(

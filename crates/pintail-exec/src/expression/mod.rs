@@ -3507,7 +3507,13 @@ fn evaluate_eager_scalar_inner(
             ))
         }
         ScalarFunction::DateFormat => {
-            let value = parse_mysql_datetime(&scalar_string(&values[0])?)?;
+            let calendar = cast_temporal_carrier(
+                &values[0],
+                argument_types.first().copied().flatten(),
+                DataType::DateTime64 { fsp: 6 },
+                values.get(3),
+            );
+            let value = parse_mysql_datetime(&scalar_string(calendar.as_ref().unwrap_or(&values[0]))?)?;
             let format = scalar_string(&values[1])?;
             Ok(Value::Utf8(if values.len() > 2 {
                 temporal::mysql_date_format_locale(

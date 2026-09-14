@@ -511,6 +511,18 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn date_format_anchors_typed_time_to_the_statement_date() {
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT DATE_FORMAT(CAST('09:00' AS TIME), '%l.%i %p'), DATE_FORMAT(CAST('09:00' AS TIME), '%Y-%m-%d'), CURDATE(), DATE_FORMAT('09:00', '%H:%i')").await.unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            pintail_types::Value::Utf8("9.00 AM".into())
+        );
+        assert_eq!(result.rows[0][1], result.rows[0][2]);
+        assert_eq!(result.rows[0][3], pintail_types::Value::Null);
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
