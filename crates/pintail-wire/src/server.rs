@@ -2885,13 +2885,23 @@ fn floating_text(value: pintail_types::Float64, field: &QueryField) -> String {
     }
 }
 
+fn is_year_field(field: &QueryField) -> bool {
+    field.data_type == Some(DataType::Year)
+        || field
+            .wire_column
+            .as_ref()
+            .is_some_and(|column| column.coltype == ColumnType::MysqlTypeYear)
+}
+
 /// Writes one value as a text-protocol cell, straight into the row: the
 /// same bytes [`text_column_value`] renders, without a buffer per cell.
 fn put_text_value(row: &mut TextRow<'_>, value: &Value, field: &QueryField) {
     match value {
         Value::Null => row.null(),
         Value::Boolean(value) => row.signed(i64::from(*value)),
+        Value::Int64(value) if is_year_field(field) => row.bytes(format!("{value:04}").as_bytes()),
         Value::Int64(value) => row.signed(*value),
+        Value::UInt64(value) if is_year_field(field) => row.bytes(format!("{value:04}").as_bytes()),
         Value::UInt64(value) => row.unsigned(*value),
         Value::Float64(value) => row.bytes(floating_text(*value, field).as_bytes()),
         Value::Utf8(value) | Value::Enum { label: value, .. } => row.bytes(value.as_bytes()),
@@ -2905,7 +2915,11 @@ fn put_text_value(row: &mut TextRow<'_>, value: &Value, field: &QueryField) {
 fn put_text_cell(row: &mut TextRow<'_>, cell: Cell<'_>, field: &QueryField) {
     match cell {
         Cell::Null => row.null(),
+        Cell::Signed(value) if is_year_field(field) => row.bytes(format!("{value:04}").as_bytes()),
         Cell::Signed(value) => row.signed(value),
+        Cell::Unsigned(value) if is_year_field(field) => {
+            row.bytes(format!("{value:04}").as_bytes());
+        }
         Cell::Unsigned(value) => row.unsigned(value),
         Cell::Float(value) => {
             let value = pintail_types::Float64::new(value);
@@ -2961,7 +2975,7 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
         if let Some(integer) = integer {
             let width = match column.coltype {
                 ColumnType::MysqlTypeTiny => Some(IntWidth::Tiny),
-                ColumnType::MysqlTypeShort => Some(IntWidth::Short),
+                ColumnType::MysqlTypeShort | ColumnType::MysqlTypeYear => Some(IntWidth::Short),
                 ColumnType::MysqlTypeLong => Some(IntWidth::Long),
                 ColumnType::MysqlTypeLonglong => Some(IntWidth::LongLong),
                 _ => None,
@@ -2980,13 +2994,15 @@ fn binary_column_value(field: &QueryField, value: &Value) -> io::Result<Option<V
         (_, Value::Null) => return Ok(None),
         (_, Value::Boolean(value)) => encode_binary_int(i64::from(*value), IntWidth::Tiny),
         (Some(DataType::Int8), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Tiny),
-        (Some(DataType::Int16), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Short),
+        (Some(DataType::Int16 | DataType::Year), Value::Int64(value)) => {
+            encode_binary_int(*value, IntWidth::Short)
+        }
         (Some(DataType::Int32), Value::Int64(value)) => encode_binary_int(*value, IntWidth::Long),
         (_, Value::Int64(value)) => encode_binary_int(*value, IntWidth::LongLong),
         (Some(DataType::UInt8), Value::UInt64(value)) => {
             encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::Tiny)
         }
-        (Some(DataType::UInt16), Value::UInt64(value)) => {
+        (Some(DataType::UInt16 | DataType::Year), Value::UInt64(value)) => {
             encode_binary_int(i64::from_le_bytes(value.to_le_bytes()), IntWidth::Short)
         }
         (Some(DataType::UInt32), Value::UInt64(value)) => {
@@ -5628,6 +5644,30 @@ mod result_ceiling_tests {
         assert_eq!(
             super::binary_column_value(&field, &value).unwrap(),
             Some(number.to_le_bytes().to_vec())
+        );
+    }
+    #[test]
+    fn year_cells_use_four_text_digits_and_two_binary_bytes() {
+        let field = super::QueryField {
+            wire_column: None,
+            name: "year_value".into(),
+            data_type: Some(super::DataType::Year),
+            nullable: false,
+            collation: None,
+            group_concat: false,
+            geometry: false,
+            timestamp: false,
+            wire_hint: None,
+        };
+        let mut encoded = super::EncodedRows::with_capacity(2);
+        super::put_text_value(&mut encoded.text_row(), &super::Value::UInt64(0), &field);
+        super::put_text_cell(&mut encoded.text_row(), super::Cell::Unsigned(0), &field);
+        for row in encoded.iter() {
+            assert_eq!(&row[1..], b"0000");
+        }
+        assert_eq!(
+            super::binary_column_value(&field, &super::Value::UInt64(2001)).unwrap(),
+            Some(2001_u16.to_le_bytes().to_vec())
         );
     }
 }
