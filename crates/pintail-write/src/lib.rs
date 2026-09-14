@@ -517,7 +517,7 @@ fn hex_literal(digits: &str, column: &SourceColumn) -> Result<Value, WriteError>
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| wrong())?;
     match column.pintail_type.storage_type() {
-        DataType::Binary => Ok(Value::Binary(bytes)),
+        DataType::Binary => binary_value(bytes, column).map(Value::Binary),
         DataType::Utf8 => String::from_utf8(bytes)
             .map_err(|_| wrong())
             .and_then(|text| typed_value(&text, column)),
@@ -724,7 +724,7 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             Value::Utf8(pintail_types::format_decimal_wide(&units, scale))
         }
         DataType::Utf8 => Value::Utf8(character_value(text, column)?),
-        DataType::Binary => Value::Binary(text.as_bytes().to_vec()),
+        DataType::Binary => Value::Binary(binary_value(text.as_bytes().to_vec(), column)?),
         other => {
             return Err(WriteError::Unsupported(format!(
                 "column '{}' stores {other:?}, which a local INSERT cannot write yet",
@@ -733,6 +733,30 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         }
     };
     Ok(value)
+}
+
+fn binary_value(mut bytes: Vec<u8>, column: &SourceColumn) -> Result<Vec<u8>, WriteError> {
+    let fixed = column.mysql_data_type.eq_ignore_ascii_case("binary");
+    if !fixed && !column.mysql_data_type.eq_ignore_ascii_case("varbinary") {
+        return Ok(bytes);
+    }
+    let width = column
+        .mysql_column_type
+        .split_once('(')
+        .and_then(|(_, tail)| tail.split_once(')'))
+        .and_then(|(width, _)| width.trim().parse::<usize>().ok())
+        .unwrap_or(1);
+    if bytes.len() > width && pintail_sql::session_parse_mode().strict {
+        return Err(WriteError::DataTooLong {
+            column: column.name.clone(),
+            row: 1,
+        });
+    }
+    bytes.truncate(width);
+    if fixed {
+        bytes.resize(width, 0);
+    }
+    Ok(bytes)
 }
 
 /// Character widths count code points; only CHAR removes trailing spaces.

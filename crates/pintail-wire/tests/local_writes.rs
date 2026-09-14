@@ -666,3 +666,49 @@ fn wide_decimal_writes_keep_exact_digits_and_declared_scale() {
         .is_err()
     );
 }
+
+#[test]
+fn binary_columns_pad_fixed_width_and_truncate_by_bytes() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE bytes_table(id INT PRIMARY KEY,b BINARY(4),v VARBINARY(2))",
+    )
+    .unwrap();
+    run(
+        &fixture,
+        "INSERT INTO bytes_table VALUES(1,'a','a'),(2,'a ','a '),(3,X'FF',X'FF00'),(4,'é','é😀')",
+    )
+    .unwrap();
+    let output = run(
+        &fixture,
+        "SELECT HEX(b),HEX(v) FROM bytes_table ORDER BY id",
+    )
+    .unwrap();
+    for (row, expected) in output.rows.iter().zip([
+        ["61000000", "61"],
+        ["61200000", "6120"],
+        ["FF000000", "FF00"],
+        ["C3A90000", "C3A9"],
+    ]) {
+        assert_eq!(
+            row,
+            &expected
+                .map(|value| pintail_types::Value::Utf8(value.into()))
+                .to_vec()
+        );
+    }
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("STRICT_ALL_TABLES"),
+        || {
+            assert!(run(&fixture, "INSERT INTO bytes_table VALUES(5,'abcd ','a')").is_err());
+            assert!(
+                run(
+                    &fixture,
+                    "INSERT INTO bytes_table VALUES(5,X'0000000000','a')"
+                )
+                .is_err()
+            );
+        },
+    );
+}
