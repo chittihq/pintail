@@ -1555,3 +1555,17 @@ fn executable_comments_follow_mysql_version_prefix_rules() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn like_default_escape_follows_the_statement_sql_mode() {
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("NO_BACKSLASH_ESCAPES"),
+        || {
+            assert_answers(&[
+                (r"_utf8mb4'a\bc' LIKE _utf8mb4'a\%'", "Boolean(true)"),
+                (r"'a%b' LIKE 'a!%b' ESCAPE '!'", "Boolean(true)"),
+                (r"'abc' LIKE 'a\bc'", "Boolean(false)"),
+            ]);
+        },
+    );
+}
