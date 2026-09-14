@@ -1609,6 +1609,9 @@ impl<'catalog> Binder<'catalog> {
             // LEFT JOIN's right input - the bushy shape bind_join_relation
             // already lowers as a derived input.
             let flipped = rewrite_right_joins(table_with_joins);
+            let written_order = flipped
+                .as_ref()
+                .and_then(|_| on_join_relation_order(table_with_joins));
             let table_with_joins = flipped.as_ref().unwrap_or(table_with_joins);
             let base = self.bind_table(&table_with_joins.relation, ctes)?;
             reject_duplicate_relation(&tables, &base)?;
@@ -1762,6 +1765,14 @@ impl<'catalog> Binder<'catalog> {
                     kind,
                     table,
                     condition,
+                });
+            }
+            if let Some(order) = written_order {
+                item_wildcard.sort_by_key(|column| {
+                    order
+                        .iter()
+                        .position(|name| name.eq_ignore_ascii_case(&column.relation_name))
+                        .unwrap_or(usize::MAX)
                 });
             }
             from.push(BoundFrom { base, joins });
@@ -2428,6 +2439,48 @@ fn flatten_parenthesized_root_joins(
     }
     flattened.joins.extend(table.joins.iter().cloned());
     Ok(Some(flattened))
+}
+
+/// ON joins preserve written wildcard order even when execution swaps inputs.
+/// USING and NATURAL joins instead keep their coalesced-column ordering.
+fn on_join_relation_order(item: &TableWithJoins) -> Option<Vec<String>> {
+    fn factor_names(factor: &TableFactor, names: &mut Vec<String>) -> Option<()> {
+        match factor {
+            TableFactor::Table { name, alias, .. } => {
+                names.push(alias.as_ref().map_or_else(
+                    || {
+                        object_name_parts(name)
+                            .ok()?
+                            .last()
+                            .map(|name| (*name).to_owned())
+                    },
+                    |alias| Some(alias.name.value.clone()),
+                )?);
+            }
+            TableFactor::Derived {
+                alias: Some(alias), ..
+            } => names.push(alias.name.value.clone()),
+            TableFactor::NestedJoin {
+                table_with_joins,
+                alias: None,
+            } => names.extend(on_join_relation_order(table_with_joins)?),
+            _ => return None,
+        }
+        Some(())
+    }
+    let mut names = Vec::new();
+    factor_names(&item.relation, &mut names)?;
+    for join in &item.joins {
+        let constraint = match &join.join_operator {
+            JoinOperator::Right(constraint) | JoinOperator::RightOuter(constraint) => constraint,
+            other => bind_join_operator(other).ok()?.1,
+        };
+        if !matches!(constraint, JoinConstraint::On(_) | JoinConstraint::None) {
+            return None;
+        }
+        factor_names(&join.relation, &mut names)?;
+    }
+    Some(names)
 }
 
 /// Rewrites every RIGHT JOIN in a chain as `right LEFT JOIN (prefix)`,

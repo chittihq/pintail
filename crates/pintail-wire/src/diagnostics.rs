@@ -266,6 +266,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn right_join_wildcards_follow_written_relation_order() {
+        let (_directory, backend) = local_backend();
+        for sql in [
+            "SELECT * FROM (SELECT 1 AS first_value) AS a RIGHT JOIN (SELECT 2 AS second_value) AS b ON a.first_value=b.second_value",
+            "SELECT * FROM (SELECT 1 AS first_value) AS a RIGHT JOIN (SELECT 2 AS second_value) AS b ON a.first_value=b.second_value RIGHT JOIN (SELECT 3 AS third_value) AS c ON b.second_value=c.third_value",
+        ] {
+            let result = backend.execute(sql).await.unwrap();
+            assert_eq!(result.fields[0].name, "first_value");
+            assert_eq!(result.fields[1].name, "second_value");
+            assert_eq!(result.rows[0][0], pintail_types::Value::Null);
+            assert_eq!(
+                result.rows[0].last(),
+                Some(&pintail_types::Value::Int64(if result.fields.len() == 2 {
+                    2
+                } else {
+                    3
+                }))
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn nested_natural_joins_keep_only_visible_wildcard_columns() {
         let (_directory, backend) = local_backend();
         let source = "(SELECT 3 AS x, 1 AS y) AS a NATURAL JOIN ((SELECT 1 AS y, 11 AS z) AS b NATURAL JOIN (SELECT 11 AS z, 4 AS w) AS c)";
