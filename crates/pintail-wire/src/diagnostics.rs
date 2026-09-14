@@ -427,6 +427,35 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn variable_reads_keep_the_type_at_statement_start() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET @a='x', @b='y'").await;
+        let result = backend
+            .execute("SELECT @a:=10, @b:=2, @a > @b, @a < @b")
+            .await
+            .unwrap();
+        assert_eq!(
+            &result.rows[0][2..],
+            &[
+                pintail_types::Value::Boolean(false),
+                pintail_types::Value::Boolean(true)
+            ]
+        );
+        let result = backend
+            .execute("SELECT @a:='10', @b:='2', @a > @b, @a < @b")
+            .await
+            .unwrap();
+        assert_eq!(
+            &result.rows[0][2..],
+            &[
+                pintail_types::Value::Boolean(true),
+                pintail_types::Value::Boolean(false)
+            ]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

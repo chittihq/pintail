@@ -1266,9 +1266,19 @@ impl CompiledExpr {
                         unreachable!("variable name literal")
                     };
                     if *function == ScalarFunction::UserVariableRead {
-                        return variables
-                            .get(&name)
-                            .map_or_else(|| args[1].evaluate(batch, row), Ok);
+                        return variables.get(&name).map_or_else(
+                            || args[1].evaluate(batch, row),
+                            |value| {
+                                // Reads keep the statement's original type category even
+                                // when an earlier assignment changes the stored value.
+                                // Decimal variables retain the newly assigned precision.
+                                if matches!(data_type, None | Some(DataType::Decimal { .. })) {
+                                    Ok(value)
+                                } else {
+                                    cast_scalar(&value, *data_type)
+                                }
+                            },
+                        );
                     }
                     let value = args[1].evaluate(batch, row)?;
                     variables.set(name, value.clone(), argument_types[1]);
