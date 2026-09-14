@@ -1575,6 +1575,7 @@ impl AggregateState {
     pub(super) fn finish(self, memory: &MemoryTracker) -> Result<Value, ExecError> {
         Ok(match self.value {
             AggregateValue::Count(count) => Value::UInt64(count),
+            AggregateValue::JsonObjectAgg { members } if members.is_empty() => Value::Null,
             AggregateValue::JsonObjectAgg { members } => Value::Utf8(
                 crate::expression::mysql_json_text(&serde_json::Value::Object(members)),
             ),

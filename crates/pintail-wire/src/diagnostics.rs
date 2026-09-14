@@ -358,6 +358,21 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn empty_json_object_aggregate_is_null() {
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT JSON_OBJECTAGG('entry', value) FROM (SELECT 1 AS value) entries WHERE value > 2").await.unwrap();
+        assert_eq!(result.rows[0], vec![pintail_types::Value::Null]);
+        let result = backend
+            .execute("SELECT JSON_OBJECTAGG('entry', value) FROM (SELECT NULL AS value) entries")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![pintail_types::Value::Utf8("{\"entry\": null}".into())]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
