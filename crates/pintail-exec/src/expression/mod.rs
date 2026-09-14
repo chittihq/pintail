@@ -2978,6 +2978,14 @@ fn evaluate_eager_scalar_inner(
                 total.wrapping_mul(256).wrapping_add(u64::from(*byte))
             })))
         }
+        ScalarFunction::Hex
+            if matches!(argument_types.first(), Some(Some(DataType::Decimal { .. }))) =>
+        {
+            let Value::Int64(integer) = cast_decimal_integer(&values[0], DataType::Int64)? else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            Ok(Value::Utf8(format!("{integer:X}")))
+        }
         ScalarFunction::Hex => match &values[0] {
             Value::Int64(signed) => Ok(Value::Utf8(format!("{signed:X}"))),
             Value::UInt64(unsigned) => Ok(Value::Utf8(format!("{unsigned:X}"))),

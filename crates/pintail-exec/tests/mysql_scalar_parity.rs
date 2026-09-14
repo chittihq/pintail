@@ -1569,3 +1569,16 @@ fn like_default_escape_follows_the_statement_sql_mode() {
         },
     );
 }
+
+#[test]
+fn hex_reads_decimal_operands_as_rounded_signed_integers() {
+    assert_answers(&[
+        ("HEX(29223372036854775809)", "7FFFFFFFFFFFFFFF"),
+        ("HEX(-29223372036854775809)", "8000000000000000"),
+        ("HEX(10.5)", "B"),
+        ("HEX(-10.5)", "FFFFFFFFFFFFFFF5"),
+        ("HEX(18446744073709551615.0)", "7FFFFFFFFFFFFFFF"),
+        ("HEX(9223372036854775808.0)", "7FFFFFFFFFFFFFFF"),
+        ("HEX('10.5')", "31302E35"),
+    ]);
+}
