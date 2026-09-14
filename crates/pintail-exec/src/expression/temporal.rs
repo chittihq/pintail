@@ -264,6 +264,14 @@ fn timezone_spec(text: &str) -> Option<ZoneSpec> {
 /// times (DST fall-back) take the earlier offset like `MySQL`; nonexistent
 /// local times (spring-forward gap) return None, a documented divergence.
 pub(super) fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
+    convert_tz_impl(text, from, to, false)
+}
+
+pub(super) fn convert_tz_bounded(text: &str, from: &str, to: &str) -> Option<String> {
+    convert_tz_impl(text, from, to, true)
+}
+
+fn convert_tz_impl(text: &str, from: &str, to: &str, bounded: bool) -> Option<String> {
     let trimmed = text.trim();
     let naive = NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%d %H:%M:%S%.f")
         .or_else(|_| {
@@ -290,9 +298,15 @@ pub(super) fn convert_tz(text: &str, from: &str, to: &str) -> Option<String> {
             LocalResult::None => return None,
         },
     };
-    let converted = match to {
-        ZoneSpec::Fixed(offset) => utc.with_timezone(&offset).naive_local(),
-        ZoneSpec::Named(zone) => utc.with_timezone(&zone).naive_local(),
+    // CONVERT_TZ leaves an out-of-range input unchanged after resolving its
+    // source zone. Internal session-zone conversion has no such restriction.
+    let converted = if bounded && !(1..=super::UNIX_TIMESTAMP_MAX).contains(&utc.timestamp()) {
+        naive
+    } else {
+        match to {
+            ZoneSpec::Fixed(offset) => utc.with_timezone(&offset).naive_local(),
+            ZoneSpec::Named(zone) => utc.with_timezone(&zone).naive_local(),
+        }
     };
     let base = converted.format("%Y-%m-%d %H:%M:%S").to_string();
     if fraction_digits == 0 {

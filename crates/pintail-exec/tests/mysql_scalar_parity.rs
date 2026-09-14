@@ -1379,3 +1379,32 @@ fn time_expressions_compare_with_strings_as_text() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn inet_aton_short_forms_still_require_one_byte_per_component() {
+    for (expression, expected) in [
+        ("INET_ATON('122.256')", "NULL"),
+        ("INET_ATON('256')", "NULL"),
+        ("INET_ATON('255')", "255"),
+        ("INET_ATON('1.2.3')", "16908291"),
+        ("INET_ATON('1.65535')", "NULL"),
+        ("INET_ATON('1.+2')", "NULL"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}
+
+#[test]
+fn convert_tz_leaves_dates_outside_the_timestamp_range_unchanged() {
+    for (date, expected) in [
+        ("1969-12-31 23:59:59", "1969-12-31 23:59:59"),
+        ("1970-01-01 00:00:00", "1970-01-01 00:00:00"),
+        ("3001-01-18 23:59:59", "3001-01-19 00:59:59"),
+        ("3001-01-19 00:00:00", "3001-01-19 00:00:00"),
+    ] {
+        assert_eq!(
+            scalar(&format!("CONVERT_TZ('{date}','+00:00','+01:00')")),
+            expected
+        );
+    }
+}

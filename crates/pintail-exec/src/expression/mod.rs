@@ -3049,29 +3049,24 @@ fn evaluate_eager_scalar_inner(
         ))),
         ScalarFunction::InetAton => {
             // MySQL accepts the classful 1-4 part shorthands: the LAST part
-            // fills the remaining bytes ('1.2.3' is 1.2.0.3, measured
-            // 16908291), each earlier part is one byte.
+            // fills the remaining bytes ('1.2.3' is 1.2.0.3), but every
+            // written component must still fit in one byte.
             let text = scalar_string(&values[0])?;
             let parts = text.split('.').collect::<Vec<_>>();
             if parts.is_empty() || parts.len() > 4 {
                 return Ok(Value::Null);
             }
             let tail_bytes = 4 - (parts.len() - 1);
-            let tail_limit = if tail_bytes == 4 {
-                u64::from(u32::MAX)
-            } else {
-                (1_u64 << (8 * tail_bytes)) - 1
-            };
             let mut address: u64 = 0;
             for (index, part) in parts.iter().enumerate() {
                 let last = index == parts.len() - 1;
-                let limit = if last { tail_limit } else { 255 };
-                let Ok(value) = part.parse::<u64>() else {
-                    return Ok(Value::Null);
-                };
-                if value > limit {
+                if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
                     return Ok(Value::Null);
                 }
+                let Ok(value) = part.parse::<u8>() else {
+                    return Ok(Value::Null);
+                };
+                let value = u64::from(value);
                 if last {
                     address = (address << (8 * tail_bytes)) | value;
                 } else {
@@ -3701,7 +3696,7 @@ fn evaluate_eager_scalar_inner(
             let text = scalar_string(&values[0])?;
             let from = scalar_string(&values[1])?;
             let to = scalar_string(&values[2])?;
-            Ok(convert_tz(&text, &from, &to).map_or(Value::Null, Value::Utf8))
+            Ok(temporal::convert_tz_bounded(&text, &from, &to).map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::SessionTimestamp => {
             if matches!(values[0], Value::Null) {
