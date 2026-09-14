@@ -608,3 +608,61 @@ fn character_columns_enforce_width_in_characters_and_strip_char_padding() {
         3
     );
 }
+
+#[test]
+fn year_casts_read_enum_ordinals_and_set_masks() {
+    let fixture = local_fixture();
+    run(&fixture, "CREATE TABLE choices(id INT PRIMARY KEY, e ENUM('alpha','20','zeta'), s SET('red','green'))").unwrap();
+    run(
+        &fixture,
+        "INSERT INTO choices VALUES(1,'zeta','red,green'),(2,'20','green')",
+    )
+    .unwrap();
+    let output = run(
+        &fixture,
+        "SELECT CAST(e AS YEAR),CAST(s AS YEAR),CAST(CONCAT(e) AS YEAR) FROM choices ORDER BY id",
+    )
+    .unwrap();
+    assert_eq!(
+        output.rows[0],
+        vec![
+            pintail_types::Value::UInt64(2003),
+            pintail_types::Value::UInt64(2003),
+            pintail_types::Value::Null
+        ]
+    );
+    assert_eq!(
+        output.rows[1],
+        vec![
+            pintail_types::Value::UInt64(2002),
+            pintail_types::Value::UInt64(2002),
+            pintail_types::Value::UInt64(2020)
+        ]
+    );
+}
+
+#[test]
+fn wide_decimal_writes_keep_exact_digits_and_declared_scale() {
+    let fixture = local_fixture();
+    run(
+        &fixture,
+        "CREATE TABLE amounts(id INT PRIMARY KEY, d DECIMAL(65,30))",
+    )
+    .unwrap();
+    run(&fixture, "INSERT INTO amounts VALUES(1,10.34999),(2,12345678901234567890123456789012345.1234567890123456789012345678904),(3,-0.0000000000000000000000000000005)").unwrap();
+    let output = run(&fixture, "SELECT d FROM amounts ORDER BY id").unwrap();
+    for (row, expected) in output.rows.iter().zip([
+        "10.349990000000000000000000000000",
+        "12345678901234567890123456789012345.123456789012345678901234567890",
+        "-0.000000000000000000000000000001",
+    ]) {
+        assert_eq!(row[0], pintail_types::Value::Utf8(expected.into()));
+    }
+    assert!(
+        run(
+            &fixture,
+            "INSERT INTO amounts VALUES(4,123456789012345678901234567890123456)"
+        )
+        .is_err()
+    );
+}

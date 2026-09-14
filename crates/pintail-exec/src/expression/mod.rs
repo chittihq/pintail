@@ -4754,6 +4754,7 @@ fn cast_mysql_year(
     statement_year: Option<&Value>,
 ) -> Result<Value, ExecError> {
     let (number, string_input) = match source_type {
+        _ if matches!(value, Value::Enum { .. }) => (mysql_f64(value)?, false),
         Some(DataType::Date32 | DataType::DateTime64 { .. }) => {
             let text = scalar_string(value)?;
             let year = text

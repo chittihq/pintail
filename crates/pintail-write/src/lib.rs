@@ -703,6 +703,26 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
         DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("set") => {
             Value::Utf8(set_labels(text, column).ok_or_else(|| wrong("Data truncated"))?)
         }
+        DataType::Utf8 if matches!(column.mysql_data_type.as_str(), "decimal" | "numeric") => {
+            let (precision, scale) = column
+                .mysql_column_type
+                .split_once('(')
+                .and_then(|(_, tail)| tail.split_once(')'))
+                .and_then(|(shape, _)| shape.split_once(','))
+                .and_then(|(precision, scale)| {
+                    Some((
+                        precision.trim().parse::<usize>().ok()?,
+                        scale.trim().parse::<u8>().ok()?,
+                    ))
+                })
+                .ok_or_else(|| wrong("invalid decimal declaration"))?;
+            let units = pintail_types::parse_decimal_wide_rounded(text.trim(), scale)
+                .ok_or_else(|| wrong("expected a decimal number"))?;
+            if units.digits() > precision {
+                return Err(wrong("Out of range value"));
+            }
+            Value::Utf8(pintail_types::format_decimal_wide(&units, scale))
+        }
         DataType::Utf8 => Value::Utf8(character_value(text, column)?),
         DataType::Binary => Value::Binary(text.as_bytes().to_vec()),
         other => {
