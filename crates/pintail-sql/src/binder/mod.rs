@@ -6702,45 +6702,6 @@ fn is_time(expr: &BoundExpr) -> bool {
     matches!(expr.data_type, Some(DataType::Time64 { .. }))
 }
 
-/// A real `IN` list holding a datetime compares every operand as a datetime,
-/// and a bare `TIME` becomes that time on the statement's own date.
-///
-/// One item is not a list: `MySQL` answers `a IN (TIMESTAMP'2001-01-01
-/// 10:20:32')` exactly as it answers the equality, comparing in the TIME
-/// domain, and a TIME column holding `10:20:32` matches. Add a second item -
-/// even another datetime - and the aggregated type takes over: the column's
-/// time now carries today's date, so a literal dated 2001 matches nothing,
-/// while the same literal dated today matches again. That is the whole
-/// difference between `IN (x)` and `IN (x, y)` here, and it is why the count
-/// is part of the condition rather than an optimization detail.
-///
-/// Measured against `MySQL` 8.4 in both shapes. The conversion itself is the
-/// one `CAST(t AS DATETIME)` already performs, statement date included.
-fn unify_time_with_datetime_list(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
-    let datetime = |expr: &BoundExpr| matches!(expr.data_type, Some(DataType::DateTime64 { .. }));
-    // args[0] is the subject, so two list items means three arguments.
-    if args.len() < 3 || !(args.iter().any(datetime) && args.iter().any(is_time)) {
-        return args;
-    }
-    let fsp = args
-        .iter()
-        .filter_map(|arg| match arg.data_type {
-            Some(DataType::DateTime64 { fsp }) => Some(fsp),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-    args.into_iter()
-        .map(|arg| {
-            if is_time(&arg) {
-                cast_to(arg, DataType::DateTime64 { fsp })
-            } else {
-                arg
-            }
-        })
-        .collect()
-}
-
 fn time_as_text(expr: BoundExpr) -> BoundExpr {
     if is_time(&expr) {
         cast_to(expr, DataType::Utf8)
@@ -6837,39 +6798,6 @@ fn number_and_text_as_double(left: BoundExpr, right: BoundExpr) -> (BoundExpr, B
         );
     }
     (left, right)
-}
-
-/// An `IN` list that mixes a string with a number compares as a double.
-///
-/// Comparing an integer with a string is a double comparison in `MySQL`. `=`
-/// and `IN` against constants escape that: the constant is converted to the
-/// column's own exact type while the statement is prepared, so
-/// `id IN ('97716021308405775')` answers for exactly that row. The escape
-/// needs every item to convert that way, and one number in the list ends it -
-/// the comparison falls back to the aggregated type. Above 2^53 a double no
-/// longer tells neighbouring integers apart, so
-/// `id IN (1234, '97716021308405775')` answers for three adjacent ids at once
-/// where the same list without the 1234 answers for one. Both readings are
-/// `MySQL`'s, measured; the difference is the list, not the id.
-fn mixed_text_and_number_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
-    let Some((subject, items)) = args.split_first() else {
-        return args;
-    };
-    if !(compares_as_number(subject)
-        && items.iter().any(is_plain_text)
-        && items.iter().any(compares_as_number))
-    {
-        return args;
-    }
-    args.into_iter()
-        .map(|argument| {
-            if compares_as_number(&argument) || is_plain_text(&argument) {
-                cast_to(argument, DataType::Float64)
-            } else {
-                argument
-            }
-        })
-        .collect()
 }
 
 fn numeric_list_as_double(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
