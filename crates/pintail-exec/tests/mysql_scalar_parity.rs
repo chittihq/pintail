@@ -1776,3 +1776,18 @@ fn binary_temporal_literals_keep_the_precision_their_text_carries() {
         ),
     ]);
 }
+
+/// `MySQL` matches a regular expression against binary operands, and under
+/// `SET NAMES binary` every unprefixed literal is binary - so refusing them
+/// at bind time refused ordinary statements. Bytes that are not valid UTF-8
+/// still refuse, but where they are read rather than by type alone.
+#[test]
+fn regular_expressions_accept_binary_operands() {
+    assert_answers(&[
+        // MySQL's own answer: HEX of the string "1", not of "31".
+        ("HEX(CONCAT(_binary'a' RLIKE _binary'a'))", "31"),
+        ("_binary'abc' RLIKE _binary'b'", "Boolean(true)"),
+        ("_binary'abc' RLIKE _binary'z'", "Boolean(false)"),
+        ("REGEXP_SUBSTR(_binary'abc', _binary'b')", "b"),
+    ]);
+}

@@ -1470,20 +1470,13 @@ pub(super) fn bind_scalar(
     ) {
         ensure_supported_text_collation(&args.iter().collect::<Vec<_>>())?;
     }
-    if matches!(
-        function,
-        ScalarFunction::RegexpLike { .. }
-            | ScalarFunction::RegexpSubstr
-            | ScalarFunction::RegexpInstr
-            | ScalarFunction::RegexpReplace
-    ) && args
-        .iter()
-        .any(|argument| argument.data_type == Some(DataType::Binary))
-    {
-        return Err(BindError::InvalidScalarFunction(
-            "regular expressions do not accept binary-string operands".to_owned(),
-        ));
-    }
+    // A binary operand is not a reason to refuse a regular expression:
+    // MySQL matches one, and `SET NAMES binary` makes every unprefixed
+    // literal binary, so refusing here refused ordinary statements -
+    // `SELECT 'a' RLIKE 'a'` among them, which MySQL answers 1. Bytes that
+    // are not valid UTF-8 cannot be matched by this engine and are refused
+    // where they are read, at evaluation, rather than by turning away every
+    // operand that merely has a binary type.
     let (data_type, nullable) = match function {
         ScalarFunction::EncodedOrd(_) => (Some(DataType::UInt64), args[0].nullable),
 
