@@ -284,6 +284,26 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn datetime_comparison_bounds_use_microsecond_session_precision() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
+        for (mode, expected) in [
+            ("", "2001-01-01 00:00:01.000000"),
+            ("TIME_TRUNCATE_FRACTIONAL", "2001-01-01 00:00:00.999999"),
+        ] {
+            backend
+                .query(format!("SET sql_mode='{mode}'").as_bytes())
+                .await;
+            let result = backend.execute("SELECT d FROM (SELECT CAST('2001-01-01 00:00:00.999999' AS DATETIME(6)) AS d UNION ALL SELECT CAST('2001-01-01 00:00:01' AS DATETIME(6))) clocks WHERE d='2001-01-01 00:00:00.9999998'").await.unwrap();
+            assert_eq!(
+                result.rows,
+                vec![vec![pintail_types::Value::Utf8(expected.into())]],
+                "{mode}"
+            );
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

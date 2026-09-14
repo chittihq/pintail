@@ -6459,6 +6459,7 @@ fn canonical_literal_operand(
         Some(Value::UInt64(number)) => number.to_string(),
         _ => return Ok(operand),
     };
+    let text = microsecond_temporal_bound(&text).unwrap_or(text);
     let Some(parsed) = TemporalLiteral::parse(&text) else {
         return Ok(operand);
     };
@@ -6603,6 +6604,25 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
         nullable: false,
         kind: BoundExprKind::Literal(value),
     })
+}
+
+// Comparisons read temporal constants at the engine's microsecond precision,
+// independently of the stored column's fractional precision.
+fn microsecond_temporal_bound(text: &str) -> Option<String> {
+    let (whole, fraction) = text.rsplit_once('.')?;
+    if fraction.len() <= 6 || !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let parsed = TemporalLiteral::parse(&format!("{whole}.{}", &fraction[..6]))?;
+    if !parsed.is_valid() {
+        return None;
+    }
+    let canonical = parsed.canonical(false, 6);
+    let mut micros = pintail_types::parse_datetime_micros(&canonical)?;
+    if !crate::session_parse_mode().time_truncate_fractional && fraction.as_bytes()[6] >= b'5' {
+        micros = micros.checked_add(1)?;
+    }
+    pintail_types::format_datetime_micros(micros, 6)
 }
 
 /// A date or datetime literal in one of the spellings `MySQL` reads:
