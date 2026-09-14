@@ -4389,9 +4389,17 @@ fn relational_edge_cases() -> Vec<OracleCase> {
             "json missing and null interactions",
             "SELECT JSON_TYPE('null'), JSON_EXTRACT('null', '$') IS NULL, JSON_EXTRACT('{}', '$.x') IS NULL, JSON_UNQUOTE(JSON_EXTRACT('{\"x\":null}', '$.x'))",
         ),
+        // `note` holds 'Alpha' and 'alpha' deliberately, and the column
+        // collates them equal. A set operation that DEDUPES or MATCHES them
+        // therefore has to return one of two spellings, and which one is the
+        // engine's business: MySQL answers 8.0 one way and 8.4 the other, so
+        // comparing the raw column here asks a question with two right
+        // answers. LOWER leaves the multiplicity and the NULL handling these
+        // cases exist for, and removes the choice. UNION ALL below keeps the
+        // raw column: it returns every row as written and picks nothing.
         unordered(
             "set multiplicity and null interactions",
-            "SELECT note FROM events WHERE id <= 3 UNION SELECT note FROM events WHERE id >= 8",
+            "SELECT LOWER(note) FROM events WHERE id <= 3 UNION SELECT LOWER(note) FROM events WHERE id >= 8",
         ),
         unordered(
             "set multiplicity and null interactions",
@@ -4399,7 +4407,7 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ),
         unordered(
             "set multiplicity and null interactions",
-            "SELECT note FROM events WHERE id <= 6 INTERSECT ALL SELECT note FROM events WHERE id >= 3",
+            "SELECT LOWER(note) FROM events WHERE id <= 6 INTERSECT ALL SELECT LOWER(note) FROM events WHERE id >= 3",
         ),
         unordered(
             "set multiplicity and null interactions",
