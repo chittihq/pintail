@@ -311,6 +311,7 @@ fn replace_metadata_counts(plan: LogicalPlan) -> LogicalPlan {
         } if group_by.is_empty()
             && aggregates.as_slice()
                 == [BoundAggregate {
+                    output_column: None,
                     declared: true,
                     function: AggregateFunction::Count,
                     expr: None,

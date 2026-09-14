@@ -4783,6 +4783,9 @@ fn build_operator_inner(
                 })
                 .collect::<Vec<_>>();
             output_columns.extend(aggregates.iter().enumerate().map(|(offset, aggregate)| {
+                if let Some(column) = &aggregate.output_column {
+                    return column.as_ref().clone();
+                }
                 synthetic(
                     group_by.len().saturating_add(offset),
                     aggregate.data_type,

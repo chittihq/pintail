@@ -276,6 +276,7 @@ pub(super) fn bind_window_function(
             let (data_type, nullable) = aggregate_result_type(aggregate_function, expr.as_ref())?;
             (
                 WindowFunction::Aggregate(BoundAggregate {
+                    output_column: None,
                     declared: true,
                     function: aggregate_function,
                     expr,

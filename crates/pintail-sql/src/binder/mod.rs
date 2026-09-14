@@ -1,5 +1,6 @@
 mod dependency;
 mod function;
+mod outer_aggregate;
 
 use function::{
     bind_between, bind_case, bind_cast, bind_convert, bind_in_list, bind_interval_arithmetic,
@@ -663,6 +664,22 @@ impl<'catalog> Binder<'catalog> {
             return Err(BindError::UnsupportedQueryClause(
                 "window functions cannot combine with DISTINCT".to_owned(),
             ));
+        }
+        for item in &mut projection {
+            outer_aggregate::lift(
+                &mut item.expr,
+                &mut aggregates,
+                &expression_tables,
+                &self.next_derived_id,
+            );
+        }
+        if let Some(predicate) = &mut having {
+            outer_aggregate::lift(
+                predicate,
+                &mut aggregates,
+                &expression_tables,
+                &self.next_derived_id,
+            );
         }
         // `ANY_VALUE` is not an aggregate in MySQL — it is a passthrough that
         // exempts its argument from the ONLY_FULL_GROUP_BY check. So a query
@@ -5025,6 +5042,7 @@ fn bind_aggregate(
             crate::text_charset::character_set,
         );
     let aggregate = BoundAggregate {
+        output_column: None,
         declared: true,
         function: aggregate_function,
         expr,
@@ -5717,6 +5735,7 @@ fn materialize_group_variables(
     {
         let index = aggregates.len();
         aggregates.push(BoundAggregate {
+            output_column: None,
             declared: false,
             function: AggregateFunction::AnyValue,
             data_type: expr.data_type,
@@ -5779,6 +5798,7 @@ fn rewrite_group_references(
             })
             .unwrap_or_else(|| {
                 aggregates.push(BoundAggregate {
+                    output_column: None,
                     declared: false,
                     function: AggregateFunction::AnyValue,
                     data_type: argument.data_type,

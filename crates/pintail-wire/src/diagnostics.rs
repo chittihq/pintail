@@ -821,6 +821,54 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn aggregates_of_outer_columns_belong_to_the_outer_query() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE numbers (n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("CREATE TABLE lookup (v INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO numbers VALUES (1),(2)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO lookup VALUES (1)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT (SELECT SUM(numbers.n) FROM lookup WHERE v=1) FROM numbers")
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        let result = backend
+            .execute("SELECT (SELECT SUM(numbers.n) FROM lookup WHERE v=0) FROM numbers")
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Null);
+        let result = backend
+            .execute(
+                "SELECT n, (SELECT SUM(numbers.n) FROM lookup) FROM numbers GROUP BY n ORDER BY n",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::Int64(1), Value::Int64(1)]);
+        assert_eq!(result.rows[1], vec![Value::Int64(2), Value::Int64(2)]);
+        let result = backend.execute("SELECT (SELECT (SELECT SUM(numbers.n) FROM lookup AS second_lookup) FROM lookup) FROM numbers").await.unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0][0], Value::Int64(3));
+        let result = backend.execute("SELECT (SELECT (SELECT SUM(numbers.n+lookup.v) FROM lookup AS inner_lookup) FROM lookup) FROM numbers ORDER BY n").await.unwrap();
+        assert_eq!(result.rows[0][0], Value::Int64(2));
+        assert_eq!(result.rows[1][0], Value::Int64(3));
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

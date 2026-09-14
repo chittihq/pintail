@@ -1457,6 +1457,8 @@ pub enum AggregateFunction {
 /// One deduplicated aggregate computation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundAggregate {
+    /// Stable output identity when a nested query references this result.
+    pub output_column: Option<Box<BoundColumn>>,
     /// Whether the SQL text explicitly requested this aggregate.
     pub declared: bool,
     /// Aggregate operation.
