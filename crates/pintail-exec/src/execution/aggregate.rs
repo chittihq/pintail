@@ -1689,11 +1689,15 @@ impl AggregateState {
                                 left.0.get(position).unwrap_or(&Value::Null),
                                 right.0.get(position).unwrap_or(&Value::Null),
                                 BoundOrderKey {
+                                    value_kind: if *decimal {
+                                        pintail_sql::OrderValueKind::Decimal
+                                    } else {
+                                        pintail_sql::OrderValueKind::Ordinary
+                                    },
                                     index: 0,
                                     ascending: *ascending,
                                     // MySQL sorts NULL keys first ascending.
                                     nulls_first: *ascending,
-                                    decimal: *decimal,
                                     collation: None,
                                 },
                                 self.collation,

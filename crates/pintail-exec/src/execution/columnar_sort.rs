@@ -414,7 +414,7 @@ fn units_at(
         }
         // A decimal key compares by value; its derived text is canonical.
         (DataType::Decimal { .. }, TypedValues::Decimal128 { values, text, .. })
-            if key.decimal && text.derived() =>
+            if key.value_kind == pintail_sql::OrderValueKind::Decimal && text.derived() =>
         {
             values.get(row).ok_or(Unordered)?
         }
@@ -423,7 +423,7 @@ fn units_at(
         (
             data_type @ (DataType::Date32 | DataType::DateTime64 { .. }),
             TypedValues::Temporal { units, text },
-        ) if !key.decimal && text.derived() => {
+        ) if key.value_kind != pintail_sql::OrderValueKind::Decimal && text.derived() => {
             let unit = units[row];
             let spelled = match data_type {
                 DataType::DateTime64 { fsp } => {
@@ -491,7 +491,7 @@ fn sort_key(
                 })
             })
         });
-        if readable && !key.decimal {
+        if readable && key.value_kind == pintail_sql::OrderValueKind::Ordinary {
             // Weight keys are built once per row, which turns the
             // collation work from O(n log n) comparisons into O(n). They
             // are also variable width and held for the whole sort, so a
@@ -674,7 +674,7 @@ mod tests {
 
     /// Columns: integer, decimal(8,2), datetime(3), text, ENUM-labelled
     /// text (compared as values), a float (compared as values), and a
-    /// payload integer. Row 5 of each batch is unselected.
+    /// payload integer and a TIME duration. Row 5 of each batch is unselected.
     fn batch(seed: usize) -> RecordBatch {
         let valid = mask(seed, 6);
         let integers = (0..ROWS)
@@ -763,6 +763,7 @@ mod tests {
                     .collect(),
             )
             .expect("payload"),
+            duration_column(seed),
         ];
         let mut batch = RecordBatch::new(ROWS, columns).expect("batch");
         let mut selection = SelectionMask::all(ROWS);
@@ -771,12 +772,37 @@ mod tests {
         batch
     }
 
+    fn duration_column(seed: usize) -> ColumnVector {
+        ColumnVector::new(
+            DataType::Time64 { fsp: 6 },
+            (0..ROWS)
+                .map(|row| {
+                    if mask(seed + 3, 4)[row] {
+                        Value::Utf8(pintail_types::format_time_micros(
+                            spread(seed + 6, row, 700) * 3_600_000_000,
+                            6,
+                        ))
+                    } else {
+                        Value::Null
+                    }
+                })
+                .collect(),
+        )
+        .expect("durations")
+    }
+
     fn key(index: usize, ascending: bool, nulls_first: bool) -> BoundOrderKey {
         BoundOrderKey {
+            value_kind: if index == 7 {
+                pintail_sql::OrderValueKind::Time
+            } else if index == 1 {
+                pintail_sql::OrderValueKind::Decimal
+            } else {
+                pintail_sql::OrderValueKind::Ordinary
+            },
             index,
             ascending,
             nulls_first,
-            decimal: index == 1,
             collation: None,
         }
     }
@@ -815,6 +841,8 @@ mod tests {
             vec![key(3, false, false), key(0, false, true)],
             vec![key(4, true, true), key(3, true, true)],
             vec![key(5, false, true)],
+            vec![key(7, true, true)],
+            vec![key(7, false, false)],
             vec![key(0, true, true), key(1, true, true), key(2, true, true)],
         ];
         for collation in ["utf8mb4_0900_ai_ci", "utf8mb4_general_ci", "utf8mb4_bin"] {

@@ -296,10 +296,10 @@ pub(super) fn build_set_operation(
         .iter()
         .enumerate()
         .map(|(index, data_type)| BoundOrderKey {
+            value_kind: pintail_sql::OrderValueKind::from_type(Some(*data_type)),
             index,
             ascending: true,
             nulls_first: true,
-            decimal: matches!(data_type, DataType::Decimal { .. }),
             // JSON columns dedupe structurally: MySQL's set duplicate
             // handling treats two spellings of one document as one row.
             collation: matches!(data_type, DataType::Json)
@@ -331,10 +331,10 @@ pub(super) fn build_distinct(
         .iter()
         .enumerate()
         .map(|(index, data_type)| BoundOrderKey {
+            value_kind: pintail_sql::OrderValueKind::from_type(Some(*data_type)),
             index,
             ascending: true,
             nulls_first: true,
-            decimal: matches!(data_type, DataType::Decimal { .. }),
             // The projection's own coercibility-ladder collation, so a
             // JSON-text column dedupes case-sensitively (utf8mb4_bin) even
             // when the plan default is case-insensitive.
@@ -874,7 +874,14 @@ pub(super) fn compare_sort_values(
             // Canonical decimal text orders numerically; lexical ordering
             // would put "9.00" after "10.00". Unparseable text (shouldn't
             // happen for decimal-typed keys) falls back to text order.
-            let ordering = if key.decimal {
+            let ordering = if key.value_kind == pintail_sql::OrderValueKind::Time {
+                pintail_types::parse_time_micros(left)
+                    .zip(pintail_types::parse_time_micros(right))
+                    .map_or_else(
+                        || compare_utf8_mysql(left, right, collation),
+                        |(left, right)| left.cmp(&right),
+                    )
+            } else if key.value_kind == pintail_sql::OrderValueKind::Decimal {
                 compare_decimal_text(left, right)
                     .unwrap_or_else(|_| compare_utf8_mysql(left, right, collation))
             } else {

@@ -799,10 +799,10 @@ pub(super) fn build_hash_join_state(
     let mut build_reserved = 0_usize;
     let mut key_bounds: Option<(Value, Value)> = None;
     let bound_order = BoundOrderKey {
+        value_kind: pintail_sql::OrderValueKind::Ordinary,
         index: 0,
         ascending: true,
         nulls_first: true,
-        decimal: false,
         collation: None,
     };
     // The resident build's batches are what leaves no room to pull the next

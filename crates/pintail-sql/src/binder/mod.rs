@@ -6936,6 +6936,9 @@ fn bind_order_by(
             }
             let ascending = order.options.asc.unwrap_or(true);
             Ok(BoundOrderKey {
+                value_kind: crate::OrderValueKind::from_type(
+                    bound.projection.get(index).and_then(|p| p.expr.data_type),
+                ),
                 index,
                 ascending,
                 // From the projection this key points at, so each key sorts by
@@ -6956,10 +6959,6 @@ fn bind_order_by(
                     }
                 }),
                 nulls_first: order.options.nulls_first.unwrap_or(ascending),
-                decimal: matches!(
-                    bound.projection.get(index).and_then(|p| p.expr.data_type),
-                    Some(DataType::Decimal { .. })
-                ),
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -8803,19 +8802,19 @@ mod tests {
             query.order_by,
             [
                 crate::BoundOrderKey {
+                    value_kind: crate::OrderValueKind::Ordinary,
                     index: 0,
                     ascending: false,
                     nulls_first: false,
-                    decimal: false,
                     // A text key now records the collation it orders under,
                     // so ORDER BY on two columns sorts each by its own.
                     collation: Some(crate::DEFAULT_TEXT_COLLATION),
                 },
                 crate::BoundOrderKey {
+                    value_kind: crate::OrderValueKind::Ordinary,
                     index: 1,
                     ascending: true,
                     nulls_first: true,
-                    decimal: false,
                     collation: None,
                 },
             ]

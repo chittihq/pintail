@@ -517,10 +517,14 @@ fn window_order_key(
     decimal: bool,
 ) -> BoundOrderKey {
     BoundOrderKey {
+        value_kind: if decimal {
+            pintail_sql::OrderValueKind::Decimal
+        } else {
+            pintail_sql::OrderValueKind::Ordinary
+        },
         index,
         ascending,
         nulls_first,
-        decimal,
         collation: None,
     }
 }
@@ -1029,10 +1033,14 @@ fn range_bound_for_target(
                 candidate,
                 target,
                 BoundOrderKey {
+                    value_kind: if *decimal {
+                        pintail_sql::OrderValueKind::Decimal
+                    } else {
+                        pintail_sql::OrderValueKind::Ordinary
+                    },
                     index: 0,
                     ascending: *ascending,
                     nulls_first: *nulls_first,
-                    decimal: *decimal,
                     collation: None,
                 },
                 collation,
@@ -1073,10 +1081,14 @@ fn window_order(
 ) -> Result<Vec<usize>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
+        value_kind: if decimal {
+            pintail_sql::OrderValueKind::Decimal
+        } else {
+            pintail_sql::OrderValueKind::Ordinary
+        },
         index: 0,
         ascending,
         nulls_first,
-        decimal,
         collation: None,
     };
     let compare_rows = |left: usize, right: usize| {
@@ -1127,10 +1139,14 @@ fn compute_window_column(
 ) -> Result<Vec<Value>, ExecError> {
     let partition_len = window.partition.len();
     let order_key = |ascending: bool, nulls_first: bool, decimal: bool| BoundOrderKey {
+        value_kind: if decimal {
+            pintail_sql::OrderValueKind::Decimal
+        } else {
+            pintail_sql::OrderValueKind::Ordinary
+        },
         index: 0,
         ascending,
         nulls_first,
-        decimal,
         collation: None,
     };
     let same_partition = |left: usize, right: usize| {

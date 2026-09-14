@@ -1558,6 +1558,29 @@ pub struct BoundLimit {
     pub count: u64,
 }
 
+/// How an ordering key interprets its stored value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OrderValueKind {
+    /// Native value ordering, including the key's text collation.
+    Ordinary,
+    /// Canonical decimal text compares numerically.
+    Decimal,
+    /// TIME text compares by its signed duration.
+    Time,
+}
+
+impl OrderValueKind {
+    /// Preserve the logical type when ordering values stored as text.
+    #[must_use]
+    pub fn from_type(data_type: Option<DataType>) -> Self {
+        match data_type {
+            Some(DataType::Decimal { .. }) => Self::Decimal,
+            Some(DataType::Time64 { .. }) => Self::Time,
+            _ => Self::Ordinary,
+        }
+    }
+}
+
 /// One ordering key resolved against the projected result layout.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundOrderKey {
@@ -1567,9 +1590,8 @@ pub struct BoundOrderKey {
     pub ascending: bool,
     /// Whether NULL values appear before non-NULL values.
     pub nulls_first: bool,
-    /// Whether the key is DECIMAL-typed: canonical decimal text must order
-    /// numerically, not lexically.
-    pub decimal: bool,
+    /// Interpretation of the key's stored value.
+    pub value_kind: OrderValueKind,
     /// The collation this key orders under, when it orders text.
     ///
     /// Per key rather than per query: `ORDER BY general_ci_column,

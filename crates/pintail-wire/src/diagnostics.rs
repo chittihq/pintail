@@ -442,6 +442,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn signed_time_order_uses_duration_value() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT duration FROM (SELECT CAST('-24:00:00.000001' AS TIME(6)) AS duration UNION ALL SELECT CAST('-240:00:00' AS TIME(6)) UNION ALL SELECT CAST('02:00:00' AS TIME(6)) UNION ALL SELECT CAST('100:00:00' AS TIME(6))) AS durations ORDER BY duration").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            [
+                "-240:00:00.000000",
+                "-24:00:00.000001",
+                "02:00:00.000000",
+                "100:00:00.000000"
+            ]
+            .into_iter()
+            .map(|s| vec![Value::Utf8(s.to_owned())])
+            .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
     async fn clock_parts_include_duration_days() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();
