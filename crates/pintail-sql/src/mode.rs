@@ -16,6 +16,8 @@ pub struct ParseMode {
     pub no_unsigned_subtraction: bool,
     /// Function-name lexing consumes whitespace after identifier tokens.
     pub ignore_space: bool,
+    /// NOT binds with unary operators rather than comparisons.
+    pub high_not_precedence: bool,
     /// Date parsing rejects any zero date component.
     pub no_zero_date: bool,
     /// Date parsing rejects zero month/day when the year is nonzero.
@@ -43,6 +45,7 @@ impl ParseMode {
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
             no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
             ignore_space: has("IGNORE_SPACE"),
+            high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
             no_zero_date: has("NO_ZERO_DATE"),
             no_zero_in_date: has("NO_ZERO_IN_DATE"),
             allow_invalid_dates: has("ALLOW_INVALID_DATES"),

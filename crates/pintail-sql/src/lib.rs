@@ -457,7 +457,38 @@ impl Dialect for PintailDialect {
     fn supports_multiline_comment_hints(&self) -> bool {
         self.0.supports_multiline_comment_hints()
     }
+    fn prec_value(&self, precedence: sqlparser::dialect::Precedence) -> u8 {
+        if self.1.high_not_precedence
+            && matches!(precedence, sqlparser::dialect::Precedence::UnaryNot)
+        {
+            50
+        } else {
+            self.0.prec_value(precedence)
+        }
+    }
+    fn parse_prefix(
+        &self,
+        parser: &mut Parser,
+    ) -> Option<Result<sqlparser::ast::Expr, ParserError>> {
+        use sqlparser::ast::{Expr, UnaryOperator};
+        use sqlparser::tokenizer::Token;
+        let op = match parser.peek_token().token {
+            Token::Plus => UnaryOperator::Plus,
+            Token::Minus => UnaryOperator::Minus,
+            Token::Tilde => UnaryOperator::BitwiseNot,
+            Token::ExclamationMark => UnaryOperator::Not,
+            _ => return self.0.parse_prefix(parser),
+        };
+        let _ = parser.next_token();
+        Some(parser.parse_subexpr(50).map(|expr| Expr::UnaryOp {
+            op,
+            expr: Box::new(expr),
+        }))
+    }
     fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
+        if parser.peek_token().token == sqlparser::tokenizer::Token::Caret {
+            return Some(Ok(44));
+        }
         (self.1.pipes_as_concat
             && parser.peek_token().token == sqlparser::tokenizer::Token::StringConcat)
             .then_some(Ok(45))

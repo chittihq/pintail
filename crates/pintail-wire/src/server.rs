@@ -676,12 +676,7 @@ where
 }
 
 /// Modes whose grammar or evaluation semantics remain unsupported.
-const RESULT_CHANGING_SQL_MODES: &[&str] = &[
-    // Parsing.
-    "HIGH_NOT_PRECEDENCE",
-    // Evaluation.
-    "REAL_AS_FLOAT",
-];
+const RESULT_CHANGING_SQL_MODES: &[&str] = &["REAL_AS_FLOAT"];
 
 /// Compound modes, each of which turns on result-changing flags.
 const COMPOUND_SQL_MODES: &[&str] = &["ANSI", "DB2", "MAXDB", "MSSQL", "ORACLE", "POSTGRESQL"];
@@ -5042,9 +5037,8 @@ mod tests {
 
     #[test]
     fn sql_mode_refuses_modes_that_would_change_results() {
-        for mode in ["HIGH_NOT_PRECEDENCE", "REAL_AS_FLOAT"] {
-            assert!(super::reject_unsupported_sql_modes(mode).is_err());
-        }
+        assert!(super::reject_unsupported_sql_modes("REAL_AS_FLOAT").is_err());
+        assert!(super::reject_unsupported_sql_modes("HIGH_NOT_PRECEDENCE").is_ok());
         // Compound modes turn the above on by another name.
         assert!(super::reject_unsupported_sql_modes("ANSI").is_err());
         // Refusal must survive being buried in a list, which is how clients

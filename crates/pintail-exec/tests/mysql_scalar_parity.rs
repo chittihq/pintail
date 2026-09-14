@@ -1444,3 +1444,31 @@ fn from_unixtime_captures_fraction_truncation_mode() {
         },
     );
 }
+
+#[test]
+fn mysql_xor_and_high_not_precedence_bind_before_arithmetic_and_comparison() {
+    for (expression, expected) in [
+        ("1+2^3", "2"),
+        ("-1^1", "18446744073709551614"),
+        ("~1^1", "18446744073709551615"),
+        ("NOT 2=1", "Boolean(true)"),
+        ("NOT 2+3", "Boolean(false)"),
+        ("NOT NULL IS NULL", "Boolean(false)"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("HIGH_NOT_PRECEDENCE"),
+        || {
+            for (expression, expected) in [
+                ("NOT 2=1", "Boolean(false)"),
+                ("NOT 2+3", "3"),
+                ("NOT NULL IS NULL", "Boolean(true)"),
+                ("NOT(2 BETWEEN 2 AND 3)", "Boolean(false)"),
+                ("NOT 0 AND 0", "Boolean(false)"),
+            ] {
+                assert_eq!(scalar(expression), expected, "{expression}");
+            }
+        },
+    );
+}
