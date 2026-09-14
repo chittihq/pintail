@@ -471,15 +471,15 @@ pub fn parse_time_micros(text: &str) -> Option<i64> {
 }
 
 /// Formats signed microseconds as `MySQL` TIME text with exactly `fsp`
-/// fraction digits, clamped to the type's +/-838:59:59.999999 as `MySQL`
+/// fraction digits, clamped to the type's +/-838:59:59 as `MySQL`
 /// clamps a value written into a TIME column.
 #[must_use]
 pub fn format_time_micros(micros: i64, fsp: u8) -> String {
     const MAX_SECONDS: i64 = 838 * 3_600 + 59 * 60 + 59;
     let negative = micros < 0;
     let magnitude = micros.unsigned_abs();
-    let (seconds, sub_micros) = if magnitude / 1_000_000 > MAX_SECONDS.unsigned_abs() {
-        (MAX_SECONDS.unsigned_abs(), 999_999)
+    let (seconds, sub_micros) = if magnitude > MAX_SECONDS.unsigned_abs() * 1_000_000 {
+        (MAX_SECONDS.unsigned_abs(), 0)
     } else {
         (magnitude / 1_000_000, magnitude % 1_000_000)
     };
@@ -561,6 +561,19 @@ fn fraction_micros(fraction: &str) -> Option<i64> {
 #[cfg(test)]
 mod temporal_input_tests {
     use super::*;
+
+    #[test]
+    fn time_range_ends_at_the_last_whole_second() {
+        let limit = (838 * 3_600 + 59 * 60 + 59) * 1_000_000_i64;
+        for overflow in [1, 999_999, 1_000_000, 86_400_000_000] {
+            assert_eq!(format_time_micros(limit + overflow, 6), "838:59:59.000000");
+            assert_eq!(
+                format_time_micros(-limit - overflow, 6),
+                "-838:59:59.000000"
+            );
+        }
+        assert_eq!(format_time_micros(limit - 1, 6), "838:59:58.999999");
+    }
 
     #[test]
     fn time_input_forms_canonicalize_at_the_column_precision() {
