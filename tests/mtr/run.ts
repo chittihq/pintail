@@ -705,6 +705,14 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         await pt.query(sql).catch(() => {})
         continue
       }
+      // SELECT INTO assigns connection variables from the same epoch's rows.
+      if (/^\s*(?:select|with)\b/i.test(sql) && /\binto\s+@/i.test(sql)) {
+        counts.session += 1
+        const rewritten = epochs.rewrite(sql)
+        await my.query(rewritten).catch(() => {})
+        await pt.query(rewritten).catch(() => {})
+        continue
+      }
       if (/^\s*drop\s+(?:temporary\s+)?table\b/i.test(sql)) {
         counts.setup += 1
         continue

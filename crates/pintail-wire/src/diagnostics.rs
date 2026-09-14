@@ -107,6 +107,77 @@ fn condition_item(condition: &Condition, item: &str) -> Result<Value, String> {
     Ok(Value::SingleQuotedString(text.to_owned()))
 }
 
+pub(super) async fn select_into(
+    backend: &super::Backend,
+    query: &str,
+    targets: Vec<String>,
+) -> pintail_protocol::Response {
+    use pintail_protocol::{ErrorKind, OkPacket, Response};
+    let output = match backend.execute(query).await {
+        Ok(output) => output,
+        Err(error) => return Response::Error(super::error_kind(&error), error.to_string()),
+    };
+    let Ok(mut session) = backend.session.lock() else {
+        return Response::Error(
+            ErrorKind::ErUnknownError,
+            "Session lock is unavailable".into(),
+        );
+    };
+    let error = |session: &mut Session, kind: ErrorKind, message: &str| {
+        session.row_count = -1;
+        session.condition_count = 1;
+        session.conditions = vec![Condition {
+            level: "Error",
+            code: kind.code(),
+            sql_state: kind.sql_state(),
+            message: message.into(),
+        }];
+        Response::Error(kind, message.into())
+    };
+    if output.fields.len() != targets.len() {
+        return error(
+            &mut session,
+            ErrorKind::ErWrongNumberOfColumnsInSelect,
+            "The used SELECT statements have a different number of columns",
+        );
+    }
+    let count = output.rows.len();
+    if let Some(row) = output.rows.into_values().into_iter().next() {
+        let mut variables = (*session.user_variables).clone();
+        for ((name, value), field) in targets.into_iter().zip(row).zip(output.fields) {
+            variables.insert(name, super::user_variable_literal(value, field.data_type));
+        }
+        session.user_variables = std::sync::Arc::new(variables);
+    }
+    if count > 1 {
+        return error(
+            &mut session,
+            ErrorKind::ErTooManyRows,
+            "Result consisted of more than one row",
+        );
+    }
+    session.row_count = i64::try_from(count).unwrap_or(0);
+    if count == 0 {
+        session.condition_count = session.condition_count.saturating_add(1);
+        if session.conditions.len() < super::MAX_LISTED_CONDITIONS {
+            session.conditions.push(Condition {
+                level: "Warning",
+                code: 1329,
+                sql_state: b"02000",
+                message: "No data - zero rows fetched, selected, or processed".into(),
+            });
+        }
+    }
+    Response::Ok(
+        OkPacket {
+            affected_rows: u64::try_from(count).unwrap_or(0),
+            warnings: u16::try_from(session.condition_count).unwrap_or(u16::MAX),
+            ..OkPacket::default()
+        },
+        String::new(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,10 +237,8 @@ mod tests {
             Value::SingleQuotedString("Division by 0".into())
         );
     }
-    #[tokio::test]
-    async fn row_counts_follow_the_real_write_and_query_path() {
+    fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
-        use pintail_protocol::Handler;
         let directory = tempfile::tempdir().unwrap();
         let metadata_path = directory.path().join("meta.db");
         let metadata = pintail_meta::MetaStore::open(&metadata_path).unwrap();
@@ -180,7 +249,7 @@ mod tests {
         pintail_write::LocalDatabase::new(directory.path(), &metadata_path, "local")
             .recover()
             .unwrap();
-        let mut backend = Backend::new(
+        let backend = Backend::new(
             directory.path(),
             &metadata_path,
             64 * 1024 * 1024,
@@ -193,6 +262,13 @@ mod tests {
             local: true,
             source_time_zone: None,
         });
+        (directory, backend)
+    }
+
+    #[tokio::test]
+    async fn row_counts_follow_the_real_write_and_query_path() {
+        use pintail_protocol::Handler;
+        let (_directory, mut backend) = local_backend();
         for (sql, expected) in [
             ("CREATE TABLE values_table(id INT)", 0),
             ("INSERT INTO values_table VALUES(1),(2),(3)", 3),
@@ -249,5 +325,47 @@ mod tests {
         }
         backend.execute("SELECT 1").await.unwrap();
         assert_eq!(backend.session.lock().unwrap().condition_count, 0);
+        assert!(matches!(
+            backend
+                .query(
+                    b"SELECT id, id+1 INTO @first, @second FROM values_table ORDER BY id LIMIT 1"
+                )
+                .await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        {
+            let session = backend.session.lock().unwrap();
+            assert_eq!(
+                session.user_variables["first"],
+                Value::Number("1".into(), false)
+            );
+            assert_eq!(
+                session.user_variables["second"],
+                Value::Number("2".into(), false)
+            );
+            assert_eq!(session.row_count, 1);
+        }
+        assert!(matches!(
+            backend
+                .query(b"SELECT id INTO @first FROM values_table WHERE FALSE")
+                .await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        {
+            let session = backend.session.lock().unwrap();
+            assert_eq!(
+                session.user_variables["first"],
+                Value::Number("1".into(), false)
+            );
+            assert_eq!(session.row_count, 0);
+            assert_eq!(session.conditions[0].code, 1329);
+        }
+        assert!(matches!(
+            backend
+                .query(b"SELECT id INTO @first FROM values_table")
+                .await,
+            pintail_protocol::Response::Error(..)
+        ));
+        assert_eq!(backend.session.lock().unwrap().conditions[0].code, 1172);
     }
 }

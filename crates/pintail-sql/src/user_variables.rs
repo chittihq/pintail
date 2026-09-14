@@ -81,10 +81,121 @@ pub fn user_variable_assignments(statement: &Statement) -> Option<Vec<(String, E
         .collect()
 }
 
+/// Separates a SELECT's user-variable targets from the query that supplies them.
+/// File output and table creation forms are left to ordinary statement binding.
+#[must_use]
+pub fn select_variable_targets(sql: &str) -> Option<(String, Vec<String>)> {
+    use sqlparser::tokenizer::Token;
+    if !sql
+        .as_bytes()
+        .windows(4)
+        .any(|word| word.eq_ignore_ascii_case(b"into"))
+    {
+        return None;
+    }
+    let dialect = crate::PintailDialect(
+        sqlparser::dialect::MySqlDialect {},
+        crate::session_parse_mode(),
+    );
+    let tokens = crate::tokenize_mysql(sql, &dialect).ok()?;
+    let tokens: Vec<_> = tokens
+        .iter()
+        .filter(|token| !matches!(token.token, Token::Whitespace(_)))
+        .collect();
+    if !matches!(&tokens.first()?.token, Token::Word(word) if word.value.eq_ignore_ascii_case("SELECT") || word.value.eq_ignore_ascii_case("WITH"))
+    {
+        return None;
+    }
+    let mut depth = 0_usize;
+    let into = tokens.iter().position(|token| {
+        match &token.token {
+            Token::LParen => depth += 1,
+            Token::RParen => depth = depth.saturating_sub(1),
+            Token::Word(word) if depth == 0 && word.value.eq_ignore_ascii_case("INTO") => {
+                return true;
+            }
+            _ => {}
+        }
+        false
+    })?;
+    let mut at = into + 1;
+    let mut names = Vec::new();
+    loop {
+        let Token::Word(word) = &tokens.get(at)?.token else {
+            return None;
+        };
+        let name = word
+            .value
+            .strip_prefix('@')
+            .filter(|name| !name.starts_with('@'))?;
+        at += 1;
+        let name = if name.is_empty() {
+            let name = match &tokens.get(at)?.token {
+                Token::Word(word) if word.quote_style.is_some() => word.value.clone(),
+                Token::SingleQuotedString(name) | Token::DoubleQuotedString(name) => name.clone(),
+                _ => return None,
+            };
+            at += 1;
+            name
+        } else {
+            name.to_owned()
+        };
+        names.push(name.to_ascii_lowercase());
+        if !matches!(tokens.get(at).map(|token| &token.token), Some(Token::Comma)) {
+            break;
+        }
+        at += 1;
+    }
+    let offset = |location: sqlparser::tokenizer::Location| {
+        let mut line = 1;
+        let mut column = 1;
+        for (offset, ch) in sql.char_indices() {
+            if line == location.line && column == location.column {
+                return Some(offset);
+            }
+            if ch == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+        }
+        (line == location.line && column == location.column).then_some(sql.len())
+    };
+    let begin = offset(tokens[into].span.start)?;
+    let end = offset(tokens[at - 1].span.end)?;
+    let query = format!("{} {}", &sql[..begin], &sql[end..]);
+    matches!(crate::parse_statement(&query).ok()?, Statement::Query(_)).then_some((query, names))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::parse_statement;
+
+    #[test]
+    fn select_targets_preserve_query_text_and_ignore_nested_or_quoted_into() {
+        for sql in [
+            "SELECT 1, 'é' INTO @a, @B",
+            "SELECT 1, 'é' INTO @a, @B FROM records",
+            "SELECT 1, 'é' FROM records INTO @a, @B",
+        ] {
+            let (query, names) = select_variable_targets(sql).expect("targets");
+            assert_eq!(names, ["a", "b"]);
+            assert!(!query.contains("INTO"));
+            assert!(query.contains("'é'"));
+        }
+        for sql in [
+            "SELECT 'INTO @a'",
+            "SELECT (SELECT 1 INTO @a)",
+            "SELECT 1 INTO OUTFILE 'x'",
+            "SELECT 1 INTO table_name",
+            "SELECT 1 INTO @@global.x",
+            "SELECT 1 INTO @a; SELECT 2",
+        ] {
+            assert!(select_variable_targets(sql).is_none(), "{sql}");
+        }
+    }
 
     #[test]
     fn assignments_name_only_user_variables() {

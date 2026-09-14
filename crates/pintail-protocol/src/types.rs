@@ -224,6 +224,10 @@ pub enum ErrorKind {
     ErSyntaxError = 1149,
     /// 1152: the client went away mid-statement.
     ErAborting = 1152,
+    /// 1172: SELECT INTO produced more than one row.
+    ErTooManyRows = 1172,
+    /// 1222: SELECT INTO has a different number of targets and columns.
+    ErWrongNumberOfColumnsInSelect = 1222,
     /// 1317: the statement was interrupted, including by a deadline.
     ErQueryInterrupted = 1317,
     /// 1064 alias used for a malformed command packet.
@@ -303,7 +307,8 @@ impl ErrorKind {
             | Self::ErOptionPreventsStatement
             | Self::ErWrongFieldWithGroup
             | Self::ErMaxPreparedStmtCountReached
-            | Self::ErInvalidJsonPath => b"42000",
+            | Self::ErInvalidJsonPath
+            | Self::ErTooManyRows => b"42000",
             Self::ErNoSuchTable => b"42S02",
             Self::ErTableExistsError => b"42S01",
             Self::ErBadFieldError => b"42S22",
@@ -311,7 +316,7 @@ impl ErrorKind {
             Self::ErNonUniqError | Self::ErDupEntry | Self::ErBadNullError => b"23000",
             Self::ErDataOutOfRange => b"22003",
             Self::ErDataTooLong => b"22001",
-            Self::ErSubqueryNo1Row => b"21000",
+            Self::ErSubqueryNo1Row | Self::ErWrongNumberOfColumnsInSelect => b"21000",
             Self::ErAborting | Self::ErUnknownComError => b"08S01",
             Self::ErConCountError => b"08004",
             Self::ErQueryInterrupted => b"70100",

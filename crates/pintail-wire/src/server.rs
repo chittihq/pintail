@@ -2185,6 +2185,16 @@ impl Handler for Backend {
                 Err(message) => Response::Error(ErrorKind::ErParseError, message),
             };
         }
+        let mode = self
+            .session
+            .lock()
+            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
+            .unwrap_or_default();
+        if let Some((query, targets)) =
+            pintail_sql::with_parse_mode(mode, || pintail_sql::select_variable_targets(sql))
+        {
+            return diagnostics::select_into(self, &query, targets).await;
+        }
         if let Some(assignments) = self.user_variable_assignments(sql) {
             if let Ok(mut session) = self.session.lock() {
                 session.conditions.clear();
