@@ -760,6 +760,25 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn formatted_date_parsing_applies_zero_and_invalid_date_modes() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET sql_mode='NO_ZERO_IN_DATE'").await;
+        let result = backend.execute("SELECT STR_TO_DATE('0000-00-00','%Y-%m-%d'), STR_TO_DATE('0000-01-00','%Y-%m-%d'), STR_TO_DATE('0000-00-01','%Y-%m-%d')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Utf8("0000-00-00".into()), Value::Null, Value::Null]
+        );
+        backend.query(b"SET sql_mode='ALLOW_INVALID_DATES'").await;
+        let result = backend.execute("SELECT STR_TO_DATE('2023-02-31','%Y-%m-%d'), STR_TO_DATE('2023-13-01','%Y-%m-%d'), STR_TO_DATE('2023-02-32','%Y-%m-%d')").await.unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![Value::Utf8("2023-02-31".into()), Value::Null, Value::Null]
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

@@ -1919,7 +1919,9 @@ pub(super) fn bind_scalar(
     }
     if function == ScalarFunction::StrToDate {
         let mode = crate::session_parse_mode();
-        let policy = u64::from(mode.no_zero_date) | (u64::from(mode.no_zero_in_date) << 1);
+        let policy = u64::from(mode.no_zero_date)
+            | (u64::from(mode.no_zero_in_date) << 1)
+            | (u64::from(mode.allow_invalid_dates) << 2);
         args.push(BoundExpr {
             data_type: Some(DataType::UInt64),
             nullable: false,

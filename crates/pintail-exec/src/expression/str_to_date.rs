@@ -52,7 +52,7 @@ pub(super) fn parse(
 ) -> Option<String> {
     let mut parts = Parts::default();
     parts.consume(&mut text.trim_start(), format)?;
-    parts.finish_date()?;
+    parts.finish_date(policy & 4 != 0)?;
     if parts.twelve_hour {
         if !(1..=12).contains(&parts.hour) {
             return None;
@@ -65,7 +65,9 @@ pub(super) fn parse(
     let time_only = matches!(data_type, Some(DataType::Time64 { .. }));
     if !time_only
         && ((policy & 1 != 0 && (parts.year == 0 || parts.month == 0 || parts.day == 0))
-            || (policy & 2 != 0 && parts.year != 0 && (parts.month == 0 || parts.day == 0)))
+            || (policy & 2 != 0
+                && (parts.year != 0 || parts.month != 0 || parts.day != 0)
+                && (parts.month == 0 || parts.day == 0)))
     {
         return None;
     }
@@ -179,7 +181,7 @@ impl Parts {
         Some(())
     }
 
-    fn finish_date(&mut self) -> Option<()> {
+    fn finish_date(&mut self, allow_invalid: bool) -> Option<()> {
         if self.year > 9999 || self.month > 12 || self.day > 31 {
             return None;
         }
@@ -213,7 +215,7 @@ impl Parts {
             ))?;
             self.set_date(date)?;
         }
-        if self.month != 0 && self.day != 0 {
+        if !allow_invalid && self.month != 0 && self.day != 0 {
             // Year zero is not a leap year in this calendar.
             NaiveDate::from_ymd_opt(i32::try_from(self.year.max(1)).ok()?, self.month, self.day)?;
         }
