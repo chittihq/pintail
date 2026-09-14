@@ -132,12 +132,70 @@ pub fn executable_comment_body(comment: &[u8]) -> Option<&[u8]> {
     (version <= 80_400).then_some(&body[prefix..])
 }
 
+/// The SQL escape alphabet does not include the bell or form-feed escapes.
+/// Recover affected literals from undecoded tokens so literal control bytes and
+/// escaped backslashes remain distinguishable; identifiers keep normal decoding.
+fn tokenize_mysql_strings(
+    sql: &str,
+    dialect: &PintailDialect,
+) -> Result<Vec<sqlparser::tokenizer::TokenWithSpan>, ParserError> {
+    use sqlparser::tokenizer::{Token, Tokenizer};
+    let mut tokens = Tokenizer::new(dialect, sql).tokenize_with_location()?;
+    if dialect.1.no_backslash_escapes || !(sql.contains("\\a") || sql.contains("\\f")) {
+        return Ok(tokens);
+    }
+    let raw = Tokenizer::new(dialect, sql)
+        .with_unescape(false)
+        .tokenize_with_location()?;
+    for (token, raw) in tokens.iter_mut().zip(raw) {
+        let (target, text, quote) = match (&mut token.token, raw.token) {
+            (Token::SingleQuotedString(target), Token::SingleQuotedString(text))
+            | (Token::NationalStringLiteral(target), Token::NationalStringLiteral(text)) => {
+                (target, text, '\'')
+            }
+            (Token::DoubleQuotedString(target), Token::DoubleQuotedString(text)) => {
+                (target, text, '"')
+            }
+            _ => continue,
+        };
+        let mut decoded = String::with_capacity(text.len());
+        let mut characters = text.chars().peekable();
+        while let Some(character) = characters.next() {
+            if character == '\\' {
+                if let Some(escaped) = characters.next() {
+                    let value = match escaped {
+                        '0' => '\0',
+                        'b' => '\u{8}',
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        'Z' => '\u{1a}',
+                        '%' | '_' => {
+                            decoded.push('\\');
+                            escaped
+                        }
+                        other => other,
+                    };
+                    decoded.push(value);
+                }
+            } else {
+                decoded.push(character);
+                if character == quote && characters.peek() == Some(&quote) {
+                    characters.next();
+                }
+            }
+        }
+        *target = decoded;
+    }
+    Ok(tokens)
+}
+
 fn tokenize_mysql(
     sql: &str,
     dialect: &PintailDialect,
 ) -> Result<Vec<sqlparser::tokenizer::TokenWithSpan>, ParserError> {
-    use sqlparser::tokenizer::{Token, Tokenizer, Whitespace};
-    let tokens = Tokenizer::new(dialect, sql).tokenize_with_location()?;
+    use sqlparser::tokenizer::{Token, Whitespace};
+    let tokens = tokenize_mysql_strings(sql, dialect)?;
     let mut expanded = Vec::with_capacity(tokens.len());
     for token in tokens {
         let Token::Whitespace(Whitespace::MultiLineComment(comment)) = &token.token else {
@@ -150,7 +208,7 @@ fn tokenize_mysql(
         };
         let prefix = u64::try_from(comment.len() - body.len() + 2).unwrap_or(u64::MAX);
         let body = std::str::from_utf8(body).expect("a comment prefix is ASCII");
-        let inner = Tokenizer::new(dialect, body).tokenize_with_location()?;
+        let inner = tokenize_mysql_strings(body, dialect)?;
         for mut inner in inner {
             for location in [&mut inner.span.start, &mut inner.span.end] {
                 if location.line == 1 {
@@ -434,6 +492,35 @@ mod tests {
     use sqlparser::ast::{LimitClause, Statement};
 
     use super::{ParseError, parse_statement, parse_statements};
+
+    #[test]
+    fn mysql_literals_drop_unknown_escape_prefixes_without_changing_control_bytes() {
+        use sqlparser::tokenizer::Token;
+        let dialect = super::PintailDialect(
+            sqlparser::dialect::MySqlDialect {},
+            super::ParseMode::default(),
+        );
+        for (sql, expected) in [
+            (r"'\a\f\v'", "afv"),
+            (r"'\\a\f'", "\\af"),
+            (r"'\a\b\n\r\t\0\Z\%\_'", "a\u{8}\n\r\t\0\u{1a}\\%\\_"),
+            (r"'it''s\a'", "it'sa"),
+            ("'\u{7}\u{c}\\a'", "\u{7}\u{c}a"),
+            (r#""\a\f""#, "af"),
+        ] {
+            let tokens = super::tokenize_mysql_strings(sql, &dialect).unwrap();
+            let (Token::SingleQuotedString(actual) | Token::DoubleQuotedString(actual)) =
+                &tokens[0].token
+            else {
+                panic!("string token")
+            };
+            assert_eq!(actual, expected, "{sql}");
+        }
+        let mode = super::ParseMode::from_sql_mode("NO_BACKSLASH_ESCAPES");
+        let dialect = super::PintailDialect(sqlparser::dialect::MySqlDialect {}, mode);
+        let tokens = super::tokenize_mysql_strings(r"'\a\f'", &dialect).unwrap();
+        assert_eq!(tokens[0].token, Token::SingleQuotedString(r"\a\f".into()));
+    }
 
     #[test]
     fn parses_mysql_identifiers_and_limit_offset_count() {
