@@ -442,6 +442,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn time_extrema_use_the_greatest_fractional_precision() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        let result = backend.execute("SELECT LEAST(TIME'00:00:00.1', TIME'00:00:00.12'), GREATEST(TIME'00:00:00.1', TIME'00:00:00.12'), LEAST(TIME'-24:00:00.1', TIME'-240:00:00.12')").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("00:00:00.10".into()),
+                Value::Utf8("00:00:00.12".into()),
+                Value::Utf8("-240:00:00.12".into())
+            ]]
+        );
+    }
+
+    #[tokio::test]
     async fn time_function_results_keep_temporal_comparison_types() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

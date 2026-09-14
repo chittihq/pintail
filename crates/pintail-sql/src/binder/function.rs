@@ -1944,7 +1944,9 @@ fn coerce_temporal_branches(
     };
     let branches = match function {
         ScalarFunction::If => &mut args[1..],
-        ScalarFunction::Coalesce => args,
+        ScalarFunction::Coalesce
+        | ScalarFunction::Greatest { .. }
+        | ScalarFunction::Least { .. } => args,
         _ => return Ok(()),
     };
     for branch in branches {
@@ -2067,6 +2069,9 @@ fn extremum_result_type(args: &[BoundExpr]) -> Result<Option<DataType>, BindErro
         })
     {
         return Ok(Some(DataType::Utf8));
+    }
+    if time_count > 0 {
+        return conditional_result_type(args);
     }
     let types = args
         .iter()
