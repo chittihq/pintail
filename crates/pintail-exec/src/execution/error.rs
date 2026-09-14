@@ -49,6 +49,8 @@ pub enum ExecError {
     NumericOverflow,
     /// Binary numeric coercion encountered invalid UTF-8.
     InvalidUtf8Number,
+    /// Bytes cannot be converted to an explicitly required character set.
+    CharacterConversion(pintail_types::CharacterSet),
     /// A date/time value or operation is outside the supported `MySQL` range.
     InvalidDateTime,
     /// A recursive CTE did not converge within the iteration cap.
@@ -151,6 +153,7 @@ impl fmt::Display for ExecError {
             ),
             Self::OutOfRange(message) => formatter.write_str(message),
             Self::NumericOverflow => formatter.write_str("numeric expression overflow"),
+            Self::CharacterConversion(charset) => write!(formatter, "Cannot convert string from binary to {}", charset.default_collation().split('_').next().unwrap_or("text")),
             Self::InvalidUtf8Number => {
                 formatter.write_str("binary value is not valid UTF-8 for numeric coercion")
             }

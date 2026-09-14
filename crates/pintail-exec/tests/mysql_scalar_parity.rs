@@ -1285,3 +1285,26 @@ fn datediff_accepts_invalid_calendar_days_only_under_the_captured_mode() {
         },
     );
 }
+
+#[test]
+fn concat_respects_explicit_encoding_before_binary_coercibility() {
+    for (expression, expected) in [
+        (
+            "HEX(CONCAT(_utf32 0x0410 COLLATE utf32_general_ci,0x61))",
+            "0000041000000061",
+        ),
+        (
+            "HEX(CONCAT(_utf32 0x0410 COLLATE utf32_general_ci,0x6162))",
+            "0000041000006162",
+        ),
+        (
+            "HEX(CONCAT(0x61,_utf32 0x0410 COLLATE utf32_general_ci))",
+            "0000006100000410",
+        ),
+        ("HEX(CONCAT(_utf32 0x0410,0x61))", "0000041061"),
+        ("HEX(CONCAT(_utf16 0x0410,0x61))", "041061"),
+        ("HEX(CONCAT(_binary X'FF','a'))", "FF61"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

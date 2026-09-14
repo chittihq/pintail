@@ -3301,6 +3301,7 @@ fn error_kind(error: &QueryError) -> ErrorKind {
             SqlRejection::NotNull => ErrorKind::ErBadNullError,
             SqlRejection::SubqueryRows => ErrorKind::ErSubqueryNo1Row,
             SqlRejection::InvalidJsonPath => ErrorKind::ErInvalidJsonPath,
+            SqlRejection::CharacterConversion => ErrorKind::ErCannotConvertString,
             SqlRejection::BinaryBitwiseLength => ErrorKind::ErInvalidBitwiseOperandsSize,
             SqlRejection::BinaryBitwiseAggregateWidth => {
                 ErrorKind::ErInvalidBitwiseAggregateOperandsSize

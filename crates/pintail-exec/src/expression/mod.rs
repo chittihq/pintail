@@ -1453,7 +1453,7 @@ impl CompiledExpr {
                 };
                 let first = string(0);
                 let output = match function {
-                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -1659,7 +1659,7 @@ impl CompiledExpr {
                 let first = bound(0);
                 match function {
                     ScalarFunction::BitBytes(_) => 8,
-                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
+                    ScalarFunction::EncodedCase { .. } | ScalarFunction::TextCharset(_, _) | ScalarFunction::RawText(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::EncodeText(_) => first.saturating_mul(8),
                     ScalarFunction::PadTextBytes(_) => first.saturating_mul(2).saturating_add(4),
                     ScalarFunction::Concat | ScalarFunction::ConcatWs => args
                         .iter()
@@ -2309,6 +2309,16 @@ fn evaluate_eager_scalar_inner(
                 .decode(&charset.encode(&text))
                 .map(Value::Utf8)
                 .ok_or(ExecError::InvalidExpressionType)
+        }
+        ScalarFunction::CoerceText(charset) => {
+            let Value::Binary(bytes) = &values[0] else {
+                return Err(ExecError::InvalidExpressionType);
+            };
+            charset
+                .converted_bytes(bytes)
+                .and_then(|bytes| charset.decode(&bytes))
+                .map(Value::Utf8)
+                .ok_or(ExecError::CharacterConversion(charset))
         }
         ScalarFunction::DecodeText(charset) | ScalarFunction::PadTextBytes(charset) => {
             let Value::Binary(bytes) = &values[0] else {

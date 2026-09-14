@@ -1319,6 +1319,11 @@ pub(super) fn bind_scalar(
             }
         }
     }
+    let args = if matches!(function, ScalarFunction::Concat | ScalarFunction::ConcatWs) {
+        crate::text_charset::concat_arguments(args)
+    } else {
+        args
+    };
     let args = if matches!(
         function,
         ScalarFunction::Greatest { .. } | ScalarFunction::Least { .. }
@@ -1562,7 +1567,7 @@ pub(super) fn bind_scalar(
             extremum_result_type(&args)?,
             args.iter().any(|argument| argument.nullable),
         ),
-        ScalarFunction::FloatString | ScalarFunction::FixedFloatString(_) | ScalarFunction::RawText(_, _) | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::ConcatWs
+        ScalarFunction::FloatString | ScalarFunction::FixedFloatString(_) | ScalarFunction::RawText(_, _) | ScalarFunction::TextCharset(_, _) | ScalarFunction::DecodeText(_) | ScalarFunction::CoerceText(_) | ScalarFunction::ConcatWs
         | ScalarFunction::JsonQuote
         | ScalarFunction::JsonPretty => (Some(DataType::Utf8), args[0].nullable),
         ScalarFunction::Reverse

@@ -510,3 +510,20 @@ fn bit_columns_keep_declared_bytes_when_concatenated() {
         );
     }
 }
+
+#[test]
+fn explicit_text_encoding_rejects_invalid_binary_concat() {
+    let fixture = local_fixture();
+    let error = run(
+        &fixture,
+        "SELECT CONCAT(_utf8mb4 'a' COLLATE utf8mb4_bin,0xFF)",
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        pintail_wire::QueryError::Rejected {
+            rejection: pintail_wire::SqlRejection::CharacterConversion,
+            ..
+        }
+    ));
+}

@@ -278,6 +278,8 @@ pub enum ErrorKind {
     ErInvalidBitwiseOperandsSize = 3513,
     /// 3514: aggregate binary arguments exceed 511 bytes.
     ErInvalidBitwiseAggregateOperandsSize = 3514,
+    /// 3854: a required character-set conversion is invalid.
+    ErCannotConvertString = 3854,
 }
 
 impl ErrorKind {
@@ -315,7 +317,8 @@ impl ErrorKind {
             | Self::ErUnknownError
             | Self::ErInvalidGroupFuncUse
             | Self::ErInvalidBitwiseOperandsSize
-            | Self::ErInvalidBitwiseAggregateOperandsSize => b"HY000",
+            | Self::ErInvalidBitwiseAggregateOperandsSize
+            | Self::ErCannotConvertString => b"HY000",
         }
     }
 }

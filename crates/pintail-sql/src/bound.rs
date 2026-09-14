@@ -597,7 +597,7 @@ impl BoundExpr {
             return Some(collation.as_str().to_owned());
         }
         if let BoundExprKind::Scalar {
-            function: ScalarFunction::DecodeText(charset),
+            function: ScalarFunction::DecodeText(charset) | ScalarFunction::CoerceText(charset),
             ..
         } = &self.kind
         {
@@ -630,7 +630,7 @@ impl BoundExpr {
                 ..
             } => collations.push(collation.as_str().to_owned()),
             BoundExprKind::Scalar {
-                function: ScalarFunction::DecodeText(charset),
+                function: ScalarFunction::DecodeText(charset) | ScalarFunction::CoerceText(charset),
                 ..
             } => collations.push(charset.default_collation().to_owned()),
             BoundExprKind::Scalar { args, .. } => {
@@ -936,6 +936,8 @@ pub enum ScalarFunction {
     },
     /// Read encoded bytes as Unicode, retaining the original character set.
     DecodeText(pintail_types::CharacterSet),
+    /// Convert binary bytes to a required text encoding, rejecting malformed input.
+    CoerceText(pintail_types::CharacterSet),
     /// Materialize SQL text bytes at a byte-observing boundary.
     EncodeText(pintail_types::CharacterSet),
     /// Align and validate binary-to-text conversion bytes without decoding.

@@ -27,7 +27,8 @@ pub(crate) fn character_set(expression: &BoundExpr) -> CharacterSet {
             function:
                 ScalarFunction::TextCharset(charset, _)
                 | ScalarFunction::RawText(charset, _)
-                | ScalarFunction::DecodeText(charset),
+                | ScalarFunction::DecodeText(charset)
+                | ScalarFunction::CoerceText(charset),
             ..
         } => *charset,
         BoundExprKind::Scalar {
@@ -309,4 +310,32 @@ pub(crate) fn binary_pair(left: BoundExpr, right: BoundExpr) -> (BoundExpr, Boun
     } else {
         (left, right)
     }
+}
+
+/// Explicit text collation outranks a binary operand. Otherwise each text
+/// operand contributes bytes in its own encoding to the binary result.
+pub(crate) fn concat_arguments(args: Vec<BoundExpr>) -> Vec<BoundExpr> {
+    if !args
+        .iter()
+        .any(|arg| arg.data_type == Some(DataType::Binary))
+    {
+        return args;
+    }
+    let explicit = args.iter().find_map(|arg| {
+        if arg.data_type != Some(DataType::Utf8) {
+            return None;
+        }
+        let mut collations = Vec::new();
+        arg.collect_explicit_collations(&mut collations);
+        (!collations.is_empty()).then(|| character_set(arg))
+    });
+    args.into_iter()
+        .map(|arg| match explicit {
+            Some(charset) if arg.data_type == Some(DataType::Binary) => {
+                wrap(arg, ScalarFunction::CoerceText(charset), DataType::Utf8)
+            }
+            Some(_) => arg,
+            None => encoded(arg),
+        })
+        .collect()
 }

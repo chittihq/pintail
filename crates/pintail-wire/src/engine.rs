@@ -214,6 +214,8 @@ pub enum SqlRejection {
     BinaryBitwiseLength,
     /// 3514: aggregate binary width exceeds 511 bytes.
     BinaryBitwiseAggregateWidth,
+    /// 3854: a required character-set conversion is invalid.
+    CharacterConversion,
 }
 
 /// The metadata files a database's signature was last read against, and
@@ -1536,6 +1538,10 @@ fn query_execution_error(error: ExecError) -> QueryError {
         ExecError::ScalarSubqueryRows { .. } => QueryError::Rejected {
             rejection: SqlRejection::SubqueryRows,
             message: "Subquery returns more than 1 row".to_owned(),
+        },
+        ExecError::CharacterConversion(_) => QueryError::Rejected {
+            rejection: SqlRejection::CharacterConversion,
+            message: error.to_string(),
         },
         ExecError::BinaryBitwiseLength => QueryError::Rejected {
             rejection: SqlRejection::BinaryBitwiseLength,
