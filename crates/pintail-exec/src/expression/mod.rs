@@ -4090,8 +4090,27 @@ fn evaluate_eager_scalar_inner(
                 return Ok(Value::Null);
             }
             let text = scalar_string(&operand)?;
-            let micros = pintail_types::parse_decimal_rounded(&text, 6)
-                .or_else(|| pintail_types::parse_decimal_scaled(&format!("{numeric:.6}"), 6));
+            let truncate = matches!(values.get(1), Some(Value::Boolean(true)));
+            let micros = if truncate {
+                let text = text.trim();
+                let end = text
+                    .find('.')
+                    .map_or(text.len(), |dot| (dot + 7).min(text.len()));
+                let plain = text
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'.' | b'+' | b'-'));
+                plain
+                    .then(|| pintail_types::parse_decimal_scaled(&text[..end], 6))
+                    .flatten()
+                    .or_else(|| {
+                        format!("{:.0}", (numeric * 1_000_000.0).trunc())
+                            .parse::<i128>()
+                            .ok()
+                    })
+            } else {
+                pintail_types::parse_decimal_rounded(&text, 6)
+                    .or_else(|| pintail_types::parse_decimal_scaled(&format!("{numeric:.6}"), 6))
+            };
             let Some(micros) = micros
                 .and_then(|micros| i64::try_from(micros).ok())
                 .filter(|micros| (0..=UNIX_TIMESTAMP_MAX_MICROS).contains(micros))
@@ -4104,7 +4123,7 @@ fn evaluate_eager_scalar_inner(
                 Some(DataType::DateTime64 { fsp }) => fsp,
                 _ => 0,
             };
-            let value = if let Some(zone) = values.get(1) {
+            let value = if let Some(zone) = values.get(2) {
                 convert_tz(
                     &format_with_fraction(utc.naive_utc(), fsp, "%Y-%m-%d %H:%M:%S"),
                     "+00:00",

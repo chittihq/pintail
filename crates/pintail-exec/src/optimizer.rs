@@ -858,7 +858,12 @@ fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
     if matches!(
         function,
         ScalarFunction::UnixTimestamp | ScalarFunction::FromUnixTime
-    ) && args.len() == 1
+    ) && args.len()
+        == if function == ScalarFunction::FromUnixTime {
+            2
+        } else {
+            1
+        }
         && let Some(zone) = SESSION_TIME_ZONE.get()
     {
         let zone = match zone {

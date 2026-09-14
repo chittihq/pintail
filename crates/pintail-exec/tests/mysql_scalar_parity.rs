@@ -1408,3 +1408,39 @@ fn convert_tz_leaves_dates_outside_the_timestamp_range_unchanged() {
         );
     }
 }
+
+#[test]
+fn from_unixtime_captures_fraction_truncation_mode() {
+    struct ResetZone;
+    impl Drop for ResetZone {
+        fn drop(&mut self) {
+            assert!(pintail_exec::set_session_time_zone(None));
+        }
+    }
+    let _reset = ResetZone;
+    assert!(pintail_exec::set_session_time_zone(Some("+00:00")));
+    assert_eq!(
+        scalar("FROM_UNIXTIME(2147483647.9999999)"),
+        "2038-01-19 03:14:08.000000"
+    );
+    assert_eq!(scalar("FROM_UNIXTIME(32536771199.9999999)"), "NULL");
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("TIME_TRUNCATE_FRACTIONAL"),
+        || {
+            for (expression, expected) in [
+                (
+                    "FROM_UNIXTIME(2147483647.9999999)",
+                    "2038-01-19 03:14:07.999999",
+                ),
+                (
+                    "FROM_UNIXTIME(32536771199.9999999)",
+                    "3001-01-18 23:59:59.999999",
+                ),
+                ("FROM_UNIXTIME(1.9999999e0)", "1970-01-01 00:00:01.999999"),
+                ("FROM_UNIXTIME('1.9999999')", "1970-01-01 00:00:01.999999"),
+            ] {
+                assert_eq!(scalar(expression), expected, "{expression}");
+            }
+        },
+    );
+}

@@ -1809,6 +1809,15 @@ pub(super) fn bind_scalar(
             kind: BoundExprKind::Literal(Value::UInt64(policy)),
         });
     }
+    if function == ScalarFunction::FromUnixTime {
+        args.push(BoundExpr {
+            data_type: Some(DataType::Boolean),
+            nullable: false,
+            kind: BoundExprKind::Literal(Value::Boolean(
+                crate::session_parse_mode().time_truncate_fractional,
+            )),
+        });
+    }
     if function == ScalarFunction::DateDiff {
         args.push(BoundExpr {
             data_type: Some(DataType::Boolean),

@@ -24,6 +24,8 @@ pub struct ParseMode {
     pub allow_invalid_dates: bool,
     /// Invalid character conversion returns NULL instead of a valid prefix.
     pub strict: bool,
+    /// Temporal conversions discard excess fractional digits instead of rounding.
+    pub time_truncate_fractional: bool,
 }
 
 impl ParseMode {
@@ -45,6 +47,7 @@ impl ParseMode {
             no_zero_in_date: has("NO_ZERO_IN_DATE"),
             allow_invalid_dates: has("ALLOW_INVALID_DATES"),
             strict: has("STRICT_TRANS_TABLES") || has("STRICT_ALL_TABLES") || has("TRADITIONAL"),
+            time_truncate_fractional: has("TIME_TRUNCATE_FRACTIONAL"),
         }
     }
 }
