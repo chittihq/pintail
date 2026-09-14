@@ -6214,7 +6214,9 @@ fn arithmetic_type(
     }
     // DIV answers a BIGINT whatever its operands: the quotient is taken in
     // their own domain and then cut toward zero, so 1.2e19 DIV 2 is exact
-    // and 7.5 DIV 2.5 is 3, not 7 DIV 2.
+    // and 7.5 DIV 2.5 is 3, not 7 DIV 2. It is an UNSIGNED bigint when
+    // either operand is unsigned - signed, the top half of the unsigned
+    // range has nowhere to land and answers became overflow errors.
     if op == BinaryOp::IntegerDivide
         && [left, right].iter().any(|operand| {
             matches!(
@@ -6227,7 +6229,17 @@ fn arithmetic_type(
             )
         })
     {
-        return Some(DataType::Int64);
+        let unsigned = [left, right].iter().any(|operand| {
+            matches!(
+                operand,
+                DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64
+            )
+        });
+        return Some(if unsigned {
+            DataType::UInt64
+        } else {
+            DataType::Int64
+        });
     }
     if op == BinaryOp::Divide
         || left == DataType::Float64

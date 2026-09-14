@@ -35,8 +35,8 @@ pub use execution::{
     PhysicalPlanner, ScanProvider, with_execution_cancellation,
 };
 pub use execution::{
-    MemoryBudget, MemoryScope, init_shared_memory_budget, session_cte_max_recursion_depth,
-    session_group_concat_max_len, session_window_high_precision,
+    MemoryBudget, MemoryScope, init_parallel_pool, init_shared_memory_budget,
+    session_cte_max_recursion_depth, session_group_concat_max_len, session_window_high_precision,
     set_session_cte_max_recursion_depth, set_session_group_concat_max_len,
     set_session_window_high_precision, shared_memory_budget, take_session_conversion_warnings,
     take_session_division_warnings, take_session_group_concat_warnings,

@@ -446,11 +446,24 @@ impl DisconnectWatch for TcpDisconnectWatch {
     async fn watch(&mut self) -> WatchOutcome {
         let mut probe_byte = [0_u8; 1];
         loop {
-            if self.probe.readable().await.is_err() {
+            // Three different things end a connection here, and only one of
+            // them is a client hanging up. Collapsing them into a bare
+            // verdict and dropping the error made a real disconnect and a
+            // misclassified transient failure read identically afterwards -
+            // which is why a connection lost mid-query could not be
+            // attributed to either. Whatever decided it is now written down.
+            if let Err(error) = self.probe.readable().await {
+                pintail_log::log_error!(
+                    "wire disconnect watch: readiness failed ({:?}): {error}",
+                    error.kind()
+                );
                 return WatchOutcome::Disconnected;
             }
             match self.probe.peek(&mut probe_byte).await {
-                Ok(0) => return WatchOutcome::Disconnected,
+                Ok(0) => {
+                    pintail_log::log_debug!("wire disconnect watch: the peer closed the socket");
+                    return WatchOutcome::Disconnected;
+                }
                 // Data is genuinely there and untouched; not a disconnect.
                 Ok(_) => return WatchOutcome::Primed(Vec::new()),
                 // Readiness is advisory and a signal can cut a syscall short:
@@ -461,7 +474,16 @@ impl DisconnectWatch for TcpDisconnectWatch {
                         error.kind(),
                         io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
                     ) => {}
-                Err(_) => return WatchOutcome::Disconnected,
+                Err(error) => {
+                    // Not at debug: this is the path that would end a live
+                    // connection on something other than the peer leaving,
+                    // so its absence from a log has to mean it did not fire.
+                    pintail_log::log_error!(
+                        "wire disconnect watch: peek failed ({:?}): {error}",
+                        error.kind()
+                    );
+                    return WatchOutcome::Disconnected;
+                }
             }
         }
     }
@@ -1701,44 +1723,58 @@ impl Backend {
         unsupported_transaction_guarantee(sql)
     }
 
-    /// The user variables a `SET` statement assigns, when it assigns nothing
-    /// else. `:=` is `MySQL`'s other spelling of the assignment.
-    fn user_variable_assignments(&self, sql: &str) -> Option<Vec<(String, String)>> {
-        if !normalized_command(sql).starts_with("set @") {
-            return None;
+    /// The user variables a `SET` statement assigns, and the rest of its
+    /// list.
+    ///
+    /// `SET` takes a comma-separated list that may mix the two kinds, and
+    /// each half has to reach the code that applies it: a list read as one
+    /// user-variable assignment swallowed everything after the first comma,
+    /// answered OK, and applied none of it.
+    ///
+    /// Each item keeps its ORIGINAL text. Rendering an expression back from
+    /// a parsed form loses backslashes - `'C:\\temp'` came back as
+    /// `'C:\temp'` and re-parsed with a tab in it - and the text is handed
+    /// to a real SELECT, which parses it in this session's own mode.
+    fn user_variable_assignments(sql: &str) -> Option<SetList> {
+        let body = set_body(sql)?;
+        let mut assignments = Vec::new();
+        let mut settings = Vec::new();
+        for item in split_top_level(body) {
+            match user_variable_item(item) {
+                Some(pair) => assignments.push(pair),
+                None => settings.push(item.to_owned()),
+            }
         }
-        let mode = self
-            .session
-            .lock()
-            .ok()
-            .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
-            .unwrap_or_default();
-        pintail_sql::with_parse_mode(mode, || {
-            let assignments = |sql: &str| {
-                pintail_sql::parse_statement(sql)
-                    .ok()
-                    .and_then(|statement| pintail_sql::user_variable_assignments(&statement))
-            };
-            assignments(sql)
-                .or_else(|| assignments(&sql.replace(":=", "=")))
-                .and_then(|pairs| {
-                    pairs
-                        .into_iter()
-                        .map(|(name, expression)| {
-                            Some((
-                                name,
-                                pintail_sql::user_variable_expression_sql(&expression)?,
-                            ))
-                        })
-                        .collect()
-                })
-                .or_else(|| single_user_variable_assignment(sql))
-        })
+        (!assignments.is_empty()).then_some((assignments, settings))
     }
 
     /// Evaluates each assignment in order - a later one reads an earlier one -
     /// and records the value it answered.
     async fn assign_user_variables(
+        &self,
+        assignments: Vec<(String, String)>,
+    ) -> Result<(), QueryError> {
+        // sql_select_limit caps what a top-level SELECT returns, and the
+        // SELECT below is this connection's own machinery, not one the
+        // client asked for. Under `sql_select_limit = 0` it returned no
+        // rows at all and every assignment stored NULL.
+        let suspended = self
+            .session
+            .lock()
+            .map_err(|error| QueryError::Internal(error.to_string()))?
+            .sql_select_limit
+            .take();
+        let outcome = self.assign_each_user_variable(assignments).await;
+        if suspended.is_some() {
+            self.session
+                .lock()
+                .map_err(|error| QueryError::Internal(error.to_string()))?
+                .sql_select_limit = suspended;
+        }
+        outcome
+    }
+
+    async fn assign_each_user_variable(
         &self,
         assignments: Vec<(String, String)>,
     ) -> Result<(), QueryError> {
@@ -2141,16 +2177,61 @@ impl Backend {
     }
 }
 
-/// `SET @name = expression` read from its text, for an assignment the parser
-/// does not take as one - `SET @saved=@@div_precision_increment` among them.
-/// One assignment only; the expression is checked when it is evaluated.
-fn single_user_variable_assignment(sql: &str) -> Option<Vec<(String, String)>> {
+/// A `SET` list split in two: the user variables it assigns, and the items
+/// that are session settings for [`Handler::apply_session_command`].
+type SetList = (Vec<(String, String)>, Vec<String>);
+
+/// Everything after the leading `SET` of a `SET` statement, or `None` when
+/// the statement is not one.
+fn set_body(sql: &str) -> Option<&str> {
     let body = sql.trim().trim_end_matches(';').trim();
-    let rest = body
-        .get(..3)
+    body.get(..3)
         .filter(|head| head.eq_ignore_ascii_case("set"))
-        .map(|_| body[3..].trim_start())?;
-    let rest = rest
+        .map(|_| body[3..].trim_start())
+        .filter(|rest| !rest.is_empty())
+}
+
+/// Splits a `SET` list at its own commas. A comma inside a string, an
+/// identifier or a call's arguments belongs to an expression, not to the
+/// list, so `SET @a = CONCAT('x, y', 'z'), @b = 2` is two items.
+fn split_top_level(body: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0_u32;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut start = 0;
+    for (index, character) in body.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match quote {
+            Some(open) => match character {
+                '\\' if open != '`' => escaped = true,
+                _ if character == open => quote = None,
+                _ => {}
+            },
+            None => match character {
+                '\'' | '"' | '`' => quote = Some(character),
+                '(' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                ',' if depth == 0 => {
+                    items.push(body[start..index].trim());
+                    start = index + character.len_utf8();
+                }
+                _ => {}
+            },
+        }
+    }
+    items.push(body[start..].trim());
+    items
+}
+
+/// One `@name = expression` item of a `SET` list, read from its text. The
+/// expression is checked when it is evaluated, so this only has to find
+/// where the name ends. `:=` is `MySQL`'s other spelling of the assignment.
+fn user_variable_item(item: &str) -> Option<(String, String)> {
+    let rest = item
         .strip_prefix('@')
         .filter(|rest| !rest.starts_with('@'))?;
     let name_end = rest
@@ -2165,7 +2246,7 @@ fn single_user_variable_assignment(sql: &str) -> Option<Vec<(String, String)>> {
         .or_else(|| rest.strip_prefix('='))?
         .trim();
     (!name.is_empty() && !expression.is_empty())
-        .then(|| vec![(name.to_ascii_lowercase(), expression.to_owned())])
+        .then(|| (name.to_ascii_lowercase(), expression.to_owned()))
 }
 
 /// The literal a user variable keeps for a value: a query reading it binds
@@ -2442,20 +2523,30 @@ impl Handler for Backend {
         {
             return diagnostics::select_into(self, &query, targets).await;
         }
-        if let Some(assignments) = self.user_variable_assignments(sql) {
+        if let Some((assignments, settings)) = Self::user_variable_assignments(sql) {
             if let Ok(mut session) = self.session.lock() {
                 session.conditions.clear();
                 session.condition_count = 0;
             }
-            return match self.assign_user_variables(assignments).await {
-                Ok(()) => {
-                    if let Ok(mut session) = self.session.lock() {
-                        session.row_count = 0;
-                    }
-                    Response::Ok(OkPacket::default(), String::new())
+            if let Err(error) = self.assign_user_variables(assignments).await {
+                return Response::Error(error_kind(&error), error.to_string());
+            }
+            // The rest of the list is applied too, in order: a SET that mixes
+            // a user variable with a session setting used to answer OK and
+            // apply only the variable.
+            for item in settings {
+                let statement = format!("SET {item}");
+                if let Some(rejection) = self.transaction_guarantee_rejection(&statement) {
+                    return Response::Error(ErrorKind::ErSyntaxError, rejection.to_owned());
                 }
-                Err(error) => Response::Error(error_kind(&error), error.to_string()),
-            };
+                if let Err(error) = self.apply_session_command(&statement) {
+                    return Response::Error(ErrorKind::ErWrongArguments, error);
+                }
+            }
+            if let Ok(mut session) = self.session.lock() {
+                session.row_count = 0;
+            }
+            return Response::Ok(OkPacket::default(), String::new());
         }
         if is_session_command(sql) {
             if let Some(rejection) = self.transaction_guarantee_rejection(sql) {

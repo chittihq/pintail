@@ -4712,7 +4712,13 @@ fn bloom_might_contain(bloom: &[u8], hash: u64) -> bool {
     })
 }
 
-pub(crate) fn sync_directory(directory: &Path) -> Result<(), StoreError> {
+/// Makes a directory's entries durable, so a removal or rename survives a
+/// power loss rather than only a process crash.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be opened or synchronized.
+pub fn sync_directory(directory: &Path) -> Result<(), StoreError> {
     File::open(directory)
         .and_then(|file| file.sync_all())
         .map_err(|error| StoreError::io(format!("sync directory {}", directory.display()), error))

@@ -294,6 +294,36 @@ fn enum_and_set_store_labels_with_the_declared_case() {
     );
 }
 
+/// A hex literal in a numeric column is its big-endian value, not the text
+/// its bytes spell: X'31' is 49 everywhere, and a DECIMAL is a numeric
+/// column even though its storage carries canonical text.
+#[test]
+fn a_hex_literal_in_a_numeric_column_is_its_value() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE amounts (id BIGINT UNSIGNED NOT NULL, whole BIGINT NOT NULL, \
+         exact DECIMAL(10,2) NOT NULL, label VARCHAR(8) NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO amounts (id, whole, exact, label) VALUES (1, X'31', X'31', X'31')",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "amounts"),
+        vec![vec![
+            Value::UInt64(1),
+            Value::Int64(49),
+            Value::Utf8("49.00".to_owned()),
+            // A text column reads the same literal as the characters its
+            // bytes spell, which is the other half of MySQL's rule.
+            Value::Utf8("1".to_owned()),
+        ]]
+    );
+}
+
 #[test]
 fn float_bit_precision_selects_single_or_double_storage() {
     let fixture = fixture();
@@ -387,6 +417,68 @@ fn binary_enum_and_set_members_keep_case_distinct() {
     );
 }
 
+/// Exponent form reaches a DECIMAL exactly. Routed through a double it
+/// rounded at the seventeenth digit, inside the range a DECIMAL(30,0) holds.
+#[test]
+fn an_exponent_form_decimal_keeps_every_digit() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE wide (id BIGINT UNSIGNED NOT NULL, big DECIMAL(30,0) NOT NULL, \
+         small DECIMAL(10,4) NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO wide (id, big, small) VALUES (1, 12345678901234567890e3, 15e-2)",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "wide"),
+        vec![vec![
+            Value::UInt64(1),
+            Value::Utf8("12345678901234567890000".to_owned()),
+            Value::Utf8("0.1500".to_owned()),
+        ]]
+    );
+}
+
+/// An unquoted number in an ENUM or SET column is a position, never a
+/// label. The fixture declares labels that are themselves digits, so a
+/// label-first reading answers differently from MySQL's.
+#[test]
+fn an_unquoted_number_in_an_enum_is_a_position() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE choices (id BIGINT UNSIGNED NOT NULL, pick ENUM('2','1') NOT NULL, \
+         flags SET('a','b','c') NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO choices (id, pick, flags) VALUES (1, 2, 5), (2, '2', 'b')",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "choices"),
+        vec![
+            // Position 2 is '1'; bitmask 5 is the first and third members.
+            vec![
+                Value::UInt64(1),
+                Value::Utf8("1".to_owned()),
+                Value::Utf8("a,c".to_owned())
+            ],
+            // Quoted, the same digit is the label '2'.
+            vec![
+                Value::UInt64(2),
+                Value::Utf8("2".to_owned()),
+                Value::Utf8("b".to_owned())
+            ],
+        ]
+    );
+}
+
 #[test]
 fn stored_text_obeys_column_repertoires_and_strict_inserts_are_atomic() {
     let fixture = fixture();
@@ -448,4 +540,59 @@ fn binary_character_set_declarations_store_bytes_and_padding() {
         assert_eq!(column.character_set, None);
         assert_eq!(column.collation, None);
     }
+}
+
+/// A label holding a backslash survives the declaration round trip. Left
+/// unescaped when the type was written down, it came back without the
+/// backslash and no insert into the column could match a label.
+#[test]
+fn an_enum_label_with_a_backslash_round_trips() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE paths (id BIGINT UNSIGNED NOT NULL, \
+         root ENUM('C:\\\\dev','D:\\\\data') NOT NULL, PRIMARY KEY (id))",
+    )
+    .expect("create");
+    run(
+        &fixture,
+        "INSERT INTO paths (id, root) VALUES (1, 'C:\\\\dev')",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "paths"),
+        vec![vec![Value::UInt64(1), Value::Utf8(r"C:\dev".to_owned())]]
+    );
+}
+
+/// A charset is read from the definition, not swept out of its text: a
+/// column named `charset` declares nothing, and a comment that happens to
+/// say "collate" is a comment.
+#[test]
+fn an_identifier_is_not_read_as_a_character_set() {
+    let fixture = fixture();
+    run(
+        &fixture,
+        "CREATE TABLE encodings (id BIGINT UNSIGNED NOT NULL, charset VARCHAR(16) NOT NULL, \
+         PRIMARY KEY (id)) COMMENT 'collate these carefully'",
+    )
+    .expect("a column may be named charset");
+    run(
+        &fixture,
+        "INSERT INTO encodings (id, charset) VALUES (1, 'utf8mb4')",
+    )
+    .expect("insert");
+    assert_eq!(
+        stored_rows(&fixture, "encodings"),
+        vec![vec![Value::UInt64(1), Value::Utf8("utf8mb4".to_owned())]]
+    );
+    // A real declaration is still refused.
+    assert!(
+        run(
+            &fixture,
+            "CREATE TABLE cyrillic (id BIGINT UNSIGNED NOT NULL, \
+             body VARCHAR(16) CHARACTER SET cp1251 NOT NULL, PRIMARY KEY (id))",
+        )
+        .is_err()
+    );
 }

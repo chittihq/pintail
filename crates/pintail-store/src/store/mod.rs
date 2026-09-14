@@ -96,6 +96,12 @@ fn projected_scan_pool() -> Result<&'static rayon::ThreadPool, StoreError> {
                 });
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads)
+                // Matches the main thread's 8 MiB. Left at rayon's default a
+                // worker had a quarter of that, so how deep a recursion
+                // could go depended on whether rayon ran the work on a
+                // worker or inline on the caller - a difference that varies
+                // between runs of the same query.
+                .stack_size(8 * 1024 * 1024)
                 .thread_name(|index| format!("pintail-scan-{index}"))
                 .build()
                 .map_err(|error| error.to_string())

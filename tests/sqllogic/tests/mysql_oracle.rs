@@ -40,7 +40,7 @@ const MEMORY_LIMIT: usize = 8 * 1024 * 1024;
 const FUZZ_MYSQL_BATCH_CASES: usize = 1_000;
 /// Generated parametric loops + hand-written edges + typed multi-table diversify cases.
 /// Prefer `bun run scripts/oracle-coverage.ts` over this count when judging diversity.
-const EXPECTED_CASES: usize = 1907;
+const EXPECTED_CASES: usize = 1908;
 /// orders.status declaration order - deliberately disagrees with the
 /// alphabetical order at every adjacent pair.
 const ENUM_LABELS: [&str; 5] = ["pending", "processing", "shipped", "delivered", "cancelled"];
@@ -372,6 +372,11 @@ fn oracle_case_inventory_matches_the_declared_gate() {
 
 #[allow(clippy::too_many_lines)]
 fn run_oracle() -> Result<(), String> {
+    // The server does this at startup; a test binary has no startup, so
+    // without it the workers here keep the platform's smaller stacks and
+    // this runs a different engine from the one that ships. Already-built
+    // is not an error: another test in this binary got there first.
+    let _ = pintail_exec::init_parallel_pool();
     let evidence = std::env::var("PINTAIL_ORACLE_EVIDENCE")
         .ok()
         .map(|path| {
@@ -2473,8 +2478,15 @@ fn hand_written_cases() -> Vec<OracleCase> {
              CAST('12:34:56.7896' AS TIME(3)), \
              CAST('-12:34:56.123456' AS TIME(6)), \
              CAST('1 02:03:04' AS TIME), CAST('1112' AS TIME), \
+             CAST('101112' AS TIME), TIME('101112'), \
              CAST('2026-08-06 07:08:09.987654' AS TIME(3)), \
              CAST('850:00:00' AS TIME)",
+        ),
+        ordered(
+            "hand-written cast binary width",
+            "SELECT LENGTH(CAST(1 AS BINARY(100))), \
+             CAST(1 AS BINARY(2000000000)), \
+             LENGTH(CAST('ab' AS BINARY(1)))",
         ),
         ordered(
             "hand-written cast temporal invalid",
@@ -2925,7 +2937,9 @@ fn hand_written_cases() -> Vec<OracleCase> {
         ),
         ordered(
             "hand-written arithmetic",
-            "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2",
+            "SELECT -7 DIV 3, -7 % 3, 7 / 2, 7 DIV 2, \
+             CAST(18446744073709551615 AS UNSIGNED) DIV 1.0, \
+             CAST(18446744073709551615 AS UNSIGNED) DIV 2.5",
         ),
         ordered(
             "hand-written aggregate empty input",
@@ -4375,9 +4389,17 @@ fn relational_edge_cases() -> Vec<OracleCase> {
             "json missing and null interactions",
             "SELECT JSON_TYPE('null'), JSON_EXTRACT('null', '$') IS NULL, JSON_EXTRACT('{}', '$.x') IS NULL, JSON_UNQUOTE(JSON_EXTRACT('{\"x\":null}', '$.x'))",
         ),
+        // `note` holds 'Alpha' and 'alpha' deliberately, and the column
+        // collates them equal. A set operation that DEDUPES or MATCHES them
+        // therefore has to return one of two spellings, and which one is the
+        // engine's business: MySQL answers 8.0 one way and 8.4 the other, so
+        // comparing the raw column here asks a question with two right
+        // answers. LOWER leaves the multiplicity and the NULL handling these
+        // cases exist for, and removes the choice. UNION ALL below keeps the
+        // raw column: it returns every row as written and picks nothing.
         unordered(
             "set multiplicity and null interactions",
-            "SELECT note FROM events WHERE id <= 3 UNION SELECT note FROM events WHERE id >= 8",
+            "SELECT LOWER(note) FROM events WHERE id <= 3 UNION SELECT LOWER(note) FROM events WHERE id >= 8",
         ),
         unordered(
             "set multiplicity and null interactions",
@@ -4385,7 +4407,7 @@ fn relational_edge_cases() -> Vec<OracleCase> {
         ),
         unordered(
             "set multiplicity and null interactions",
-            "SELECT note FROM events WHERE id <= 6 INTERSECT ALL SELECT note FROM events WHERE id >= 3",
+            "SELECT LOWER(note) FROM events WHERE id <= 6 INTERSECT ALL SELECT LOWER(note) FROM events WHERE id >= 3",
         ),
         unordered(
             "set multiplicity and null interactions",

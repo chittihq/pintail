@@ -677,6 +677,41 @@ fn open_targets(
             .entry(source.name.to_ascii_lowercase())
             .or_default() += 1;
     }
+    // Skipping is not enough on its own. The changes a tracked table misses
+    // while it is ambiguous are gone - nothing queues them - so when the
+    // other spelling is dropped it would rejoin the stream, and the query
+    // catalog, holding rows from before the ambiguity and answering as if
+    // they were current. Quarantining it makes rejoining go through a
+    // recopy, which is the only thing that can close that gap.
+    let ambiguous = records
+        .iter()
+        .filter(|table| {
+            table.orphaned_at.is_none()
+                && table.state != "needs_resync"
+                && spellings
+                    .get(&table.name.to_ascii_lowercase())
+                    .is_some_and(|count| *count > 1)
+        })
+        .map(|table| table.name.clone())
+        .collect::<Vec<_>>();
+    if !ambiguous.is_empty() {
+        let metadata = MetaStore::open(metadata_path).map_err(display)?;
+        for name in &ambiguous {
+            metadata
+                .mark_table_needs_resync(
+                    database_id,
+                    name,
+                    "the source holds another table whose name differs only in case; change \
+                     capture cannot tell them apart",
+                )
+                .map_err(display)?;
+        }
+        pintail_log::log_error!(
+            "table quarantined db={database_id} tables={}: another source table's name differs \
+             only in case",
+            ambiguous.join(", ")
+        );
+    }
     report
         .tables
         .iter()
@@ -870,8 +905,116 @@ fn restore_tables_after_restart(state: &ApiState, metadata: &MetaStore) {
 
 #[cfg(test)]
 mod tests {
-    use super::{eligible, restore_tables_after_restart};
+    use super::{eligible, open_targets, restore_tables_after_restart};
     use pintail_meta::{DatabaseRecord, MetaStore};
+
+    /// Change capture matches table names regardless of case, so once the
+    /// source holds two tables whose names differ only in case, neither can
+    /// be streamed. Skipping them is not enough: the changes missed in the
+    /// meantime are never queued, so the tracked one has to be quarantined
+    /// or it rejoins the stream later carrying stale rows.
+    #[test]
+    fn a_table_the_stream_cannot_tell_apart_is_quarantined_not_just_skipped() {
+        let directory = tempfile::tempdir().expect("data directory");
+        let metadata_path = directory.path().join("pintail-meta.db");
+        let now = "2026-09-14T00:00:00Z";
+        let metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("db-1", "shop", b"secret", now)
+            .expect("database");
+        for name in ["Orders", "customers"] {
+            metadata
+                .upsert_snapshot_table("db-1", name, Some("[\"id\"]"), Some("[\"id\"]"))
+                .expect("register");
+            metadata
+                .complete_snapshot_table("db-1", name)
+                .expect("copy");
+        }
+
+        // The source grew a second spelling of one tracked table.
+        let source = |name: &str| {
+            serde_json::json!({
+                "name": name,
+                "engine": "InnoDB",
+                "estimated_rows": 1,
+                "columns": [{
+                    "id": 1,
+                    "name": "id",
+                    "mysql_data_type": "bigint",
+                    "mysql_column_type": "bigint",
+                    "pintail_type": "int64",
+                    "nullable": false,
+                    "character_set": null,
+                    "collation": null,
+                    "generated_stored": false,
+                    "generation_expression": "",
+                    "extra": "",
+                    "auto_increment": false,
+                    "default_value": null,
+                    "default_generated": false,
+                    "ordinal": 0
+                }],
+                "key": {"mode": "primary", "index_name": "PRIMARY", "columns": ["id"]},
+                "unique_keys": [],
+                "requires_reconciliation": false,
+                "warnings": []
+            })
+        };
+        let report: pintail_probe::ProbeReport = serde_json::from_value(serde_json::json!({
+            "database": "shop",
+            "server": {
+                "version": "8.4.0",
+                "version_comment": "MySQL Community Server",
+                "flavor": "mysql"
+            },
+            "variables": {},
+            "grants": [],
+            "capabilities": {
+                "log_bin": true,
+                "row_binlog": true,
+                "full_row_image": true,
+                "full_row_metadata": true,
+                "replication_grants": true,
+                "global_read_lock": true,
+                "gtid_available": true,
+                "recommended_mode": "cdc",
+                "reasons": []
+            },
+            "tables": [source("Orders"), source("orders")],
+            "warnings": []
+        }))
+        .expect("probe report");
+
+        let records = metadata.tables("db-1").expect("tables");
+        let targets = open_targets(
+            &metadata_path,
+            "db-1",
+            &directory.path().join("tables"),
+            &report,
+            &records,
+        )
+        .expect("targets");
+        assert!(
+            targets
+                .iter()
+                .all(|target| target.source().name != "Orders"),
+            "an ambiguous table is not streamed"
+        );
+        let states = metadata
+            .tables("db-1")
+            .expect("tables")
+            .into_iter()
+            .map(|table| (table.name, table.state))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            states,
+            vec![
+                ("customers".to_owned(), "pending".to_owned()),
+                ("Orders".to_owned(), "needs_resync".to_owned()),
+            ],
+            "the ambiguous table is quarantined; an unrelated one is untouched"
+        );
+    }
 
     /// The state a failed whole-database job leaves behind: the database
     /// and every table in error, the copies on disk untouched. Boot must

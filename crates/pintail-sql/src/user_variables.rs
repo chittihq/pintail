@@ -52,6 +52,11 @@ pub(crate) fn user_variable(name: &str) -> Option<Value> {
     )
 }
 
+// A `SET` list is read from its own text by the wire layer, not from a
+// parsed form: rendering an expression back to SQL loses backslash escapes,
+// and the list can mix user variables with session settings, which a parse
+// into user-variable pairs alone cannot represent.
+
 /// The user variables a `SET` statement assigns, as (name, expression)
 /// pairs in order. `None` unless every assignment targets a user variable.
 #[must_use]

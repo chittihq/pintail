@@ -709,6 +709,110 @@ async fn a_table_that_cannot_be_copied_is_flagged_and_the_rest_complete() {
     pool.disconnect().await.expect("disconnect source pool");
 }
 
+/// A keyless table's rows are identified by where they arrived in the
+/// stream, so a copy that starts after the captured position holds rows the
+/// replay will insert again - two rows where the source has one, with
+/// nothing able to tell afterwards. Without the global read lock that gap
+/// is exactly what opens, so such a table is left uncopied and flagged;
+/// keyed tables are copied as before, since the replay only upserts them.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_keyless_table_is_not_copied_without_the_global_read_lock() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-05T00:00:00Z",
+        )
+        .expect("register database");
+    let find = |name: &str| {
+        report
+            .tables
+            .iter()
+            .find(|table| table.name == name)
+            .expect("probed table")
+            .clone()
+    };
+    let keyless_source = find("append_table");
+    assert_eq!(keyless_source.key.mode, KeyMode::AppendRowId);
+    let keyless = target(&keyless_source, &workspace.path().join("append_table"));
+    let keyed = target(&find("primary_table"), &workspace.path().join("primary"));
+
+    // A session holding a table keeps the source's open-table count above
+    // zero, which is the condition under which the global read lock is not
+    // attempted: taking it then would queue every write on the source.
+    let mut holder = pool.get_conn().await.expect("holding connection");
+    holder
+        .query_drop("LOCK TABLES digits READ")
+        .await
+        .expect("hold a table");
+
+    let result = run_snapshot(
+        &pool,
+        &metadata_path,
+        DATABASE_ID,
+        &report,
+        vec![keyless, keyed],
+        SnapshotOptions {
+            workers: 1,
+            chunk_rows: 1_000,
+            ..SnapshotOptions::default()
+        },
+    )
+    .await;
+    holder
+        .query_drop("UNLOCK TABLES")
+        .await
+        .expect("release the table");
+    drop(holder);
+    let result = result.expect("the keyed table still copies");
+    assert!(
+        !result.globally_consistent,
+        "the held table must make this the degraded path the finding is about"
+    );
+    assert_eq!(
+        result
+            .failed
+            .iter()
+            .map(|failure| failure.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["append_table"]
+    );
+    assert_eq!(
+        result
+            .tables
+            .iter()
+            .map(|table| table.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["primary_table"]
+    );
+    let states = MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .tables(DATABASE_ID)
+        .expect("tables")
+        .into_iter()
+        .map(|table| (table.name, table.state, table.copy_complete))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![
+            ("append_table".to_owned(), "needs_resync".to_owned(), false),
+            ("primary_table".to_owned(), "pending".to_owned(), true),
+        ]
+    );
+    pool.disconnect().await.expect("disconnect source pool");
+}
+
 struct CompatibilityVariant {
     label: &'static str,
     image: &'static str,

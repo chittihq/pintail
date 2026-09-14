@@ -1779,7 +1779,13 @@ fn settled_signature(
     aggregates: &[CompiledAggregate],
 ) -> Option<String> {
     use std::fmt::Write;
-    let mut signature = String::new();
+    // The memo is process-wide, so anything outside the plan that changes
+    // the ANSWER has to be part of the key. `div_precision_increment` is
+    // exactly that: it sets how many fraction digits AVG and division add,
+    // so two sessions running the same text over the same settled data
+    // want different scales, and without this one of them is served the
+    // other's.
+    let mut signature = format!("d:{};", pintail_sql::session_div_precision_increment());
     for expr in group_by {
         write!(signature, "g:{};", expr.deterministic_signature()?).ok()?;
     }

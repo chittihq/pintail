@@ -198,6 +198,39 @@ pub fn set_session_cte_max_recursion_depth(limit: Option<u64>) {
 /// never configures a budget keeps exactly the previous behaviour.
 static SHARED_MEMORY_BUDGET: std::sync::OnceLock<MemoryBudget> = std::sync::OnceLock::new();
 
+/// Stack every parallel worker gets, matching the 8 MiB a main thread has
+/// by default on Linux.
+///
+/// Rayon leaves its workers on the platform default, which is a quarter of
+/// that. Expression evaluation, binding and planning all recurse, and
+/// whether a given piece of that work runs on a worker or inline on the
+/// caller is rayon's decision, not ours - so the depth a query could reach
+/// before running out of stack varied between runs of the same query. That
+/// is the shape of a fault that appears in a fraction of runs and vanishes
+/// under a debugger, which is what the intermittent corpus SIGSEGV looks
+/// like. Equal stacks do not BOUND the recursion; they stop it depending on
+/// where the work landed.
+pub const PARALLEL_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+/// Builds the global rayon pool with worker stacks that match the main
+/// thread's.
+///
+/// Must run before anything touches the global pool: rayon builds it on
+/// first use, and a pool already built cannot be replaced. A later call, or
+/// one that lost the race, reports so rather than pretending it configured
+/// anything.
+///
+/// # Errors
+///
+/// Returns an error when the global pool already exists.
+pub fn init_parallel_pool() -> Result<(), String> {
+    rayon::ThreadPoolBuilder::new()
+        .stack_size(PARALLEL_WORKER_STACK_BYTES)
+        .thread_name(|index| format!("pintail-exec-{index}"))
+        .build_global()
+        .map_err(|error| error.to_string())
+}
+
 /// Installs the process-wide memory budget. Called once at startup; later
 /// calls are ignored so a stray caller cannot loosen a configured budget.
 pub fn init_shared_memory_budget(limit: usize) {

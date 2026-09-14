@@ -1193,6 +1193,37 @@ pub struct DeclaredColumn<'a> {
     pub collation: Option<&'a str>,
 }
 
+/// Folds a declaration outside its quoted runs, so `DECIMAL(10,2) UNSIGNED`
+/// still folds whole while `ENUM('Draft','Sent')` keeps its labels.
+fn lowercase_type_keyword(column_type: &str) -> String {
+    let mut folded = String::with_capacity(column_type.len());
+    let mut quote = None;
+    let mut escaped = false;
+    for character in column_type.chars() {
+        match quote {
+            Some(open) => {
+                folded.push(character);
+                if escaped {
+                    escaped = false;
+                } else if character == '\\' {
+                    escaped = true;
+                } else if character == open {
+                    quote = None;
+                }
+            }
+            None => {
+                if matches!(character, '\'' | '"') {
+                    quote = Some(character);
+                    folded.push(character);
+                } else {
+                    folded.extend(character.to_lowercase());
+                }
+            }
+        }
+    }
+    folded
+}
+
 /// Maps one locally declared column onto the same [`SourceColumn`] a probe
 /// of an identical `MySQL` column would produce.
 ///
@@ -1206,7 +1237,13 @@ pub fn declared_column(column: &DeclaredColumn<'_>) -> Result<SourceColumn, Prob
         name: column.name.to_owned(),
         nullable: column.nullable,
         data_type: column.data_type.to_ascii_lowercase(),
-        column_type: column.column_type.to_owned(),
+        // Only the type itself folds. An ENUM or SET declaration carries
+        // its labels here, and MySQL keeps their case in `COLUMN_TYPE`;
+        // folding the whole string stored `ENUM('Draft')` as `draft`.
+        // Both branches fixed that; this keeps the folding, which a caller
+        // that hands over `BIGINT UNSIGNED` still needs for the type
+        // mapping to recognise it.
+        column_type: lowercase_type_keyword(column.column_type),
         numeric_precision: column.numeric_precision,
         numeric_scale: column.numeric_scale,
         datetime_precision: column.datetime_precision,

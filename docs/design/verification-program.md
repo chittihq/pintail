@@ -47,10 +47,13 @@ backlog for the phases below.
 
 ### P1 - MySQL's suite as a gate
 
-1. `tests/mtr` banks a per-file baseline and fails when any file's exact count
-   drops; the `mtr` stage joins the rc profile.
+1. `tests/mtr` banks a per-file baseline of the statements that matched
+   exactly, by identity, and fails when any of them stops matching; the `mtr`
+   stage joins the rc profile. A count would hide one statement regressing
+   while another started passing.
 2. The replay widens to every query-shaped file of the main suite, and a second
-   oracle runs MariaDB's suite against a MariaDB container.
+   run replays MariaDB's suite - against the same MySQL 8.4 oracle, since what
+   is being measured is Pintail's answers to those statements.
 3. A replication mode runs each file's fixtures and DML on the source and
    compares after the replica catches up, so statements a local database could
    not follow become change-capture checks.

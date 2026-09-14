@@ -13,8 +13,8 @@
 ///
 /// Usage:  bun run scripts/farm.ts                       # until stopped
 ///         bun run scripts/farm.ts --cycles 3 --jobs cdc-sim,disk-faults
-/// Docker jobs (sql-fuzz, cdc-matrix, mtr-replica) use the DOCKER_HOST the
-/// shell has; run the farm on a host no gate is measuring on.
+/// Docker jobs (sql-fuzz, cdc-matrix) use the DOCKER_HOST the shell has; run
+/// the farm on a host no gate is measuring on.
 import { spawnSync } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -97,14 +97,31 @@ function loadState(): Record<string, number> {
   return existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {}
 }
 
-/// The first line that says what went wrong, with numbers masked so the same
-/// defect on another seed shares a signature.
+/// What went wrong, with the volatile numbers masked so the same defect on
+/// another seed shares a signature - and only those, so two defects do not.
+///
+/// A digit inside a word is part of a name: `mysql84` and `mysql57` are
+/// different sources, `utf8mb4` is a charset. Masking every digit made them
+/// one signature and filed two findings as one. Standalone numbers - seeds,
+/// counts, row values, line numbers, addresses - are what varies between
+/// runs of the SAME defect, and those still go.
+///
+/// A panic line alone is just a site, and every simulation panic shares one.
+/// The message under it is what distinguishes them, so it comes along.
 export function signature(log: string): string {
-  const line =
-    log.split('\n').find((l) => /panicked at|DIVERGED|differed|MISMATCH|FAIL:|error\[/.test(l) && !/test result/.test(l)) ??
-    log.split('\n').reverse().find((l) => l.trim()) ??
-    'no output'
-  return line.replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().slice(0, 240)
+  const lines = log.split('\n')
+  const index = lines.findIndex((l) => /panicked at|DIVERGED|differed|MISMATCH|FAIL:|error\[/.test(l) && !/test result/.test(l))
+  let line = index >= 0 ? lines[index]! : (lines.reverse().find((l) => l.trim()) ?? 'no output')
+  if (index >= 0 && /panicked at/.test(line)) {
+    const message = lines.slice(index + 1).find((l) => l.trim())
+    if (message) line = `${line.trim()} ${message.trim()}`
+  }
+  return line
+    .replace(/0x[0-9a-fA-F]+/g, '0xN')
+    .replace(/(?<![0-9A-Za-z_])\d+(?![0-9A-Za-z_])/g, 'N')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 240)
 }
 
 function git(...args: string[]): string {

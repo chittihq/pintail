@@ -104,6 +104,15 @@ async fn main() -> Result<()> {
         config.reserved_query_slots(),
     );
     pintail_exec::init_shared_memory_budget(config.total_query_memory_limit_bytes());
+    // Before any query: rayon builds its pool on first use, and a pool
+    // already built keeps the platform's smaller worker stacks, which is
+    // what made how deep a query could recurse depend on where rayon ran
+    // the work.
+    if let Err(error) = pintail_exec::init_parallel_pool() {
+        pintail_log::log_error!(
+            "parallel pool already built, workers keep the default stack: {error}"
+        );
+    }
     raise_open_file_limit();
     // This process is its data directory's only writer: a table stays
     // locked to it between replication cycles, so queries prove the replica
