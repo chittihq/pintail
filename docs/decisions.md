@@ -1756,3 +1756,16 @@ globals and grant tables, then restores them after every file, including before
 a retry. Grant snapshots remain temporary tables on the supervisor connection.
 A failed restoration aborts the run. Statement selection, comparison rules and
 within-file effects stay unchanged.
+
+### Grouped windows without ordering use a reproducible traversal
+
+An order-sensitive window without `ORDER BY` receives grouped rows in ascending
+group-key order, with NULL keys first and each key's declared collation. This
+avoids assigning row numbers or cumulative frames according to hash-table bucket
+order. The sort runs after aggregation and HAVING, and only when a window leaves
+its order unspecified. Explicit window ordering remains authoritative.
+
+This is a deterministic execution choice, not an additional SQL ordering
+guarantee. Queries that require a particular numbering or frame must declare
+`ORDER BY` inside the window. The cost is sorting the surviving groups, using the
+existing memory and spill controls.

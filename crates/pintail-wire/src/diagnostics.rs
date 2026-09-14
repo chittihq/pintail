@@ -1350,6 +1350,32 @@ pub(super) mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn unordered_grouped_windows_use_a_stable_group_key_traversal() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE amounts (grp INT,n INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO amounts VALUES (8,8),(7,7),(6,6),(5,5),(4,4),(3,3),(2,2),(1,1)")
+            .await
+            .unwrap();
+        let result = backend.execute("SELECT grp,ROW_NUMBER() OVER(),SUM(SUM(n)) OVER(ROWS UNBOUNDED PRECEDING) FROM amounts GROUP BY grp ORDER BY grp").await.unwrap();
+        for (index, row) in result.rows.iter().enumerate() {
+            let n = i64::try_from(index + 1).unwrap();
+            assert_eq!(
+                row,
+                &vec![
+                    Value::Int64(n),
+                    Value::UInt64(n.unsigned_abs()),
+                    Value::Int64(n * (n + 1) / 2)
+                ]
+            );
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

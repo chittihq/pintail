@@ -208,6 +208,39 @@ impl LogicalPlan {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LogicalPlanner;
 
+/// Give order-sensitive windows without ORDER BY a reproducible grouped input.
+/// Explicitly ordered windows continue to use their declared ordering keys.
+fn grouped_window_order(group_by: &[BoundExpr], windows: &[BoundWindow]) -> Vec<BoundOrderKey> {
+    use pintail_sql::{OrderValueKind, WindowFunction};
+    if !windows.iter().any(|window| {
+        window.order_by.is_empty()
+            && (matches!(
+                window.function,
+                WindowFunction::RowNumber
+                    | WindowFunction::NTile(_)
+                    | WindowFunction::Offset { .. }
+                    | WindowFunction::Extreme { .. }
+            ) || window.frame.is_some_and(|frame| !frame.range))
+    }) {
+        return Vec::new();
+    }
+    group_by
+        .iter()
+        .enumerate()
+        .map(|(index, key)| BoundOrderKey {
+            index,
+            ascending: true,
+            nulls_first: true,
+            value_kind: OrderValueKind::from_type(key.data_type),
+            collation: if key.data_type == Some(DataType::Json) {
+                Some(pintail_sql::JSON_TEXT_COLLATION)
+            } else {
+                key.text_collation()
+            },
+        })
+        .collect()
+}
+
 impl LogicalPlanner {
     /// Builds an unoptimized logical plan.
     #[must_use]
@@ -252,6 +285,7 @@ impl LogicalPlanner {
                 }
             }
         }
+        let window_input_order = grouped_window_order(&group_by, &windows);
         let mut plan = source_plan(from);
         if let Some(predicate) = filter {
             plan = LogicalPlan::Filter {
@@ -270,6 +304,13 @@ impl LogicalPlanner {
             plan = LogicalPlan::Filter {
                 input: Box::new(plan),
                 predicate,
+            };
+        }
+        if !window_input_order.is_empty() {
+            plan = LogicalPlan::Sort {
+                input: Box::new(plan),
+                keys: window_input_order,
+                trim: 0,
             };
         }
         if !windows.is_empty() {
