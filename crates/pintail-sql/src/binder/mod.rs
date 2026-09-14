@@ -5020,7 +5020,20 @@ fn numeric_aggregate_input(
             | AggregateFunction::StdDev { .. }
             | AggregateFunction::Variance { .. }
     ) {
-        expr.map(|value| implicit_day_number(&value).unwrap_or(value))
+        expr.map(|value| {
+            let value = implicit_day_number(&value).unwrap_or(value);
+            if matches!(
+                function,
+                AggregateFunction::StdDev { .. } | AggregateFunction::Variance { .. }
+            ) && matches!(value.data_type, Some(DataType::Decimal { .. }))
+            {
+                // Statistical moments consume a decimal expression in the
+                // approximate domain before its display scale rounds it.
+                cast_to(value, DataType::Float64)
+            } else {
+                value
+            }
+        })
     } else {
         expr
     }

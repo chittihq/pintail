@@ -1308,3 +1308,19 @@ fn concat_respects_explicit_encoding_before_binary_coercibility() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn floating_consumers_read_decimal_guard_digits_before_display_rounding() {
+    for (expression, expected) in [
+        ("CAST(1/3 AS DOUBLE)", "float 0.333333333"),
+        ("1/3+0e0", "float 0.333333333"),
+        ("CAST(1/3 AS CHAR)", "0.3333"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+    assert_eq!(evaluate_rows("STD(id/3)", 3), "float 0.27216552711199143");
+    assert_eq!(
+        evaluate_rows("VARIANCE(id/3)", 3),
+        "float 0.07407407414814815"
+    );
+}

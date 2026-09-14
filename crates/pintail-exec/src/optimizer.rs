@@ -1037,8 +1037,10 @@ fn evaluate_constant(expr: &BoundExpr) -> Option<Value> {
         BoundExprKind::Binary { op, left, right } => {
             let left = evaluate_constant(left)?;
             let right = evaluate_constant(right)?;
-            if *op == BinaryOp::IntegerDivide {
-                // DIV reads a decimal subtree's internal digits. Evaluating
+            if *op == BinaryOp::IntegerDivide
+                || matches!(expr.data_type, Some(DataType::Float32 | DataType::Float64))
+            {
+                // Numeric consumers read a decimal subtree's internal digits. Evaluating
                 // each child to its display value would round them away.
                 let compiled = crate::expression::CompiledExpr::compile(
                     expr,

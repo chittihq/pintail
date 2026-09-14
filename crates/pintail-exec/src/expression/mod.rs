@@ -1197,7 +1197,8 @@ impl CompiledExpr {
                     }
                 }
                 let operand = |expression: &Self| {
-                    if *op == BinaryOp::IntegerDivide
+                    if (*op == BinaryOp::IntegerDivide
+                        || matches!(data_type, Some(DataType::Float32 | DataType::Float64)))
                         && let Some(value) = expression.internal_decimal_value(batch, row)?
                     {
                         return Ok(value);
@@ -7444,8 +7445,9 @@ pub(crate) fn mysql_f64(value: &Value) -> Result<f64, ExecError> {
         Value::Enum { index, .. } => Ok(*index as f64),
         Value::Utf8(value) => Ok(parse_mysql_number(value)),
         Value::DecimalAverage(average) => {
-            let value = &average.label;
-            Ok(parse_mysql_number(value))
+            // Approximate arithmetic reads retained decimal guard digits;
+            // only string consumers use the narrower display label.
+            Ok(parse_mysql_number(&average.canonical()))
         }
         Value::Binary(value) => {
             let value = std::str::from_utf8(value).map_err(|_| ExecError::InvalidUtf8Number)?;
