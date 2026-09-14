@@ -6552,6 +6552,13 @@ fn canonical_literal_operand(
         Some(DataType::Date32) => true,
         Some(DataType::DateTime64 { .. }) => false,
         target_type if exact_numeric_type(target_type) => {
+            if matches!(target.kind, BoundExprKind::Column(_))
+                && !matches!(target_type, Some(DataType::Decimal { .. }))
+                && operand.data_type == Some(DataType::Utf8)
+                && let Some(value) = integer_string_constant(&operand)
+            {
+                return Ok(value);
+            }
             return Ok(numeric_literal(operand));
         }
         _ => return Ok(operand),
@@ -6592,7 +6599,27 @@ fn canonical_literal_operand(
     })
 }
 
-/// An exact number compared with a string compares as a double in `MySQL`,
+/// Integer columns can absorb an integer string constant without losing bits.
+/// Computed numeric expressions retain the ordinary floating comparison domain.
+fn integer_string_constant(operand: &BoundExpr) -> Option<BoundExpr> {
+    let literal = crate::text_charset::literal_value(operand)?;
+    let Value::Utf8(text) = literal.as_ref() else {
+        return None;
+    };
+    let value = text
+        .trim()
+        .parse::<i64>()
+        .map(Value::Int64)
+        .ok()
+        .or_else(|| text.trim().parse::<u64>().map(Value::UInt64).ok())?;
+    Some(BoundExpr {
+        data_type: value.data_type(),
+        nullable: false,
+        kind: BoundExprKind::Literal(value),
+    })
+}
+
+/// A numeric expression compared with a string uses the floating domain,
 /// however the string is spelled: `'9007199254740992'` and
 /// `'9007199254740992x'` meet a BIGINT the same way. A literal that is a plain
 /// number is read as that double here; any other text is read by its numeric

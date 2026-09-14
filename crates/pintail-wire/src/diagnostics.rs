@@ -685,6 +685,36 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn bigint_columns_compare_integer_string_constants_without_float_rounding() {
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE identifiers (v BIGINT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO identifiers VALUES (102935229216544093)")
+            .await
+            .unwrap();
+        assert!(
+            backend
+                .execute("SELECT v FROM identifiers WHERE v='102935229216544104'")
+                .await
+                .unwrap()
+                .rows
+                .is_empty()
+        );
+        assert_eq!(
+            backend
+                .execute("SELECT v FROM identifiers WHERE v='102935229216544093'")
+                .await
+                .unwrap()
+                .rows
+                .len(),
+            1
+        );
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
