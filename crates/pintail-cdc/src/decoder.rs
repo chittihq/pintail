@@ -596,27 +596,15 @@ fn transcode_text(column: &SourceColumn, bytes: &[u8]) -> Result<String, CdcErro
             String::from_utf8(bytes.to_vec())
                 .map_err(|error| CdcError::Decode(format!("{}.{}: {error}", "<row>", column.name)))
         }
-        Some(character_set) if character_set == "latin1" => {
-            Ok(bytes.iter().map(|byte| cp1252_character(*byte)).collect())
-        }
+        Some(character_set) if character_set == "latin1" => Ok(pintail_types::CharacterSet::Latin1
+            .decode(bytes)
+            .expect("every single-byte value is defined")),
         None => String::from_utf8(bytes.to_vec())
             .map_err(|error| CdcError::Decode(format!("{}.{}: {error}", "<row>", column.name))),
         Some(character_set) => Err(CdcError::Decode(format!(
             "{} uses unsupported binlog character set {character_set}",
             column.name
         ))),
-    }
-}
-
-fn cp1252_character(byte: u8) -> char {
-    const EXTENDED: [char; 32] = [
-        '€', '\u{0081}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{008d}', 'Ž',
-        '\u{008f}', '\u{0090}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ',
-        '\u{009d}', 'ž', 'Ÿ',
-    ];
-    match byte {
-        0x80..=0x9f => EXTENDED[usize::from(byte - 0x80)],
-        _ => char::from(byte),
     }
 }
 

@@ -7,6 +7,8 @@ pub enum CharacterSet {
     /// Unicode encoded as UTF-8.
     #[default]
     Utf8Mb4,
+    /// Western European single-byte text, including the Windows extensions.
+    Latin1,
     /// UTF-8 restricted to the basic multilingual plane.
     Utf8Mb3,
     /// Big-endian basic-plane code units.
@@ -32,6 +34,7 @@ impl CharacterSet {
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_ascii_lowercase().as_str() {
             "utf8mb4" => Some(Self::Utf8Mb4),
+            "latin1" => Some(Self::Latin1),
             "utf8" | "utf8mb3" => Some(Self::Utf8Mb3),
             "ucs2" => Some(Self::Ucs2),
             "utf16" => Some(Self::Utf16),
@@ -46,6 +49,7 @@ impl CharacterSet {
     pub const fn default_collation(self) -> &'static str {
         match self {
             Self::Utf8Mb4 => "utf8mb4_0900_ai_ci",
+            Self::Latin1 => "latin1_swedish_ci",
             Self::Utf8Mb3 => "utf8mb3_general_ci",
             Self::Ucs2 => "ucs2_general_ci",
             Self::Utf16 => "utf16_general_ci",
@@ -58,7 +62,7 @@ impl CharacterSet {
     #[must_use]
     pub const fn minimum_width(self) -> usize {
         match self {
-            Self::Utf8Mb4 | Self::Utf8Mb3 => 1,
+            Self::Utf8Mb4 | Self::Utf8Mb3 | Self::Latin1 => 1,
             Self::Ucs2 | Self::Utf16 | Self::Utf16Le => 2,
             Self::Utf32 => 4,
         }
@@ -73,6 +77,7 @@ impl CharacterSet {
                 character = '?';
             }
             match self {
+                Self::Latin1 => bytes.push(latin1_byte(character).unwrap_or(b'?')),
                 Self::Utf8Mb4 | Self::Utf8Mb3 => {
                     bytes.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
                 }
@@ -115,6 +120,7 @@ impl CharacterSet {
     #[must_use]
     pub fn decode_prefix(self, bytes: &[u8]) -> String {
         match self {
+            Self::Latin1 => bytes.iter().map(|byte| latin1_character(*byte)).collect(),
             Self::Utf8Mb4 | Self::Utf8Mb3 => std::str::from_utf8(utf8_prefix(bytes))
                 .unwrap_or_default()
                 .chars()
@@ -149,6 +155,7 @@ impl CharacterSet {
     #[must_use]
     pub fn decode(self, bytes: &[u8]) -> Option<String> {
         match self {
+            Self::Latin1 => Some(bytes.iter().map(|byte| latin1_character(*byte)).collect()),
             Self::Utf8Mb4 | Self::Utf8Mb3 => {
                 let text = std::str::from_utf8(bytes).ok()?;
                 if self == Self::Utf8Mb3 && text.chars().any(|c| u32::from(c) > 0xffff) {
@@ -187,5 +194,44 @@ impl CharacterSet {
                     .collect()
             }
         }
+    }
+}
+
+const LATIN1_EXTENDED: [char; 32] = [
+    '€', '\u{0081}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{008d}', 'Ž',
+    '\u{008f}', '\u{0090}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{009d}',
+    'ž', 'Ÿ',
+];
+
+fn latin1_character(byte: u8) -> char {
+    match byte {
+        0x80..=0x9f => LATIN1_EXTENDED[usize::from(byte - 0x80)],
+        _ => char::from(byte),
+    }
+}
+
+fn latin1_byte(character: char) -> Option<u8> {
+    match u32::from(character) {
+        value @ (0..=0x7f | 0xa0..=0xff) => u8::try_from(value).ok(),
+        _ => LATIN1_EXTENDED
+            .iter()
+            .position(|candidate| *candidate == character)
+            .and_then(|position| u8::try_from(position).ok())
+            .map(|position| position + 0x80),
+    }
+}
+
+#[cfg(test)]
+mod latin1_tests {
+    use super::CharacterSet;
+
+    #[test]
+    fn latin1_preserves_every_byte_and_encodes_extended_characters() {
+        let charset = CharacterSet::from_name("latin1").expect("latin1 encoding");
+        let bytes = (0_u8..=255).collect::<Vec<_>>();
+        let decoded = charset.decode(&bytes).expect("every byte is defined");
+        assert_eq!(charset.encode(&decoded), bytes);
+        assert_eq!(charset.encode("é€Ÿ🐬"), vec![0xe9, 0x80, 0x9f, b'?']);
+        assert_eq!(charset.default_collation(), "latin1_swedish_ci");
     }
 }
