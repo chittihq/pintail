@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Scalar bitwise operators and `BIT_COUNT` preserve binary byte strings,
+  fixed-width shifts and numeric hex-literal semantics.
+
 - `utf8mb4_0900_as_cs` preserves accents and case in comparisons, grouping,
   ordering and searches, including connection collation and regex defaults.
 

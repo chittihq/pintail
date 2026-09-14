@@ -195,3 +195,8 @@ for comparisons, sort keys and grouping, with NO PAD semantics. Searches
 retain exact source characters even when canonical forms compare equal.
 Regex defaults follow the expression collation; explicit match flags still
 override that default. Connection collation updates the literal charset.
+
+Scalar bit operators choose their binary or unsigned domain during binding.
+Raw hex/bit literals remain numeric unless a binary operand selects byte
+operations. Shifts preserve the left byte width, including overshifts,
+while complements and BIT_COUNT inspect every byte of binary inputs.

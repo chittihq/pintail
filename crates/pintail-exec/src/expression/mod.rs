@@ -1473,6 +1473,7 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
@@ -1552,6 +1553,7 @@ impl CompiledExpr {
                     | ScalarFunction::Conv
                     | ScalarFunction::Bin
                     | ScalarFunction::Oct
+                    | ScalarFunction::BitCount
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
@@ -1673,6 +1675,7 @@ impl CompiledExpr {
                     | ScalarFunction::Left
                     | ScalarFunction::Right
                     | ScalarFunction::NullIf
+                    | ScalarFunction::BitNot
                     | ScalarFunction::Reverse
                     | ScalarFunction::Unhex
                     | ScalarFunction::FromBase64
@@ -1747,6 +1750,7 @@ impl CompiledExpr {
                     | ScalarFunction::Conv
                     | ScalarFunction::Bin
                     | ScalarFunction::Oct
+                    | ScalarFunction::BitCount
                     | ScalarFunction::Crc32
                     | ScalarFunction::InetAton
                     | ScalarFunction::InetNtoa
@@ -2887,6 +2891,18 @@ fn evaluate_eager_scalar_inner(
             };
             Ok(Value::Utf8(digest))
         }
+        ScalarFunction::BitNot => match &values[0] {
+            Value::Binary(bytes) => Ok(Value::Binary(bytes.iter().map(|byte| !byte).collect())),
+            value => Ok(bit_pattern(value)?.map_or(Value::Null, |bits| Value::UInt64(!bits))),
+        },
+        ScalarFunction::BitCount => match &values[0] {
+            Value::Binary(bytes) => Ok(Value::UInt64(
+                bytes.iter().map(|byte| u64::from(byte.count_ones())).sum(),
+            )),
+            value => Ok(bit_pattern(value)?.map_or(Value::Null, |bits| {
+                Value::UInt64(u64::from(bits.count_ones()))
+            })),
+        },
         ScalarFunction::Crc32 => {
             let input = match &values[0] {
                 Value::Binary(bytes) => bytes.clone(),
@@ -6785,6 +6801,34 @@ pub(crate) fn evaluate_binary(
 /// its 64-bit pattern (a negative integer wraps), the result is unsigned,
 /// and a shift by 64 or more bits is zero.
 fn evaluate_bitwise(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, ExecError> {
+    if matches!(left, Value::Null) || matches!(right, Value::Null) {
+        return Ok(Value::Null);
+    }
+    if let Value::Binary(left) = left {
+        return match right {
+            Value::Binary(right) => {
+                if left.len() != right.len() {
+                    return Err(ExecError::BinaryBitwiseLength);
+                }
+                let bytes = left
+                    .iter()
+                    .zip(right)
+                    .map(|(left, right)| match op {
+                        BinaryOp::BitAnd => left & right,
+                        BinaryOp::BitOr => left | right,
+                        BinaryOp::BitXor => left ^ right,
+                        _ => unreachable!("binary shifts have numeric right operands"),
+                    })
+                    .collect();
+                Ok(Value::Binary(bytes))
+            }
+            Value::UInt64(bits) if matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight) => Ok(
+                Value::Binary(shift_binary(left, *bits, op == BinaryOp::ShiftLeft)),
+            ),
+            _ => Err(ExecError::InvalidExpressionType),
+        };
+    }
+
     let (Some(left), Some(right)) = (bit_pattern(left)?, bit_pattern(right)?) else {
         return Ok(Value::Null);
     };
@@ -6803,6 +6847,40 @@ fn evaluate_bitwise(op: BinaryOp, left: &Value, right: &Value) -> Result<Value, 
         _ => return Err(ExecError::InvalidExpressionType),
     };
     Ok(Value::UInt64(result))
+}
+
+/// Shift the big-endian bit stream without changing its byte width.
+fn shift_binary(bytes: &[u8], bits: u64, left: bool) -> Vec<u8> {
+    let mut result = vec![0; bytes.len()];
+    let Ok(bits) = usize::try_from(bits) else {
+        return result;
+    };
+    if bits / 8 >= bytes.len() {
+        return result;
+    }
+    let whole = bits / 8;
+    let part = bits % 8;
+    for (index, output) in result.iter_mut().enumerate() {
+        if left {
+            let source = index + whole;
+            if let Some(byte) = bytes.get(source) {
+                *output = byte << part;
+                if part != 0
+                    && let Some(next) = bytes.get(source + 1)
+                {
+                    *output |= next >> (8 - part);
+                }
+            }
+        } else if let Some(source) = index.checked_sub(whole) {
+            *output = bytes[source] >> part;
+            if part != 0
+                && let Some(previous) = source.checked_sub(1)
+            {
+                *output |= bytes[previous] << (8 - part);
+            }
+        }
+    }
+    result
 }
 
 fn bit_pattern(value: &Value) -> Result<Option<u64>, ExecError> {

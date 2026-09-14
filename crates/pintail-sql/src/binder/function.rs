@@ -418,6 +418,7 @@ pub(super) fn bind_scalar_function(
         "SHA1" | "SHA" if args.len() == 1 => ScalarFunction::Sha1,
         "SHA2" if args.len() == 2 => ScalarFunction::Sha2,
         "CRC32" if args.len() == 1 => ScalarFunction::Crc32,
+        "BIT_COUNT" if args.len() == 1 => ScalarFunction::BitCount,
         "UUID" if args.is_empty() => ScalarFunction::Uuid,
         "BIN" if args.len() == 1 => ScalarFunction::Bin,
         "OCT" if args.len() == 1 => ScalarFunction::Oct,
@@ -539,6 +540,19 @@ pub(super) fn bind_scalar_function(
         "FROM_UNIXTIME" if args.len() == 1 => ScalarFunction::FromUnixTime,
         _ => return Err(BindError::UnsupportedExpression(function.to_string())),
     };
+    if scalar == ScalarFunction::BitCount
+        && let Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(written))) = arguments.args.first()
+    {
+        let arg = args.remove(0);
+        args.push(
+            if arg.data_type == Some(DataType::Binary) && !super::unintroduced_bit_literal(written)
+            {
+                arg
+            } else {
+                super::numeric_bit_input(arg, written)?
+            },
+        );
+    }
     let bound = bind_scalar(scalar, args)?;
     // RETURNING is a cast over the extracted member, which keeps JSON_VALUE
     // itself a single job and reuses the CAST target table wholesale.
@@ -1527,7 +1541,7 @@ pub(super) fn bind_scalar(
         // '00:00:01.5'), and the fixed-width temporal carrier truncates to
         // the declared precision - typing it Time64 cost the fraction, which
         // the oracle caught. Same for MAKETIME and CONVERT_TZ below.
-        ScalarFunction::Collate { .. } => (args[0].data_type, args[0].nullable),
+        ScalarFunction::Collate { .. } | ScalarFunction::BitNot => (args[0].data_type, args[0].nullable),
         ScalarFunction::EncodeText(_) | ScalarFunction::JsonSortKey => (Some(DataType::Binary), args[0].nullable),
         // SHA2's width argument, an invalid IPv4 string, and an
         // out-of-range address number all answer NULL, so these stay
@@ -1622,7 +1636,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::JsonContains | ScalarFunction::JsonContainsPath => {
             (Some(DataType::Int64), true)
         }
-        ScalarFunction::Crc32 | ScalarFunction::InetAton => (Some(DataType::UInt64), true),
+        ScalarFunction::BitCount | ScalarFunction::Crc32 | ScalarFunction::InetAton => (Some(DataType::UInt64), true),
         ScalarFunction::RegexpInstr => (
             Some(DataType::UInt64),
             args.iter().any(|argument| argument.nullable),

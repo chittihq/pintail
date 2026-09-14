@@ -139,3 +139,40 @@ fn binary_folds_retain_width_across_groups_and_windows() {
 fn binary_strings_and_hex_literals_keep_their_aggregate_domains() {
     assert_eq!(query("SELECT HEX(BIT_AND(_binary'a')), BIT_AND(X'AA'), BIT_AND(X'010000000000000000'), HEX(BIT_AND(CAST(NULL AS BINARY(6)))) FROM items").unwrap(), vec![vec!["61".to_owned(), "170".to_owned(), "0".to_owned(), "FFFFFFFFFFFF".to_owned()]]);
 }
+
+#[test]
+fn scalar_bit_operators_preserve_binary_width_and_literal_domains() {
+    let rows = query("SELECT HEX(~payload), HEX(payload << 4), HEX(payload >> 4), BIT_COUNT(payload), HEX(payload & _binary X'FFFFFF') FROM items WHERE id=4").unwrap();
+    assert_eq!(
+        rows,
+        vec![vec!["543210", "BCDEF0", "0ABCDE", "17", "ABCDEF"]]
+    );
+    for (expression, expected) in [
+        ("HEX(X'ABCDEF' & X'123456')", "20446"),
+        ("HEX(_binary X'ABCDEF' & X'123456')", "020446"),
+        ("HEX(~X'0102')", "FFFFFFFFFFFFFEFD"),
+        ("HEX(~_binary X'0102')", "FEFD"),
+        ("HEX(_binary X'0102' << 16)", "0000"),
+        ("HEX(_binary X'0102' >> -1)", "0000"),
+        ("HEX(_binary'a' & 'b')", "0"),
+        ("HEX(_binary X'0003' << (_binary X'38' | X'38'))", "0300"),
+        ("BIT_COUNT(X'010000000000000001')", "0"),
+        ("BIT_AND(X'010000000000000001')", "0"),
+        ("BIT_AND(X'000000000000000001')", "1"),
+        ("HEX(X'010000000000000001' | 0)", "0"),
+        ("HEX(_binary X'0102' << 0)", "0102"),
+        ("HEX(_binary X'0102' << 8)", "0200"),
+        ("HEX(_binary X'0102' >> 8)", "0001"),
+        ("BIT_COUNT(_binary X'010000000000000001')", "2"),
+    ] {
+        assert_eq!(
+            query(&format!("SELECT {expression} FROM items WHERE id=1")).unwrap(),
+            vec![vec![expected]],
+            "{expression}"
+        );
+    }
+    assert!(matches!(
+        query("SELECT payload & _binary'a' FROM items WHERE id=4"),
+        Err(pintail_exec::ExecError::BinaryBitwiseLength)
+    ));
+}

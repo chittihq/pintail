@@ -214,6 +214,7 @@ impl BoundExpr {
         }
         match &self.kind {
             BoundExprKind::Column(column) => column.binary_width,
+            BoundExprKind::Binary { left, .. } => left.binary_width(),
             BoundExprKind::Literal(Value::Binary(bytes)) => u32::try_from(bytes.len()).ok(),
             BoundExprKind::Scalar {
                 function:
@@ -227,7 +228,8 @@ impl BoundExpr {
                 function:
                     ScalarFunction::Collate { .. }
                     | ScalarFunction::TextCharset(_)
-                    | ScalarFunction::Cast(DataType::Binary),
+                    | ScalarFunction::Cast(DataType::Binary)
+                    | ScalarFunction::BitNot,
                 args,
             } => args.first()?.binary_width(),
             BoundExprKind::Scalar {
@@ -1005,6 +1007,10 @@ pub enum ScalarFunction {
     Sha2,
     /// `CRC32(str)`: the IEEE polynomial, as an unsigned number.
     Crc32,
+    /// Count set bits in a binary string or unsigned integer.
+    BitCount,
+    /// Complement every bit, retaining the argument domain.
+    BitNot,
     /// `UUID()`: a fresh random identifier per call (volatile, like RAND).
     Uuid,
     /// `BIN(n)`: base-2 digits of the 64-bit value.

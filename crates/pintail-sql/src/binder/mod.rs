@@ -3513,7 +3513,17 @@ fn bind_unary(
     windows: &mut Option<&mut Vec<BoundWindow>>,
     subqueries: Option<&SubqueryResolver<'_>>,
 ) -> Result<BoundExpr, BindError> {
+    let written = expr;
     let expr = bind_expr_inner(expr, tables, aggregates, windows, subqueries)?;
+    if operator == UnaryOperator::BitwiseNot {
+        let expr = if expr.data_type == Some(DataType::Binary) && !unintroduced_bit_literal(written)
+        {
+            expr
+        } else {
+            numeric_bit_input(expr, written)?
+        };
+        return bind_scalar(ScalarFunction::BitNot, vec![expr]);
+    }
     // A negated unsigned literal is how -9223372036854775808 reaches the
     // binder: the magnitude alone does not fit BIGINT, so it arrives
     // unsigned. MySQL reads the negation as BIGINT when it fits and as a
@@ -3669,8 +3679,19 @@ fn bind_binary(
             subqueries,
         );
     }
+    let (written_left, written_right) = (left, right);
     let left = bind_expr_inner(left, tables, aggregates, windows, subqueries)?;
     let right = bind_expr_inner(right, tables, aggregates, windows, subqueries)?;
+    if matches!(
+        operator,
+        BinaryOperator::BitwiseAnd
+            | BinaryOperator::BitwiseOr
+            | BinaryOperator::BitwiseXor
+            | BinaryOperator::PGBitwiseShiftLeft
+            | BinaryOperator::PGBitwiseShiftRight
+    ) {
+        return bind_bit_operator(left, right, operator, written_left, written_right);
+    }
     if *operator == BinaryOperator::StringConcat {
         return bind_scalar(ScalarFunction::Concat, vec![left, right]);
     }
@@ -3796,25 +3817,6 @@ fn bind_binary(
                 result
             };
             (op, result)
-        }
-        BinaryOperator::BitwiseAnd
-        | BinaryOperator::BitwiseOr
-        | BinaryOperator::BitwiseXor
-        | BinaryOperator::PGBitwiseShiftLeft
-        | BinaryOperator::PGBitwiseShiftRight
-            if is_numeric(left.data_type) && is_numeric(right.data_type) =>
-        {
-            let op = match operator {
-                BinaryOperator::BitwiseAnd => BinaryOp::BitAnd,
-                BinaryOperator::BitwiseOr => BinaryOp::BitOr,
-                BinaryOperator::BitwiseXor => BinaryOp::BitXor,
-                BinaryOperator::PGBitwiseShiftLeft => BinaryOp::ShiftLeft,
-                BinaryOperator::PGBitwiseShiftRight => BinaryOp::ShiftRight,
-                _ => unreachable!("matched bit operators"),
-            };
-            // MySQL evaluates bit operators over BIGINT UNSIGNED, whatever
-            // the operands were.
-            (op, Some(DataType::UInt64))
         }
         BinaryOperator::Eq
         | BinaryOperator::NotEq
@@ -4851,6 +4853,85 @@ fn aggregate_function_name(function: &Function) -> Option<AggregateFunction> {
     }
 }
 
+fn unintroduced_bit_literal(mut written: &Expr) -> bool {
+    while let Expr::Nested(inner) = written {
+        written = inner;
+    }
+    matches!(written, Expr::Value(value) if matches!(value.value, SqlValue::HexStringLiteral(_) | SqlValue::SingleQuotedByteStringLiteral(_)))
+}
+
+fn bit_literal_number(bytes: &[u8]) -> u64 {
+    bytes
+        .iter()
+        .try_fold(0_u64, |number, byte| {
+            number.checked_mul(256)?.checked_add(u64::from(*byte))
+        })
+        .unwrap_or(0)
+}
+
+fn numeric_bit_input(expr: BoundExpr, written: &Expr) -> Result<BoundExpr, BindError> {
+    if unintroduced_bit_literal(written)
+        && let BoundExprKind::Literal(Value::Binary(bytes)) = &expr.kind
+    {
+        let number = bit_literal_number(bytes);
+        return Ok(BoundExpr {
+            kind: BoundExprKind::Literal(Value::UInt64(number)),
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+        });
+    }
+    bind_scalar(ScalarFunction::Cast(DataType::UInt64), vec![expr])
+}
+
+fn bind_bit_operator(
+    left: BoundExpr,
+    right: BoundExpr,
+    operator: &BinaryOperator,
+    written_left: &Expr,
+    written_right: &Expr,
+) -> Result<BoundExpr, BindError> {
+    let op = match operator {
+        BinaryOperator::BitwiseAnd => BinaryOp::BitAnd,
+        BinaryOperator::BitwiseOr => BinaryOp::BitOr,
+        BinaryOperator::BitwiseXor => BinaryOp::BitXor,
+        BinaryOperator::PGBitwiseShiftLeft => BinaryOp::ShiftLeft,
+        BinaryOperator::PGBitwiseShiftRight => BinaryOp::ShiftRight,
+        _ => unreachable!("bit operator dispatch"),
+    };
+    let shift = matches!(op, BinaryOp::ShiftLeft | BinaryOp::ShiftRight);
+    let binary = left.data_type == Some(DataType::Binary)
+        && if shift {
+            !unintroduced_bit_literal(written_left)
+        } else {
+            right.data_type == Some(DataType::Binary)
+                && !(unintroduced_bit_literal(written_left)
+                    && unintroduced_bit_literal(written_right))
+        };
+    let left = if binary {
+        left
+    } else {
+        numeric_bit_input(left, written_left)?
+    };
+    let right = if binary && !shift {
+        right
+    } else {
+        numeric_bit_input(right, written_right)?
+    };
+    Ok(BoundExpr {
+        nullable: left.nullable || right.nullable,
+        data_type: Some(if binary {
+            DataType::Binary
+        } else {
+            DataType::UInt64
+        }),
+        kind: BoundExprKind::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        },
+    })
+}
+
 fn bit_aggregate_input(
     function: AggregateFunction,
     expr: Option<BoundExpr>,
@@ -4865,21 +4946,15 @@ fn bit_aggregate_input(
     let Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(written))) = written else {
         return expr;
     };
-    let mut written = written;
-    while let Expr::Nested(inner) = written {
-        written = inner;
-    }
-    if matches!(written, Expr::Value(value) if matches!(value.value, SqlValue::HexStringLiteral(_) | SqlValue::SingleQuotedByteStringLiteral(_)))
+    if unintroduced_bit_literal(written)
         && let Some(BoundExpr {
             kind: BoundExprKind::Literal(Value::Binary(bytes)),
             ..
         }) = &expr
     {
         // Unintroduced hex/bit literals take the numeric aggregate domain,
-        // retaining their low 64 bits. Explicit binary strings keep bytes.
-        let number = bytes.iter().fold(0_u64, |number, byte| {
-            number.wrapping_shl(8) | u64::from(*byte)
-        });
+        // returning zero on overflow. Explicit binary strings keep bytes.
+        let number = bit_literal_number(bytes);
         return Some(BoundExpr {
             kind: BoundExprKind::Literal(Value::UInt64(number)),
             data_type: Some(DataType::UInt64),
