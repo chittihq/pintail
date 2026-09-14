@@ -1085,6 +1085,37 @@ pub(super) mod tests {
         assert_eq!(result.rows[1], vec![Value::Int64(1), Value::UInt64(2)]);
     }
 
+    #[tokio::test]
+    async fn set_names_default_restores_default_comparisons() {
+        use pintail_protocol::{Handler, Response};
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        assert!(matches!(
+            backend.query(b"SET NAMES binary").await,
+            Response::Ok(..)
+        ));
+        assert!(matches!(
+            backend.query(b"SET NAMES DEFAULT").await,
+            Response::Ok(..)
+        ));
+        let result = backend
+            .execute("SELECT REGEXP_SUBSTR('ab ac ad','.D')")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::Utf8("ad".into())]);
+        let result = backend
+            .execute(
+                "SELECT @@character_set_client,@@character_set_connection,@@character_set_results",
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0], vec![Value::Utf8("utf8mb4".into()); 3]);
+        assert!(matches!(
+            backend.query(b"SET NAMES 'default'").await,
+            Response::Error(..)
+        ));
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

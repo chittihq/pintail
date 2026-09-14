@@ -2088,6 +2088,9 @@ fn user_variable_literal(value: Value, data_type: Option<DataType>) -> sqlparser
 /// The charset and connection collation `SET NAMES charset [COLLATE name]`
 /// asks for. Without `COLLATE` the charset's default applies, as in `MySQL`.
 fn set_names_target(rest: &str) -> Result<(String, &'static str), String> {
+    if rest.trim().eq_ignore_ascii_case("default") {
+        return Ok(("utf8mb4".to_owned(), "utf8mb4_0900_ai_ci"));
+    }
     let mut words = rest
         .split_whitespace()
         .map(|word| word.trim_matches(['\'', '"', '`']));
