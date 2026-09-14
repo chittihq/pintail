@@ -171,6 +171,7 @@ pub async fn serve(
 ) -> io::Result<()> {
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
+    let sql_mode = configured_sql_mode(std::env::var("PINTAIL_SQL_MODE").ok().as_deref())?;
     loop {
         let (stream, ()) = accept_recovering(&listener).await;
         let mut backend = Backend::new(
@@ -179,6 +180,7 @@ pub async fn serve(
             DEFAULT_QUERY_MEMORY_LIMIT,
             WireLimits::default(),
         );
+        backend.use_default_sql_mode(&sql_mode);
         backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
         tokio::spawn(async move {
             match serve_connection(stream, backend, None, DEFAULT_WIRE_IDLE_TIMEOUT).await {
@@ -356,6 +358,7 @@ where
 {
     let data_dir = data_dir.into();
     let metadata_path = metadata_path.into();
+    let sql_mode = configured_sql_mode(std::env::var("PINTAIL_SQL_MODE").ok().as_deref())?;
     // One permit per connection, held from accept until the connection's
     // task ends, so an unauthenticated or idle session counts the same as a
     // busy one - both hold a task, a session and an engine handle.
@@ -384,6 +387,7 @@ where
                     options.query_memory_limit,
                     options.limits,
                 );
+                backend.use_default_sql_mode(&sql_mode);
                 backend.client_ip = stream.peer_addr().ok().map(|peer| peer.ip().to_string());
                 let tls = options.tls.clone();
                 let idle_timeout = options.idle_timeout;
@@ -785,6 +789,7 @@ struct Session {
     timestamp_micros: Option<i64>,
     default_week_format: u8,
     sql_mode: String,
+    default_sql_mode: String,
     charset_client: String,
     charset_connection: String,
     charset_results: String,
@@ -814,6 +819,16 @@ struct Session {
     user_variables: pintail_sql::UserVariables,
 }
 
+const DEFAULT_SQL_MODE: &str = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION";
+
+fn configured_sql_mode(value: Option<&str>) -> io::Result<String> {
+    let mode = value.unwrap_or(DEFAULT_SQL_MODE);
+    reject_unsupported_sql_modes(mode)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    Ok(mode.to_owned())
+}
+
 impl Default for Session {
     fn default() -> Self {
         Self {
@@ -821,9 +836,8 @@ impl Default for Session {
             calendar_locale: "en_US",
             timestamp_micros: None,
             default_week_format: 0,
-            sql_mode: "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
-ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
-                .to_owned(),
+            sql_mode: DEFAULT_SQL_MODE.to_owned(),
+            default_sql_mode: DEFAULT_SQL_MODE.to_owned(),
             charset_client: "utf8mb4".to_owned(),
             charset_connection: "utf8mb4".to_owned(),
             charset_results: "utf8mb4".to_owned(),
@@ -897,6 +911,7 @@ struct Backend {
     engine: ReplicaEngine,
     authentication: Mutex<Option<Authenticated>>,
     session: Mutex<Session>,
+    default_sql_mode: String,
     /// The trace of the statement being answered, from its execution until
     /// its response is encoded (`PINTAIL_QUERY_TRACE`).
     pending_trace: Mutex<Option<crate::trace::Trace>>,
@@ -995,6 +1010,7 @@ impl Backend {
                 .with_memory_limit(query_memory_limit),
             authentication: Mutex::new(None),
             session: Mutex::new(Session::default()),
+            default_sql_mode: DEFAULT_SQL_MODE.to_owned(),
             pending_trace: Mutex::new(None),
             pending_stream: Mutex::new(None),
             prepared: BTreeMap::new(),
@@ -1005,6 +1021,13 @@ impl Backend {
             query_memory_limit,
             limits,
         }
+    }
+
+    fn use_default_sql_mode(&mut self, mode: &str) {
+        mode.clone_into(&mut self.default_sql_mode);
+        let session = self.session.get_mut().expect("new connection session");
+        mode.clone_into(&mut session.sql_mode);
+        mode.clone_into(&mut session.default_sql_mode);
     }
 
     /// Why one more prepared statement cannot be held, or `None` when it
@@ -1104,6 +1127,8 @@ impl Backend {
         });
         Session {
             time_zone: zone.unwrap_or_else(|| Session::default().time_zone),
+            sql_mode: self.default_sql_mode.clone(),
+            default_sql_mode: self.default_sql_mode.clone(),
             ..Session::default()
         }
     }
@@ -1711,8 +1736,10 @@ impl Backend {
             }
             "sql_mode" => {
                 let raw = command.split_once('=').map_or("", |(_, rhs)| rhs).trim();
-                let value = if raw.eq_ignore_ascii_case("default") {
-                    Session::default().sql_mode
+                let value = if raw.eq_ignore_ascii_case("default")
+                    || raw.eq_ignore_ascii_case("@@global.sql_mode")
+                {
+                    self.default_sql_mode.clone()
                 } else {
                     value
                 };
@@ -3347,10 +3374,12 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
     };
     let mut output = None;
     for (expression, alias) in projection {
-        let expression = expression
-            .to_ascii_lowercase()
-            .replace("@@session.", "@@")
-            .replace("@@global.", "@@");
+        let expression = expression.to_ascii_lowercase().replace("@@session.", "@@");
+        let expression = if expression == "@@global.sql_mode" {
+            expression
+        } else {
+            expression.replace("@@global.", "@@")
+        };
         let mut item = compatibility_single(&format!("SELECT {expression}"), database, session)?;
         item.fields[0].name = alias;
         if let Some(result) = &mut output {
@@ -3497,6 +3526,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         (
             "@@session.time_zone",
             Value::Utf8(session.time_zone.clone()),
+        )
+    } else if normalized.contains("@@global.sql_mode") {
+        (
+            "@@global.sql_mode",
+            Value::Utf8(session.default_sql_mode.clone()),
         )
     } else if normalized.contains("@@sql_mode") {
         ("@@sql_mode", Value::Utf8(session.sql_mode.clone()))
@@ -5177,6 +5211,54 @@ mod result_ceiling_tests {
         assert_eq!(max_result_rows_from(Some("0")), usize::MAX);
         assert_eq!(max_result_rows_from(Some("not a number")), usize::MAX);
         assert_eq!(max_result_rows_from(Some(" 250000 ")), 250_000);
+    }
+
+    #[test]
+    fn configured_sql_mode_survives_session_changes_and_reset() {
+        let mode = super::configured_sql_mode(Some("NO_ENGINE_SUBSTITUTION")).unwrap();
+        assert!(super::configured_sql_mode(Some("ANSI")).is_err());
+        assert_eq!(
+            super::configured_sql_mode(None).unwrap(),
+            super::DEFAULT_SQL_MODE
+        );
+        assert_eq!(super::configured_sql_mode(Some("")).unwrap(), "");
+        let directory = tempfile::tempdir().unwrap();
+        let mut backend = super::Backend::new(
+            directory.path(),
+            &directory.path().join("meta.db"),
+            1024,
+            super::WireLimits::default(),
+        );
+        backend.use_default_sql_mode(&mode);
+        backend
+            .apply_session_command("SET sql_mode='STRICT_ALL_TABLES'")
+            .unwrap();
+        let session = backend.session.lock().unwrap().clone();
+        let output = super::compatibility_query(
+            "SELECT @@global.sql_mode,@@session.sql_mode",
+            "local",
+            &session,
+        )
+        .unwrap();
+        assert_eq!(
+            output.rows[0],
+            vec![
+                pintail_types::Value::Utf8(mode.clone()),
+                pintail_types::Value::Utf8("STRICT_ALL_TABLES".into())
+            ]
+        );
+        backend
+            .apply_session_command("SET sql_mode=DEFAULT")
+            .unwrap();
+        assert_eq!(backend.session.lock().unwrap().sql_mode, mode);
+        backend
+            .apply_session_command("SET sql_mode='STRICT_ALL_TABLES'")
+            .unwrap();
+        backend
+            .apply_session_command("SET sql_mode=@@global.sql_mode")
+            .unwrap();
+        assert_eq!(backend.session.lock().unwrap().sql_mode, mode);
+        assert_eq!(backend.fresh_session().sql_mode, mode);
     }
 
     #[test]

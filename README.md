@@ -292,6 +292,8 @@ variables, then `pintail.toml`. Every option is described in
 [pintail.example.toml](pintail.example.toml) and `pintail --help`.
 `PINTAIL_LOG` selects verbosity (`error`, `info`, `debug`); no log line
 carries a DSN, API key secret, invite token, session JWT or row value.
+`PINTAIL_SQL_MODE` sets the wire listener's initial session SQL mode and
+the value restored by `SET sql_mode=DEFAULT`; an empty value selects permissive mode.
 
 ## Documentation
 

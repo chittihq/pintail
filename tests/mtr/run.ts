@@ -1123,8 +1123,9 @@ async function startPintail(binary: string) {
       stderr: process.env.MTR_PINTAIL_LOG ? Bun.file(process.env.MTR_PINTAIL_LOG) : 'ignore',
       // A fast supervisor cadence: replica mode waits on it at every sync.
       // The oracle's host runs in UTC, and SYSTEM time zone means the host's
-      // zone on both sides, so the server runs in UTC too.
-      env: { ...process.env, TZ: 'UTC', PINTAIL_LOG: process.env.MTR_PINTAIL_LOG_LEVEL ?? 'error', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
+      // zone on both sides, so the server runs in UTC too. The startup SQL
+      // mode also matches the oracle, including what SET sql_mode=DEFAULT restores.
+      env: { ...process.env, TZ: 'UTC', PINTAIL_SQL_MODE: 'NO_ENGINE_SUBSTITUTION', PINTAIL_LOG: process.env.MTR_PINTAIL_LOG_LEVEL ?? 'error', PINTAIL_SUPERVISOR_INTERVAL_MS: process.env.PINTAIL_SUPERVISOR_INTERVAL_MS ?? '200' },
     },
   )
   for (let attempt = 0; attempt < 240; attempt += 1) {
