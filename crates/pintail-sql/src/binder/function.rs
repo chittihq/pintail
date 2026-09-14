@@ -36,6 +36,31 @@ fn signed_integer_constant(expression: &BoundExpr) -> Option<i64> {
     }
 }
 
+pub(super) fn typed_temporal_precision(text: &str, time: bool) -> Option<u64> {
+    let (prefix, fraction) = text.trim().rsplit_once('.')?;
+    let groups = prefix
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|part| !part.is_empty())
+        .count();
+    let compact = prefix.trim_start_matches(['-', '+']);
+    let complete_clock = if time {
+        groups >= 3 || compact.bytes().all(|byte| byte.is_ascii_digit())
+    } else {
+        groups >= 6
+            || (matches!(compact.len(), 12 | 14)
+                && compact.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    if !complete_clock {
+        return None;
+    }
+    let digits = fraction
+        .bytes()
+        .take_while(u8::is_ascii_digit)
+        .count()
+        .min(6);
+    (digits > 0).then(|| u64::try_from(digits).ok()).flatten()
+}
+
 fn temporal_argument_precision(argument: &BoundExpr) -> u8 {
     if argument.data_type == Some(DataType::Utf8)
         && let Some(value) = crate::text_charset::literal_value(argument)

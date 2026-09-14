@@ -2,11 +2,11 @@ mod str_to_date;
 mod temporal;
 mod vector;
 
-pub(crate) use temporal::{has_timestamp_offset, shift_temporal_value};
 use temporal::{
     TO_DAYS_EPOCH_OFFSET, apply_interval, convert_tz, mysql_date_format, mysql_yearweek,
     parse_mysql_datetime, timestamp_diff,
 };
+pub(crate) use temporal::{has_timestamp_offset, shift_temporal_value};
 
 use std::{cmp::Ordering, sync::Arc};
 
@@ -4712,18 +4712,22 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
             if let Some((date, _)) = canonical_temporal(&text) {
                 return Ok(Value::Utf8(date.to_owned()));
             }
-            return Ok(parse_mysql_datetime(&text).map_or(Value::Null, |parsed| {
-                Value::Utf8(parsed.date().format("%Y-%m-%d").to_string())
-            }));
+            return Ok(
+                temporal::parse_calendar_cast(&text).map_or(Value::Null, |parsed| {
+                    Value::Utf8(parsed.date().format("%Y-%m-%d").to_string())
+                }),
+            );
         }
         Some(DataType::DateTime64 { fsp }) => {
             let text = scalar_string(value)?;
             if let Some(widened) = canonical_datetime_at(&text, fsp) {
                 return Ok(Value::Utf8(widened));
             }
-            return Ok(parse_mysql_datetime(&text).map_or(Value::Null, |parsed| {
-                Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
-            }));
+            return Ok(
+                temporal::parse_calendar_cast(&text).map_or(Value::Null, |parsed| {
+                    Value::Utf8(format_with_fraction(parsed, fsp, "%Y-%m-%d %H:%M:%S"))
+                }),
+            );
         }
         Some(DataType::Time64 { fsp }) => {
             return Ok(

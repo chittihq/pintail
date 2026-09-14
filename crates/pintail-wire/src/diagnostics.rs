@@ -442,6 +442,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn temporal_literals_accept_relaxed_separators() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        for (literal, expected) in [
+            ("DATE'01:01:01'", "2001-01-01"),
+            ("TIMESTAMP'2010-01-01 00'", "2010-01-01 00:00:00"),
+            ("TIMESTAMP'2010-01-01 10:10:10.'", "2010-01-01 10:10:10"),
+            ("TIMESTAMP'2021-07-15 23:01:02  '", "2021-07-15 23:01:02"),
+            ("TIMESTAMP'2021//07-15 23..01:02'", "2021-07-15 23:01:02"),
+            ("TIMESTAMP'2021-07-15 23:01..02'", "2021-07-15 23:01:02"),
+            ("TIMESTAMP'2021-07-17.18:45:00'", "2021-07-17 18:45:00"),
+            ("TIMESTAMP'20211018.121000'", "2021-10-18 12:10:00"),
+        ] {
+            let result = backend.execute(&format!("SELECT {literal}")).await.unwrap();
+            assert_eq!(result.rows[0][0], Value::Utf8(expected.into()), "{literal}");
+        }
+        let clock = backend.execute("SELECT HOUR('01:02:03')").await.unwrap();
+        assert_eq!(clock.rows[0][0], Value::Int64(1));
+    }
+
+    #[tokio::test]
     async fn explicit_timestamp_offsets_resolve_in_the_connection_zone() {
         use pintail_protocol::Handler;
         use pintail_types::Value;

@@ -18,6 +18,7 @@ pub(super) fn mysql_weekday(date: NaiveDate) -> u32 {
 }
 
 pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecError> {
+    let value = value.trim();
     // Digits alone are a packed date or date and time: YYMMDD, YYYYMMDD,
     // YYMMDDHHMMSS or YYYYMMDDHHMMSS.
     let trimmed = value.trim();
@@ -67,7 +68,92 @@ pub(super) fn parse_mysql_datetime(value: &str) -> Result<NaiveDateTime, ExecErr
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .ok()
         .and_then(|date| date.and_hms_opt(0, 0, 0))
+        .or_else(|| parse_relaxed_datetime(value, false))
         .ok_or(ExecError::InvalidDateTime)
+}
+
+pub(super) fn parse_calendar_cast(text: &str) -> Result<NaiveDateTime, ExecError> {
+    parse_mysql_datetime(text)
+        .or_else(|_| parse_relaxed_datetime(text.trim(), true).ok_or(ExecError::InvalidDateTime))
+}
+
+fn temporal_digits<'a>(input: &mut &'a str, max: usize) -> Option<&'a str> {
+    let end = input.bytes().take_while(u8::is_ascii_digit).count();
+    if end == 0 || end > max {
+        return None;
+    }
+    let digits = &input[..end];
+    *input = &input[end..];
+    Some(digits)
+}
+
+fn temporal_separator(input: &mut &str, clock: bool) -> Option<()> {
+    let end = input
+        .bytes()
+        .take_while(|byte| {
+            byte.is_ascii_punctuation() || (clock && (byte.is_ascii_whitespace() || *byte == b'T'))
+        })
+        .count();
+    if end == 0 {
+        return None;
+    }
+    *input = &input[end..];
+    Some(())
+}
+
+/// Date fields and clock fields accept mixed and repeated punctuation.
+/// In an untyped argument, a colon-only triple remains a TIME duration.
+fn parse_relaxed_datetime(text: &str, calendar_context: bool) -> Option<NaiveDateTime> {
+    if !calendar_context
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b':')
+    {
+        return None;
+    }
+    if let Some((date, clock)) = text.split_once('.')
+        && date.len() == 8
+        && clock.len() == 6
+        && date
+            .bytes()
+            .chain(clock.bytes())
+            .all(|byte| byte.is_ascii_digit())
+    {
+        return numeric_datetime(format!("{date}{clock}").parse().ok()?);
+    }
+    let mut remaining = text;
+    let written_year = temporal_digits(&mut remaining, 4)?;
+    let mut year = written_year.parse::<i32>().ok()?;
+    if written_year.len() <= 2 {
+        year += if year < 70 { 2000 } else { 1900 };
+    }
+    temporal_separator(&mut remaining, false)?;
+    let month = temporal_digits(&mut remaining, 2)?.parse().ok()?;
+    temporal_separator(&mut remaining, false)?;
+    let day = temporal_digits(&mut remaining, 2)?.parse().ok()?;
+    let date = NaiveDate::from_ymd_opt(year, month, day)?;
+    let mut clock = [0_u32; 3];
+    for part in &mut clock {
+        if remaining.is_empty() {
+            break;
+        }
+        temporal_separator(&mut remaining, true)?;
+        *part = temporal_digits(&mut remaining, 2)?.parse().ok()?;
+    }
+    let fraction = if remaining.is_empty() {
+        ""
+    } else {
+        remaining.strip_prefix('.')?
+    };
+    if !fraction.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let nanos = fraction
+        .bytes()
+        .take(9)
+        .fold(0_u32, |value, digit| value * 10 + u32::from(digit - b'0'))
+        * 10_u32.pow(u32::try_from(9_usize.saturating_sub(fraction.len())).ok()?);
+    date.and_hms_nano_opt(clock[0], clock[1], clock[2], nanos)
 }
 
 pub(super) fn date_part(value: NaiveDateTime, part: DatePart) -> u64 {

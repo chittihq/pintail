@@ -3158,29 +3158,22 @@ fn bind_expr_inner(
         Expr::TypedString(typed) => {
             let inner = Expr::Value(typed.value.clone());
             // A TIME or TIMESTAMP literal keeps the fraction digits it is
-            // written with: TIMESTAMP '01:02:03.25' has two.
+            // written with: TIME '01:02:03.25' has two.
             let written = match (&typed.data_type, &typed.value.value) {
                 (
                     sqlparser::ast::DataType::Timestamp(None, zone)
                     | sqlparser::ast::DataType::Time(None, zone),
                     SqlValue::SingleQuotedString(text),
-                ) => text
-                    .rsplit_once('.')
-                    .map(|(_, fraction)| {
-                        fraction
-                            .bytes()
-                            .take_while(u8::is_ascii_digit)
-                            .count()
-                            .min(6)
-                    })
-                    .filter(|digits| (1..=6).contains(digits))
-                    .and_then(|digits| u64::try_from(digits).ok())
-                    .map(|digits| match typed.data_type {
-                        sqlparser::ast::DataType::Timestamp(..) => {
-                            sqlparser::ast::DataType::Timestamp(Some(digits), *zone)
-                        }
-                        _ => sqlparser::ast::DataType::Time(Some(digits), *zone),
-                    }),
+                ) => function::typed_temporal_precision(
+                    text,
+                    matches!(typed.data_type, sqlparser::ast::DataType::Time(..)),
+                )
+                .map(|digits| match typed.data_type {
+                    sqlparser::ast::DataType::Timestamp(..) => {
+                        sqlparser::ast::DataType::Timestamp(Some(digits), *zone)
+                    }
+                    _ => sqlparser::ast::DataType::Time(Some(digits), *zone),
+                }),
                 _ => None,
             };
             bind_cast(
