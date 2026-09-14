@@ -2,6 +2,8 @@
 mod diagnostics;
 #[path = "session_expression.rs"]
 mod session_expression;
+#[path = "sql_prepare.rs"]
+mod sql_prepare;
 
 use std::{
     collections::BTreeMap,
@@ -940,6 +942,7 @@ struct Backend {
     /// written it: its worker, and what the statement holds until then.
     pending_stream: Mutex<Option<PendingStream>>,
     prepared: BTreeMap<u32, Prepared>,
+    named_prepared: BTreeMap<String, sql_prepare::NamedStatement>,
     /// Statement text held by `prepared`, so the byte ceiling is a counter
     /// rather than a walk of the map on every PREPARE.
     prepared_bytes: usize,
@@ -1037,6 +1040,7 @@ impl Backend {
             pending_trace: Mutex::new(None),
             pending_stream: Mutex::new(None),
             prepared: BTreeMap::new(),
+            named_prepared: BTreeMap::new(),
             prepared_bytes: 0,
             next_statement_id: 1,
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
@@ -1044,6 +1048,41 @@ impl Backend {
             query_memory_limit,
             limits,
         }
+    }
+
+    async fn text_answer(
+        &self,
+        sql: &str,
+        mode: Option<pintail_sql::ParseMode>,
+        written: &str,
+    ) -> Response {
+        let Some((group_concat_max_len, charset, negotiated)) = self.session_snapshot() else {
+            return Response::Error(
+                ErrorKind::ErUnknownError,
+                "session state is unavailable".to_owned(),
+            );
+        };
+        let encoded_limit = self.query_memory_limit;
+        let stream = StreamRequest {
+            encoding: WireEncoding {
+                group_concat_max_len,
+                charset: charset.clone(),
+                negotiated,
+                binary: false,
+            },
+            describe: None,
+        };
+        self.wire_answer(sql, mode, stream, written, move |result| {
+            query_output_to_response(
+                result,
+                group_concat_max_len,
+                &charset,
+                negotiated,
+                false,
+                encoded_limit,
+            )
+        })
+        .await
     }
 
     fn use_default_sql_mode(&mut self, mode: &str) {
@@ -1059,7 +1098,7 @@ impl Backend {
     /// while leaving CPU open.
     fn prepared_statement_refusal(&self, sql_bytes: usize) -> Option<String> {
         let count = self.limits.max_prepared_statements;
-        if count > 0 && self.prepared.len() >= count {
+        if count > 0 && self.prepared.len() + self.named_prepared.len() >= count {
             return Some(format!(
                 "Can't create more than max_prepared_stmt_count statements (current value: {count})"
             ));
@@ -1169,6 +1208,7 @@ impl Backend {
         let fresh = self.fresh_session();
         *self.session.lock().map_err(io_other)? = fresh;
         self.prepared.clear();
+        self.named_prepared.clear();
         self.prepared_bytes = 0;
         self.next_statement_id = 1;
         Ok(())
@@ -2236,6 +2276,11 @@ impl Handler for Backend {
             .lock()
             .map(|session| pintail_sql::ParseMode::from_sql_mode(&session.sql_mode))
             .unwrap_or_default();
+        if let Some(command) =
+            pintail_sql::with_parse_mode(mode, || pintail_sql::parse_prepared_command(sql))
+        {
+            return self.named_statement(command, mode).await;
+        }
         if let Some((query, targets)) =
             pintail_sql::with_parse_mode(mode, || pintail_sql::select_variable_targets(sql))
         {
@@ -2272,33 +2317,7 @@ impl Handler for Backend {
                 Err(error) => Response::Error(ErrorKind::ErWrongArguments, error),
             };
         }
-        let Some((group_concat_max_len, charset, negotiated)) = self.session_snapshot() else {
-            return Response::Error(
-                ErrorKind::ErUnknownError,
-                "session state is unavailable".to_owned(),
-            );
-        };
-        let encoded_limit = self.query_memory_limit;
-        let stream = StreamRequest {
-            encoding: WireEncoding {
-                group_concat_max_len,
-                charset: charset.clone(),
-                negotiated,
-                binary: false,
-            },
-            describe: None,
-        };
-        self.wire_answer(sql, None, stream, sql, move |result| {
-            query_output_to_response(
-                result,
-                group_concat_max_len,
-                &charset,
-                negotiated,
-                false,
-                encoded_limit,
-            )
-        })
-        .await
+        self.text_answer(sql, None, sql).await
     }
 
     async fn prepare(&mut self, sql: &[u8]) -> Result<PreparedStatement, (ErrorKind, String)> {

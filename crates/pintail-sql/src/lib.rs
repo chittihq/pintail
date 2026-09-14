@@ -9,6 +9,8 @@ mod interval;
 mod metadata;
 mod mode;
 pub use mode::{ParseMode, session_parse_mode, with_parse_mode};
+mod prepared;
+pub use prepared::{PreparedCommand, PreparedSource, parse_prepared_command};
 mod request;
 pub use request::first_statement;
 

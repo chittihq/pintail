@@ -179,7 +179,7 @@ pub(super) async fn select_into(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     #[test]
@@ -237,7 +237,7 @@ mod tests {
             Value::SingleQuotedString("Division by 0".into())
         );
     }
-    fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
+    pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();
         let metadata_path = directory.path().join("meta.db");
