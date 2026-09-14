@@ -3795,6 +3795,19 @@ fn bind_binary(
             | BinaryOperator::Gt
             | BinaryOperator::GtEq
     ) {
+        let numeric = |ty| {
+            exact_numeric_type(ty) || matches!(ty, Some(DataType::Float32 | DataType::Float64))
+        };
+        let left = if numeric(right.data_type) {
+            temporal_extremum_as_number(left)
+        } else {
+            left
+        };
+        let right = if numeric(left.data_type) {
+            temporal_extremum_as_number(right)
+        } else {
+            right
+        };
         let (left, right) = unify_temporal_operands(left, right);
         let (left, right) = unify_time_operands(left, right);
         let right = canonical_literal_operand(&left, right)?;
@@ -5948,7 +5961,7 @@ fn implicit_day_number(expr: &BoundExpr) -> Option<BoundExpr> {
 /// at the value's fractional precision: `TIME + 0` is that number.
 /// An arithmetic operand read as a number: a TIME, DATE or DATETIME is its
 /// digits - HHMMSS, YYYYMMDD and YYYYMMDDHHMMSS[.fraction].
-fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+fn temporal_extremum_as_number(expr: BoundExpr) -> BoundExpr {
     // Temporal extrema choose again in a numeric context. Their displayed
     // winner can differ: mixed TIME operands compare as strings for display.
     if let BoundExprKind::Scalar { function, args } = &expr.kind
@@ -5980,6 +5993,11 @@ fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
             },
         };
     }
+    expr
+}
+
+fn temporal_as_number(expr: BoundExpr) -> BoundExpr {
+    let expr = temporal_extremum_as_number(expr);
     if let Some(number) = implicit_day_number(&expr) {
         return number;
     }

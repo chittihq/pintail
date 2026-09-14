@@ -1254,3 +1254,19 @@ fn time_arithmetic_preserves_typed_precision_and_renders_dynamic_fractions() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn numeric_consumers_reselect_temporal_extrema_without_changing_explicit_casts() {
+    for (expression, expected) in [
+        ("ABS(GREATEST(time '20:00:00',120000))", "float 200000"),
+        ("GREATEST(time '20:00:00',120000)=200000", "Boolean(true)"),
+        ("200000=GREATEST(time '20:00:00',120000)", "Boolean(true)"),
+        (
+            "GREATEST(time '20:00:00',120000)='20:00:00'",
+            "Boolean(true)",
+        ),
+        ("CAST(GREATEST(time '20:00:00',120000) AS SIGNED)", "20"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

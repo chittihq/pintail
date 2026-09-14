@@ -1256,6 +1256,28 @@ pub(super) fn bind_scalar(
     function: ScalarFunction,
     args: Vec<BoundExpr>,
 ) -> Result<BoundExpr, BindError> {
+    let args = if matches!(
+        function,
+        ScalarFunction::Abs { .. }
+            | ScalarFunction::Ceil { .. }
+            | ScalarFunction::Floor { .. }
+            | ScalarFunction::Round { .. }
+            | ScalarFunction::Truncate { .. }
+            | ScalarFunction::Sign
+            | ScalarFunction::Sqrt
+            | ScalarFunction::Exp
+            | ScalarFunction::Ln
+            | ScalarFunction::Log2
+            | ScalarFunction::Log10
+            | ScalarFunction::LogBase
+            | ScalarFunction::Power
+    ) {
+        args.into_iter()
+            .map(super::temporal_extremum_as_number)
+            .collect()
+    } else {
+        args
+    };
     let mut args = float_string_arguments(function, args);
     let subject = match function {
         ScalarFunction::Locate => Some(1),
