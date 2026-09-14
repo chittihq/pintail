@@ -1,0 +1,503 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "file": "delete",
+      "id": "1cb1faa4251a0fdc",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE fixture mutations."
+    },
+    {
+      "file": "delete",
+      "id": "336624b9f5b0df21",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE fixture mutations."
+    },
+    {
+      "file": "delete",
+      "id": "6af2612408e00cd7",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE fixture mutations."
+    },
+    {
+      "file": "delete",
+      "id": "8c4881f9732b785b",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE fixture mutations."
+    },
+    {
+      "file": "deprecate_eof",
+      "id": "6c601a4596f0309c",
+      "category": "routine",
+      "reason": "The observed variables are OUT and INOUT parameters written by a procedure call."
+    },
+    {
+      "file": "func_concat",
+      "id": "e24ed5c5a7356a9d",
+      "category": "routine",
+      "reason": "The observed variable is constructed by a stored procedure."
+    },
+    {
+      "file": "func_math",
+      "id": "312a66cdf20b8225",
+      "category": "routine",
+      "reason": "The observed variables depend on stored routine or trigger execution."
+    },
+    {
+      "file": "func_math",
+      "id": "e6796da1a6ddb593",
+      "category": "routine",
+      "reason": "The observed variables depend on stored routine or trigger execution."
+    },
+    {
+      "file": "get_diagnostics",
+      "id": "0322e980aee2b329",
+      "category": "diagnostic",
+      "reason": "The assertion depends on stored-routine diagnostics and condition state."
+    },
+    {
+      "file": "get_diagnostics",
+      "id": "38a5c910e548cff4",
+      "category": "diagnostic",
+      "reason": "The assertion depends on stored-routine diagnostics and condition state."
+    },
+    {
+      "file": "get_diagnostics",
+      "id": "a4977970ed647f4b",
+      "category": "diagnostic",
+      "reason": "The assertion depends on stored-routine diagnostics and condition state."
+    },
+    {
+      "file": "get_diagnostics",
+      "id": "caac563e3640ae69",
+      "category": "diagnostic",
+      "reason": "The assertion depends on stored-routine diagnostics and condition state."
+    },
+    {
+      "file": "group_skip_scan",
+      "id": "2a2cabb3e5b7a3c1",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "group_skip_scan",
+      "id": "2d762375cef1b78f",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "group_skip_scan",
+      "id": "9c04cf676a8ca8b4",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "group_skip_scan_hypergraph",
+      "id": "57e6de9523330e03",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "group_skip_scan_hypergraph",
+      "id": "6154a65f07e20862",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "group_skip_scan_hypergraph",
+      "id": "aed78bd148c892ad",
+      "category": "routine",
+      "reason": "A stored procedure populates the fixture before the selected rows are compared."
+    },
+    {
+      "file": "index_skip_scan_end_range",
+      "id": "49e3e7ea369aa211",
+      "category": "routine",
+      "reason": "A stored procedure loop populates the fixture before the read."
+    },
+    {
+      "file": "insert_select",
+      "id": "2927e740b724f1d9",
+      "category": "fixture-write",
+      "reason": "The fixture depends on insert-select conflict handling and updates."
+    },
+    {
+      "file": "insert_update",
+      "id": "2bc893e9db1e0c77",
+      "category": "fixture-write",
+      "reason": "The fixture depends on duplicate-key updates or writes through stored routines."
+    },
+    {
+      "file": "insert_update",
+      "id": "6d00f0a9d3f72a38",
+      "category": "fixture-write",
+      "reason": "The fixture depends on duplicate-key updates or writes through stored routines."
+    },
+    {
+      "file": "max_statement_time",
+      "id": "a8b68d1d8f705b98",
+      "category": "routine",
+      "reason": "The observed variables depend on stored procedure execution."
+    },
+    {
+      "file": "max_statement_time",
+      "id": "b6deba8a5ba107bd",
+      "category": "routine",
+      "reason": "The observed variables depend on stored procedure execution."
+    },
+    {
+      "file": "max_statement_time",
+      "id": "c70a496cf8589d84",
+      "category": "routine",
+      "reason": "The observed variables depend on stored procedure execution."
+    },
+    {
+      "file": "opt_hints_set_var",
+      "id": "1bf8982a65673401",
+      "category": "fixture-write",
+      "reason": "The fixture requires generated AUTO_INCREMENT values and statement-local sequence settings."
+    },
+    {
+      "file": "opt_hints_set_var",
+      "id": "845c478294a910fa",
+      "category": "fixture-write",
+      "reason": "The fixture requires generated AUTO_INCREMENT values and statement-local sequence settings."
+    },
+    {
+      "file": "opt_hints_set_var",
+      "id": "b2c3e1af5224a3e0",
+      "category": "fixture-write",
+      "reason": "The fixture requires generated AUTO_INCREMENT values and statement-local sequence settings."
+    },
+    {
+      "file": "parser_57",
+      "id": "2efea7e0be9d37bc",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "parser_57",
+      "id": "3648d3d256ae2c6f",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "parser_57",
+      "id": "7ecd302f58c135d6",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "parser_57",
+      "id": "e46ae7e483e8e05d",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "parser_57",
+      "id": "ea81e3d2241bdce2",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "parser_57",
+      "id": "f60bd8ff71ff518c",
+      "category": "fixture-write",
+      "reason": "The SERIAL column depends on generated AUTO_INCREMENT values; the explicit ordering column agrees."
+    },
+    {
+      "file": "range_all",
+      "id": "267e7670cc8cf304",
+      "category": "routine",
+      "reason": "Stored procedure loops populate the counted tables."
+    },
+    {
+      "file": "range_all",
+      "id": "62ba0ae277f05fe7",
+      "category": "routine",
+      "reason": "Stored procedure loops populate the counted tables."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "0f8783855237da80",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "616c5f5c8cefecac",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "671a76488bdb200f",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "7ff04e54abb34778",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "804dcd18a66be15a",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "a04b4261354875d8",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "b0edd02cd35f5343",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "skip_records_in_range",
+      "id": "d88f0d3bba943c3d",
+      "category": "diagnostic",
+      "reason": "The assertion inspects MySQL optimizer-trace decisions about forced indexes."
+    },
+    {
+      "file": "sql_mode",
+      "id": "01e70549799faedf",
+      "category": "fixture-write",
+      "reason": "The selected rows depend on prepared UPDATE statements in fixture setup."
+    },
+    {
+      "file": "subquery_all",
+      "id": "aec1528dc7c156c0",
+      "category": "fixture-write",
+      "reason": "The selected rows depend on DELETE or UPDATE fixture mutations."
+    },
+    {
+      "file": "subquery_all",
+      "id": "b8e9299c99cabf38",
+      "category": "fixture-write",
+      "reason": "The selected rows depend on DELETE or UPDATE fixture mutations."
+    },
+    {
+      "file": "subquery_all",
+      "id": "c7bb3dbd44191f64",
+      "category": "fixture-write",
+      "reason": "The selected rows depend on DELETE or UPDATE fixture mutations."
+    },
+    {
+      "file": "subquery_table_to_derived",
+      "id": "198a358d21ed0a3b",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE operations using subqueries."
+    },
+    {
+      "file": "subquery_table_to_derived",
+      "id": "f45e7f0d03911867",
+      "category": "fixture-write",
+      "reason": "The selected rows follow DELETE operations using subqueries."
+    },
+    {
+      "file": "time_zone2",
+      "id": "19db472db8318448",
+      "category": "fixture-write",
+      "reason": "A BEFORE INSERT trigger supplies the datetime value that differs."
+    },
+    {
+      "file": "update",
+      "id": "d3e3ceca573101bd",
+      "category": "fixture-write",
+      "reason": "The selected rows follow UPDATE fixture mutations."
+    },
+    {
+      "file": "user_var",
+      "id": "3abef04fe203fd35",
+      "category": "fixture-write",
+      "reason": "The variable is assigned by an UPDATE statement in fixture setup."
+    },
+    {
+      "file": "user_var",
+      "id": "a99d07357c271e68",
+      "category": "fixture-write",
+      "reason": "The variable is assigned by an UPDATE statement in fixture setup."
+    },
+    {
+      "file": "user_var",
+      "id": "b574791129752e75",
+      "category": "fixture-write",
+      "reason": "The variable is assigned by an UPDATE statement in fixture setup."
+    },
+    {
+      "file": "user_var",
+      "id": "d776ba353101eaf6",
+      "category": "fixture-write",
+      "reason": "The variable is assigned by an UPDATE statement in fixture setup."
+    },
+    {
+      "file": "view",
+      "id": "02500e0655fe1558",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "156f6234f49fb35f",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "16550bbbd2475727",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "1c3d0b6ccc3e69f6",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "1cd4bd7dfd4f7cbc",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "286a0aedbe31d34b",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "3fdd773b448122ea",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "47d5a90786e2d900",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "4a3ea118aa8f9f40",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "4c3f062f260e737e",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "4f60c31adace48f0",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "59a4a9cb3b3547cf",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "6aaea4cf6d2c1a4c",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "779d8a12a99261cc",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "7839d66ef6f89417",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "898f9c7fce17be36",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "98b43cbb2e9137ad",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "9f95a928b6ab1adc",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "a4ff21b59e21f571",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "bfa54a3a1b39f2de",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "c18608a72d3ae076",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "c4cb4a0201fb3346",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "cd48c0f2acfa7673",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "cd8e09c09bb8eb5b",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "df88d5615e91ca57",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "ec1b211b4d4fa0d3",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    },
+    {
+      "file": "view",
+      "id": "edd98491fce00c33",
+      "category": "fixture-write",
+      "reason": "The selected rows follow writes through views; the local fixture does not apply those base-table changes."
+    }
+  ]
+}
