@@ -677,8 +677,6 @@ const RESULT_CHANGING_SQL_MODES: &[&str] = &[
     "HIGH_NOT_PRECEDENCE",
     // Evaluation.
     "REAL_AS_FLOAT",
-    // Would ask ingestion to keep values it normalizes to NULL.
-    "ALLOW_INVALID_DATES",
 ];
 
 /// Compound modes, each of which turns on result-changing flags.
@@ -5006,11 +5004,7 @@ mod tests {
 
     #[test]
     fn sql_mode_refuses_modes_that_would_change_results() {
-        for mode in [
-            "HIGH_NOT_PRECEDENCE",
-            "REAL_AS_FLOAT",
-            "ALLOW_INVALID_DATES",
-        ] {
+        for mode in ["HIGH_NOT_PRECEDENCE", "REAL_AS_FLOAT"] {
             assert!(super::reject_unsupported_sql_modes(mode).is_err());
         }
         // Compound modes turn the above on by another name.

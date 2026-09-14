@@ -2516,6 +2516,9 @@ fn evaluate_eager_scalar_inner(
             values.get(1),
         ),
         ScalarFunction::Cast(target) => {
+            if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
+                return Ok(value);
+            }
             if let Some(value) = cast_temporal_carrier(
                 &values[0],
                 argument_types.first().copied().flatten(),
@@ -2530,6 +2533,9 @@ fn evaluate_eager_scalar_inner(
             )
         }
         ScalarFunction::DeclaredCast { target, characters } => {
+            if let Some(value) = cast_partial_calendar(&values[0], target, values.get(1)) {
+                return Ok(value);
+            }
             if let Some(value) = cast_temporal_carrier(
                 &values[0],
                 argument_types.first().copied().flatten(),
@@ -3264,6 +3270,24 @@ fn evaluate_eager_scalar_inner(
             }
         }
         ScalarFunction::DatePart(part) => {
+            if matches!(
+                argument_types.first().copied().flatten(),
+                Some(DataType::Date32 | DataType::DateTime64 { .. })
+            ) && let Value::Utf8(text) = &values[0]
+                && let Some((date, _)) = canonical_temporal_parts_policy(text, true, true)
+            {
+                let digits = match part {
+                    DatePart::Year => Some(&date[..4]),
+                    DatePart::Month => Some(&date[5..7]),
+                    DatePart::Day => Some(&date[8..]),
+                    _ => None,
+                };
+                if let Some(digits) = digits {
+                    return Ok(Value::Int64(
+                        digits.parse().map_err(|_| ExecError::InvalidDateTime)?,
+                    ));
+                }
+            }
             // An integer argument is a packed date (YYYYMMDD) or, for the
             // time-of-day parts, a packed time (HHMMSS). A YEAR also arrives as
             // an integer and is not packed.
@@ -3367,7 +3391,14 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::MonthName => {
             let text = scalar_string(&values[0])?;
-            let month = if let Some((date, _)) = canonical_temporal_parts(&text, true) {
+            let month = if let Some((date, _)) = canonical_temporal_parts_policy(
+                &text,
+                true,
+                matches!(
+                    argument_types.first().copied().flatten(),
+                    Some(DataType::Date32 | DataType::DateTime64 { .. })
+                ),
+            ) {
                 date[5..7]
                     .parse::<usize>()
                     .map_err(|_| ExecError::InvalidDateTime)?
@@ -3381,7 +3412,14 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::LastDay => {
             let text = scalar_string(&values[0])?;
-            let (year, month) = if let Some((date, _)) = canonical_temporal_parts(&text, true) {
+            let (year, month) = if let Some((date, _)) = canonical_temporal_parts_policy(
+                &text,
+                true,
+                matches!(
+                    argument_types.first().copied().flatten(),
+                    Some(DataType::Date32 | DataType::DateTime64 { .. })
+                ),
+            ) {
                 (
                     date[..4]
                         .parse::<u32>()
@@ -4034,6 +4072,14 @@ fn canonical_temporal(text: &str) -> Option<(&str, Option<&str>)> {
 }
 
 fn canonical_temporal_parts(text: &str, allow_zero: bool) -> Option<(&str, Option<&str>)> {
+    canonical_temporal_parts_policy(text, allow_zero, false)
+}
+
+fn canonical_temporal_parts_policy(
+    text: &str,
+    allow_zero: bool,
+    allow_invalid: bool,
+) -> Option<(&str, Option<&str>)> {
     let bytes = text.as_bytes();
     let digits = |from: usize, to: usize| {
         bytes
@@ -4049,7 +4095,7 @@ fn canonical_temporal_parts(text: &str, allow_zero: bool) -> Option<(&str, Optio
         return None;
     }
     let (year, month, day) = (number(0, 4), number(5, 7), number(8, 10));
-    let month_days = if month == 0 && allow_zero {
+    let month_days = if (month == 0 && allow_zero) || (allow_invalid && month <= 12) {
         31
     } else {
         mysql_month_days(year, month)?
@@ -4093,6 +4139,43 @@ fn mysql_month_days(year: u32, month: u32) -> Option<u32> {
     })
 }
 
+/// A calendar cast validates zero components separately from invalid civil
+/// dates. Its policy was captured at binding, before execution moves threads.
+fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>) -> Option<Value> {
+    if !matches!(target, DataType::Date32 | DataType::DateTime64 { .. }) {
+        return None;
+    }
+    let Some(Value::UInt64(policy)) = policy else {
+        return None;
+    };
+    let text = scalar_string(value).ok()?;
+    let (date, clock) = canonical_temporal_parts_policy(&text, true, true)?;
+    let year: u32 = date[..4].parse().ok()?;
+    let month: u32 = date[5..7].parse().ok()?;
+    let day: u32 = date[8..].parse().ok()?;
+    if (policy & 1 != 0 && year == 0 && month == 0 && day == 0)
+        || (policy & 2 != 0 && year != 0 && (month == 0 || day == 0))
+        || (policy & 4 == 0 && month != 0 && day > mysql_month_days(year, month)?)
+    {
+        return Some(Value::Null);
+    }
+    // Civil dates use the ordinary rounding and carry path.
+    if canonical_temporal(&text).is_some() {
+        return None;
+    }
+    match target {
+        DataType::Date32 => Some(Value::Utf8(date.to_owned())),
+        DataType::DateTime64 { fsp } => {
+            let clock = cast_mysql_time(clock.unwrap_or("00:00:00"), fsp)?;
+            if clock.starts_with("24:") {
+                return Some(Value::Null);
+            }
+            Some(Value::Utf8(format!("{date} {clock}")))
+        }
+        _ => None,
+    }
+}
+
 /// Stored and typed temporal values already passed their producer's validity
 /// rules. A cast must preserve their zero components rather than parse them
 /// again as untyped strings under civil-calendar rules.
@@ -4124,7 +4207,7 @@ fn cast_temporal_carrier(
     let Value::Utf8(text) = value else {
         return None;
     };
-    let (date, time) = canonical_temporal_parts(text, true)?;
+    let (date, time) = canonical_temporal_parts_policy(text, true, true)?;
     let clock = time.unwrap_or("00:00:00");
     match target {
         DataType::Date32 => Some(Value::Utf8(date.to_owned())),

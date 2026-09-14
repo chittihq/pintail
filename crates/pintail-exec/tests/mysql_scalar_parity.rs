@@ -1026,3 +1026,60 @@ fn accent_and_case_sensitive_collation_keeps_comparison_and_search_domains() {
         "3"
     );
 }
+
+#[test]
+fn calendar_casts_capture_zero_and_invalid_date_policies() {
+    for (mode, text, expected) in [
+        ("", "0000-00-00", "0000-00-00"),
+        ("NO_ZERO_DATE", "0000-00-00", "NULL"),
+        ("NO_ZERO_DATE", "0000-01-01", "0000-01-01"),
+        ("NO_ZERO_DATE", "2000-01-00", "2000-01-00"),
+        ("NO_ZERO_IN_DATE", "0000-00-00", "0000-00-00"),
+        ("NO_ZERO_IN_DATE", "2000-01-00", "NULL"),
+        ("", "2000-00-01", "2000-00-01"),
+        ("", "2000-02-31", "NULL"),
+        ("ALLOW_INVALID_DATES", "2000-02-31", "2000-02-31"),
+        ("ALLOW_INVALID_DATES", "2000-02-32", "NULL"),
+        ("ALLOW_INVALID_DATES,NO_ZERO_IN_DATE", "2000-00-01", "NULL"),
+    ] {
+        pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(mode), || {
+            for input in [format!("'{text}'"), format!("IF(id=1, '{text}', NULL)")] {
+                for target in ["DATE", "DATETIME(6)"] {
+                    let sql = format!("CAST({input} AS {target})");
+                    let answer = evaluate(&sql);
+                    let expected = if expected != "NULL" && target == "DATETIME(6)" {
+                        format!("{expected} 00:00:00.000000")
+                    } else {
+                        expected.to_owned()
+                    };
+                    assert_eq!(answer, expected, "{mode}: {sql}");
+                }
+            }
+        });
+    }
+}
+
+#[test]
+fn accepted_invalid_calendar_values_keep_their_fields() {
+    pintail_sql::with_parse_mode(
+        pintail_sql::ParseMode::from_sql_mode("ALLOW_INVALID_DATES"),
+        || {
+            for (function, expected) in [
+                ("YEAR", "2000"),
+                ("MONTH", "2"),
+                ("DAY", "31"),
+                ("DATE", "2000-02-31"),
+                ("MONTHNAME", "February"),
+                ("LAST_DAY", "2000-02-29"),
+            ] {
+                assert_eq!(
+                    evaluate(&format!(
+                        "{function}(CAST(IF(id=1,'2000-02-31',NULL) AS DATE))"
+                    )),
+                    expected,
+                    "{function}"
+                );
+            }
+        },
+    );
+}

@@ -453,9 +453,12 @@ pub(super) fn cast_column(
     data_type: Option<DataType>,
     effects: &mut Effects,
 ) -> Option<ColumnVector> {
-    let [argument] = args else {
+    let [argument, rest @ ..] = args else {
         return None;
     };
+    if !matches!(rest, [] | [CompiledExpr::Literal(Value::UInt64(_))]) {
+        return None;
+    }
     let DataType::DateTime64 { fsp: out_fsp } = target else {
         return None;
     };

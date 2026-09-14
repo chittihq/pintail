@@ -1739,6 +1739,25 @@ pub(super) fn bind_scalar(
             *branch = crate::text_charset::encoded(branch.clone());
         }
     }
+    if matches!(
+        function,
+        ScalarFunction::Cast(DataType::Date32 | DataType::DateTime64 { .. })
+            | ScalarFunction::DeclaredCast {
+                target: DataType::Date32 | DataType::DateTime64 { .. },
+                ..
+            }
+    ) && !matches!(args[0].data_type, Some(DataType::Time64 { .. }))
+    {
+        let mode = crate::session_parse_mode();
+        let policy = u64::from(mode.no_zero_date)
+            | (u64::from(mode.no_zero_in_date) << 1)
+            | (u64::from(mode.allow_invalid_dates) << 2);
+        args.push(BoundExpr {
+            data_type: Some(DataType::UInt64),
+            nullable: false,
+            kind: BoundExprKind::Literal(Value::UInt64(policy)),
+        });
+    }
     if function == ScalarFunction::StrToDate {
         let mode = crate::session_parse_mode();
         let policy = u64::from(mode.no_zero_date) | (u64::from(mode.no_zero_in_date) << 1);

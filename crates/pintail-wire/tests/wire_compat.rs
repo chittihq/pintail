@@ -609,6 +609,19 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .query_drop("SET NAMES utf8mb4")
         .await
         .expect("restore connection");
+    connection
+        .query_drop("SET sql_mode='ALLOW_INVALID_DATES'")
+        .await
+        .expect("invalid-date policy");
+    let invalid: Option<String> = connection
+        .query_first("SELECT CAST('2000-02-31' AS DATE)")
+        .await
+        .expect("invalid calendar cast");
+    assert_eq!(invalid.as_deref(), Some("2000-02-31"));
+    connection
+        .query_drop("SET sql_mode=DEFAULT")
+        .await
+        .expect("restore default date policy");
     let folded: Option<String> = connection
         .query_first("SELECT HEX(BIT_AND(_binary'abc'))")
         .await

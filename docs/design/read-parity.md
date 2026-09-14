@@ -200,3 +200,8 @@ Scalar bit operators choose their binary or unsigned domain during binding.
 Raw hex/bit literals remain numeric unless a binary operand selects byte
 operations. Shifts preserve the left byte width, including overshifts,
 while complements and BIT_COUNT inspect every byte of binary inputs.
+
+Calendar casts capture NO_ZERO_DATE, NO_ZERO_IN_DATE and ALLOW_INVALID_DATES
+separately. Zero dates and partial dates remain text carriers, while valid
+civil dates keep the packed vector path. A typed invalid date retains its
+year, month and day for field consumers without becoming a different date.
