@@ -686,9 +686,9 @@ const COMPOUND_SQL_MODES: &[&str] = &["ANSI", "DB2", "MAXDB", "MSSQL", "ORACLE",
 
 /// Refuses a `sql_mode` that would change results Pintail cannot deliver.
 ///
-/// Write-and-DDL modes (`STRICT_*`, `NO_ZERO_*`, `NO_ENGINE_SUBSTITUTION`
-/// and friends) are accepted quietly: this endpoint is read-only, so they
-/// are genuinely inert here rather than silently ignored.
+/// Parsing and temporal modes are captured for query binding. Modes that
+/// govern writes are accepted for client compatibility; unsupported changes
+/// to read semantics are rejected.
 fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
     for mode in value.split(',') {
         let mode = mode.trim().to_ascii_uppercase();
@@ -1699,6 +1699,12 @@ impl Backend {
                 }
             }
             "sql_mode" => {
+                let raw = command.split_once('=').map_or("", |(_, rhs)| rhs).trim();
+                let value = if raw.eq_ignore_ascii_case("default") {
+                    Session::default().sql_mode
+                } else {
+                    value
+                };
                 reject_unsupported_sql_modes(&value)?;
                 session.sql_mode = value;
                 Ok(())

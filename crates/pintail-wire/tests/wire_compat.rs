@@ -470,6 +470,25 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         .await
         .expect("sql mode probe");
     assert_eq!(mode.as_deref(), Some("STRICT_TRANS_TABLES"));
+    connection
+        .query_drop("SET sql_mode = ''")
+        .await
+        .expect("allow zero dates");
+    let zero: Option<Option<String>> = connection
+        .query_first("SELECT STR_TO_DATE('0000-00-00', '%Y-%m-%d')")
+        .await
+        .expect("zero date without mode");
+    assert_eq!(zero, Some(Some("0000-00-00".to_owned())));
+    connection
+        .query_drop("SET sql_mode = DEFAULT")
+        .await
+        .expect("restore default modes");
+    let zero: Option<Option<String>> = connection
+        .query_first("SELECT STR_TO_DATE('0000-00-00', '%Y-%m-%d')")
+        .await
+        .expect("zero date with default modes");
+    assert_eq!(zero, Some(None));
+
     // User variables hold what their expression answered, typed as written:
     // a decimal stays exact, and a later assignment reads an earlier one.
     connection

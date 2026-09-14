@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `SET sql_mode = DEFAULT` restores the default modes, including zero-date
+  validation, instead of storing the keyword as a mode name.
+
 - Typed `TIME` casts to calendar types and calendar intervals anchor to
   the captured session date. Query sharing separates different dates.
 
