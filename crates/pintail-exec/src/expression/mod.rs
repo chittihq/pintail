@@ -2,7 +2,7 @@ mod str_to_date;
 mod temporal;
 mod vector;
 
-pub(crate) use temporal::shift_temporal_value;
+pub(crate) use temporal::{has_timestamp_offset, shift_temporal_value};
 use temporal::{
     TO_DAYS_EPOCH_OFFSET, apply_interval, convert_tz, mysql_date_format, mysql_yearweek,
     parse_mysql_datetime, timestamp_diff,
@@ -1546,7 +1546,7 @@ impl CompiledExpr {
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
                     // Numeric and temporal casts can expand compact input
                     // (`'12'` -> `00:00:12`, scaled DECIMAL, and so on).
-                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
@@ -1765,7 +1765,7 @@ impl CompiledExpr {
                     | ScalarFunction::SubstringIndex
                     | ScalarFunction::Cast(DataType::Utf8 | DataType::Binary) => first,
                     ScalarFunction::Cast(DataType::Json) => first.saturating_mul(2).max(128),
-                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } => first.max(128),
+                    ScalarFunction::Cast(_) | ScalarFunction::DeclaredCast { .. } | ScalarFunction::NormalizeTimestampOffset => first.max(128),
                     // Modification results hold the document plus every
                     // inserted value and separators; a merge holds both docs.
                     ScalarFunction::JsonModify { .. } | ScalarFunction::JsonMergePatch => args
@@ -3808,6 +3808,11 @@ fn evaluate_eager_scalar_inner(
             let from = scalar_string(&values[1])?;
             let to = scalar_string(&values[2])?;
             Ok(temporal::convert_tz_bounded(&text, &from, &to).map_or(Value::Null, Value::Utf8))
+        }
+        ScalarFunction::NormalizeTimestampOffset => {
+            let text = scalar_string(&values[0])?;
+            let zone = scalar_string(&values[1])?;
+            Ok(temporal::normalize_timestamp_offset(&text, &zone).map_or(Value::Null, Value::Utf8))
         }
         ScalarFunction::SessionTimestamp => {
             if matches!(values[0], Value::Null) {

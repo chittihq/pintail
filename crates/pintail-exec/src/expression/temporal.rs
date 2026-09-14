@@ -260,6 +260,64 @@ fn timezone_spec(text: &str) -> Option<ZoneSpec> {
         .map(ZoneSpec::Named)
 }
 
+/// A datetime offset is a signed two-digit hour and minute suffix.
+pub(crate) fn has_timestamp_offset(text: &str) -> bool {
+    let text = text.trim_end();
+    let bytes = text.as_bytes();
+    bytes.len() >= 15
+        && matches!(bytes.get(bytes.len() - 6), Some(b'+' | b'-'))
+        && bytes.get(bytes.len() - 3) == Some(&b':')
+        && text[..text.len() - 6].contains([' ', 'T'])
+}
+
+/// Explicit input offsets resolve before calendar or clock extraction. The
+/// destination is captured in the expression so worker threads need no session state.
+pub(super) fn normalize_timestamp_offset(text: &str, zone: &str) -> Option<String> {
+    if !has_timestamp_offset(text) {
+        return Some(text.to_owned());
+    }
+    let text = text.trim_end();
+    let (calendar, offset) = text.split_at(text.len() - 6);
+    if offset == "-00:00"
+        || !offset.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
+        || !offset.as_bytes()[4..6].iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let ZoneSpec::Fixed(offset) = timezone_spec(offset)? else {
+        return None;
+    };
+    let naive = parse_mysql_datetime(calendar).ok()?;
+    let fsp = calendar
+        .rsplit_once('.')
+        .map_or(0, |(_, digits)| digits.len().min(6));
+    let rounded = naive
+        .with_nanosecond(0)?
+        .checked_add_signed(Duration::microseconds(i64::from(
+            (naive.nanosecond() + 500) / 1_000,
+        )))?;
+    let utc = offset
+        .from_local_datetime(&rounded)
+        .single()?
+        .with_timezone(&Utc);
+    let local = if zone == "SYSTEM" {
+        utc.with_timezone(&chrono::Local).naive_local()
+    } else {
+        match timezone_spec(zone)? {
+            ZoneSpec::Fixed(offset) => utc.with_timezone(&offset).naive_local(),
+            ZoneSpec::Named(zone) => utc.with_timezone(&zone).naive_local(),
+        }
+    };
+    if !(0..=9999).contains(&local.year()) {
+        return None;
+    }
+    Some(super::format_with_fraction(
+        local,
+        u8::try_from(fsp).ok()?,
+        "%Y-%m-%d %H:%M:%S",
+    ))
+}
+
 /// `CONVERT_TZ` on the canonical datetime text carrier. Ambiguous local
 /// times (DST fall-back) take the earlier offset like `MySQL`; nonexistent
 /// local times (spring-forward gap) return None, a documented divergence.

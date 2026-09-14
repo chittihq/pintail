@@ -1125,6 +1125,8 @@ pub enum ScalarFunction {
     /// time zone, as `MySQL` presents it. Arguments: the column, then the
     /// zone.
     SessionTimestamp,
+    /// Resolve a datetime string's explicit offset into the captured session zone.
+    NormalizeTimestampOffset,
     /// `CHAR(n, ...)`: integer code points become bytes (values above 255
     /// span multiple bytes); NULL arguments are skipped, never propagated.
     Char,

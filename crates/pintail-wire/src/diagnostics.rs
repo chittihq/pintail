@@ -442,6 +442,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_timestamp_offsets_resolve_in_the_connection_zone() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value;
+        let (_directory, mut backend) = local_backend();
+        backend.query(b"SET time_zone='+01:00'").await;
+        let result = backend.execute("SELECT TIMESTAMP'2015-01-01 10:10:10.1+05:30', TIMESTAMP'2015-01-01 10:10:10.0000009+05:30', TIME('2015-01-01 00:30:00+05:30'), DATE('2015-01-01 00:30:00+05:30')").await.unwrap();
+        assert_eq!(
+            result.rows.into_values(),
+            vec![vec![
+                Value::Utf8("2015-01-01 05:40:10.1".into()),
+                Value::Utf8("2015-01-01 05:40:10.000001".into()),
+                Value::Utf8("20:00:00".into()),
+                Value::Utf8("2014-12-31".into())
+            ]]
+        );
+        backend.query(b"SET time_zone='+00:00'").await;
+        let result = backend
+            .execute("SELECT TIMESTAMP'2015-01-01 10:10:10+05:30'")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][0], Value::Utf8("2015-01-01 04:40:10".into()));
+    }
+
+    #[tokio::test]
     async fn second_intervals_preserve_fractional_amounts() {
         use pintail_types::Value;
         let (_directory, backend) = local_backend();

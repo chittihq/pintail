@@ -792,8 +792,78 @@ fn fold_arithmetic(
     folded
 }
 
+fn capture_timestamp_offsets(function: ScalarFunction, args: &mut [BoundExpr]) {
+    let count = match function {
+        ScalarFunction::DateDiff
+        | ScalarFunction::TimestampDiff { .. }
+        | ScalarFunction::AddTime
+        | ScalarFunction::SubTime
+        | ScalarFunction::TimeDiff => 2,
+        ScalarFunction::Date
+        | ScalarFunction::Time
+        | ScalarFunction::DatePart(_)
+        | ScalarFunction::ExtractTime { .. }
+        | ScalarFunction::PackedDateParts { .. }
+        | ScalarFunction::DateFormat
+        | ScalarFunction::DateInterval { .. }
+        | ScalarFunction::DayName
+        | ScalarFunction::MonthName
+        | ScalarFunction::LastDay
+        | ScalarFunction::ToDays
+        | ScalarFunction::YearWeek
+        | ScalarFunction::TimeToSec
+        | ScalarFunction::UnixTimestamp
+        | ScalarFunction::ConvertTz
+        | ScalarFunction::Cast(
+            DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. },
+        )
+        | ScalarFunction::DeclaredCast {
+            target: DataType::Date32 | DataType::DateTime64 { .. } | DataType::Time64 { .. },
+            ..
+        } => 1,
+        _ => return,
+    };
+    for argument in args.iter_mut().take(count) {
+        if argument.data_type != Some(DataType::Utf8)
+            || matches!(&argument.kind, BoundExprKind::Literal(Value::Utf8(text)) if !crate::expression::has_timestamp_offset(text))
+            || matches!(
+                &argument.kind,
+                BoundExprKind::Scalar {
+                    function: ScalarFunction::NormalizeTimestampOffset,
+                    ..
+                }
+            )
+        {
+            continue;
+        }
+        let zone = SESSION_TIME_ZONE.get().map_or_else(
+            || "SYSTEM".to_owned(),
+            |zone| match zone {
+                SessionZone::Fixed(offset) => offset.to_string(),
+                SessionZone::Named(zone) => zone.name().to_owned(),
+            },
+        );
+        *argument = BoundExpr {
+            data_type: Some(DataType::Utf8),
+            nullable: true,
+            kind: BoundExprKind::Scalar {
+                function: ScalarFunction::NormalizeTimestampOffset,
+                args: vec![
+                    argument.clone(),
+                    BoundExpr {
+                        data_type: Some(DataType::Utf8),
+                        nullable: false,
+                        kind: BoundExprKind::Literal(Value::Utf8(zone)),
+                    },
+                ],
+            },
+        };
+    }
+}
+
 /// Resolve connection settings once, before expressions move to worker threads.
 fn capture_scalar_session(function: ScalarFunction, args: &mut Vec<BoundExpr>) {
+    capture_timestamp_offsets(function, args);
     if matches!(
         function,
         ScalarFunction::Cast(DataType::Year)

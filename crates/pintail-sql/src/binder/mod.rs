@@ -3166,7 +3166,13 @@ fn bind_expr_inner(
                     SqlValue::SingleQuotedString(text),
                 ) => text
                     .rsplit_once('.')
-                    .map(|(_, fraction)| fraction.len())
+                    .map(|(_, fraction)| {
+                        fraction
+                            .bytes()
+                            .take_while(u8::is_ascii_digit)
+                            .count()
+                            .min(6)
+                    })
                     .filter(|digits| (1..=6).contains(digits))
                     .and_then(|digits| u64::try_from(digits).ok())
                     .map(|digits| match typed.data_type {

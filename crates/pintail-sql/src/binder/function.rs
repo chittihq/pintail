@@ -1417,7 +1417,7 @@ pub(super) fn bind_scalar(
         ScalarFunction::EncodedOrd(_) => (Some(DataType::UInt64), args[0].nullable),
 
         // A session-zone reading keeps its column's type and nullability.
-        ScalarFunction::SessionTimestamp => (
+        ScalarFunction::SessionTimestamp | ScalarFunction::NormalizeTimestampOffset => (
             args.first().and_then(|argument| argument.data_type),
             args.first().is_some_and(|argument| argument.nullable),
         ),
