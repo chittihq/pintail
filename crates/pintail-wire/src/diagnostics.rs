@@ -738,6 +738,28 @@ pub(super) mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn window_average_materializes_its_declared_scale_before_arithmetic() {
+        use pintail_types::Value;
+        let (_directory, backend) = local_backend();
+        backend
+            .execute("CREATE TABLE samples (v INT)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO samples VALUES (9),(64),(31)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT 0.2 * AVG(v) OVER () FROM samples")
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 3);
+        for row in &result.rows {
+            assert_eq!(row[0], Value::Utf8("6.93334".into()));
+        }
+    }
+
     pub(in crate::server) fn local_backend() -> (tempfile::TempDir, super::super::Backend) {
         use super::super::{Authenticated, Backend};
         let directory = tempfile::tempdir().unwrap();

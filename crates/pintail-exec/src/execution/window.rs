@@ -1448,7 +1448,7 @@ fn compute_window_column(
                                     )?;
                                     accumulated += 1;
                                 }
-                                state.clone().finish(memory)?
+                                materialize_window_value(state.clone().finish(memory)?)
                             }
                             _ if trailing && start <= accumulated && end == partition.len() => {
                                 while accumulated > start {
@@ -1459,7 +1459,7 @@ fn compute_window_column(
                                         memory,
                                     )?;
                                 }
-                                state.clone().finish(memory)?
+                                materialize_window_value(state.clone().finish(memory)?)
                             }
                             _ => {
                                 let mut framed = AggregateState::new(aggregate);
@@ -1470,7 +1470,7 @@ fn compute_window_column(
                                         memory,
                                     )?;
                                 }
-                                framed.finish(memory)?
+                                materialize_window_value(framed.finish(memory)?)
                             }
                         };
                         previous = Some((start, end, value.clone()));
@@ -1483,7 +1483,7 @@ fn compute_window_column(
                     for row in partition {
                         state.update(aggregate, &keys[*row][argument_position], memory)?;
                     }
-                    let value = state.finish(memory)?;
+                    let value = materialize_window_value(state.finish(memory)?);
                     for row in partition {
                         memory.reserve(value.heap_bytes())?;
                         results[*row] = value.clone();
@@ -1502,7 +1502,7 @@ fn compute_window_column(
                         for row in &partition[group_start..group_end] {
                             state.update(aggregate, &keys[*row][argument_position], memory)?;
                         }
-                        let value = state.clone().finish(memory)?;
+                        let value = materialize_window_value(state.clone().finish(memory)?);
                         for row in &partition[group_start..group_end] {
                             memory.reserve(value.heap_bytes())?;
                             results[*row] = value.clone();
@@ -1516,6 +1516,15 @@ fn compute_window_column(
         start = end;
     }
     Ok(results)
+}
+
+/// Window output is materialized at its declared scale before a surrounding
+/// expression consumes it; an aggregate's internal quotient must not escape.
+fn materialize_window_value(value: Value) -> Value {
+    match value {
+        Value::DecimalAverage(average) => Value::Utf8(average.label),
+        other => other,
+    }
 }
 
 /// The first position and the end of each row's peer group, by position in
