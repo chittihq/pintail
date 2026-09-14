@@ -1346,3 +1346,17 @@ fn time_columns_round_untyped_constant_bounds_to_their_declared_precision() {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
 }
+
+#[test]
+fn nullif_year_returns_text_to_numeric_aggregates() {
+    for (expression, expected) in [
+        ("AVG(NULLIF(YEAR('2001-01-01'),10))", "float 2001"),
+        ("SUM(NULLIF(YEAR('2001-01-01'),10))", "float 2001"),
+        ("CONCAT(AVG(NULLIF(2001,10)))", "2001.0000"),
+        ("CONCAT(AVG(YEAR('2001-01-01')))", "2001.0000"),
+        ("NULLIF(YEAR('2001-01-01'),2001)", "NULL"),
+        ("NULLIF(YEAR('2001-01-01'),10)", "2001"),
+    ] {
+        assert_eq!(scalar(expression), expected, "{expression}");
+    }
+}

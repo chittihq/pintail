@@ -1480,6 +1480,9 @@ pub(super) fn bind_scalar(
             conditional_result_type(&args)?,
             args.iter().all(|argument| argument.nullable),
         ),
+        ScalarFunction::NullIf if args[0].data_type == Some(DataType::Year)
+            || matches!(args[0].kind, BoundExprKind::Scalar { function: ScalarFunction::DatePart(DatePart::Year), .. }) =>
+            (Some(DataType::Utf8), true),
         ScalarFunction::NullIf => (args[0].data_type, true),
         ScalarFunction::Round { decimal: true } => {
             let Some(DataType::Decimal { precision, scale }) = args[0].data_type else {

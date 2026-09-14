@@ -529,7 +529,7 @@ fn expression(
                 | ScalarFunction::Least { .. } => {
                     if let Some(widest) = inputs.iter().max_by_key(|column| column.column_length) {
                         column.column_length = widest.column_length;
-                        if inputs.iter().all(integer) {
+                        if column.character_set == 63 && inputs.iter().all(integer) {
                             column.coltype = widest.coltype;
                             column
                                 .colflags
