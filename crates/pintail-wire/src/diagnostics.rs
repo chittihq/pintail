@@ -266,6 +266,43 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ansi_mode_changes_real_casts_columns_and_concatenation() {
+        use pintail_protocol::Handler;
+        use pintail_types::Value as SqlValue;
+        let (_directory, mut backend) = local_backend();
+        let before = backend
+            .execute("SELECT CAST(CAST(16777217 AS REAL) AS SIGNED)")
+            .await
+            .unwrap();
+        assert_eq!(before.rows[0][0], SqlValue::Int64(16_777_217));
+        assert!(matches!(
+            backend.query(b"SET sql_mode='ANSI'").await,
+            pintail_protocol::Response::Ok(..)
+        ));
+        let result = backend
+            .execute("SELECT 'A'||'B', CAST(CAST(16777217 AS REAL) AS SIGNED)")
+            .await
+            .unwrap();
+        assert_eq!(
+            result.rows[0],
+            vec![SqlValue::Utf8("AB".into()), SqlValue::Int64(16_777_216)]
+        );
+        backend
+            .execute("CREATE TABLE real_values(value REAL)")
+            .await
+            .unwrap();
+        backend
+            .execute("INSERT INTO real_values VALUES(16777217)")
+            .await
+            .unwrap();
+        let result = backend
+            .execute("SELECT CAST(value AS SIGNED) FROM real_values")
+            .await
+            .unwrap();
+        assert_eq!(result.rows[0][0], SqlValue::Int64(16_777_216));
+    }
+
+    #[tokio::test]
     async fn sql_mode_assignments_evaluate_expressions_and_session_references() {
         use pintail_protocol::Handler;
         let (_directory, mut backend) = local_backend();

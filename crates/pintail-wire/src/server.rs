@@ -680,11 +680,8 @@ where
     }
 }
 
-/// Modes whose grammar or evaluation semantics remain unsupported.
-const RESULT_CHANGING_SQL_MODES: &[&str] = &["REAL_AS_FLOAT"];
-
 /// Compound modes, each of which turns on result-changing flags.
-const COMPOUND_SQL_MODES: &[&str] = &["ANSI", "DB2", "MAXDB", "MSSQL", "ORACLE", "POSTGRESQL"];
+const COMPOUND_SQL_MODES: &[&str] = &["DB2", "MAXDB", "MSSQL", "ORACLE", "POSTGRESQL"];
 
 /// Refuses a `sql_mode` that would change results Pintail cannot deliver.
 ///
@@ -697,13 +694,6 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
         if mode.is_empty() {
             continue;
         }
-        if RESULT_CHANGING_SQL_MODES.contains(&mode.as_str()) {
-            return Err(format!(
-                "Variable 'sql_mode' can't be set to the value of '{mode}': \
-                 Pintail does not implement it and would otherwise return a \
-                 different result than the mode requests"
-            ));
-        }
         if COMPOUND_SQL_MODES.contains(&mode.as_str()) {
             return Err(format!(
                 "Variable 'sql_mode' can't be set to the value of '{mode}': \
@@ -713,6 +703,32 @@ fn reject_unsupported_sql_modes(value: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn expanded_sql_mode(value: &str) -> String {
+    if !sql_mode_has(value, "ANSI") {
+        return value.to_owned();
+    }
+    let mut members = vec![
+        "REAL_AS_FLOAT",
+        "PIPES_AS_CONCAT",
+        "ANSI_QUOTES",
+        "IGNORE_SPACE",
+        "ONLY_FULL_GROUP_BY",
+    ];
+    for member in value
+        .split(',')
+        .map(str::trim)
+        .filter(|member| !member.is_empty())
+    {
+        if !members
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(member))
+        {
+            members.push(member);
+        }
+    }
+    members.join(",")
 }
 
 /// One entry of a statement's diagnostics area.
@@ -830,7 +846,7 @@ fn configured_sql_mode(value: Option<&str>) -> io::Result<String> {
     let mode = value.unwrap_or(DEFAULT_SQL_MODE);
     reject_unsupported_sql_modes(mode)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
-    Ok(mode.to_owned())
+    Ok(expanded_sql_mode(mode))
 }
 
 impl Default for Session {
@@ -1800,7 +1816,7 @@ impl Backend {
                     value
                 };
                 reject_unsupported_sql_modes(&value)?;
-                session.sql_mode = value;
+                session.sql_mode = expanded_sql_mode(&value);
                 Ok(())
             }
             name @ ("character_set_client"
@@ -5138,15 +5154,14 @@ mod tests {
 
     #[test]
     fn sql_mode_refuses_modes_that_would_change_results() {
-        assert!(super::reject_unsupported_sql_modes("REAL_AS_FLOAT").is_err());
+        assert!(super::reject_unsupported_sql_modes("REAL_AS_FLOAT").is_ok());
         assert!(super::reject_unsupported_sql_modes("HIGH_NOT_PRECEDENCE").is_ok());
-        // Compound modes turn the above on by another name.
-        assert!(super::reject_unsupported_sql_modes("ANSI").is_err());
+        // ANSI expands into the supported parsing and numeric flags.
+        assert!(super::reject_unsupported_sql_modes("ANSI").is_ok());
         // Refusal must survive being buried in a list, which is how clients
         // actually send sql_mode.
         assert!(
-            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,REAL_AS_FLOAT,NO_ZERO_DATE")
-                .is_err()
+            super::reject_unsupported_sql_modes("STRICT_TRANS_TABLES,DB2,NO_ZERO_DATE").is_err()
         );
     }
 
@@ -5312,7 +5327,7 @@ mod result_ceiling_tests {
     #[test]
     fn configured_sql_mode_survives_session_changes_and_reset() {
         let mode = super::configured_sql_mode(Some("NO_ENGINE_SUBSTITUTION")).unwrap();
-        assert!(super::configured_sql_mode(Some("ANSI")).is_err());
+        assert!(super::configured_sql_mode(Some("DB2")).is_err());
         assert_eq!(
             super::configured_sql_mode(None).unwrap(),
             super::DEFAULT_SQL_MODE

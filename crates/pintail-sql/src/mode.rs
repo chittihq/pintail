@@ -8,6 +8,8 @@ use std::cell::Cell;
 pub struct ParseMode {
     /// Double quotes delimit identifiers instead of strings.
     pub ansi_quotes: bool,
+    /// REAL declarations and casts use single precision.
+    pub real_as_float: bool,
     /// Double pipes concatenate strings instead of evaluating OR.
     pub pipes_as_concat: bool,
     /// Backslashes in strings remain literal characters.
@@ -40,11 +42,12 @@ impl ParseMode {
                 .any(|mode| mode.trim().eq_ignore_ascii_case(name))
         };
         Self {
-            ansi_quotes: has("ANSI_QUOTES"),
-            pipes_as_concat: has("PIPES_AS_CONCAT"),
+            ansi_quotes: has("ANSI_QUOTES") || has("ANSI"),
+            real_as_float: has("REAL_AS_FLOAT") || has("ANSI"),
+            pipes_as_concat: has("PIPES_AS_CONCAT") || has("ANSI"),
             no_backslash_escapes: has("NO_BACKSLASH_ESCAPES"),
             no_unsigned_subtraction: has("NO_UNSIGNED_SUBTRACTION"),
-            ignore_space: has("IGNORE_SPACE"),
+            ignore_space: has("IGNORE_SPACE") || has("ANSI"),
             high_not_precedence: has("HIGH_NOT_PRECEDENCE"),
             no_zero_date: has("NO_ZERO_DATE"),
             no_zero_in_date: has("NO_ZERO_IN_DATE"),

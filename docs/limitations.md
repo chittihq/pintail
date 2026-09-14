@@ -503,8 +503,7 @@ stays readable as a list of things to fix.
   keypair, or cleartext from a client that trusts its transport), validated
   against the stored verifiers. Keys from before metadata schema version 6
   lack both verifiers and must still be rotated.
-- Evaluation mode `REAL_AS_FLOAT` and combination modes (`ANSI`, `DB2`, `MAXDB`,
-  `MSSQL`, `ORACLE`, `POSTGRESQL`) remain refused.
+- Combination modes `DB2`, `MAXDB`, `MSSQL`, `ORACLE`, and `POSTGRESQL` remain refused.
 - Variable-width expressions outside the declaration rules use a type-derived
   `column_length` fallback of 1024. Only a
   direct `GROUP_CONCAT` projection derives that field and its VARCHAR/BLOB

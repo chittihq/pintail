@@ -738,7 +738,18 @@ fn typed_value(text: &str, column: &SourceColumn) -> Result<Value, WriteError> {
             check_unsigned_width(column.pintail_type, number).map_err(wrong)?;
             Value::UInt64(number)
         }
-        DataType::Float64 => Value::float64(text.parse().map_err(|_| wrong("expected a number"))?),
+        DataType::Float64 => {
+            let number: f64 = text.parse().map_err(|_| wrong("expected a number"))?;
+            // FLOAT stores single precision even though the physical carrier
+            // shared with DOUBLE is a 64-bit value.
+            #[allow(clippy::cast_possible_truncation)]
+            let stored = if column.pintail_type == DataType::Float32 {
+                f64::from(number as f32)
+            } else {
+                number
+            };
+            Value::float64(stored)
+        }
         DataType::Utf8 if column.mysql_data_type.eq_ignore_ascii_case("enum") => {
             Value::Utf8(enum_label(text, column).ok_or_else(|| wrong("Data truncated"))?)
         }
@@ -972,6 +983,18 @@ fn mysql_terms(
             .join(",")
     };
     let full = match data_type {
+        SqlDataType::Real | SqlDataType::RealUnsigned => {
+            let base = if pintail_sql::session_parse_mode().real_as_float {
+                "float"
+            } else {
+                "double"
+            };
+            if matches!(data_type, SqlDataType::RealUnsigned) {
+                format!("{base} unsigned")
+            } else {
+                base.to_owned()
+            }
+        }
         SqlDataType::Enum(members, _) => format!(
             "enum({})",
             quoted(&mut members.iter().map(|member| match member {

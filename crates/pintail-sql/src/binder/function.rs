@@ -1199,6 +1199,13 @@ fn cast_data_type(data_type: &SqlDataType) -> Option<DataType> {
     // through to `None` and reject. Fractional-second precision rides along
     // where MySQL allows it.
     match data_type {
+        SqlDataType::Real => {
+            return Some(if crate::session_parse_mode().real_as_float {
+                DataType::Float32
+            } else {
+                DataType::Float64
+            });
+        }
         SqlDataType::Float(info) => {
             use sqlparser::ast::ExactNumberInfo;
             return match info {
