@@ -1,10 +1,21 @@
 //! Session lexical options, scoped to synchronous parsing work.
 use std::cell::Cell;
 
+/// What `sql_mode` a `MySQL` 8.4 server hands a connection that never sets one.
+///
+/// This is the default in the literal sense: it is what a statement runs under
+/// unless a session says otherwise, so it belongs beside `ParseMode` rather
+/// than at one entry point. The wire path had it and the HTTP query path did
+/// not, which let the same statement answer two ways depending on which door
+/// it came in: `STR_TO_DATE('201506', '%Y%m')` is NULL under `NO_ZERO_IN_DATE`
+/// and `2015-06-00` without it, and the HTTP path was answering the latter.
+pub const DEFAULT_SQL_MODE: &str = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,\
+NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION";
+
 /// The supported parsing flags in a session's SQL mode.
 // Each flag mirrors one independent `sql_mode` member.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParseMode {
     /// Double quotes delimit identifiers instead of strings.
     pub ansi_quotes: bool,
@@ -32,6 +43,18 @@ pub struct ParseMode {
     pub strict: bool,
     /// Temporal conversions discard excess fractional digits instead of rounding.
     pub time_truncate_fractional: bool,
+}
+
+impl Default for ParseMode {
+    /// A server's own default mode, not an empty one. Deriving every field
+    /// from `false` reads as neutral and is not: it is the permissive mode,
+    /// which `MySQL` stopped shipping long ago. `permissive_grouping` already
+    /// had to be written inverted to compensate - the tell that the neutral
+    /// reading was wrong - and each remaining flag had the same gap, silently,
+    /// on every path that never installed a session mode.
+    fn default() -> Self {
+        Self::from_sql_mode(DEFAULT_SQL_MODE)
+    }
 }
 
 impl ParseMode {

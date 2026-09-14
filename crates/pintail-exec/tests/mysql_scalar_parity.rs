@@ -660,7 +660,10 @@ fn encoded_constants_keep_temporal_and_binary_comparisons() {
         ("'a\\0' < 'a'", "Boolean(true)"),
         ("BINARY 'a\\0' > 'a'", "Boolean(true)"),
         ("HEX(CONVERT(0xAA USING ucs2))", "00AA"),
-        ("HEX(CONVERT(0xFF USING utf8mb4))", ""),
+        // NULL, not the valid prefix: a fresh MySQL 8.4 session is strict.
+        // The non-strict answer for these same bytes is covered where the
+        // session that produces it is named.
+        ("HEX(CONVERT(0xFF USING utf8mb4))", "NULL"),
         ("HEX(CONVERT(0xD800 USING utf16))", "NULL"),
     ] {
         pintail_sql::set_session_character_set(Some(pintail_types::CharacterSet::Ucs2));
@@ -858,13 +861,53 @@ fn date_format_parsing_handles_partial_values_and_mysql_directives() {
             "2008-03-17 00:00:00.000000",
         ),
     ] {
-        assert_eq!(scalar(expression), expected, "{expression}");
+        // The zero-date answers above hold only where no zero-date mode
+        // refuses them, so the session that produces them is named. A fresh
+        // MySQL 8.4 connection carries NO_ZERO_DATE and NO_ZERO_IN_DATE and
+        // answers NULL to those same three; that reading is asserted in
+        // `date_format_parsing_captures_zero_date_policy`.
+        let answer =
+            pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+                scalar(expression)
+            });
+        assert_eq!(answer, expected, "{expression}");
     }
 }
 
 #[test]
 fn date_format_parsing_captures_zero_date_policy() {
     for (mode, expression, expected) in [
+        // What a fresh MySQL 8.4 connection answers, spelled out with the
+        // mode it carries. Every one of these read as a zero date on any
+        // Pintail path that never installed a session mode.
+        (
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+            "STR_TO_DATE('02', '%d')",
+            "NULL",
+        ),
+        (
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+            "STR_TO_DATE('0000-00-00', '%Y-%m-%d')",
+            "NULL",
+        ),
+        (
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+            "STR_TO_DATE('201506', '%Y%m')",
+            "NULL",
+        ),
+        (
+            "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
+             ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
+            "STR_TO_DATE('2015-06-15', '%Y-%m-%d')",
+            "2015-06-15",
+        ),
+        // The same three under a session that sets no mode at all.
+        ("", "STR_TO_DATE('02', '%d')", "0000-00-02"),
+        ("", "STR_TO_DATE('0000-00-00', '%Y-%m-%d')", "0000-00-00"),
+        ("", "STR_TO_DATE('201506', '%Y%m')", "2015-06-00"),
         ("NO_ZERO_DATE", "STR_TO_DATE('02', '%d')", "NULL"),
         (
             "NO_ZERO_DATE",
@@ -941,7 +984,13 @@ fn parsed_partial_dates_survive_temporal_consumers() {
             "Tuesday 28 February 0000",
         ),
     ] {
-        assert_eq!(scalar(&expression), expected, "{expression}");
+        // Partial dates exist at all only where no zero-date mode refuses
+        // them, so this whole family names the session that permits them.
+        let answer =
+            pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+                scalar(&expression)
+            });
+        assert_eq!(answer, expected, "{expression}");
     }
 }
 
@@ -1153,14 +1202,29 @@ fn chained_between_binds_its_upper_bound_before_the_outer_comparison() {
 
 #[test]
 fn utf8_conversion_keeps_the_valid_prefix_before_invalid_bytes() {
+    // Keeping the prefix IS the non-strict behaviour - a strict session
+    // answers NULL for the same bytes - so the session is named here rather
+    // than inherited. MySQL 8.4 ships STRICT_TRANS_TABLES by default, which
+    // is why an unnamed session is the wrong one to measure this under.
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        for (expression, expected) in [
+            ("HEX(CONVERT(0xFF USING utf8mb4))", ""),
+            ("HEX(CONVERT(0x41FF42 USING utf8mb4))", "41"),
+            ("HEX(CONVERT(0x41E1 USING utf8mb4))", "41"),
+            ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb3))", "NULL"),
+            ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb4))", "41F09D8C8642"),
+            ("HEX(CONVERT(0xFF USING utf8mb3))", ""),
+            ("HEX(CONVERT(IF(id=1,0x41FF42,0x42) USING utf8mb4))", "41"),
+        ] {
+            assert_eq!(scalar(expression), expected, "{expression}");
+        }
+    });
+    // The same bytes under the mode a fresh MySQL 8.4 connection actually
+    // has. Both answers are MySQL's; only one of them was being tested.
     for (expression, expected) in [
-        ("HEX(CONVERT(0xFF USING utf8mb4))", ""),
-        ("HEX(CONVERT(0x41FF42 USING utf8mb4))", "41"),
-        ("HEX(CONVERT(0x41E1 USING utf8mb4))", "41"),
-        ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb3))", "NULL"),
+        ("HEX(CONVERT(0xFF USING utf8mb4))", "NULL"),
+        ("HEX(CONVERT(0x41FF42 USING utf8mb4))", "NULL"),
         ("HEX(CONVERT(0x41F09D8C8642 USING utf8mb4))", "41F09D8C8642"),
-        ("HEX(CONVERT(0xFF USING utf8mb3))", ""),
-        ("HEX(CONVERT(IF(id=1,0x41FF42,0x42) USING utf8mb4))", "41"),
     ] {
         assert_eq!(scalar(expression), expected, "{expression}");
     }
@@ -1528,7 +1592,13 @@ fn mysql_xor_and_high_not_precedence_bind_before_arithmetic_and_comparison() {
 
 #[test]
 fn partial_calendar_casts_accept_minute_precision_clocks() {
-    pintail_sql::with_parse_mode(pintail_sql::ParseMode::default(), || {
+    // A zero date survives only where no zero-date mode refuses it, so this
+    // asks for that session explicitly. It used to ask for the default and
+    // mean the same thing, which was the bug: a server's default mode is not
+    // an empty one, and every path that never set a mode was quietly
+    // permissive - `STR_TO_DATE('02', '%d')` answering `0000-00-02` on the
+    // HTTP path where the same statement answered NULL over the wire.
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
         for (expression, expected) in [
             ("CAST(TIMESTAMP'0000-00-00 00:00' AS YEAR)", "0"),
             (

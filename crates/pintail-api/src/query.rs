@@ -420,10 +420,19 @@ async fn execute_query(
     let output = tokio::task::spawn_blocking(move || {
         // Nested executions belong to this HTTP query for both victim
         // selection and cancellation, just as they do on the wire path.
-        pintail_exec::with_execution_cancellation(
-            pintail_exec::ExecutionCancellation::new(),
-            || engine.execute(&database_id, &sql, MAX_RESPONSE_ROWS),
-        )
+        //
+        // The mode is installed here for the same reason: an HTTP request
+        // carries no session, so it runs under a server's default `sql_mode`,
+        // exactly as a wire connection that never set one does. Left
+        // uninstalled it took whatever the blocking thread last held, and a
+        // fresh thread holds the process default - so the two doors into the
+        // same engine disagreed about zero dates and strict conversion.
+        pintail_sql::with_parse_mode(pintail_sql::ParseMode::default(), || {
+            pintail_exec::with_execution_cancellation(
+                pintail_exec::ExecutionCancellation::new(),
+                || engine.execute(&database_id, &sql, MAX_RESPONSE_ROWS),
+            )
+        })
     })
     .await
     .map_err(|error| ApiError::internal(format!("query worker failed: {error}")))?

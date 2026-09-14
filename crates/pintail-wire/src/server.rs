@@ -899,8 +899,7 @@ impl Session {
     }
 }
 
-const DEFAULT_SQL_MODE: &str = "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,\
-ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION";
+use pintail_sql::DEFAULT_SQL_MODE;
 
 fn configured_sql_mode(value: Option<&str>) -> io::Result<String> {
     let mode = value.unwrap_or(DEFAULT_SQL_MODE);

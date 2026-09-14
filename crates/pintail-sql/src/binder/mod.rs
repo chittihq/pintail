@@ -9197,14 +9197,22 @@ mod tests {
         .expect("JSON paths and REGEXP match_type bind");
         assert_eq!(query.projection[0].expr.data_type, Some(DataType::Json));
         assert_eq!(query.projection[1].expr.data_type, Some(DataType::Boolean));
-        assert!(matches!(
-            bind("SELECT REGEXP_LIKE(CAST(Name AS BINARY), 'x') FROM Events"),
-            Err(BindError::InvalidScalarFunction(_))
-        ));
-        assert!(matches!(
-            bind("SELECT Name REGEXP CAST('x' AS BINARY) FROM Events"),
-            Err(BindError::InvalidScalarFunction(_))
-        ));
+        // A binary operand binds: MySQL matches one, and refusing it here
+        // rejected ordinary statements on any connection that ran
+        // `SET NAMES binary`, where every unprefixed literal is binary.
+        // Bytes that are not valid UTF-8 are still refused, at evaluation,
+        // where the bytes themselves are in hand rather than only their type.
+        for sql in [
+            "SELECT REGEXP_LIKE(CAST(Name AS BINARY), 'x') FROM Events",
+            "SELECT Name REGEXP CAST('x' AS BINARY) FROM Events",
+            "SELECT REGEXP_LIKE(Name, _binary'x') FROM Events",
+        ] {
+            assert_eq!(
+                bind(sql).expect(sql).projection[0].expr.data_type,
+                Some(DataType::Boolean),
+                "{sql}"
+            );
+        }
     }
 
     #[test]
@@ -9363,6 +9371,143 @@ mod tests {
         let date =
             bind("SELECT STR_TO_DATE('29th February 2024', '%D %M %Y')").expect("ordinal date");
         assert_eq!(date.projection[0].expr.data_type, Some(DataType::Date32));
+    }
+
+    /// A literal declared as bytes spells the same text a character literal
+    /// does, and the declared result type has to agree. This matters on every
+    /// connection that ran `SET NAMES binary`, where each unprefixed literal
+    /// arrives binary - so the same statement text would otherwise take one
+    /// result type on one connection and a different one on the next.
+    ///
+    /// Each pair below is checked as a pair on purpose: a fix that reads the
+    /// binary spelling but drifts from the text spelling is still a parity bug.
+    #[test]
+    fn a_binary_literal_declares_what_the_same_text_literal_declares() {
+        for (text, binary) in [
+            // The format decides the shape: a date-only format is a DATE, and
+            // reading only the character spelling sent the byte spelling to
+            // the dynamic branch, which declares DATETIME(6).
+            (
+                "SELECT STR_TO_DATE('2001-01-01', '%Y-%m-%d')",
+                "SELECT STR_TO_DATE(_binary'2001-01-01', _binary'%Y-%m-%d')",
+            ),
+            // A binary format beside a character value was enough on its own.
+            (
+                "SELECT STR_TO_DATE('2001-01-01', '%Y-%m-%d')",
+                "SELECT STR_TO_DATE('2001-01-01', _binary'%Y-%m-%d')",
+            ),
+            (
+                "SELECT STR_TO_DATE('01:02:03', '%H:%i:%s')",
+                "SELECT STR_TO_DATE(_binary'01:02:03', _binary'%H:%i:%s')",
+            ),
+            // A cast that only restates text is the identity, and the format
+            // underneath it is as known as a bare literal.
+            (
+                "SELECT STR_TO_DATE('2001-01-01', '%Y-%m-%d')",
+                "SELECT STR_TO_DATE(CAST('2001-01-01' AS CHAR), CAST('%Y-%m-%d' AS CHAR))",
+            ),
+            (
+                "SELECT STR_TO_DATE('2001-01-01', '%Y-%m-%d')",
+                "SELECT STR_TO_DATE(_utf8'2001-01-01', CAST(_utf8'%Y-%m-%d' AS CHAR))",
+            ),
+            (
+                "SELECT TIMEDIFF('2001-01-02 00:00:00.5', '2001-01-01 00:00:00')",
+                "SELECT TIMEDIFF(CAST('2001-01-02 00:00:00.5' AS CHAR), '2001-01-01 00:00:00')",
+            ),
+            (
+                "SELECT STR_TO_DATE('2001-01-01 01:02:03', '%Y-%m-%d %H:%i:%s')",
+                "SELECT STR_TO_DATE(_binary'2001-01-01 01:02:03', _binary'%Y-%m-%d %H:%i:%s')",
+            ),
+            // The fraction a datetime's own text carries, not the six-digit
+            // default that unknown text takes.
+            (
+                "SELECT UNIX_TIMESTAMP('2001-01-01 00:00:00')",
+                "SELECT UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00')",
+            ),
+            (
+                "SELECT UNIX_TIMESTAMP('2001-01-01 00:00:00.25')",
+                "SELECT UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00.25')",
+            ),
+            (
+                "SELECT TIMEDIFF('2001-01-02 00:00:00', '2001-01-01 00:00:00')",
+                "SELECT TIMEDIFF(_binary'2001-01-02 00:00:00', _binary'2001-01-01 00:00:00')",
+            ),
+            (
+                "SELECT TIMEDIFF('2001-01-02 00:00:00.5', '2001-01-01 00:00:00')",
+                "SELECT TIMEDIFF(_binary'2001-01-02 00:00:00.5', _binary'2001-01-01 00:00:00')",
+            ),
+        ] {
+            let expected = bind(text).expect(text).projection[0].expr.data_type;
+            let actual = bind(binary).expect(binary).projection[0].expr.data_type;
+            assert_eq!(actual, expected, "{binary} against {text}");
+        }
+    }
+
+    /// The pairs above prove the two spellings agree; this pins what they
+    /// agree ON, so a drift shared by both cannot pass unnoticed.
+    #[test]
+    fn a_constant_temporal_argument_declares_the_type_its_text_spells() {
+        for (sql, expected) in [
+            (
+                "SELECT STR_TO_DATE(_binary'2001-01-01', _binary'%Y-%m-%d')",
+                DataType::Date32,
+            ),
+            (
+                "SELECT UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00')",
+                DataType::UInt64,
+            ),
+            (
+                "SELECT UNIX_TIMESTAMP(_binary'2001-01-01 00:00:00.25')",
+                DataType::Decimal {
+                    precision: 20,
+                    scale: 2,
+                },
+            ),
+            (
+                "SELECT TIMEDIFF(_binary'2001-01-02 00:00:00', _binary'2001-01-01 00:00:00')",
+                DataType::Time64 { fsp: 0 },
+            ),
+            (
+                "SELECT TIMEDIFF(_binary'2001-01-02 00:00:00.5', _binary'2001-01-01 00:00:00')",
+                DataType::Time64 { fsp: 1 },
+            ),
+        ] {
+            assert_eq!(
+                bind(sql).expect(sql).projection[0].expr.data_type,
+                Some(expected),
+                "{sql}"
+            );
+        }
+        // A width is not the identity - `CAST(x AS CHAR(4))` truncates, so the
+        // format it yields is not the one written, and reading through it would
+        // declare a type the statement never asked for.
+        assert_eq!(
+            bind("SELECT STR_TO_DATE('2001-01-01', CAST('%Y-%m-%d' AS CHAR(4)))")
+                .expect("truncating cast")
+                .projection[0]
+                .expr
+                .data_type,
+            Some(DataType::DateTime64 { fsp: 6 }),
+        );
+        // Bytes that spell nothing readable are genuinely unknown input and
+        // still take the six-digit default - the fix reads a spelling, it
+        // does not assume one. `X'FFFE'` is not valid UTF-8, so it spells no
+        // datetime; text that is readable but is not a datetime lands in the
+        // same place, which is the behaviour that was already correct.
+        for sql in [
+            "SELECT UNIX_TIMESTAMP(X'FFFE')",
+            "SELECT UNIX_TIMESTAMP('not a datetime')",
+            "SELECT UNIX_TIMESTAMP(_binary'not a datetime')",
+        ] {
+            assert_eq!(
+                bind(sql).expect(sql).projection[0].expr.data_type,
+                Some(DataType::Decimal {
+                    precision: 20,
+                    scale: 6
+                }),
+                "{sql}"
+            );
+        }
     }
 
     #[test]

@@ -46,6 +46,22 @@ fn run(
     fixture.engine.execute("db-local", sql, 1_000)
 }
 
+/// Runs `sql` on a session that sets no `sql_mode` at all.
+///
+/// Storing an over-long value by truncating it is what a non-strict session
+/// does; a strict one refuses it with "Data too long", and MySQL 8.4 ships
+/// strict by default. Tests that measure truncation therefore have to name
+/// the session that truncates instead of inheriting whatever an unset one
+/// carries - which is the whole defect this helper exists beside.
+fn run_permissive(
+    fixture: &Fixture,
+    sql: &str,
+) -> Result<pintail_wire::QueryOutput, pintail_wire::QueryError> {
+    pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
+        run(fixture, sql)
+    })
+}
+
 #[test]
 fn a_local_database_creates_inserts_and_reads_back() {
     let fixture = local_fixture();
@@ -570,7 +586,7 @@ fn character_columns_enforce_width_in_characters_and_strip_char_padding() {
         "CREATE TABLE labels(id INT PRIMARY KEY, c CHAR(2), v VARCHAR(2))",
     )
     .unwrap();
-    run(
+    run_permissive(
         &fixture,
         "INSERT INTO labels VALUES(1,'é😀z','é😀z'),(2,'a  ','a  ')",
     )
@@ -675,7 +691,7 @@ fn binary_columns_pad_fixed_width_and_truncate_by_bytes() {
         "CREATE TABLE bytes_table(id INT PRIMARY KEY,b BINARY(4),v VARBINARY(2))",
     )
     .unwrap();
-    run(
+    run_permissive(
         &fixture,
         "INSERT INTO bytes_table VALUES(1,'a','a'),(2,'a ','a '),(3,X'FF',X'FF00'),(4,'é','é😀')",
     )
