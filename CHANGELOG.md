@@ -34,7 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Aggregates over a computed argument (`SUM(CASE ...)`, `SUM(a * b)`,
   `AVG(x + 1)`) project the argument a batch at a time and take the parallel
-  aggregation paths: about 2.3 to 3 times faster over 2M rows.
+  aggregation paths: up to three times faster over 2M rows.
 - `GROUP BY` on a text key or several keys found each new group by scanning
   every group so far, which was quadratic in the group count. A collation-
   keyed index answers it with one lookup.
