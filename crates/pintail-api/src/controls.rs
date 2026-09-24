@@ -175,6 +175,28 @@ fn auto_resync_candidate(
     Some((table_name, copy_pending))
 }
 
+/// Whether the control plane records `table_name` with no source key.
+fn table_is_keyless(
+    metadata: &pintail_meta::MetaStore,
+    database_id: &str,
+    table_name: &str,
+) -> bool {
+    metadata
+        .tables(database_id)
+        .ok()
+        .and_then(|tables| {
+            tables
+                .into_iter()
+                .find(|table| table.name.eq_ignore_ascii_case(table_name))
+        })
+        .is_some_and(|table| {
+            table
+                .primary_key_json
+                .as_deref()
+                .is_none_or(|key| key == "[]")
+        })
+}
+
 /// Recopies the first quarantined table of `database_id`, exactly as the
 /// operator resync endpoint would - same job claim, same fence, same
 /// completion bookkeeping - but driven by the supervisor, so a table that
@@ -192,6 +214,7 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     let Some((table_name, copy_pending)) = auto_resync_candidate(&metadata, &database) else {
         return;
     };
+    let keyless = table_is_keyless(&metadata, database_id, &table_name);
     if database.mode == "paused" {
         return;
     }
@@ -206,7 +229,10 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         let key = (database_id.to_owned(), table_name.clone());
         // A failed copy is unfinished work, not repeated source drift.
         // Resume it at supervisor cadence, including under keyless quarantine.
-        if !copy_pending && cooldown.contains_key(&key) {
+        // A keyless table reaches here only under the auto_resync policy, and
+        // each quarantine is a new source change the operator chose to have
+        // repaired, not drift recurring - so it is repaired at cadence too.
+        if !copy_pending && !keyless && cooldown.contains_key(&key) {
             return;
         }
     }
