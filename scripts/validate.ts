@@ -1120,6 +1120,23 @@ async function main() {
       }
       process.env.PINTAIL_DASHBOARD_PREBUILT = '1'
     }
+    // Every stage that runs tests/e2e/run.ts imports the ORM checks, and
+    // those import a generated Prisma client that is not in the tree: a
+    // fresh checkout failed the first such stage before it said anything.
+    // Generate it once for the whole run.
+    if (requested.some((name) => STAGES.find((stage) => stage.name === name)?.cwd === join(repository, 'tests', 'e2e'))) {
+      status('e2e: bun install && prisma generate')
+      const prisma = await run(['bash', '-c', 'bun install --frozen-lockfile && bun run generate:prisma'], {
+        timeoutMinutes: 10,
+        label: 'prisma',
+        cwd: join(repository, 'tests', 'e2e'),
+      })
+      if (prisma.code !== 0) {
+        status('ABORT: generating the e2e Prisma client failed')
+        writeFileSync(join(runDir, 'prisma.log'), prisma.output)
+        process.exit(2)
+      }
+    }
     const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'migrations', 'e2e-mysql80']
     if (
       !process.env.PINTAIL_E2E_BINARY
