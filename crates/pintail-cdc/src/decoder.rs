@@ -567,7 +567,6 @@ fn key_part(value: &Value) -> Option<KeyPart> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{adapt_binlog_value, declaration_labels, embed_by_type, set_bits, transcode_text};
