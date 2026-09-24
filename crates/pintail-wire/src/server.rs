@@ -1567,6 +1567,9 @@ impl Backend {
                     };
                     let (finished, rows) = match answer {
                         Ok(crate::engine::Answer::Whole(output)) => {
+                            if sql.contains(":=") && outer_order_by(&sql) {
+                                settle_projected_assignments(&output, &variable_writes);
+                            }
                             let result = refuse_truncated(output);
                             let rows = result
                                 .as_ref()
@@ -6190,4 +6193,52 @@ mod result_ceiling_tests {
             Some(2001_u16.to_le_bytes().to_vec())
         );
     }
+}
+
+/// Gives each top-level `@name := expr` in a held, ordered answer the value
+/// of the last row the client receives.
+///
+/// `MySQL` evaluates the assignment as it reads each row, so without ORDER BY
+/// the variable holds the last row read - grouping included. An ORDER BY
+/// evaluates the select list again as the sorted rows are sent, so the
+/// variable holds the last row sent instead; Pintail evaluates it once,
+/// before the sort, and this puts the sent row's value back.
+/// `SELECT @v := f2 FROM t GROUP BY f1 ORDER BY f2 DESC LIMIT 1` must leave
+/// `@v` holding the one row returned, as `MySQL` does. A streamed answer
+/// keeps the executor's value: its rows are gone by the time it settles.
+fn settle_projected_assignments(
+    output: &crate::engine::QueryOutput,
+    writes: &pintail_sql::UserVariableWrites,
+) {
+    let Some(last) = output.rows.last_row() else {
+        return;
+    };
+    for (field, value) in output.fields.iter().zip(last) {
+        if let Some(name) = projected_assignment(&field.name) {
+            writes.set(name, value.clone(), field.data_type);
+        }
+    }
+}
+
+/// The variable a result column assigns when the column is itself an
+/// assignment - its name is the expression, `@v:=f2` - lowercased as the
+/// binder stores it.
+fn projected_assignment(column: &str) -> Option<String> {
+    let rest = column.trim().strip_prefix('@')?;
+    if rest.starts_with('@') {
+        return None;
+    }
+    let end = rest
+        .find(|character: char| character.is_whitespace() || character == ':')
+        .unwrap_or(rest.len());
+    let (name, tail) = rest.split_at(end);
+    (!name.is_empty() && tail.trim_start().starts_with(":=")).then(|| name.to_ascii_lowercase())
+}
+
+/// Whether the statement is a query with an ORDER BY of its own.
+fn outer_order_by(sql: &str) -> bool {
+    matches!(
+        pintail_sql::parse_statement(sql),
+        Ok(sqlparser::ast::Statement::Query(query)) if query.order_by.is_some()
+    )
 }

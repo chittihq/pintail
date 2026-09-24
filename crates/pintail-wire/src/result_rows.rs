@@ -104,6 +104,12 @@ impl ResultRows {
         self.values.take().unwrap_or_default()
     }
 
+    /// The last row, as values.
+    #[must_use]
+    pub(crate) fn last_row(&self) -> Option<&Vec<Value>> {
+        self.materialize().last()
+    }
+
     fn materialize(&self) -> &Vec<Vec<Value>> {
         self.values.get_or_init(|| {
             let mut rows = Vec::with_capacity(self.len);
