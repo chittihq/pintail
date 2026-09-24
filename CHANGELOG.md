@@ -4,6 +4,50 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A source ALTER that had not streamed yet could leave a table's store
+  refusing to open with a schema fingerprint mismatch. A table never altered
+  took its shape from the stored probe, which a re-probe, forced snapshot or
+  sibling resync rewrites with the source's current columns. Its first
+  shape is now recorded in schema history when its store first opens.
+- One table's storage refusing its rows, a TRUNCATE its store could not
+  take, or a failed first copy of a newly created table stopped replication
+  for every table and failed the same way each cycle. That table is now
+  quarantined for the automatic resync while the rest keep streaming.
+- A grouped `SUM`, `AVG`, `MIN` or `MAX` over a projected decimal column
+  holding a CASE with an integer branch (`CASE ... THEN price ELSE 0 END`,
+  through a derived table or view) answered NULL for every group.
+- `GROUP BY` on several keys, one of them under a binary collation, merged
+  keys that differ only in letter case.
+- `SELECT 1, @@version` - a connection variable beside any other item -
+  returned the variable's column alone.
+
+### Added
+
+- `default_week_format` is honored: a one-argument `WEEK()` uses the
+  session's mode, 0 to 7.
+
+### Performance
+
+- Aggregates over a computed argument (`SUM(CASE ...)`, `SUM(a * b)`,
+  `AVG(x + 1)`) project the argument a batch at a time and take the parallel
+  aggregation paths: about 2.3 to 3 times faster over 2M rows.
+- `GROUP BY` on a text key or several keys found each new group by scanning
+  every group so far, which was quadratic in the group count. A collation-
+  keyed index answers it with one lookup.
+
+### Verification
+
+- The MTR harness keeps the better of a run and its replay, and the MySQL
+  and MariaDB suites no longer overwrite each other's diffs.
+- A nightly workflow replays the MTR suites, replica mode included, which
+  no gate ran before.
+- The rc gate generates the dashboard once and builds under one setting, so
+  stages no longer rebuild and relink the binary between them.
+
 ## [0.1.5-rc5] - 2026-09-24
 
 Fixes from reviewing the verification program, and one replication stall.

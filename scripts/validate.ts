@@ -1073,7 +1073,28 @@ async function main() {
     // e2e, browser, and accept each build the same release binary; build it
     // once here and hand every stage the path through the overrides they
     // already honor. Skipped when the caller exported a binary of its own.
-    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak']
+    // Several stages build with PINTAIL_DASHBOARD_PREBUILT=1 and the rest
+    // without it, and pintail-api's build script reruns when that variable
+    // changes - so every flip between stages rebuilt the crate and relinked
+    // the binary, the release one included. Generate the dashboard once and
+    // hold the variable for the whole run: the prebuild below, mtr's own
+    // `cargo build` and every test profile then agree, and a build a stage
+    // repeats is a no-op.
+    if (!process.env.PINTAIL_DASHBOARD_PREBUILT) {
+      status('dashboard: bun run generate')
+      const dashboard = await run(['bun', 'run', 'generate'], {
+        timeoutMinutes: 10,
+        label: 'dashboard',
+        cwd: join(repository, 'packages', 'dashboard'),
+      })
+      if (dashboard.code !== 0) {
+        status('ABORT: dashboard generation failed')
+        writeFileSync(join(runDir, 'dashboard.log'), dashboard.output)
+        process.exit(2)
+      }
+      process.env.PINTAIL_DASHBOARD_PREBUILT = '1'
+    }
+    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'migrations', 'e2e-mysql80']
     if (
       !process.env.PINTAIL_E2E_BINARY
       && requested.some((name) => binaryConsumers.includes(name))
