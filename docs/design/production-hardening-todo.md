@@ -320,15 +320,21 @@ prints.
   Closed 2026-09-07: the `Overlay` part decodes the segment directly with
   the superseded rows masked by the key column; see "A segment the
   memtable overlaps is decoded directly" in `docs/decisions.md`.
-- [ ] **G8. The partial-range memory fallback may drop key bounds.** A
+- [x] **G8. The partial-range memory fallback may drop key bounds.** A
   bounded direct decode that fails on memory retries over physical rows
   `0..row_count`, and the range decoder applies no key bounds, so
-  out-of-range rows could surface when the smaller slices fit. Found by
-  inspection during the overlay review; not reproduced.
-- [ ] **G9. SMA pruning does not consider stale memtable versions.** A
+  out-of-range rows could surface when the smaller slices fit. Closed
+  2026-09-25: reproduced at a 128 KiB budget (a range of 10,000 keys in a
+  200,000-row segment answered with rows outside it). Both fallbacks now
+  slice only the rows the key range selects, and keep the memory error
+  when that run cannot be located rather than decode unbounded rows.
+- [x] **G9. SMA pruning does not consider stale memtable versions.** A
   segment row failing a predicate can be pruned while a lower-version
   memtable row for the same key passes it; the merge would have kept the
-  segment's version. Found by inspection; not reproduced.
+  segment's version. Closed 2026-09-25: reproduced (a replayed older
+  version in the memtable answered in place of the flushed newer one under
+  a value bound). A segment is prunable only when no memtable row in its
+  key range is as old as its newest version.
 - [x] **G10. Two overlapping segments never compact.** `compaction_plan`
   returned before the overlap check when the manifest held fewer segments
   than the fan-in (four), so an update-heavy table flushed once sat on a

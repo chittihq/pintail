@@ -4,6 +4,19 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- A range scan over part of a segment too large for its memory budget
+  returned rows outside the range: the fallback that reads the segment in
+  row slices decoded every row, unbounded by key. It now slices only the
+  rows the range selects.
+- A scan with a value predicate could answer with an older version of a
+  row: a segment skipped on its statistics shadowed an older version the
+  memtable still held after a replay, and the skip let that version stand.
+  Such a segment is no longer skipped.
+
 ## [0.1.5-rc6] - 2026-09-24
 
 Read parity with MySQL (character sets, temporal reading, comparison

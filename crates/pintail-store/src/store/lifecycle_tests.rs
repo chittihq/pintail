@@ -671,3 +671,189 @@ fn a_table_directory_renames_under_a_live_writer() {
     );
     assert_eq!(table.directory(), std::fs::canonicalize(&new).unwrap());
 }
+
+/// A range scan over part of one segment keeps its key bounds when the
+/// segment does not fit the budget and is decoded in row slices instead.
+#[test]
+fn a_memory_bounded_range_scan_keeps_its_key_bounds() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "amount", DataType::Int64, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        block_rows: 1_000,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    table
+        .ingest(
+            (0..200_000)
+                .map(|id| {
+                    StoredRow::new(
+                        key(id),
+                        vec![
+                            pintail_types::Value::UInt64(id),
+                            pintail_types::Value::Int64(1),
+                        ],
+                        1,
+                        false,
+                    )
+                })
+                .collect(),
+        )
+        .unwrap();
+    table.flush().unwrap();
+    let snapshot = table.snapshot();
+    let (low, high) = (50_000_u64, 59_999_u64);
+    let mut exercised = 0;
+    for (single, keyed) in [(true, false), (false, false), (true, true), (false, true)] {
+        for limit in (10..=24).map(|shift| 1_usize << shift) {
+            let mut stream = snapshot
+                .scan_projected_range_stream(&key(low), &key(high), &[1, 2])
+                .unwrap()
+                .expect("stream");
+            if keyed {
+                stream.enable_memtable_overlay(&[1]);
+            }
+            let mut ids = Vec::new();
+            let outcome = loop {
+                let chunks = if single {
+                    stream
+                        .next_column_chunk(limit)
+                        .map(|chunk| chunk.into_iter().collect::<Vec<_>>())
+                } else {
+                    stream.next_column_chunks(1, limit)
+                };
+                match chunks {
+                    Ok(chunks) if chunks.is_empty() => break Ok(()),
+                    Ok(chunks) => {
+                        for chunk in chunks {
+                            let columns = chunk.into_decoded_columns();
+                            for value in columns.into_iter().next().unwrap().into_values() {
+                                let pintail_types::Value::UInt64(id) = value else {
+                                    panic!("unexpected {value:?}")
+                                };
+                                ids.push(id);
+                            }
+                        }
+                    }
+                    Err(error) => break Err(error),
+                }
+            };
+            match outcome {
+                Ok(()) => {
+                    exercised += 1;
+                    let outside = ids.iter().filter(|id| !(low..=high).contains(id)).count();
+                    assert_eq!(
+                        (outside, ids.len()),
+                        (0, 10_000),
+                        "single={single} keyed={keyed} limit={limit}: rows outside the range, or missing"
+                    );
+                }
+                Err(StoreError::MemoryLimitExceeded { .. }) => {}
+                Err(error) => panic!("single={single} limit={limit}: {error}"),
+            }
+        }
+    }
+    assert!(exercised > 0, "no budget answered at all");
+}
+
+/// A segment skipped on its statistics must not let an older memtable
+/// version of one of its keys stand in for the version it holds.
+#[test]
+fn value_pruning_never_surfaces_an_older_memtable_version() {
+    let directory = tempfile::tempdir().unwrap();
+    let schema = TableSchema::new(
+        1,
+        vec![
+            Column::new(1, "id", DataType::UInt64, false),
+            Column::new(2, "amount", DataType::Int64, true),
+        ],
+    )
+    .unwrap();
+    let options = StoreOptions {
+        background_compaction: false,
+        ..StoreOptions::default()
+    };
+    let mut table = TableStore::open(directory.path(), schema, options).unwrap();
+    let key = |id: u64| PrimaryKey::new(vec![KeyPart::UInt64(id)]).unwrap();
+    let row = |id: u64, amount: i64, version: u64| {
+        StoredRow::new(
+            key(id),
+            vec![
+                pintail_types::Value::UInt64(id),
+                pintail_types::Value::Int64(amount),
+            ],
+            version,
+            false,
+        )
+    };
+    // The current version of key 5 (amount 10) is flushed; a replayed older
+    // version (amount 1) then lands in the memtable.
+    table
+        .ingest((1..=70_000).map(|id| row(id, 10, 5)).collect())
+        .unwrap();
+    table.flush().unwrap();
+    table.ingest(vec![row(5, 1, 3)]).unwrap();
+    let snapshot = table.snapshot();
+    let current = snapshot
+        .scan_projected_range(&key(0), &key(100_000), &[1, 2])
+        .unwrap()
+        .into_rows()
+        .into_iter()
+        .map(ProjectedRow::into_values)
+        .find(|values| values[0] == pintail_types::Value::UInt64(5))
+        .expect("key 5");
+    assert_eq!(
+        current[1],
+        pintail_types::Value::Int64(10),
+        "the newest version wins"
+    );
+    // amount < 5: the segment's statistics (every amount is 10) prove it
+    // fails, so it may be skipped - but key 5's answer is still amount 10.
+    let bounds = [crate::segment::ColumnBounds {
+        column_id: 2,
+        domain: crate::segment::BoundDomain::Int,
+        lower: None,
+        upper: Some(4),
+    }];
+    // The stream declines a small merge; the bounded scan below serves it.
+    let mut surfaced = Vec::new();
+    let mut stream = snapshot
+        .scan_projected_range_stream_pruned(&key(0), &key(100_000), &[1, 2], &bounds)
+        .unwrap();
+    while let Some(chunk) = stream
+        .as_mut()
+        .and_then(|stream| stream.next_column_chunk(usize::MAX).unwrap())
+    {
+        let mut columns = chunk.into_decoded_columns().into_iter();
+        let ids = columns.next().unwrap().into_values();
+        let amounts = columns.next().unwrap().into_values();
+        surfaced.extend(ids.into_iter().zip(amounts));
+    }
+    assert!(
+        surfaced
+            .iter()
+            .all(|(_, amount)| *amount != pintail_types::Value::Int64(1)),
+        "a stale version surfaced: {surfaced:?}"
+    );
+    let bounded = snapshot
+        .scan_projected_range_bounded_pruned(&key(0), &key(100_000), &[1, 2], usize::MAX, &bounds)
+        .unwrap()
+        .into_rows()
+        .into_iter()
+        .map(ProjectedRow::into_values)
+        .filter(|values| values[1] == pintail_types::Value::Int64(1))
+        .collect::<Vec<_>>();
+    assert!(
+        bounded.is_empty(),
+        "the bounded scan surfaced a stale version: {bounded:?}"
+    );
+}

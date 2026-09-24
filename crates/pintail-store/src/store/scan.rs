@@ -1467,14 +1467,19 @@ impl ProjectedScanStream {
                     // A segment the budget cannot hold whole is read in row
                     // slices instead of refused: a compacted table can hold
                     // tens of millions of rows in one segment.
-                    Err(StoreError::MemoryLimitExceeded { .. }) if segment.row_count > 1 => self
-                        .decode_direct_range_within(
-                            segment.clone(),
-                            0,
-                            segment.row_count,
-                            memory_limit,
-                        )
-                        .map(Some),
+                    // The slices cover only the rows the scan's key range
+                    // selects.
+                    Err(error @ StoreError::MemoryLimitExceeded { .. })
+                        if segment.row_count > 1 =>
+                    {
+                        let (start_row, end_row) =
+                            self.bounded_rows(&segment, memory_limit)?.ok_or(error)?;
+                        if start_row == end_row {
+                            continue;
+                        }
+                        self.decode_direct_range_within(segment, start_row, end_row, memory_limit)
+                            .map(Some)
+                    }
                     other => other.map(Some),
                 };
             }
@@ -1725,9 +1730,20 @@ impl ProjectedScanStream {
                 return self.decode_overlay_slice_bounded(slice, memory_limit, prewhere);
             }
             return match self.decode_slice(&slice, memory_limit, prewhere) {
-                Err(StoreError::MemoryLimitExceeded { .. }) if end_row - start_row > 1 => self
-                    .decode_direct_range_within(segment, start_row, end_row, memory_limit)
-                    .map(|chunk| vec![chunk]),
+                Err(error @ StoreError::MemoryLimitExceeded { .. }) if end_row - start_row > 1 => {
+                    // A whole segment the range covers only in part keeps
+                    // its key bounds when read in slices.
+                    let (start_row, end_row) = if matches!(slice, DirectSlice::Whole(_)) {
+                        self.bounded_rows(&segment, memory_limit)?.ok_or(error)?
+                    } else {
+                        (start_row, end_row)
+                    };
+                    if start_row == end_row {
+                        return Ok(Vec::new());
+                    }
+                    self.decode_direct_range_within(segment, start_row, end_row, memory_limit)
+                        .map(|chunk| vec![chunk])
+                }
                 other => other,
             };
         }
@@ -2596,6 +2612,27 @@ impl ProjectedScanStream {
                 ..ScanStats::default()
             },
             retained_bytes,
+        }))
+    }
+
+    /// The physical rows of `segment` this scan's key range selects, for a
+    /// decode that reads them in row slices: every row when the range covers
+    /// the segment, the located run otherwise, and `None` when the run
+    /// cannot be located - a slice decode applies no key bounds, so it must
+    /// not be given rows the range excludes.
+    fn bounded_rows(
+        &self,
+        segment: &segment::SegmentMeta,
+        memory_limit: usize,
+    ) -> Result<Option<(u64, u64)>, StoreError> {
+        if self.start <= segment.min_key && self.end >= segment.max_key {
+            return Ok(Some((0, segment.row_count)));
+        }
+        let scan_memory = AtomicUsize::new(0);
+        let budget = segment::ScanMemoryBudget::new(&scan_memory, memory_limit);
+        Ok(self.key_row_span(segment, &budget)?.map(|span| {
+            let row = |value: usize| u64::try_from(value).unwrap_or(u64::MAX);
+            (row(span.rows.start), row(span.rows.end))
         }))
     }
 

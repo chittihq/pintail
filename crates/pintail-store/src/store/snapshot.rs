@@ -620,6 +620,18 @@ impl TableSnapshot {
         // a newer segment over it - on a table taking updates, always - and
         // turned a range filter on a timestamp column into a scan of every
         // segment.
+        //
+        // The memtable is one more reader under the same rule: it usually
+        // holds only newer versions, but a replay can leave an older one
+        // there, and dropping the segment that shadows it would surface it.
+        let memtable_oldest = self.memtable.values().map(StoredRow::version).min();
+        let memtable_shadowed = |meta: &crate::segment::SegmentMeta| {
+            memtable_oldest.is_some_and(|oldest| oldest <= meta.max_version)
+                && self
+                    .memtable
+                    .range(meta.min_key.clone()..=meta.max_key.clone())
+                    .any(|(_, row)| row.version() <= meta.max_version)
+        };
         let segments = &self.manifest.segments;
         segments
             .iter()
@@ -630,7 +642,7 @@ impl TableSnapshot {
                         || other.max_key < meta.min_key
                         || other.min_key > meta.max_key
                         || other.min_version > meta.max_version
-                })
+                }) && !memtable_shadowed(meta)
             })
             .collect()
     }
