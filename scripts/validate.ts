@@ -173,15 +173,12 @@ const STAGES: Stage[] = [
     // discovery cost distinct from a test stall and within the gate budget.
     timeoutMinutes: 40,
     stallMinutes: 30,
-    // Serial discovery avoids macOS launching every fresh test binary into
-    // concurrent provenance checks. The tests themselves are fast enough that
-    // this is materially quicker and more reliable than loader fan-out.
-    // Share the recovery profile's optimized development build while keeping
-    // resource-sensitive tests serial. Debug assertions and overflow checks stay on.
-    command: [
-      'cargo', 'nextest', 'run', '--cargo-profile', 'recovery',
-      '--test-threads', '1', '--workspace',
-    ],
+    // Parallel across the host's cores, one process per test. Tests that
+    // assert on a timing or on core usage run one at a time, with retries:
+    // .config/nextest.toml names them. The recovery profile is an optimized
+    // development build;
+    // debug assertions and overflow checks stay on.
+    command: ['cargo', 'nextest', 'run', '--cargo-profile', 'recovery', '--workspace'],
   },
   {
     // This is a separate Cargo workspace, so the workspace unit stage

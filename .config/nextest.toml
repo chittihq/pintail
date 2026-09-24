@@ -1,0 +1,20 @@
+# Tests run in parallel, one process each, across every core the host has.
+#
+# The exception is a test whose assertion is a measurement: a ratio of two
+# timings, a wall-clock ceiling, or how many cores a query kept busy. Those
+# run one at a time among themselves, so two measurements never load each
+# other, and a failure is retried: a measurement that read a neighbour's load
+# passes on the retry, a real regression fails every attempt, and nextest
+# reports the first kind as flaky rather than hiding it. Giving each of them
+# the whole host instead tripled the run.
+
+[test-groups]
+measurements = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = '''
+test(/^(multi_core|subquery_scaling|text_grouping_scale|window_frame_scaling|settled_memo_scale|activity_scale|morsel_bench|range_prune_bench|dependent_subquery_ratio|join_key_value_cost|scalar_fallback_cost|computed_aggregate_arguments|correlated_self_join|grouped_fold|segment_subcube|mask_cost|merge_output|ranged_overlay|supersession_bitmap|layout|shared_query_burst)::/)
+| (binary(wire_compat) & test(a_saturated_server_refuses_queries_instead_of_queueing_them))
+'''
+test-group = "measurements"
+retries = 2
