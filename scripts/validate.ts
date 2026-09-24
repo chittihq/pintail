@@ -1032,6 +1032,16 @@ async function main() {
     return true
   }
 
+  /// Two remote sequences can reach a stage start at the same moment, and
+  /// two shelvings at once race on the git index: one checkout fails on the
+  /// other's lock and its stage aborts as if the tree were dirty.
+  let shelving: Promise<unknown> = Promise.resolve()
+  function shelveInTurn(context: string): Promise<boolean> {
+    const turn = shelving.then(() => shelveHarnessArtifacts(context))
+    shelving = turn.catch(() => {})
+    return turn
+  }
+
   /// Returns the shelved ledgers to the working tree so the run's evidence is
   /// on disk, uncommitted, for whoever decides to keep it.
   async function unshelveHarnessArtifacts(): Promise<void> {
@@ -1147,7 +1157,7 @@ async function main() {
     const runStage = async (stage: (typeof STAGES)[number]) => {
         // Earlier stages rewrite harness artifacts and the benchmark
         // refuses dirty trees: bank artifacts before every remote stage.
-        if (stage.remote && !(await shelveHarnessArtifacts(stage.name))) {
+        if (stage.remote && !(await shelveInTurn(stage.name))) {
           status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
           results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
           return undefined
