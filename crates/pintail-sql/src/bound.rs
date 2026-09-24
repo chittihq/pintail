@@ -394,6 +394,23 @@ pub fn session_select_limit() -> Option<u64> {
     SESSION_SELECT_LIMIT.with(std::cell::Cell::get)
 }
 
+thread_local! {
+    static SESSION_DEFAULT_WEEK_FORMAT: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// Installs the connection's `default_week_format` for the current thread's
+/// statement, or restores mode 0 with `None`: the mode a one-argument `WEEK`
+/// binds to. `MySQL` accepts 0 to 7.
+pub fn set_session_default_week_format(mode: Option<u8>) {
+    SESSION_DEFAULT_WEEK_FORMAT.with(|cell| cell.set(mode.unwrap_or(0).min(7)));
+}
+
+/// The mode a one-argument `WEEK` binds to on this thread.
+#[must_use]
+pub fn session_default_week_format() -> u8 {
+    SESSION_DEFAULT_WEEK_FORMAT.with(std::cell::Cell::get)
+}
+
 /// The fraction digits division and `AVG` add on this thread's statement.
 #[must_use]
 pub fn session_div_precision_increment() -> u8 {

@@ -831,6 +831,8 @@ struct Session {
     div_precision_increment: u8,
     /// `sql_select_limit`: the most rows a SELECT without its own LIMIT returns.
     sql_select_limit: Option<u64>,
+    /// `default_week_format`: the mode a one-argument `WEEK` uses.
+    default_week_format: u8,
     /// `SET @name = expr` values, each the literal its expression evaluated
     /// to, read by every later statement on this connection.
     user_variables: pintail_sql::UserVariables,
@@ -855,6 +857,7 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"
             max_execution_time_ms: 0,
             div_precision_increment: pintail_sql::DEFAULT_DIV_PRECISION_INCREMENT,
             sql_select_limit: None,
+            default_week_format: 0,
             user_variables: pintail_sql::UserVariables::default(),
         }
     }
@@ -1304,6 +1307,7 @@ impl Backend {
                         session.div_precision_increment,
                     ));
                     pintail_sql::set_session_select_limit(session.sql_select_limit);
+                    pintail_sql::set_session_default_week_format(Some(session.default_week_format));
                     pintail_exec::set_session_group_concat_max_len(Some(
                         session.group_concat_max_len,
                     ));
@@ -1330,6 +1334,7 @@ impl Backend {
                     pintail_sql::set_session_default_collation(None);
                     pintail_sql::set_session_div_precision_increment(None);
                     pintail_sql::set_session_select_limit(None);
+                    pintail_sql::set_session_default_week_format(None);
                     let _ = pintail_exec::set_session_time_zone(None);
                     crate::trace::label_exec_counters();
                     // Division by zero is a warning only under
@@ -1734,25 +1739,31 @@ impl Backend {
                 session.sql_select_limit = (limit < u64::MAX).then_some(limit);
                 Ok(())
             }
-            // These change ANSWERS - day and month names, week numbers - and
-            // only their defaults are implemented, so another value is
-            // refused rather than accepted and ignored.
+            // MySQL clamps an out-of-range mode to 0..=7 with a warning; a
+            // value that is not an integer is refused.
+            "default_week_format" => {
+                let mode = value.trim().parse::<i64>().map_err(|_| {
+                    "Incorrect argument type to variable 'default_week_format'".to_owned()
+                })?;
+                session.default_week_format =
+                    u8::try_from(mode.clamp(0, 7)).expect("clamped to 0..=7");
+                Ok(())
+            }
+            // This changes ANSWERS - day and month names - and only its
+            // default is implemented, so another value is refused rather
+            // than accepted and ignored.
             //
             // Checked against the rule that a setting a client sends
-            // automatically is never refused: neither of these is one. A
-            // driver negotiating a connection sets charsets, time zones and
-            // row caps; the locale for DAYNAME and the week-number
-            // convention are an application's deliberate choice, and the
-            // BI-client gate connects through the MySQL CLI, Go, JDBC,
-            // Python and bun without either appearing. Accepting one and
+            // automatically is never refused: this is not one. A driver
+            // negotiating a connection sets charsets, time zones and row
+            // caps; the locale for DAYNAME is an application's deliberate
+            // choice, and the BI-client gate connects through the MySQL CLI,
+            // Go, JDBC, Python and bun without it appearing. Accepting one and
             // ignoring it would answer a question wrongly rather than
             // refusing to answer it, which is the trade that rule exists to
             // avoid, not to make.
             "lc_time_names" if !value.eq_ignore_ascii_case("en_US") => Err(format!(
                 "Unknown locale: '{value}' (only en_US is supported)"
-            )),
-            "default_week_format" if value.trim() != "0" => Err(format!(
-                "Variable 'default_week_format' can't be set to the value of '{value}' (only 0 is supported)"
             )),
             // Everything else keeps the accepted-no-op compatibility
             // behavior (isolation levels, probes, and autocommit on a
@@ -3251,6 +3262,16 @@ fn compatibility_query(sql: &str, database: &str, session: &Session) -> Option<Q
         || pintail_sql::connection_projection(sql),
     );
     let Some(projection) = projection else {
+        // A SELECT that mixes a connection variable with anything else
+        // belongs to the engine: answering it here matched the variable
+        // by substring and returned its column alone, dropping the rest.
+        if sql
+            .trim_start()
+            .get(..6)
+            .is_some_and(|head| head.eq_ignore_ascii_case("select"))
+        {
+            return None;
+        }
         return compatibility_single(sql, database, session);
     };
     let mut output = None;
@@ -3363,6 +3384,11 @@ fn compatibility_single(sql: &str, database: &str, session: &Session) -> Option<
         (
             "@@sql_select_limit",
             Value::UInt64(session.sql_select_limit.unwrap_or(u64::MAX)),
+        )
+    } else if normalized.contains("@@default_week_format") {
+        (
+            "@@default_week_format",
+            Value::UInt64(u64::from(session.default_week_format)),
         )
     } else if normalized.contains("@@div_precision_increment") {
         (
@@ -4976,6 +5002,10 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         )
         .expect("compatibility response");
         assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(2)]]);
+        assert!(
+            compatibility_query("SELECT 1, @@version", "analytics", &Session::default()).is_none(),
+            "a mixed projection is the engine's to answer, not one column of it"
+        );
     }
 
     /// A peer that opens a socket and then says nothing must be let go.

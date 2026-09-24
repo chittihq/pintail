@@ -416,7 +416,12 @@ pub(super) fn bind_scalar_function(
         "DAYOFWEEK" if args.len() == 1 => ScalarFunction::DatePart(DatePart::DayOfWeek),
         "WEEKDAY" if args.len() == 1 => ScalarFunction::DatePart(DatePart::WeekDay),
         "DAYOFYEAR" if args.len() == 1 => ScalarFunction::DatePart(DatePart::DayOfYear),
-        "WEEK" if args.len() == 1 => ScalarFunction::DatePart(DatePart::Week),
+        // A one-argument WEEK takes the session's `default_week_format`,
+        // fixed at bind time the way a literal mode is.
+        "WEEK" if args.len() == 1 => match crate::bound::session_default_week_format() {
+            0 => ScalarFunction::DatePart(DatePart::Week),
+            mode => ScalarFunction::DatePart(DatePart::WeekMode(mode)),
+        },
         "WEEK" if args.len() == 2 => {
             let mode = match &args[1].kind {
                 BoundExprKind::Literal(Value::Int64(mode @ 0..=7)) => {

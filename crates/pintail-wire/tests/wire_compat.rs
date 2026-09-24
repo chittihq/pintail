@@ -525,19 +525,32 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         Some(6)
     );
     widened_meta.drop_result().await.expect("drain");
-    // Settings whose other values are not implemented are refused, not ignored.
+    // A locale whose names are not implemented is refused, not ignored.
     assert!(
         connection
             .query_drop("SET lc_time_names = 'de_DE'")
             .await
             .is_err()
     );
-    assert!(
-        connection
-            .query_drop("SET default_week_format = 2")
-            .await
-            .is_err()
-    );
+    // default_week_format is the mode a one-argument WEEK takes.
+    connection
+        .query_drop("SET default_week_format = 2")
+        .await
+        .expect("set week format");
+    let weeks: Vec<(u64, u64, u64)> = connection
+        .query("SELECT WEEK('2024-01-01'), WEEK('2024-01-01', 2), WEEK('2024-01-01', 0)")
+        .await
+        .expect("week under format 2");
+    assert_eq!(weeks, vec![(53, 53, 0)]);
+    let format: Vec<u64> = connection
+        .query("SELECT @@default_week_format")
+        .await
+        .expect("read week format");
+    assert_eq!(format, vec![2]);
+    connection
+        .query_drop("SET default_week_format = 0")
+        .await
+        .expect("restore week format");
     // sql_select_limit caps a SELECT without its own LIMIT, as a JDBC
     // setMaxRows asks; a written LIMIT is its own.
     connection

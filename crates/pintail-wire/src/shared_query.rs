@@ -85,6 +85,8 @@ pub(crate) struct SharedQueryKey {
     pub(crate) div_precision_increment: u8,
     /// The session's `sql_select_limit`, which caps how many rows are returned.
     pub(crate) select_limit: Option<u64>,
+    /// The session's `default_week_format`, the mode a one-argument `WEEK` binds to.
+    pub(crate) default_week_format: u8,
     /// The session's `sql_mode` flags: the same text binds to a different
     /// statement, or evaluates differently, under another mode.
     pub(crate) parse_mode: pintail_sql::ParseMode,
@@ -105,6 +107,7 @@ impl SharedQueryKey {
             cte_max_recursion_depth: pintail_exec::session_cte_max_recursion_depth(),
             div_precision_increment: pintail_sql::session_div_precision_increment(),
             select_limit: pintail_sql::session_select_limit(),
+            default_week_format: pintail_sql::session_default_week_format(),
             parse_mode: pintail_sql::session_parse_mode(),
         }
     }
@@ -409,6 +412,7 @@ mod tests {
             cte_max_recursion_depth: 1000,
             div_precision_increment: 4,
             select_limit: None,
+            default_week_format: 0,
             parse_mode: pintail_sql::ParseMode::default(),
         }
     }
