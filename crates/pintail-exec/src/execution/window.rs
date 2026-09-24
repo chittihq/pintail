@@ -372,9 +372,12 @@ fn columnar_window(
         row_count += batch.visible_row_count();
     }
     let mut results = Vec::with_capacity(windows.len());
+    let mut results_bytes = 0_usize;
     for window in windows {
         let held = memory.used();
         let mut key_batches = Vec::with_capacity(batches.len());
+        // One row handle per input row, allocated up front.
+        memory.reserve(row_count.saturating_mul(size_of::<Vec<Value>>()))?;
         let mut keys = Vec::with_capacity(row_count);
         for batch in batches {
             let mut columns = Vec::with_capacity(window.key_types.len());
@@ -386,7 +389,6 @@ fn columnar_window(
             }
             let mut key_batch = RecordBatch::new(batch.row_count(), columns)?;
             key_batch.set_selection(batch.selection().clone())?;
-            memory.reserve(key_batch.estimated_bytes())?;
             for row in batch.selection().selected_rows() {
                 let values = key_batch
                     .columns()
@@ -400,14 +402,24 @@ fn columnar_window(
                 memory.reserve(estimated_row_payload_bytes(&values))?;
                 keys.push(values);
             }
+            // Charged after the rows are read: reading a typed column by row
+            // materializes its values, which the batch then holds as well.
+            memory.reserve(key_batch.estimated_bytes())?;
             key_batches.push(key_batch);
         }
         let order = columnar_order(window, key_batches, &offsets, memory, collation)?;
-        results.push(compute_window_column(
-            window, &keys, row_count, &order, memory, collation,
-        )?);
+        let result = compute_window_column(window, &keys, row_count, &order, memory, collation)?;
+        // The computed column is held, beside the keys at first, until every
+        // output batch has copied its share out of it.
+        let bytes = result
+            .capacity()
+            .saturating_mul(size_of::<Value>())
+            .saturating_add(result.iter().map(Value::heap_bytes).sum::<usize>());
+        memory.reserve(bytes)?;
+        results.push(result);
+        results_bytes = results_bytes.saturating_add(bytes);
         drop(keys);
-        memory.release(memory.used().saturating_sub(held));
+        memory.release(memory.used().saturating_sub(held).saturating_sub(bytes));
     }
     let mut output = VecDeque::with_capacity(batches.len());
     for (batch, offset) in batches.iter().zip(offsets) {
@@ -427,6 +439,8 @@ fn columnar_window(
         answered.set_selection(batch.selection().clone())?;
         output.push_back(answered);
     }
+    drop(results);
+    memory.release(results_bytes);
     Ok(Some(output))
 }
 
