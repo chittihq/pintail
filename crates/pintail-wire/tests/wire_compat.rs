@@ -681,7 +681,7 @@ async fn mysql_client_auth_metadata_prepared_query_and_read_only_error() {
         Some(6)
     );
     widened_meta.drop_result().await.expect("drain");
-    // Settings whose other values are not implemented are refused, not ignored.
+    // A locale whose names are not implemented is refused, not ignored.
     assert!(
         connection
             .query_drop("SET lc_time_names = 'missing_locale'")

@@ -116,10 +116,114 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Session time zones and fractional seconds in Unix timestamp conversions,
   including negative inputs and upper-range rounding.
 
+- A source ALTER that had not streamed yet could leave a table's store
+  refusing to open with a schema fingerprint mismatch. A table never altered
+  took its shape from the stored probe, which a re-probe, forced snapshot or
+  sibling resync rewrites with the source's current columns. Its first
+  shape is now recorded in schema history when its store first opens.
+- One table's storage refusing its rows, a TRUNCATE its store could not
+  take, or a failed first copy of a newly created table stopped replication
+  for every table and failed the same way each cycle. That table is now
+  quarantined for the automatic resync while the rest keep streaming.
+- A grouped `SUM`, `AVG`, `MIN` or `MAX` over a projected decimal column
+  holding a CASE with an integer branch (`CASE ... THEN price ELSE 0 END`,
+  through a derived table or view) answered NULL for every group.
+- `GROUP BY` on several keys, one of them under a binary collation, merged
+  keys that differ only in letter case.
+- `SELECT 1, @@version` - a connection variable beside any other item -
+  returned the variable's column alone.
+- `CAST(x AS SIGNED)` and `AS UNSIGNED` truncated a fractional number where
+  MySQL rounds it (`CAST(1.5 AS SIGNED)` is 2), and refused an operand that
+  did not fit where MySQL saturates it.
+
+
+### Added
+
+- `default_week_format` is honored: a one-argument `WEEK()` uses the
+  session's mode, 0 to 7.
+
+### Performance
+
+- Aggregates over a computed argument (`SUM(CASE ...)`, `SUM(a * b)`,
+  `AVG(x + 1)`) project the argument a batch at a time and take the parallel
+  aggregation paths: up to three times faster over 2M rows.
+- `GROUP BY` on a text key or several keys found each new group by scanning
+  every group so far, which was quadratic in the group count. A collation-
+  keyed index answers it with one lookup.
+
 ### Changed
 
 - MTR replay artifacts are retained per invocation with source and binary
   provenance, statement identities, and bounded diagnostic samples.
+
+### Verification
+
+- The MTR harness keeps the better of a run and its replay, and the MySQL
+  and MariaDB suites no longer overwrite each other's diffs.
+- A nightly workflow replays the MTR suites, replica mode included, which
+  no gate ran before.
+- The rc gate generates the dashboard once and builds under one setting, so
+  stages no longer rebuild and relink the binary between them.
+- The rc gate runs in about 13 minutes instead of about 43: the unit stage
+  runs in parallel (timing-sensitive tests one at a time, with retries), each
+  crate's integration tests build as one binary, MTR files replay eight at a
+  time with the two suites side by side, and a second Docker host takes the
+  mtr, migrations and MySQL 8.0 stages once the oracle has passed.
+
+## [0.1.5-rc5] - 2026-09-24
+
+Fixes from reviewing the verification program, and one replication stall.
+Twenty-three commits since rc4.
+
+### Fixed
+
+- One table whose store could not open stopped replication for the whole
+  database. A store written for another shape of its table - same schema
+  version, different fingerprint - failed every cycle, and the failure was
+  written onto every table, so all of them showed the same fingerprint error
+  and none of them streamed. That table is now quarantined on its own, the
+  rest keep streaming, and the automatic resync recopies it.
+- Change capture stopped for good when every tracked table had been dropped
+  and re-created; it now keeps running and reads the CREATE events that
+  replace the retained rows.
+- A table whose name differs only in case from another source table is
+  quarantined, not just skipped, so it cannot rejoin the stream later with
+  rows missing from the gap.
+- A keyless table is no longer copied without the global read lock. Without
+  it, events between the captured position and the copy were replayed on
+  top of the copy, and a keyless table has no key to absorb the duplicates.
+- A crash between a transaction's rows and its commit record could leave a
+  table that refused every later open. Recovery now frees the sequences of
+  the transaction that never committed.
+- `AVG` and division honour the session's `div_precision_increment` in the
+  cached aggregate and in the column metadata a driver reads; both assumed
+  four digits.
+- `CAST('101112' AS TIME)` and `TIME('101112')` read the digits as packed
+  `HHMMSS` instead of a date; `DIV` with an unsigned operand and a
+  non-integer one no longer overflows; a hex literal converts to a number
+  correctly.
+- `SET @v = ...` keeps backslash escapes and `:=` inside literals, and a
+  `SET` list applies every assignment.
+- A local `CREATE TABLE` reads unquoted `ENUM`/`SET` numbers as positions,
+  and three other definition details from the parsed statement rather than
+  its text.
+- `CAST(x AS BINARY(n))` wider than `max_allowed_packet` answers `NULL` with
+  warning 1301 instead of allocating the declared width for every row.
+- Parallel execution workers get the same 8 MiB stack as the calling thread,
+  so how deep a query may recurse no longer depends on which thread ran it.
+- A connection the disconnect watch closes now logs which of EOF, a
+  readiness failure or a read error it saw.
+
+### Verification
+
+- The MySQL and MariaDB suite replay reads the suites' SQL correctly,
+  forwards their session statements, refuses a baseline banked against a
+  different oracle, and lets a partial run speak only for the files it ran.
+- The CDC matrix runs every leg it claims; the farm masks varying numbers
+  rather than identifying ones; the preflight sweep only removes abandoned
+  containers.
+- The oracle no longer compares a spelling that a case-insensitive `UNION`
+  or `INTERSECT` may legitimately return either way.
 
 ## [0.1.5-rc4] - 2026-09-13
 

@@ -1,8 +1,8 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-13T20:46:17.638Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-24T13:38:22.860Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-**3,448 of 3,884 compared SELECTs match MySQL byte-for-byte** (88.8%), **out of 23,119 SELECTs replayed** - 19,235 never reached a comparison, so this is a share of what could be compared and not of the suite. 395 differ in rows, 41 in column names only. 4,217 SELECTs Pintail could not run, 10,132 were not compared because their tables were changed by statements a local database cannot follow, 2,909 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. Fixtures: 10,562 accepted, 680 rejected by Pintail, 28,755 outside the replayed subset.
+**3,462 of 3,899 compared SELECTs match MySQL byte-for-byte** (88.8%), **out of 23,119 SELECTs replayed** - 19,220 never reached a comparison, so this is a share of what could be compared and not of the suite. 396 differ in rows, 41 in column names only. 4,202 SELECTs Pintail could not run, 10,132 were not compared because their tables were changed by statements a local database cannot follow, 2,909 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. Fixtures: 10,562 accepted, 680 rejected by Pintail, 28,755 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -25,7 +25,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | big_packets_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | big_packets_boundary | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | big_packets_boundary_async | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| bigint | 171 | 59 | 1 | 2 | 9 | 20 | 0 | 53 | 5 | 12 | 2 | 7 |
+| bigint | 171 | 61 | 1 | 2 | 7 | 20 | 0 | 53 | 5 | 12 | 2 | 7 |
 | binary | 82 | 8 | 1 | 0 | 11 | 19 | 0 | 29 | 1 | 8 | 0 | 3 |
 | binary_to_hex | 11 | 0 | 0 | 0 | 0 | 0 | 0 | 5 | 1 | 0 | 1 | 4 |
 | bind_address_1_not_windows | 4 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |
@@ -34,7 +34,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | bool | 30 | 15 | 1 | 0 | 4 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
 | bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
 | case | 140 | 33 | 2 | 0 | 2 | 11 | 0 | 49 | 3 | 11 | 7 | 22 |
-| cast | 564 | 133 | 34 | 0 | 29 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
+| cast | 564 | 139 | 34 | 0 | 23 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
 | change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 |
 | character_set_deprecation | 100 | 8 | 0 | 0 | 26 | 0 | 0 | 13 | 21 | 13 | 3 | 13 |
 | charset | 77 | 0 | 1 | 2 | 0 | 4 | 0 | 15 | 1 | 6 | 11 | 36 |
@@ -220,9 +220,9 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
 | func_sapdb | 88 | 45 | 4 | 0 | 28 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
 | func_set | 77 | 18 | 3 | 0 | 17 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
-| func_str | 834 | 341 | 10 | 9 | 170 | 13 | 0 | 145 | 3 | 17 | 18 | 94 |
+| func_str | 834 | 341 | 12 | 9 | 168 | 13 | 0 | 145 | 3 | 17 | 18 | 94 |
 | func_test | 221 | 91 | 10 | 3 | 24 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
-| func_time | 599 | 277 | 19 | 0 | 66 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
+| func_time | 599 | 278 | 18 | 0 | 66 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
 | func_timestamp | 7 | 0 | 1 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
 | func_unixtime | 96 | 31 | 17 | 0 | 2 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
 | func_uuid | 99 | 0 | 0 | 0 | 29 | 9 | 0 | 12 | 3 | 8 | 3 | 35 |
@@ -231,7 +231,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | functional_index | 227 | 4 | 0 | 0 | 0 | 6 | 0 | 97 | 6 | 34 | 2 | 72 |
 | gcc296 | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 0 | 0 |
 | generated_invisible_primary_key | 122 | 0 | 0 | 0 | 0 | 0 | 0 | 40 | 1 | 20 | 9 | 52 |
-| get_diagnostics | 225 | 7 | 11 | 0 | 8 | 0 | 0 | 27 | 0 | 30 | 8 | 134 |
+| get_diagnostics | 225 | 12 | 11 | 0 | 3 | 0 | 0 | 27 | 0 | 30 | 8 | 134 |
 | get_table_share | 116 | 0 | 0 | 0 | 0 | 0 | 0 | 19 | 0 | 1 | 75 | 21 |
 | global_status_gr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | gr_member_actions | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 5 |
@@ -655,7 +655,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 152 | Error: unsupported expression: weight_string(_) |
 | 77 | INSERT: Error: only literal values are supported in INSERT, got _ |
 | 70 | Error: unsupported expression: AES_ENCRYPT(_, @KEY1, @IVA) |
-| 69 | Error: numeric expression overflow |
+| 63 | Error: numeric expression overflow |
 | 58 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
 | 45 | Error: unsupported expression: ST_GeomFromText(_) |
 | 43 | DDL: Error: character set utf32 is not supported on a local table |

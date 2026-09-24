@@ -782,7 +782,7 @@ pub(crate) fn open_tracked_store(
         .map_err(display)?;
     let attempted =
         open_store_with_history(metadata, database_id, source, directory.clone(), &history);
-    match attempted {
+    let opened = match attempted {
         Err(message)
             if wipe_on_schema_mismatch
                 && (message.contains("schema fingerprint mismatch")
@@ -855,7 +855,14 @@ pub(crate) fn open_tracked_store(
             .map_err(display)
         }
         other => other,
+    };
+    // The copy about to run fills this shape; recording it as the first
+    // generation keeps a later re-probe from redefining it (see
+    // `freeze_first_generation`).
+    if history.is_empty() && opened.is_ok() {
+        pintail_cdc::freeze_first_generation(metadata, database_id, source).map_err(display)?;
     }
+    opened
 }
 
 fn open_store_with_history(

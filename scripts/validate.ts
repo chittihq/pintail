@@ -105,6 +105,14 @@ interface Stage {
   /// no lane: the repository protocol gives oracle, E2E, benchmark, and
   /// acceptance exclusive use of the shared Docker host.
   lane?: string
+  /// With PINTAIL_VALIDATE_SECOND_HOST set, the stage runs on that Docker
+  /// host in a second remote sequence beside the first. Only stages that
+  /// start their own containers, reach them through DOCKER_HOST and hold no
+  /// check on the tree while they run belong here.
+  secondHost?: boolean
+  /// Waits for the second remote sequence to finish before it starts: it
+  /// needs the tree to itself or measures the host.
+  exclusive?: boolean
   timeoutMinutes: number
   command: string[]
   cwd?: string
@@ -173,15 +181,12 @@ const STAGES: Stage[] = [
     // discovery cost distinct from a test stall and within the gate budget.
     timeoutMinutes: 40,
     stallMinutes: 30,
-    // Serial discovery avoids macOS launching every fresh test binary into
-    // concurrent provenance checks. The tests themselves are fast enough that
-    // this is materially quicker and more reliable than loader fan-out.
-    // Share the recovery profile's optimized development build while keeping
-    // resource-sensitive tests serial. Debug assertions and overflow checks stay on.
-    command: [
-      'cargo', 'nextest', 'run', '--cargo-profile', 'recovery',
-      '--test-threads', '1', '--workspace',
-    ],
+    // Parallel across the host's cores, one process per test. Tests that
+    // assert on a timing or on core usage run one at a time, with retries:
+    // .config/nextest.toml names them. The recovery profile is an optimized
+    // development build;
+    // debug assertions and overflow checks stay on.
+    command: ['cargo', 'nextest', 'run', '--cargo-profile', 'recovery', '--workspace'],
   },
   {
     // This is a separate Cargo workspace, so the workspace unit stage
@@ -206,14 +211,18 @@ const STAGES: Stage[] = [
     // must still be exact. Both suites share one stage so a gate never
     // reports one of them green while the other did not run.
     name: 'mtr',
+    secondHost: true,
     remote: true,
     timeoutMinutes: 30,
     stallMinutes: 10,
     command: [
       'bash', '-c',
+      // The two suites run side by side: each starts its own oracle and its
+      // own server, and neither reads the other's diffs or ledger.
       'bun install --frozen-lockfile && "$CARGO" build --release -p pintail' +
-        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 bun run run.ts' +
-        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 MTR_SUITE=mariadb bun run run.ts',
+        ' && export PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1' +
+        ' && { bun run run.ts & mysql=$!; MTR_SUITE=mariadb bun run run.ts & mariadb=$!;' +
+        ' wait $mysql; a=$?; wait $mariadb; b=$?; exit $(( a || b )); }',
     ],
     cwd: join(repository, 'tests', 'mtr'),
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
@@ -246,6 +255,7 @@ const STAGES: Stage[] = [
     // left the rows it never mentioned correct. Banks
     // tests/e2e/results-migrations.md.
     name: 'migrations',
+    secondHost: true,
     remote: true,
     env: process.env.PINTAIL_E2E_DOCKER_HOST
       ? { DOCKER_HOST: process.env.PINTAIL_E2E_DOCKER_HOST }
@@ -261,6 +271,7 @@ const STAGES: Stage[] = [
     // the primary leg). Banks its own ledger (results-mysql80.md). Part of
     // the rc stage list - a version we claim is covered has to gate.
     name: 'e2e-mysql80',
+    secondHost: true,
     remote: true,
     env: {
       ...(process.env.PINTAIL_E2E_DOCKER_HOST
@@ -279,6 +290,7 @@ const STAGES: Stage[] = [
     // Deterministic crash, storage-error and source-outage recovery. Stable
     // only: each rc already runs both complete MySQL differential legs.
     name: 'recovery',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 75,
     stallMinutes: 15,
@@ -291,6 +303,7 @@ const STAGES: Stage[] = [
     // sakila dataset - tens of minutes BY DESIGN. Opt-in only; never in the
     // default stage list or the release chain.
     name: 'soak',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 180,
     stallMinutes: 45,
@@ -303,6 +316,7 @@ const STAGES: Stage[] = [
     // memory measurement that runs on Linux, which is where the allocator
     // that hoarded seven gigabytes on staging lives.
     name: 'memsoak',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 45,
     stallMinutes: 20,
@@ -350,6 +364,7 @@ const STAGES: Stage[] = [
   },
   {
     name: 'bench',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 90,
     stallMinutes: 25,
@@ -358,6 +373,7 @@ const STAGES: Stage[] = [
   },
   {
     name: 'accept',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 120,
     // The stage that hung twice. Its dataset copy and snapshot both report
@@ -1016,6 +1032,16 @@ async function main() {
     return true
   }
 
+  /// Two remote sequences can reach a stage start at the same moment, and
+  /// two shelvings at once race on the git index: one checkout fails on the
+  /// other's lock and its stage aborts as if the tree were dirty.
+  let shelving: Promise<unknown> = Promise.resolve()
+  function shelveInTurn(context: string): Promise<boolean> {
+    const turn = shelving.then(() => shelveHarnessArtifacts(context))
+    shelving = turn.catch(() => {})
+    return turn
+  }
+
   /// Returns the shelved ledgers to the working tree so the run's evidence is
   /// on disk, uncommitted, for whoever decides to keep it.
   async function unshelveHarnessArtifacts(): Promise<void> {
@@ -1073,7 +1099,45 @@ async function main() {
     // e2e, browser, and accept each build the same release binary; build it
     // once here and hand every stage the path through the overrides they
     // already honor. Skipped when the caller exported a binary of its own.
-    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak']
+    // Several stages build with PINTAIL_DASHBOARD_PREBUILT=1 and the rest
+    // without it, and pintail-api's build script reruns when that variable
+    // changes - so every flip between stages rebuilt the crate and relinked
+    // the binary, the release one included. Generate the dashboard once and
+    // hold the variable for the whole run: the prebuild below, mtr's own
+    // `cargo build` and every test profile then agree, and a build a stage
+    // repeats is a no-op.
+    if (!process.env.PINTAIL_DASHBOARD_PREBUILT) {
+      status('dashboard: bun install && bun run generate')
+      const dashboard = await run(['bash', '-c', 'bun install --frozen-lockfile && bun run generate'], {
+        timeoutMinutes: 10,
+        label: 'dashboard',
+        cwd: join(repository, 'packages', 'dashboard'),
+      })
+      if (dashboard.code !== 0) {
+        status('ABORT: dashboard generation failed')
+        writeFileSync(join(runDir, 'dashboard.log'), dashboard.output)
+        process.exit(2)
+      }
+      process.env.PINTAIL_DASHBOARD_PREBUILT = '1'
+    }
+    // Every stage that runs tests/e2e/run.ts imports the ORM checks, and
+    // those import a generated Prisma client that is not in the tree: a
+    // fresh checkout failed the first such stage before it said anything.
+    // Generate it once for the whole run.
+    if (requested.some((name) => STAGES.find((stage) => stage.name === name)?.cwd === join(repository, 'tests', 'e2e'))) {
+      status('e2e: bun install && prisma generate')
+      const prisma = await run(['bash', '-c', 'bun install --frozen-lockfile && bun run generate:prisma'], {
+        timeoutMinutes: 10,
+        label: 'prisma',
+        cwd: join(repository, 'tests', 'e2e'),
+      })
+      if (prisma.code !== 0) {
+        status('ABORT: generating the e2e Prisma client failed')
+        writeFileSync(join(runDir, 'prisma.log'), prisma.output)
+        process.exit(2)
+      }
+    }
+    const binaryConsumers = ['e2e', 'browser', 'accept', 'soak', 'mtr', 'migrations', 'e2e-mysql80']
     if (
       !process.env.PINTAIL_E2E_BINARY
       && requested.some((name) => binaryConsumers.includes(name))
@@ -1110,7 +1174,7 @@ async function main() {
     const runStage = async (stage: (typeof STAGES)[number]) => {
         // Earlier stages rewrite harness artifacts and the benchmark
         // refuses dirty trees: bank artifacts before every remote stage.
-        if (stage.remote && !(await shelveHarnessArtifacts(stage.name))) {
+        if (stage.remote && !(await shelveInTurn(stage.name))) {
           status(`ABORT before ${stage.name}: working tree has non-artifact changes — commit first`)
           results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'dirty tree' })
           return undefined
@@ -1204,7 +1268,42 @@ async function main() {
       status(`lane local: ${localStages.map((one) => one.name).join(' → ')} overlapping the remote sequence`)
     }
 
-    for (const group of remoteGroups) {
+    // A second Docker host takes the stages marked for it off the first
+    // host's sequence. They start once the oracle is done - the oracle
+    // refuses evidence from a tree that changes under it, and these stages
+    // write ledgers - and an exclusive stage waits for them to finish.
+    const secondHost = process.env.PINTAIL_VALIDATE_SECOND_HOST?.trim()
+    const secondStages = secondHost
+      ? remoteGroups.flat().filter((stage) => stage.secondHost)
+          .map((stage) => ({ ...stage, env: { ...stage.env, DOCKER_HOST: secondHost } }))
+      : []
+    const firstGroups = remoteGroups
+      .map((group) => group.filter((stage) => !secondStages.some((moved) => moved.name === stage.name)))
+      .filter((group) => group.length > 0)
+    const secondResults: Array<{ name: string; verdict: string; minutes: number; note: string }> = []
+    let secondRun: Promise<void> | undefined
+    const startSecond = () => {
+      if (secondRun || secondStages.length === 0) return
+      status(`lane ${secondHost}: ${secondStages.map((one) => one.name).join(' → ')} beside the first host`)
+      secondRun = (async () => {
+        for (const stage of secondStages) {
+          const outcome = await runStage(stage)
+          if (!outcome) return
+          secondResults.push(outcome)
+          if (outcome.verdict !== 'PASS') return
+        }
+      })()
+    }
+    const secondFailed = () =>
+      secondResults.some((outcome) => outcome.verdict !== 'PASS')
+      || (secondStages.length > 0 && results.some((outcome) => outcome.verdict === 'ABORTED'))
+    if (!firstGroups.flat().some((stage) => stage.name === 'oracle')) startSecond()
+
+    for (const group of firstGroups) {
+      if (group.some((stage) => stage.exclusive) && secondRun) {
+        await secondRun
+        if (secondFailed()) break
+      }
       if (group.length > 1) {
         status(`lane ${group[0].lane}: ${group.map((one) => one.name).join(' + ')} together`)
       }
@@ -1215,6 +1314,16 @@ async function main() {
       // already recorded its own ABORTED row; either way the run stops.
       if (outcomes.length !== group.length) break
       if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
+      if (group.some((stage) => stage.name === 'oracle')) startSecond()
+    }
+    // A first sequence that stopped before the oracle passed never started
+    // the second one; its stages report as not run below.
+    await secondRun
+    results.push(...secondResults)
+    for (const stage of secondStages) {
+      if (!results.some((result) => result.name === stage.name)) {
+        results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'did not run' })
+      }
     }
     await localRun
     // Report rows keep the declared stage order whatever finished first.

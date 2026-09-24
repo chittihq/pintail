@@ -50,7 +50,7 @@ const JOBS: Job[] = [
     seedsPerRun: 5000,
     docker: false,
     command: (seed) => ({
-      args: [cargo, 'test', '--release', '-p', 'pintail-store', '--test', 'disk_faults'],
+      args: [cargo, 'test', '--release', '-p', 'pintail-store', '--test', 'integration', 'disk_faults::'],
       env: { ...cargoEnv, PINTAIL_DISK_FAULT_SEED_BASE: String(seed), PINTAIL_DISK_FAULT_SEEDS: '5000' },
     }),
   },

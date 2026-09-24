@@ -2702,10 +2702,18 @@ fn evaluate_eager_scalar_inner(
             if let Some(value) = cast_datetime_precision(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
-            cast_scalar(
+            match cast_scalar(
                 &numeric_cast_operand(&values[0], argument_types, target),
                 Some(target),
-            )
+            ) {
+                Err(ExecError::NumericOverflow) => saturated_integer_cast(
+                    &values[0],
+                    argument_types.first().copied().flatten(),
+                    target,
+                )
+                .ok_or(ExecError::NumericOverflow),
+                other => other,
+            }
         }
         ScalarFunction::DeclaredCast { target, characters } => {
             if matches!(target, DataType::Int64 | DataType::UInt64)
@@ -2728,10 +2736,18 @@ fn evaluate_eager_scalar_inner(
             if let Some(value) = cast_datetime_precision(&values[0], target, values.get(1)) {
                 return Ok(value);
             }
-            let mut value = cast_scalar(
+            let mut value = match cast_scalar(
                 &numeric_cast_operand(&values[0], argument_types, target),
                 Some(target),
-            )?;
+            ) {
+                Err(ExecError::NumericOverflow) => saturated_integer_cast(
+                    &values[0],
+                    argument_types.first().copied().flatten(),
+                    target,
+                )
+                .ok_or(ExecError::NumericOverflow)?,
+                other => other?,
+            };
             if let (Some(characters), Value::Utf8(text)) = (characters, &mut value)
                 && let Some((offset, _)) = text.char_indices().nth(characters as usize)
             {
@@ -4732,6 +4748,11 @@ fn numeric_cast_operand<'a>(
         && let Some(number) = date_as_number(value, target)
     {
         std::borrow::Cow::Owned(number)
+    } else if matches!(target, DataType::Int64 | DataType::UInt64)
+        && let Some(rounded) =
+            rounded_integer_operand(value, argument_types.first().copied().flatten())
+    {
+        std::borrow::Cow::Owned(rounded)
     } else {
         std::borrow::Cow::Borrowed(value)
     }
@@ -4746,6 +4767,30 @@ fn expression_calendar_locale(
         _ => 0,
     };
     crate::calendar_locale::locale(locale)
+}
+
+/// A fractional number rounded to the integer `CAST AS SIGNED`/`UNSIGNED`
+/// answers, which the integer readers would otherwise truncate. `MySQL`
+/// rounds a float half to even (`CAST(2.5e0 AS SIGNED)` is 2) and an exact
+/// decimal half away from zero (`CAST(2.5 AS SIGNED)` is 3). Text is read
+/// by its integer prefix and is left alone: `CAST('2.5' AS SIGNED)` is 2.
+fn rounded_integer_operand(value: &Value, argument_type: Option<DataType>) -> Option<Value> {
+    match value {
+        Value::Float64(number) if number.get().fract() != 0.0 => {
+            Some(Value::float64(number.get().round_ties_even()))
+        }
+        Value::DecimalAverage(average) if average.label.contains('.') => {
+            pintail_types::parse_decimal_rounded(&average.label, 0)
+                .map(|units| Value::Utf8(units.to_string()))
+        }
+        Value::Utf8(text)
+            if matches!(argument_type, Some(DataType::Decimal { .. })) && text.contains('.') =>
+        {
+            pintail_types::parse_decimal_rounded(text, 0)
+                .map(|units| Value::Utf8(units.to_string()))
+        }
+        _ => None,
+    }
 }
 
 fn scalar_string(value: &Value) -> Result<String, ExecError> {
@@ -4892,6 +4937,10 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         // elsewhere still refuse.
         Some(DataType::UInt64) => Ok(Value::UInt64(match value {
             Value::Int64(signed) if *signed < 0 => (*signed).cast_unsigned(),
+            // A float converts through a signed integer, as MySQL's does:
+            // -1.5 wraps to 18446744073709551614 and 1e19 stops at the
+            // signed maximum (the overflow is answered by the caller).
+            Value::Float64(_) => mysql_i64(value)?.cast_unsigned(),
             Value::Utf8(text) | Value::Enum { label: text, .. }
                 if text.trim_start().starts_with('-') =>
             {
@@ -4912,6 +4961,81 @@ fn cast_scalar(value: &Value, data_type: Option<DataType>) -> Result<Value, Exec
         }),
         Some(_) => unreachable!("storage_type returns a physical scalar type"),
     }
+}
+
+/// An explicit `CAST` to an integer whose operand does not fit, as `MySQL`
+/// answers it rather than refusing. Text reads its leading integer and
+/// saturates to the unsigned range, then `SIGNED` reinterprets the bits:
+/// `CAST('18446744073709551616' AS SIGNED)` is -1. A number saturates to
+/// the signed range instead - `CAST(18446744073709551616 AS SIGNED)` is
+/// 9223372036854775807 - except that an exact decimal above it still reaches
+/// the top of the unsigned range under `UNSIGNED`. A negative that does not
+/// fit stops at `i64::MIN` either way, reinterpreted under `UNSIGNED`.
+/// `None` for any other target, or a value with no number to read.
+fn saturated_integer_cast(
+    value: &Value,
+    argument_type: Option<DataType>,
+    target: DataType,
+) -> Option<Value> {
+    let unsigned = match target.storage_type() {
+        DataType::Int64 => false,
+        DataType::UInt64 => true,
+        _ => return None,
+    };
+    let exact = matches!(argument_type, Some(DataType::Decimal { .. }));
+    let numeric = exact
+        || matches!(
+            argument_type,
+            Some(
+                DataType::Float32
+                    | DataType::Float64
+                    | DataType::Boolean
+                    | DataType::Int8
+                    | DataType::Int16
+                    | DataType::Int32
+                    | DataType::Int64
+                    | DataType::UInt8
+                    | DataType::UInt16
+                    | DataType::UInt32
+                    | DataType::UInt64
+            )
+        );
+    let negative = match value {
+        Value::Float64(number) => number.get() < 0.0,
+        other => other.text()?.trim_start().starts_with('-'),
+    };
+    if negative {
+        return Some(if unsigned {
+            Value::UInt64(i64::MIN.cast_unsigned())
+        } else {
+            Value::Int64(i64::MIN)
+        });
+    }
+    let top = if numeric {
+        if unsigned && exact {
+            u64::MAX
+        } else {
+            i64::MAX.cast_unsigned()
+        }
+    } else {
+        let digits = value
+            .text()?
+            .trim_start()
+            .trim_start_matches('+')
+            .bytes()
+            .take_while(u8::is_ascii_digit)
+            .fold(0_u128, |total, digit| {
+                total
+                    .saturating_mul(10)
+                    .saturating_add(u128::from(digit - b'0'))
+            });
+        u64::try_from(digits).unwrap_or(u64::MAX)
+    };
+    Some(if unsigned {
+        Value::UInt64(top)
+    } else {
+        Value::Int64(top.cast_signed())
+    })
 }
 
 /// Converts `MySQL`'s interval-shaped `TIME` syntax without routing through a

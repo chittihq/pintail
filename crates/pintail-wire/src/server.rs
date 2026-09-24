@@ -5731,6 +5731,10 @@ ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION",
         )
         .expect("compatibility response");
         assert_eq!(casing.rows, vec![vec![pintail_types::Value::UInt64(2)]]);
+        assert!(
+            compatibility_query("SELECT 1, @@version", "analytics", &Session::default()).is_none(),
+            "a mixed projection is the engine's to answer, not one column of it"
+        );
     }
 
     /// A peer that opens a socket and then says nothing must be let go.

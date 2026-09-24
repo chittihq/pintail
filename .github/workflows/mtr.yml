@@ -1,0 +1,72 @@
+# Nightly MTR ratchet on GitHub-hosted runners.
+#
+# The rc gate replays the MySQL and MariaDB suites in local mode; replica
+# mode (fixtures built on a live MySQL source and read back through CDC) has
+# a banked baseline that no gate ran, so it could drift unnoticed. Each leg
+# runs against the runner's own Docker and fails on any banked statement
+# that is no longer exact.
+
+name: MTR
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mtr-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TARGET_DIR: target
+  PINTAIL_DASHBOARD_PREBUILT: '1'
+
+jobs:
+  mtr:
+    name: MTR ${{ matrix.suite }} ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { suite: mysql, mode: local }
+          - { suite: mariadb, mode: local }
+          - { suite: mysql, mode: replica }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: mtr
+      - name: Dashboard assets
+        working-directory: packages/dashboard
+        run: |
+          bun install --frozen-lockfile
+          bun run generate
+      - run: cargo build --release -p pintail
+      - run: bun install --frozen-lockfile
+        working-directory: tests/mtr
+      - name: Replay against MySQL 8.4
+        working-directory: tests/mtr
+        env:
+          PINTAIL_MTR_BINARY: ../../target/release/pintail
+          MTR_GATE: '1'
+          MTR_SUITE: ${{ matrix.suite }}
+          MTR_MODE: ${{ matrix.mode }}
+        run: bun run run.ts
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mtr-${{ matrix.suite }}-${{ matrix.mode }}-${{ github.run_attempt }}
+          path: |
+            tests/mtr/diffs/
+            tests/mtr/results*.md
+            validate-out/mtr/
+          retention-days: 14
+          if-no-files-found: warn
