@@ -26,16 +26,23 @@ env:
 
 jobs:
   mtr:
-    name: MTR ${{ matrix.suite }} ${{ matrix.mode }}
+    name: MTR ${{ matrix.suite }} ${{ matrix.mode }} ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Replica mode waits on the stream at every statement: one runner took
+    # 75 minutes over 175 of 633 files, so it runs as six shards.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         include:
           - { suite: mysql, mode: local }
           - { suite: mariadb, mode: local }
-          - { suite: mysql, mode: replica }
+          - { suite: mysql, mode: replica, shard: 1/6 }
+          - { suite: mysql, mode: replica, shard: 2/6 }
+          - { suite: mysql, mode: replica, shard: 3/6 }
+          - { suite: mysql, mode: replica, shard: 4/6 }
+          - { suite: mysql, mode: replica, shard: 5/6 }
+          - { suite: mysql, mode: replica, shard: 6/6 }
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -59,11 +66,12 @@ jobs:
           MTR_GATE: '1'
           MTR_SUITE: ${{ matrix.suite }}
           MTR_MODE: ${{ matrix.mode }}
+          MTR_SHARD: ${{ matrix.shard }}
         run: bun run run.ts
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mtr-${{ matrix.suite }}-${{ matrix.mode }}-${{ github.run_attempt }}
+          name: mtr-${{ matrix.suite }}-${{ matrix.mode }}-${{ strategy.job-index }}-${{ github.run_attempt }}
           path: |
             tests/mtr/diffs/
             tests/mtr/results*.md

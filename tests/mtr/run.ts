@@ -94,6 +94,19 @@ const baselinePath = join(import.meta.dir, `baseline${suffix}.json`)
 /// Which main-suite files to run: a comma list of names, or a regex when it
 /// starts with `^`. The default is every file EXCLUDED_PATTERN leaves.
 const FILES = process.env.MTR_FILES ?? ''
+/// `i/n`: this run replays every n-th file of the full selection, starting at
+/// the i-th (1-based). The shards of one n partition the selection exactly,
+/// so n runs together gate what one run does - replica mode waits on the
+/// stream at every statement and is too slow for one CI job.
+const SHARD = (() => {
+  const text = process.env.MTR_SHARD
+  if (!text) return undefined
+  const match = /^(\d+)\/(\d+)$/.exec(text)
+  const index = Number(match?.[1])
+  const count = Number(match?.[2])
+  if (!match || index < 1 || index > count) throw new Error(`MTR_SHARD must be i/n with 1 <= i <= n, got '${text}'`)
+  return { index, count }
+})()
 /// Files whose subject a read-only analytical replica does not have, or which
 /// drive the server itself (restarts, debug hooks, crashes, privileges). Every
 /// other file in the suite runs: a file with nothing comparable costs a few
@@ -1340,6 +1353,13 @@ async function main() {
   if (FILES.startsWith('^')) selected = all.filter((name) => new RegExp(FILES).test(name))
   else if (FILES) selected = FILES.split(',').map((name) => name.trim()).filter(Boolean)
   else selected = all.filter((name) => !EXCLUDED_PATTERN.test(name))
+  const fullSelection = new Set(selected)
+  if (SHARD) {
+    if (FILES) throw new Error('MTR_SHARD partitions the whole selection; unset MTR_FILES')
+    if (BANK) throw new Error('bank from a whole run, not one shard')
+    selected = selected.filter((_, position) => position % SHARD.count === SHARD.index - 1)
+  }
+  const shardSelection = new Set(selected)
   const baseline = GATE ? loadBaseline() : undefined
   if (baseline && FILES) throw new Error('MTR_GATE=1 runs the whole selection; unset MTR_FILES')
   if (LIMIT > 0) selected = selected.slice(0, LIMIT)
@@ -1540,9 +1560,15 @@ async function main() {
   if (BANK) bank(results, mysqlVersion)
   if (baseline) {
     const ran = new Set(results.map((r) => r.file))
-    const missing = Object.keys(baseline.files).filter((file) => !ran.has(file))
+    // A shard answers for its own files, and the first shard also for
+    // banked files no shard selects - or those would go unchecked.
+    const owned = (file: string) =>
+      !SHARD || shardSelection.has(file) || (SHARD.index === 1 && !fullSelection.has(file))
+    const missing = Object.keys(baseline.files).filter((file) => owned(file) && !ran.has(file))
     const lost = results.flatMap((r) => lostStatements(baseline, r).map((id) => `${r.file}:${id}`))
-    const banked = Object.values(baseline.files).reduce((n, ids) => n + ids.length, 0)
+    const banked = Object.entries(baseline.files)
+      .filter(([file]) => owned(file))
+      .reduce((n, [, ids]) => n + ids.length, 0)
     for (const file of missing) log(`GATE: ${file} holds banked statements and did not run`)
     for (const entry of lost) log(`GATE: lost ${entry}`)
     if (missing.length || lost.length) {
