@@ -584,7 +584,7 @@ fn run_sequence_with(ops: &[Op], fault: Option<&str>) -> Result<bool, String> {
         .args([
             "--ignored",
             "--exact",
-            "recovery_sequence_worker",
+            "recovery_sequences::recovery_sequence_worker",
             "--test-threads=1",
         ])
         .env(WORKER_ENV, "1")

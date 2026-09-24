@@ -7,7 +7,7 @@
 //! written with, and a table that cannot be opened at all refuses only its
 //! own reads.
 
-mod common;
+use crate::common;
 
 use common::{Replica, count, row, source_table, source_table_with};
 use pintail_types::DataType;

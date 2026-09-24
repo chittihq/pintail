@@ -8,7 +8,7 @@ fn failed_metadata_commit_preserves_the_previous_generation_and_can_retry() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "metadata_fault_worker",
+                "recovery_failpoints::metadata_fault_worker",
                 "--ignored",
                 "--nocapture",
             ])

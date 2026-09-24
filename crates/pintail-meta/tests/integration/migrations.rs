@@ -70,7 +70,7 @@ fn version_one_control_plane_upgrades_polling_state_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version one database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     drop(connection);
 
@@ -95,10 +95,10 @@ fn version_two_control_plane_upgrades_polling_checksums_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version two database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     connection
-        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .execute_batch(include_str!("../../migrations/002_polling.sql"))
         .expect("apply version two schema");
     drop(connection);
 
@@ -123,13 +123,13 @@ fn version_three_control_plane_upgrades_schema_tracking_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version three database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     connection
-        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .execute_batch(include_str!("../../migrations/002_polling.sql"))
         .expect("apply version two schema");
     connection
-        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .execute_batch(include_str!("../../migrations/003_poll_checksums.sql"))
         .expect("apply version three schema");
     drop(connection);
 
@@ -154,16 +154,16 @@ fn version_four_control_plane_upgrades_api_configuration_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version four database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     connection
-        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .execute_batch(include_str!("../../migrations/002_polling.sql"))
         .expect("apply version two schema");
     connection
-        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .execute_batch(include_str!("../../migrations/003_poll_checksums.sql"))
         .expect("apply version three schema");
     connection
-        .execute_batch(include_str!("../migrations/004_schema_tracking.sql"))
+        .execute_batch(include_str!("../../migrations/004_schema_tracking.sql"))
         .expect("apply version four schema");
     drop(connection);
 
@@ -197,19 +197,19 @@ fn version_five_control_plane_upgrades_wire_auth_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version five database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     connection
-        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .execute_batch(include_str!("../../migrations/002_polling.sql"))
         .expect("apply version two schema");
     connection
-        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .execute_batch(include_str!("../../migrations/003_poll_checksums.sql"))
         .expect("apply version three schema");
     connection
-        .execute_batch(include_str!("../migrations/004_schema_tracking.sql"))
+        .execute_batch(include_str!("../../migrations/004_schema_tracking.sql"))
         .expect("apply version four schema");
     connection
-        .execute_batch(include_str!("../migrations/005_api_control.sql"))
+        .execute_batch(include_str!("../../migrations/005_api_control.sql"))
         .expect("apply version five schema");
     drop(connection);
 
@@ -234,22 +234,22 @@ fn version_six_control_plane_upgrades_backup_state_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version six database");
     connection
-        .execute_batch(include_str!("../migrations/001_initial.sql"))
+        .execute_batch(include_str!("../../migrations/001_initial.sql"))
         .expect("apply version one schema");
     connection
-        .execute_batch(include_str!("../migrations/002_polling.sql"))
+        .execute_batch(include_str!("../../migrations/002_polling.sql"))
         .expect("apply version two schema");
     connection
-        .execute_batch(include_str!("../migrations/003_poll_checksums.sql"))
+        .execute_batch(include_str!("../../migrations/003_poll_checksums.sql"))
         .expect("apply version three schema");
     connection
-        .execute_batch(include_str!("../migrations/004_schema_tracking.sql"))
+        .execute_batch(include_str!("../../migrations/004_schema_tracking.sql"))
         .expect("apply version four schema");
     connection
-        .execute_batch(include_str!("../migrations/005_api_control.sql"))
+        .execute_batch(include_str!("../../migrations/005_api_control.sql"))
         .expect("apply version five schema");
     connection
-        .execute_batch(include_str!("../migrations/006_wire_auth.sql"))
+        .execute_batch(include_str!("../../migrations/006_wire_auth.sql"))
         .expect("apply version six schema");
     drop(connection);
 
@@ -274,13 +274,13 @@ fn version_seven_adds_restored_table_state_without_losing_children() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version seven database");
     for migration in [
-        include_str!("../migrations/001_initial.sql"),
-        include_str!("../migrations/002_polling.sql"),
-        include_str!("../migrations/003_poll_checksums.sql"),
-        include_str!("../migrations/004_schema_tracking.sql"),
-        include_str!("../migrations/005_api_control.sql"),
-        include_str!("../migrations/006_wire_auth.sql"),
-        include_str!("../migrations/007_backups.sql"),
+        include_str!("../../migrations/001_initial.sql"),
+        include_str!("../../migrations/002_polling.sql"),
+        include_str!("../../migrations/003_poll_checksums.sql"),
+        include_str!("../../migrations/004_schema_tracking.sql"),
+        include_str!("../../migrations/005_api_control.sql"),
+        include_str!("../../migrations/006_wire_auth.sql"),
+        include_str!("../../migrations/007_backups.sql"),
     ] {
         connection
             .execute_batch(migration)
@@ -331,18 +331,18 @@ fn version_twelve_control_plane_gains_caching_sha2_verifiers_in_place() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version twelve database");
     for migration in [
-        include_str!("../migrations/001_initial.sql"),
-        include_str!("../migrations/002_polling.sql"),
-        include_str!("../migrations/003_poll_checksums.sql"),
-        include_str!("../migrations/004_schema_tracking.sql"),
-        include_str!("../migrations/005_api_control.sql"),
-        include_str!("../migrations/006_wire_auth.sql"),
-        include_str!("../migrations/007_backups.sql"),
-        include_str!("../migrations/008_restored_tables.sql"),
-        include_str!("../migrations/009_backup_retention.sql"),
-        include_str!("../migrations/010_keyless_policy.sql"),
-        include_str!("../migrations/011_backup_verification.sql"),
-        include_str!("../migrations/012_backup_full_cadence.sql"),
+        include_str!("../../migrations/001_initial.sql"),
+        include_str!("../../migrations/002_polling.sql"),
+        include_str!("../../migrations/003_poll_checksums.sql"),
+        include_str!("../../migrations/004_schema_tracking.sql"),
+        include_str!("../../migrations/005_api_control.sql"),
+        include_str!("../../migrations/006_wire_auth.sql"),
+        include_str!("../../migrations/007_backups.sql"),
+        include_str!("../../migrations/008_restored_tables.sql"),
+        include_str!("../../migrations/009_backup_retention.sql"),
+        include_str!("../../migrations/010_keyless_policy.sql"),
+        include_str!("../../migrations/011_backup_verification.sql"),
+        include_str!("../../migrations/012_backup_full_cadence.sql"),
     ] {
         connection
             .execute_batch(migration)
@@ -400,23 +400,23 @@ fn version_seventeen_widens_table_states_without_losing_rows() {
     let database_path = data_dir.path().join("pintail-meta.db");
     let connection = rusqlite::Connection::open(&database_path).expect("version seventeen");
     for migration in [
-        include_str!("../migrations/001_initial.sql"),
-        include_str!("../migrations/002_polling.sql"),
-        include_str!("../migrations/003_poll_checksums.sql"),
-        include_str!("../migrations/004_schema_tracking.sql"),
-        include_str!("../migrations/005_api_control.sql"),
-        include_str!("../migrations/006_wire_auth.sql"),
-        include_str!("../migrations/007_backups.sql"),
-        include_str!("../migrations/008_restored_tables.sql"),
-        include_str!("../migrations/009_backup_retention.sql"),
-        include_str!("../migrations/010_keyless_policy.sql"),
-        include_str!("../migrations/011_backup_verification.sql"),
-        include_str!("../migrations/012_backup_full_cadence.sql"),
-        include_str!("../migrations/013_caching_sha2.sql"),
-        include_str!("../migrations/014_database_kind.sql"),
-        include_str!("../migrations/015_workspaces.sql"),
-        include_str!("../migrations/016_oauth_invites_audit.sql"),
-        include_str!("../migrations/017_audit_client_ip.sql"),
+        include_str!("../../migrations/001_initial.sql"),
+        include_str!("../../migrations/002_polling.sql"),
+        include_str!("../../migrations/003_poll_checksums.sql"),
+        include_str!("../../migrations/004_schema_tracking.sql"),
+        include_str!("../../migrations/005_api_control.sql"),
+        include_str!("../../migrations/006_wire_auth.sql"),
+        include_str!("../../migrations/007_backups.sql"),
+        include_str!("../../migrations/008_restored_tables.sql"),
+        include_str!("../../migrations/009_backup_retention.sql"),
+        include_str!("../../migrations/010_keyless_policy.sql"),
+        include_str!("../../migrations/011_backup_verification.sql"),
+        include_str!("../../migrations/012_backup_full_cadence.sql"),
+        include_str!("../../migrations/013_caching_sha2.sql"),
+        include_str!("../../migrations/014_database_kind.sql"),
+        include_str!("../../migrations/015_workspaces.sql"),
+        include_str!("../../migrations/016_oauth_invites_audit.sql"),
+        include_str!("../../migrations/017_audit_client_ip.sql"),
     ] {
         connection
             .execute_batch(migration)

@@ -211,7 +211,7 @@ const DESCRIPTOR_LIMIT: u64 = 48;
 /// the tests running alongside.
 #[test]
 fn a_spilling_aggregation_completes_under_a_low_descriptor_limit() {
-    const NAME: &str = "a_spilling_aggregation_completes_under_a_low_descriptor_limit";
+    const NAME: &str = "agg_spill::a_spilling_aggregation_completes_under_a_low_descriptor_limit";
     if std::env::var_os(DESCRIPTOR_PROBE).is_some() {
         use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
         let current = getrlimit(Resource::Nofile);

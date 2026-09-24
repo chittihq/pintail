@@ -5,7 +5,7 @@
 //! and check both halves: every kind of change is seen by the next query,
 //! and a query with nothing changed touches no table file at all.
 
-mod common;
+use crate::common;
 
 use std::sync::{Mutex, PoisonError};
 

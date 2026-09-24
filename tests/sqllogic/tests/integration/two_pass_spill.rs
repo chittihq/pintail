@@ -131,7 +131,7 @@ const SHAPES: &[(&str, &str)] = &[
 
 #[test]
 fn a_spilled_two_pass_aggregation_matches_the_in_memory_groups_exactly() {
-    const NAME: &str = "a_spilled_two_pass_aggregation_matches_the_in_memory_groups_exactly";
+    const NAME: &str = "two_pass_spill::a_spilled_two_pass_aggregation_matches_the_in_memory_groups_exactly";
     if std::env::var_os(CHILD).is_none() {
         let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
             .args(["--exact", NAME, "--nocapture", "--test-threads=1"])

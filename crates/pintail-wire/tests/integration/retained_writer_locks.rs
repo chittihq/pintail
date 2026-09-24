@@ -6,7 +6,7 @@
 //!
 //! Retention is process-wide, so these tests have a binary of their own.
 
-mod common;
+use crate::common;
 
 use std::sync::{Mutex, PoisonError};
 
