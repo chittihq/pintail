@@ -4,6 +4,61 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5-rc5] - 2026-09-24
+
+Fixes from reviewing the verification program, and one replication stall.
+Twenty-three commits since rc4.
+
+### Fixed
+
+- One table whose store could not open stopped replication for the whole
+  database. A store written for another shape of its table - same schema
+  version, different fingerprint - failed every cycle, and the failure was
+  written onto every table, so all of them showed the same fingerprint error
+  and none of them streamed. That table is now quarantined on its own, the
+  rest keep streaming, and the automatic resync recopies it.
+- Change capture stopped for good when every tracked table had been dropped
+  and re-created; it now keeps running and reads the CREATE events that
+  replace the retained rows.
+- A table whose name differs only in case from another source table is
+  quarantined, not just skipped, so it cannot rejoin the stream later with
+  rows missing from the gap.
+- A keyless table is no longer copied without the global read lock. Without
+  it, events between the captured position and the copy were replayed on
+  top of the copy, and a keyless table has no key to absorb the duplicates.
+- A crash between a transaction's rows and its commit record could leave a
+  table that refused every later open. Recovery now frees the sequences of
+  the transaction that never committed.
+- `AVG` and division honour the session's `div_precision_increment` in the
+  cached aggregate and in the column metadata a driver reads; both assumed
+  four digits.
+- `CAST('101112' AS TIME)` and `TIME('101112')` read the digits as packed
+  `HHMMSS` instead of a date; `DIV` with an unsigned operand and a
+  non-integer one no longer overflows; a hex literal converts to a number
+  correctly.
+- `SET @v = ...` keeps backslash escapes and `:=` inside literals, and a
+  `SET` list applies every assignment.
+- A local `CREATE TABLE` reads unquoted `ENUM`/`SET` numbers as positions,
+  and three other definition details from the parsed statement rather than
+  its text.
+- `CAST(x AS BINARY(n))` wider than `max_allowed_packet` answers `NULL` with
+  warning 1301 instead of allocating the declared width for every row.
+- Parallel execution workers get the same 8 MiB stack as the calling thread,
+  so how deep a query may recurse no longer depends on which thread ran it.
+- A connection the disconnect watch closes now logs which of EOF, a
+  readiness failure or a read error it saw.
+
+### Verification
+
+- The MySQL and MariaDB suite replay reads the suites' SQL correctly,
+  forwards their session statements, refuses a baseline banked against a
+  different oracle, and lets a partial run speak only for the files it ran.
+- The CDC matrix runs every leg it claims; the farm masks varying numbers
+  rather than identifying ones; the preflight sweep only removes abandoned
+  containers.
+- The oracle no longer compares a spelling that a case-insensitive `UNION`
+  or `INTERSECT` may legitimately return either way.
+
 ## [0.1.5-rc4] - 2026-09-13
 
 Verification. MySQL's and MariaDB's own regression suites now run as a gate
