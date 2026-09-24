@@ -105,6 +105,14 @@ interface Stage {
   /// no lane: the repository protocol gives oracle, E2E, benchmark, and
   /// acceptance exclusive use of the shared Docker host.
   lane?: string
+  /// With PINTAIL_VALIDATE_SECOND_HOST set, the stage runs on that Docker
+  /// host in a second remote sequence beside the first. Only stages that
+  /// start their own containers, reach them through DOCKER_HOST and hold no
+  /// check on the tree while they run belong here.
+  secondHost?: boolean
+  /// Waits for the second remote sequence to finish before it starts: it
+  /// needs the tree to itself or measures the host.
+  exclusive?: boolean
   timeoutMinutes: number
   command: string[]
   cwd?: string
@@ -203,14 +211,18 @@ const STAGES: Stage[] = [
     // must still be exact. Both suites share one stage so a gate never
     // reports one of them green while the other did not run.
     name: 'mtr',
+    secondHost: true,
     remote: true,
     timeoutMinutes: 30,
     stallMinutes: 10,
     command: [
       'bash', '-c',
+      // The two suites run side by side: each starts its own oracle and its
+      // own server, and neither reads the other's diffs or ledger.
       'bun install --frozen-lockfile && "$CARGO" build --release -p pintail' +
-        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 bun run run.ts' +
-        ' && PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1 MTR_SUITE=mariadb bun run run.ts',
+        ' && export PINTAIL_MTR_BINARY=../../target/release/pintail MTR_GATE=1' +
+        ' && { bun run run.ts & mysql=$!; MTR_SUITE=mariadb bun run run.ts & mariadb=$!;' +
+        ' wait $mysql; a=$?; wait $mariadb; b=$?; exit $(( a || b )); }',
     ],
     cwd: join(repository, 'tests', 'mtr'),
     env: { PINTAIL_DASHBOARD_PREBUILT: '1' },
@@ -243,6 +255,7 @@ const STAGES: Stage[] = [
     // left the rows it never mentioned correct. Banks
     // tests/e2e/results-migrations.md.
     name: 'migrations',
+    secondHost: true,
     remote: true,
     env: process.env.PINTAIL_E2E_DOCKER_HOST
       ? { DOCKER_HOST: process.env.PINTAIL_E2E_DOCKER_HOST }
@@ -258,6 +271,7 @@ const STAGES: Stage[] = [
     // the primary leg). Banks its own ledger (results-mysql80.md). Part of
     // the rc stage list - a version we claim is covered has to gate.
     name: 'e2e-mysql80',
+    secondHost: true,
     remote: true,
     env: {
       ...(process.env.PINTAIL_E2E_DOCKER_HOST
@@ -276,6 +290,7 @@ const STAGES: Stage[] = [
     // Deterministic crash, storage-error and source-outage recovery. Stable
     // only: each rc already runs both complete MySQL differential legs.
     name: 'recovery',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 75,
     stallMinutes: 15,
@@ -288,6 +303,7 @@ const STAGES: Stage[] = [
     // sakila dataset - tens of minutes BY DESIGN. Opt-in only; never in the
     // default stage list or the release chain.
     name: 'soak',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 180,
     stallMinutes: 45,
@@ -300,6 +316,7 @@ const STAGES: Stage[] = [
     // memory measurement that runs on Linux, which is where the allocator
     // that hoarded seven gigabytes on staging lives.
     name: 'memsoak',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 45,
     stallMinutes: 20,
@@ -347,6 +364,7 @@ const STAGES: Stage[] = [
   },
   {
     name: 'bench',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 90,
     stallMinutes: 25,
@@ -355,6 +373,7 @@ const STAGES: Stage[] = [
   },
   {
     name: 'accept',
+    exclusive: true,
     remote: true,
     timeoutMinutes: 120,
     // The stage that hung twice. Its dataset copy and snapshot both report
@@ -1222,7 +1241,42 @@ async function main() {
       status(`lane local: ${localStages.map((one) => one.name).join(' → ')} overlapping the remote sequence`)
     }
 
-    for (const group of remoteGroups) {
+    // A second Docker host takes the stages marked for it off the first
+    // host's sequence. They start once the oracle is done - the oracle
+    // refuses evidence from a tree that changes under it, and these stages
+    // write ledgers - and an exclusive stage waits for them to finish.
+    const secondHost = process.env.PINTAIL_VALIDATE_SECOND_HOST?.trim()
+    const secondStages = secondHost
+      ? remoteGroups.flat().filter((stage) => stage.secondHost)
+          .map((stage) => ({ ...stage, env: { ...stage.env, DOCKER_HOST: secondHost } }))
+      : []
+    const firstGroups = remoteGroups
+      .map((group) => group.filter((stage) => !secondStages.some((moved) => moved.name === stage.name)))
+      .filter((group) => group.length > 0)
+    const secondResults: Array<{ name: string; verdict: string; minutes: number; note: string }> = []
+    let secondRun: Promise<void> | undefined
+    const startSecond = () => {
+      if (secondRun || secondStages.length === 0) return
+      status(`lane ${secondHost}: ${secondStages.map((one) => one.name).join(' → ')} beside the first host`)
+      secondRun = (async () => {
+        for (const stage of secondStages) {
+          const outcome = await runStage(stage)
+          if (!outcome) return
+          secondResults.push(outcome)
+          if (outcome.verdict !== 'PASS') return
+        }
+      })()
+    }
+    const secondFailed = () =>
+      secondResults.some((outcome) => outcome.verdict !== 'PASS')
+      || (secondStages.length > 0 && results.some((outcome) => outcome.verdict === 'ABORTED'))
+    if (!firstGroups.flat().some((stage) => stage.name === 'oracle')) startSecond()
+
+    for (const group of firstGroups) {
+      if (group.some((stage) => stage.exclusive) && secondRun) {
+        await secondRun
+        if (secondFailed()) break
+      }
       if (group.length > 1) {
         status(`lane ${group[0].lane}: ${group.map((one) => one.name).join(' + ')} together`)
       }
@@ -1233,6 +1287,16 @@ async function main() {
       // already recorded its own ABORTED row; either way the run stops.
       if (outcomes.length !== group.length) break
       if (outcomes.some((outcome) => outcome.verdict !== 'PASS')) break
+      if (group.some((stage) => stage.name === 'oracle')) startSecond()
+    }
+    // A first sequence that stopped before the oracle passed never started
+    // the second one; its stages report as not run below.
+    await secondRun
+    results.push(...secondResults)
+    for (const stage of secondStages) {
+      if (!results.some((result) => result.name === stage.name)) {
+        results.push({ name: stage.name, verdict: 'ABORTED', minutes: 0, note: 'did not run' })
+      }
     }
     await localRun
     // Report rows keep the declared stage order whatever finished first.
