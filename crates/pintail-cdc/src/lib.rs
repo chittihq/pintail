@@ -1757,11 +1757,9 @@ pub fn freeze_first_generation(
 ) -> Result<(), CdcError> {
     let columns_json =
         serde_json::to_string(&source.columns).map_err(|error| CdcError::Ddl(error.to_string()))?;
-    metadata.record_schema_history(
+    metadata.record_first_schema_generation(
         database_id,
         &source.name,
-        1,
-        None,
         &columns_json,
         &Utc::now().to_rfc3339(),
     )?;

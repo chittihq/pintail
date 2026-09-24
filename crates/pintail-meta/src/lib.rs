@@ -1536,6 +1536,35 @@ impl MetaStore {
             .context("failed to commit schema-history update")
     }
 
+    /// Records `columns_json` as a table's first schema generation, when the
+    /// table is registered and has no history yet; otherwise does nothing.
+    /// A copy opens its store before it registers the table, and a table
+    /// that already has history keeps it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be written.
+    pub fn record_first_schema_generation(
+        &self,
+        database_id: &str,
+        table_name: &str,
+        columns_json: &str,
+        applied_at: &str,
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO schema_history (\
+                   db_id, table_name, version, ddl_text, columns_json, applied_at\
+                 ) SELECT ?1, name, 1, NULL, ?3, ?4 FROM tables \
+                 WHERE db_id = ?1 AND name = ?2 \
+                   AND NOT EXISTS (SELECT 1 FROM schema_history \
+                     WHERE db_id = ?1 AND table_name = tables.name)",
+                (database_id, table_name, columns_json, applied_at),
+            )
+            .context("failed to record a first schema generation")?;
+        Ok(())
+    }
+
     /// Removes one schema generation that storage refused after it was
     /// recorded, so the history never names a generation no store took.
     ///
