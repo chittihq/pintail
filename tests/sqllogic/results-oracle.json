@@ -8841,7 +8841,7 @@
     {
       "name": "1473:set multiplicity and null interactions",
       "ordered": false,
-      "sql": "SELECT note FROM events WHERE id <= 3 UNION SELECT note FROM events WHERE id >= 8",
+      "sql": "SELECT LOWER(note) FROM events WHERE id <= 3 UNION SELECT LOWER(note) FROM events WHERE id >= 8",
       "status": "PASS"
     },
     {
@@ -8853,7 +8853,7 @@
     {
       "name": "1475:set multiplicity and null interactions",
       "ordered": false,
-      "sql": "SELECT note FROM events WHERE id <= 6 INTERSECT ALL SELECT note FROM events WHERE id >= 3",
+      "sql": "SELECT LOWER(note) FROM events WHERE id <= 6 INTERSECT ALL SELECT LOWER(note) FROM events WHERE id >= 3",
       "status": "PASS"
     },
     {
@@ -11450,11 +11450,11 @@
     }
   ],
   "cleanTree": true,
-  "commit": "a1f2de169676cb765fb1fae5fb80f84a813a2898",
+  "commit": "331b85a4e0a11490ca40bd9d870c15fa53a19c28",
   "comparator": "typed NULL and bytes; approximate types on both sides only: tolerance 16 * f64::EPSILON * max(1, abs(actual), abs(expected)); ordered rows compared in order, otherwise as bags",
-  "corpusSha256": "880058f21d1d5e944c180e9c0a5a82697a4efafc036d066926060a33b01a0bf1",
+  "corpusSha256": "c3e59fad72a373c3a14ef220e2ad510b497f1e3a85f651d7fbaad3aeb08e69ee",
   "expectedCases": 1908,
-  "measuredAt": "2026-09-13T20:38:37.717289381+00:00",
+  "measuredAt": "2026-09-24T07:46:01.572871348+00:00",
   "schemaVersion": 1,
   "source": "MySQL 8.4.11 (mysql@sha256:3466ba4a4828aa8d46fb7c3bc16b67b781c98413cf4ea0fac6feaa6e881faa26)",
   "verdict": "PASS"
