@@ -94,7 +94,8 @@ impl CdcTarget {
         directory: impl AsRef<Path>,
         options: StoreOptions,
     ) -> Result<Self, CdcError> {
-        let history = MetaStore::open(metadata_path)?.schema_history(database_id, &source.name)?;
+        let mut metadata = MetaStore::open(metadata_path)?;
+        let history = metadata.schema_history(database_id, &source.name)?;
         let version = history.last().map_or(1, |record| record.version);
         if let Some(record) = history.last() {
             source.columns = serde_json::from_str(&record.columns_json)
@@ -107,6 +108,9 @@ impl CdcTarget {
                 "tracked store schema for {} differs from durable schema history",
                 source.name
             )));
+        }
+        if history.is_empty() {
+            freeze_first_generation(&mut metadata, database_id, &source)?;
         }
         Ok(Self { source, store })
     }
@@ -1661,6 +1665,39 @@ fn quarantine_schema_change(
     )?;
     metadata.mark_table_needs_resync(database_id, &target.source.name, statement)?;
     blocked_targets.insert(target_index);
+    Ok(())
+}
+
+/// Records a table's first generation - the shape its store was just opened
+/// with - when schema history has none.
+///
+/// Without that row the shape of an unaltered table was read from the stored
+/// probe on every open, and several paths rewrite the probe with the
+/// source's CURRENT shape: a re-probe, a forced snapshot, a sibling table's
+/// resync. A source ALTER not yet streamed then redefined version 1 under a
+/// store still holding the old columns, and the store refused to open with
+/// a fingerprint mismatch. Frozen here, version 1 stays what is on disk, and
+/// the ALTER, when it streams, evolves it like any other.
+///
+/// # Errors
+///
+/// Returns an error when the columns cannot be serialized or the history row
+/// cannot be written.
+pub fn freeze_first_generation(
+    metadata: &mut MetaStore,
+    database_id: &str,
+    source: &SourceTable,
+) -> Result<(), CdcError> {
+    let columns_json =
+        serde_json::to_string(&source.columns).map_err(|error| CdcError::Ddl(error.to_string()))?;
+    metadata.record_schema_history(
+        database_id,
+        &source.name,
+        1,
+        None,
+        &columns_json,
+        &Utc::now().to_rfc3339(),
+    )?;
     Ok(())
 }
 
@@ -3240,6 +3277,76 @@ mod tests {
             reopened.store().schema().columns()[1].collation(),
             Some("utf8mb4_0900_ai_ci")
         );
+    }
+
+    /// An unaltered table's shape must not follow the stored probe once its
+    /// store exists: a re-probe records the source's current columns, and an
+    /// ALTER still waiting in the binlog then redefined version 1 under a
+    /// store holding the old ones, which refused to open with a fingerprint
+    /// mismatch - every cycle, until someone resynced the table.
+    #[test]
+    fn a_reprobe_ahead_of_the_stream_does_not_redefine_the_first_generation() {
+        let workspace = tempfile::tempdir().expect("CDC workspace");
+        let metadata_path = workspace.path().join("pintail-meta.db");
+        let table_directory = workspace.path().join("events");
+        let metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("source", "app", b"unused", "2026-09-24T00:00:00Z")
+            .expect("database");
+        metadata
+            .upsert_snapshot_table("source", "events", Some("[\"id\"]"), Some("[\"id\"]"))
+            .expect("table");
+        drop(metadata);
+
+        let copied = source_table(KeyMode::Primary);
+        let first = CdcTarget::open_tracked(
+            &metadata_path,
+            "source",
+            copied.clone(),
+            &table_directory,
+            StoreOptions::default(),
+        )
+        .expect("first open");
+        let mut store = first.into_store();
+        store
+            .ingest(vec![StoredRow::new(
+                PrimaryKey::new(vec![KeyPart::Int64(1)]).expect("key"),
+                vec![Value::Int64(1)],
+                1,
+                false,
+            )])
+            .expect("ingest");
+        store.flush().expect("flush");
+        drop(store);
+
+        // The source gained a column; the probe saw it before the stream did.
+        let mut reprobed = copied.clone();
+        let mut added = reprobed.columns[0].clone();
+        added.id = reprobed
+            .columns
+            .iter()
+            .map(|column| column.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        added.name = "added".to_owned();
+        added.nullable = true;
+        reprobed.columns.push(added);
+        let reopened = CdcTarget::open_tracked(
+            &metadata_path,
+            "source",
+            reprobed,
+            &table_directory,
+            StoreOptions::default(),
+        )
+        .expect("the store opens at the shape it was written with");
+        assert_eq!(reopened.source().columns.len(), copied.columns.len());
+        let history = MetaStore::open(&metadata_path)
+            .expect("metadata")
+            .schema_history("source", "events")
+            .expect("history");
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].version, 1);
     }
 
     fn source_table(mode: KeyMode) -> SourceTable {
