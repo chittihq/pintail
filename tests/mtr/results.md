@@ -1,8 +1,8 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-24T17:45:04.262Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-24T20:56:12.285Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 54c007a970ff1b9a6487e077683a0d570c4a070d; source dirty: false. Binary SHA-256: 0786c2c7da80c1f99d91fbdb8fe66081515c203464d144eb0fe60e9b439f0e26.
+Replay mode: local. Source commit: ea3cab7980d300742b360f0f15eae7b1fe30d206; source dirty: false. Binary SHA-256: 6e87ca5ad22f85c644659b22ef2faf556b0fd37269b7a2a7448e8a63943fa9d6.
 
 **8,724 of 8,825 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 14,294 never reached a comparison, so this is a share of what could be compared and not of the suite. 101 differ in rows, 0 in column names only. 5,699 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 53 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/muftgcev-643412/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mug0b7ne-929595/diffs/` (not committed).
