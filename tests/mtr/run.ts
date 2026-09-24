@@ -113,6 +113,11 @@ const JOBS = Math.max(1, Number(process.env.MTR_JOBS ?? '8'))
 /// sees exactly the server state a one-at-a-time run in suite order gives it.
 /// The banked baseline was recorded that way, globals leaked forward
 /// included; running these files last instead moved ten banked answers.
+/// A global sql_mode assignment, which Pintail cannot follow.
+const GLOBAL_SQL_MODE = /^\s*set\s+(?:global\s+|@@global\.)sql_mode\b/i
+/// A session returning to the server's sql_mode.
+const SESSION_SQL_MODE_DEFAULT = /^\s*set\s+(?:session\s+|local\s+|@@session\.|@@local\.|@@)?sql_mode\s*=\s*default\s*;?\s*$/i
+
 const SERVER_WIDE =
   /^\s*(set\s+(global|persist|persist_only)\b|set\s+@@(global|persist|persist_only)\.|install\b|uninstall\b|flush\s+tables\s+with\s+read\s+lock\b|lock\s+instance\b|grant\b|revoke\b|(create|drop|rename|alter)\s+user\b|set\s+password\b|flush\s+privileges\b|(insert|replace|update|delete)\s+(ignore\s+)?(into\s+|from\s+)?`?mysql`?\.)/i
 /// Per-statement client-side timeout on both sides.
@@ -687,6 +692,8 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   )
   const epochs = new Epochs()
   let inTransaction = false
+  // MySQL's global sql_mode once this file changed it (see GLOBAL_SQL_MODE).
+  let globalSqlMode: string | undefined
 
   const run = async (connection: Side, sql: string): Promise<Answer> => {
     const [rows, fields] = await connection.query<mysql.RowDataPacket[][]>({ sql, rowsAsArray: true, timeout: QUERY_TIMEOUT_MS })
@@ -714,7 +721,7 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         // the agreement as an exact match.
         const session = epochs.rewrite(sql)
         await my.query(session).catch(() => {})
-        await pt.query(session).catch(() => {})
+        await pt.query(globalSqlMode !== undefined && SESSION_SQL_MODE_DEFAULT.test(sql) ? `SET sql_mode = '${globalSqlMode}'` : session).catch(() => {})
         continue
       }
       // Named prepared statements can mutate fixture tables. Replay their
@@ -860,6 +867,16 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
         counts.skipped += 1
         if (/^(create database|drop database|create schema|drop schema|kill|shutdown|show|explain|describe|desc|analyze|check|checksum|help)\b/.test(shape)) continue
         await my.query(epochs.rewrite(sql)).catch(() => {})
+        // The server's sql_mode is the default a session returns to with
+        // `SET sql_mode = DEFAULT`, and Pintail takes its own from
+        // configuration, so it cannot follow a global change. Remember what
+        // MySQL now holds and hand it to Pintail's session explicitly when
+        // the file asks for the default; otherwise the two sessions ran in
+        // different modes for the rest of the file.
+        if (GLOBAL_SQL_MODE.test(sql)) {
+          const [rows] = await my.query('SELECT @@GLOBAL.sql_mode AS mode').catch(() => [[]])
+          globalSqlMode = (rows as Array<{ mode?: string }>)[0]?.mode
+        }
         continue
       }
       counts['unsupported-setup'] += 1
