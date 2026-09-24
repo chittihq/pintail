@@ -16,6 +16,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   row: a segment skipped on its statistics shadowed an older version the
   memtable still held after a replay, and the skip let that version stand.
   Such a segment is no longer skipped.
+- A table another session held locked past the copy's bounded wait failed
+  the whole snapshot, and every table in the database answered with an
+  error until the next retry. The locked table is now flagged for a resync
+  on its own and the rest of the copy completes.
+- Under the `auto_resync` keyless policy, repairing one quarantined keyless
+  table recopied the whole database and left every table not ready for the
+  copy. It now recopies that one table.
 
 ## [0.1.5-rc6] - 2026-09-24
 
