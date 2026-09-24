@@ -3,10 +3,10 @@
   "repo": "mysql/mysql-server",
   "ref": "99960bf74fa919347e4f4e3ca47672f333d6e91f",
   "mysqlVersion": "8.4.11",
-  "measuredAt": "2026-09-24T07:54:34.955Z",
+  "measuredAt": "2026-09-24T13:38:22.861Z",
   "totals": {
-    "exact": 3448,
-    "compared": 3884,
+    "exact": 3462,
+    "compared": 3899,
     "queries": 18233
   },
   "results": [
@@ -383,10 +383,10 @@
       "file": "bigint",
       "statements": 171,
       "counts": {
-        "exact": 59,
+        "exact": 61,
         "mismatch": 1,
         "name-mismatch": 2,
-        "pintail-error": 9,
+        "pintail-error": 7,
         "mysql-error": 0,
         "tainted": 20,
         "setup": 53,
@@ -404,7 +404,7 @@
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "DDL: Error: column _: invalid MySQL metadata: decimal column quantity is missing precision": 1,
         "Error: sql parser error: Expected: end of statement, found: _ at Line: _, Column: _": 3,
-        "Error: BIGINT value is out of range in _": 5,
+        "Error: BIGINT value is out of range in _": 3,
         "INSERT: Error: column _ is AUTO_INCREMENT; a local table needs its value supplied": 1,
         "Error: invalid scalar function CONVERT USING unsupported character set ucs2": 1
       }
@@ -597,10 +597,10 @@
       "file": "cast",
       "statements": 564,
       "counts": {
-        "exact": 133,
+        "exact": 139,
         "mismatch": 34,
         "name-mismatch": 0,
-        "pintail-error": 29,
+        "pintail-error": 23,
         "mysql-error": 0,
         "tainted": 15,
         "setup": 85,
@@ -616,7 +616,7 @@
         "Error: operator ~ does not accept Some(Int64)": 1,
         "Error: invalid scalar function CONVERT USING unsupported character set latin1": 1,
         "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
-        "Error: numeric expression overflow": 7,
+        "Error: numeric expression overflow": 1,
         "Error: sql parser error: Expected: ), found: character at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: charset at Line: _, Column: _": 6,
         "Error: unsupported expression: character set introducer _koi8r": 1,
@@ -5631,9 +5631,9 @@
       "statements": 834,
       "counts": {
         "exact": 341,
-        "mismatch": 10,
+        "mismatch": 12,
         "name-mismatch": 9,
-        "pintail-error": 170,
+        "pintail-error": 168,
         "mysql-error": 0,
         "tainted": 13,
         "setup": 145,
@@ -5716,7 +5716,6 @@
         "Error: unsupported expression: charset(t2__1.a)": 1,
         "Error: unsupported expression: coercibility(t2__1.a)": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
-        "Error: BIGINT UNSIGNED value is out of range in _": 2,
         "Error: unsupported expression: load_file(_)": 2,
         "Error: operator := does not accept None and Some(Utf8)": 1,
         "Error: unsupported expression: rtrim(_)": 1,
@@ -5785,8 +5784,8 @@
       "file": "func_time",
       "statements": 599,
       "counts": {
-        "exact": 277,
-        "mismatch": 19,
+        "exact": 278,
+        "mismatch": 18,
         "name-mismatch": 0,
         "pintail-error": 66,
         "mysql-error": 1,
@@ -6048,10 +6047,10 @@
       "file": "get_diagnostics",
       "statements": 225,
       "counts": {
-        "exact": 7,
+        "exact": 12,
         "mismatch": 11,
         "name-mismatch": 0,
-        "pintail-error": 8,
+        "pintail-error": 3,
         "mysql-error": 0,
         "tainted": 0,
         "setup": 27,
@@ -6064,7 +6063,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: BIGINT value is out of range in _": 5,
         "Error: unsupported expression: f1()": 1,
         "Error: unsupported expression: CHARSET(@var1)": 1,
         "Error: unsupported expression: CHARSET(@var2)": 1
