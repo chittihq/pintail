@@ -2070,7 +2070,7 @@ dependencies = [
 [[package]]
 name = "mysql_common"
 version = "0.37.3"
-source = "git+https://github.com/chittihq/rust_mysql_common?rev=74369dbd353fb20d4f7537055e922a92c525a275#74369dbd353fb20d4f7537055e922a92c525a275"
+source = "git+https://github.com/chittihq/rust_mysql_common?rev=09e4560a87bfbe106c0a431ca80760697f5ac145#09e4560a87bfbe106c0a431ca80760697f5ac145"
 dependencies = [
  "base64",
  "bitflags",
