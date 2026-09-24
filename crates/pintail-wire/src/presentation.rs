@@ -261,6 +261,18 @@ fn expression(
                     && let Some(projection) = input.projection.get(index)
                 {
                     let mut column = expression(&projection.expr, input, catalog, facts);
+                    // A text column the derived table groups by or deduplicates is
+                    // stored, and a stored VARCHAR carries no decimals.
+                    if column.character_set != 63
+                        && ((!input.group_by.is_empty()
+                            && !ordered_group(input)
+                            && grouped_scalar(&projection.expr))
+                            || input.distinct
+                            || !input.union_all.is_empty()
+                            || !input.set_ops.is_empty())
+                    {
+                        column.decimals = 0;
+                    }
                     // A materialized derived table stores an integer of up to
                     // eleven digits as INT, whatever computed it (measured
                     // against MySQL 8.4); a merged one keeps the type.
@@ -1184,6 +1196,78 @@ mod tests {
             types("SELECT t.y FROM (SELECT YEAR(at) AS y FROM sales) t")[0],
             ColumnType::MysqlTypeLonglong,
             "a merged derived table keeps the computed type"
+        );
+    }
+
+    #[test]
+    fn widened_set_branches_and_grouped_derived_text_present_as_mysql_does() {
+        use pintail_catalog::{DatabaseEntry, DatabaseId, TableEntry, TableId};
+        use pintail_types::{Column as SchemaColumn, TableSchema};
+        let accounts =
+            TableSchema::new(1, vec![SchemaColumn::new(0, "id", DataType::UInt32, false)]).unwrap();
+        let events = TableSchema::new(
+            1,
+            vec![
+                SchemaColumn::new(0, "id", DataType::UInt64, false),
+                SchemaColumn::new(1, "account_id", DataType::UInt64, false),
+                SchemaColumn::new(2, "kind", DataType::Utf8, false),
+                SchemaColumn::new(
+                    3,
+                    "amount",
+                    DataType::Decimal {
+                        precision: 12,
+                        scale: 2,
+                    },
+                    false,
+                ),
+            ],
+        )
+        .unwrap();
+        let table = |id, name, schema| {
+            TableEntry::new(
+                TableId::new(id),
+                name,
+                schema,
+                pintail_catalog::TableStatistics::default(),
+            )
+            .unwrap()
+            .with_key_columns([0])
+            .unwrap()
+        };
+        let catalog = CatalogSnapshot::new([DatabaseEntry::new(
+            DatabaseId::new(1),
+            "sample",
+            [table(1, "accounts", accounts), table(2, "events", events)],
+        )
+        .unwrap()])
+        .unwrap();
+        let first = |sql: &str| {
+            let statement = pintail_sql::parse_statement(sql).unwrap();
+            let query = pintail_sql::Binder::new(&catalog, Some("sample"))
+                .bind(&statement)
+                .unwrap();
+            let column = columns(&query, &catalog, &SourceFacts::default()).remove(0);
+            (column.coltype, column.decimals)
+        };
+        // Measured against MySQL 8.4: an INT branch widened by a BIGINT one
+        // is BIGINT, whichever set operator joins them.
+        for operator in ["UNION ALL", "UNION", "INTERSECT", "EXCEPT"] {
+            assert_eq!(
+                first(&format!(
+                    "SELECT id FROM accounts {operator} SELECT account_id FROM events"
+                ))
+                .0,
+                ColumnType::MysqlTypeLonglong,
+                "{operator}"
+            );
+        }
+        assert_eq!(
+            first(
+                "SELECT kind FROM (SELECT CAST(kind AS CHAR) AS kind, SUM(amount) AS total \
+                 FROM events GROUP BY kind) t"
+            ),
+            (ColumnType::MysqlTypeVarString, 0),
+            "a grouped derived table stores its text without decimals"
         );
     }
 }

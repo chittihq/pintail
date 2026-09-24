@@ -2327,7 +2327,12 @@ fn coerce_union_projection(
         if target == DataType::Binary && expression.data_type == Some(DataType::Utf8) {
             *expression = crate::text_charset::encoded(expression.clone());
         }
-        wrap_in_cast(expression, target);
+        // Integers already execute as 64-bit values, so widening one only
+        // changes the declared type; a CAST would make the result present
+        // as the narrower branch it wraps.
+        if !(integral(target) && expression.data_type.is_some_and(integral)) {
+            wrap_in_cast(expression, target);
+        }
     }
     expression.data_type = target;
     expression.nullable = nullable;
@@ -2337,6 +2342,21 @@ fn coerce_union_projection(
     for (_, branch) in &mut query.set_ops {
         coerce_union_projection(branch, index, target, nullable);
     }
+}
+
+fn integral(data_type: DataType) -> bool {
+    matches!(
+        data_type,
+        DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+    )
 }
 
 /// Wraps an expression in a CAST to its common result type
