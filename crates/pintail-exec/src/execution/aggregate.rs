@@ -5115,6 +5115,7 @@ fn build_local_direct_groups(
     }
     let mut groups = Vec::<AggregateGroup>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
+    let mut collation_index = HashMap::<u64, usize>::new();
     let memory = parent_memory.unbounded_worker();
     let batch_bytes = batch.estimated_bytes();
     for (offset, row) in morsel.selected_rows().enumerate() {
@@ -5122,17 +5123,23 @@ fn build_local_direct_groups(
             memory.check_interruption()?;
         }
         let raw_hash = direct_group_hash(batch, row, group_columns)?;
-        let existing = raw_index
-            .get(&raw_hash)
-            .copied()
-            .filter(|index| {
-                direct_group_matches_exact(&groups[*index].values, batch, row, group_columns)
-            })
-            .or_else(|| {
-                groups.iter().position(|group| {
-                    direct_group_matches(&group.values, batch, row, group_columns, key_collations)
-                })
-            });
+        let mut collated = None;
+        let mut existing = raw_index.get(&raw_hash).copied().filter(|index| {
+            direct_group_matches_exact(&groups[*index].values, batch, row, group_columns)
+        });
+        if existing.is_none() {
+            let hash = direct_group_collation_hash(batch, row, group_columns, key_collations)?;
+            existing = collated_group(
+                &collation_index,
+                hash,
+                &groups,
+                batch,
+                row,
+                group_columns,
+                key_collations,
+            );
+            collated = Some(hash);
+        }
         let group_index = existing.unwrap_or_else(|| {
             let values = group_columns
                 .iter()
@@ -5150,6 +5157,9 @@ fn build_local_direct_groups(
             index
         });
         raw_index.entry(raw_hash).or_insert(group_index);
+        if let Some(hash) = collated {
+            collation_index.entry(hash).or_insert(group_index);
+        }
         update_aggregate_states(
             batch,
             row,
@@ -5393,6 +5403,7 @@ fn build_direct_column_aggregate(
     let mut groups = Vec::<AggregateGroup>::new();
     let mut scalar_index = HashMap::<Value, usize>::new();
     let mut raw_index = HashMap::<u64, usize>::new();
+    let mut collation_index = HashMap::<u64, usize>::new();
     let mut index_reserved = 0_usize;
     // Bytes the map and its indexes hold. Measured per batch around the
     // work that touches them: the scan charges its own retained batches to
@@ -5458,6 +5469,7 @@ fn build_direct_column_aggregate(
                 )?);
                 scalar_index = HashMap::new();
                 raw_index = HashMap::new();
+                collation_index = HashMap::new();
                 memory.release(map_bytes);
                 map_reserved = 0;
                 before_map = memory.used();
@@ -5466,11 +5478,12 @@ fn build_direct_column_aggregate(
             let raw_hash = (!indexed)
                 .then(|| direct_group_hash(&batch, row, group_columns))
                 .transpose()?;
+            let mut collated = None;
             let existing = if indexed {
                 let value = direct_group_value(&batch, row, group_columns[0])?;
                 scalar_index.get(value).copied()
             } else {
-                raw_index
+                let exact = raw_index
                     .get(&raw_hash.expect("non-indexed groups have a raw hash"))
                     .copied()
                     .filter(|index| {
@@ -5480,18 +5493,23 @@ fn build_direct_column_aggregate(
                             row,
                             group_columns,
                         )
-                    })
-                    .or_else(|| {
-                        groups.iter().position(|group| {
-                            direct_group_matches(
-                                &group.values,
-                                &batch,
-                                row,
-                                group_columns,
-                                key_collations,
-                            )
-                        })
-                    })
+                    });
+                if exact.is_some() {
+                    exact
+                } else {
+                    let hash =
+                        direct_group_collation_hash(&batch, row, group_columns, key_collations)?;
+                    collated = Some(hash);
+                    collated_group(
+                        &collation_index,
+                        hash,
+                        &groups,
+                        &batch,
+                        row,
+                        group_columns,
+                        key_collations,
+                    )
+                }
             };
             let group_index = if let Some(index) = existing {
                 index
@@ -5541,6 +5559,20 @@ fn build_direct_column_aggregate(
                 )?);
                 raw_index.insert(raw_hash, group_index);
             }
+            if let Some(hash) = collated
+                && !collation_index.contains_key(&hash)
+            {
+                index_reserved = index_reserved.saturating_add(reserve_hash_map_entries(
+                    &mut collation_index,
+                    1,
+                    size_of::<u64>()
+                        .saturating_add(size_of::<usize>())
+                        .saturating_add(HASH_ENTRY_OVERHEAD),
+                    batch_bytes,
+                    memory,
+                )?);
+                collation_index.insert(hash, group_index);
+            }
             update_aggregate_states(
                 &batch,
                 row,
@@ -5555,6 +5587,7 @@ fn build_direct_column_aggregate(
 
     drop(scalar_index);
     drop(raw_index);
+    drop(collation_index);
     if !spill_runs.is_empty() {
         let resident = direct_groups_map(groups, key_collations);
         memory.release(map_reserved);
@@ -5609,14 +5642,64 @@ pub(super) fn direct_group_matches(
                     (Value::Utf8(left), Value::Utf8(right)) => {
                         // The ASCII fast path may only answer EQUAL: it
                         // ignores PAD SPACE, so 'red' vs 'red ' must fall
-                        // through to the collation, which pads (#258).
-                        (left.is_ascii() && right.is_ascii() && left.eq_ignore_ascii_case(right))
+                        // through to the collation, which pads (#258). It
+                        // folds case, so it is no answer at all under a
+                        // collation that does not: `_bin` keeps 'a' and 'A'
+                        // apart.
+                        (!matches!(collation, Collation::Utf8mb4Bin | Collation::Json)
+                            && left.is_ascii()
+                            && right.is_ascii()
+                            && left.eq_ignore_ascii_case(right))
                             || compare_utf8_mysql(left, right, *collation) == Ordering::Equal
                     }
                     _ => grouped == candidate,
                 }
             })
         })
+}
+
+/// The row's grouping key hashed the way grouping compares it: every value
+/// in its collation's normalized form - the form groups merge under across
+/// batches - so spellings the collation calls equal hash equal.
+fn direct_group_collation_hash(
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[usize],
+    key_collations: &[Collation],
+) -> Result<u64, ExecError> {
+    let mut hasher = DefaultHasher::new();
+    for (column, collation) in columns.iter().zip(key_collations) {
+        normalized_group_value(direct_group_value(batch, row, *column)?.clone(), *collation)
+            .hash(&mut hasher);
+    }
+    Ok(hasher.finish())
+}
+
+/// The group a row whose raw bytes matched none belongs to, found through
+/// the collation index.
+///
+/// A row's raw hash misses for every new group and for every other
+/// spelling of an existing one. Answering that miss with a scan of every
+/// group made grouping quadratic in the group count; the index answers it
+/// with one lookup. Only a hash collision between two different groups
+/// still scans, which keeps the answer exact.
+fn collated_group(
+    collation_index: &HashMap<u64, usize>,
+    hash: u64,
+    groups: &[AggregateGroup],
+    batch: &RecordBatch,
+    row: usize,
+    columns: &[usize],
+    key_collations: &[Collation],
+) -> Option<usize> {
+    let matches = |group: &AggregateGroup| {
+        direct_group_matches(&group.values, batch, row, columns, key_collations)
+    };
+    match collation_index.get(&hash) {
+        None => None,
+        Some(&index) if matches(&groups[index]) => Some(index),
+        Some(_) => groups.iter().position(matches),
+    }
 }
 
 pub(super) fn direct_group_matches_exact(
