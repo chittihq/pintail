@@ -1433,7 +1433,9 @@ impl MetaStore {
             )
             .context("failed to prepare auto-resync table query")?;
         statement
-            .query_map(rusqlite::params![database_id, repair_keyless], |row| row.get(0))
+            .query_map(rusqlite::params![database_id, repair_keyless], |row| {
+                row.get(0)
+            })
             .context("failed to query auto-resync tables")?
             .collect::<rusqlite::Result<BTreeSet<_>>>()
             .context("failed to decode auto-resync tables")

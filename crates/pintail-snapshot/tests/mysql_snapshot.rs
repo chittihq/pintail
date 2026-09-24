@@ -1646,8 +1646,14 @@ async fn a_table_locked_past_the_copy_wait_is_flagged_and_the_rest_complete() {
             DATABASE_ID,
             &report,
             vec![
-                target(&find("composite_table"), &workspace.path().join("composite_table")),
-                target(&find("primary_table"), &workspace.path().join("primary_table")),
+                target(
+                    &find("composite_table"),
+                    &workspace.path().join("composite_table"),
+                ),
+                target(
+                    &find("primary_table"),
+                    &workspace.path().join("primary_table"),
+                ),
             ],
             SnapshotOptions {
                 workers: 1,
