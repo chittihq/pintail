@@ -60,6 +60,29 @@ pub(super) enum TwoPassLane {
 /// Partitions per worker thread. See `build_streaming_two_pass_aggregate`.
 const PARTITIONS_PER_WORKER: usize = 4;
 
+/// A decimal value's exact units at `scale`, for a column with no packed
+/// units to read. `None` for NULL, or for a value that does not fit `scale`
+/// exactly.
+fn decimal_units_at_scale(value: &Value, scale: u8) -> Option<i128> {
+    let widen = |units: i128, from: u8| {
+        scale
+            .checked_sub(from)
+            .and_then(|digits| 10_i128.checked_pow(u32::from(digits)))
+            .and_then(|factor| units.checked_mul(factor))
+    };
+    match value {
+        Value::Null => None,
+        Value::DecimalAverage(quotient) if quotient.count == 1 => {
+            widen(quotient.units, quotient.scale)
+        }
+        Value::Int64(signed) => widen(i128::from(*signed), 0),
+        Value::UInt64(unsigned) => widen(i128::from(*unsigned), 0),
+        other => other
+            .text()
+            .and_then(|text| pintail_types::parse_decimal_scaled(text, scale)),
+    }
+}
+
 pub(super) fn two_pass_lanes(
     aggregates: &[CompiledAggregate],
     batch: &RecordBatch,
@@ -1305,15 +1328,23 @@ fn two_pass_lane_bits(batch: &RecordBatch, row: usize, lane: &TwoPassLane) -> Op
                     })
             })
             .map(f64::to_bits),
-        TwoPassLane::DecimalUnits { column, .. } | TwoPassLane::ExtremeDecimal { column, .. } => {
+        TwoPassLane::DecimalUnits { column, scale, .. }
+        | TwoPassLane::ExtremeDecimal { column, scale } => {
             batch
                 .column(*column)
-                .and_then(|column| {
-                    let (typed, validity) = column.typed()?;
-                    validity
+                .and_then(|column| match column.typed() {
+                    Some((typed, validity)) => validity
                         .is_valid(row)
                         .then(|| typed.units_at(row))
-                        .flatten()
+                        .flatten(),
+                    // A column a projection built from values has no packed
+                    // units: a CASE whose narrower branch keeps its own
+                    // label is one. Reading only packed units answered
+                    // every such row as NULL, so a grouped SUM over it
+                    // came back NULL.
+                    None => column
+                        .value(row)
+                        .and_then(|value| decimal_units_at_scale(value, *scale)),
                 })
                 .and_then(|units| i64::try_from(units).ok())
                 .map(|units| u64::from_ne_bytes(units.to_ne_bytes()))
