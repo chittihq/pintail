@@ -36,6 +36,7 @@ mod live_replication_queries;
 mod memtable_overlay;
 mod mixed_collation_grouping;
 mod morsel_bench;
+mod mtr_answer_drift;
 mod multi_core;
 mod mysql_scalar_parity;
 mod no_unsigned_subtraction;

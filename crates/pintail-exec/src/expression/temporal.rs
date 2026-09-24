@@ -714,6 +714,108 @@ pub(super) fn numeric_datetime(number: i128) -> Option<NaiveDateTime> {
     .and_hms_opt(part(time, 10_000)?, part(time, 100)?, part(time, 1)?)
 }
 
+/// A packed number's calendar fields as `MySQL` reads them - the same digit
+/// layouts as [`numeric_datetime`] - kept as numbers so a zero month or day,
+/// which no civil date can hold, survives: `200012010000` is
+/// `2020-00-12 01:00:00`. `None` for a number outside every layout or a
+/// field outside its range.
+pub(super) fn numeric_calendar(number: i128) -> Option<[u32; 6]> {
+    let (date, time) = match number {
+        0 => (0, 0),
+        101..=691_231 => (number + 20_000_000, 0),
+        700_101..=991_231 => (number + 19_000_000, 0),
+        10_000_101..=99_991_231 => (number, 0),
+        101_000_000..=691_231_235_959 => (number / 1_000_000 + 20_000_000, number % 1_000_000),
+        700_101_000_000..=991_231_235_959 => (number / 1_000_000 + 19_000_000, number % 1_000_000),
+        10_000_101_000_000..=99_991_231_235_959 => (number / 1_000_000, number % 1_000_000),
+        _ => return None,
+    };
+    let part = |value: i128, divisor: i128| u32::try_from(value / divisor % 100).ok();
+    calendar_in_range([
+        u32::try_from(date / 10_000).ok()?,
+        part(date, 100)?,
+        part(date, 1)?,
+        part(time, 10_000)?,
+        part(time, 100)?,
+        part(time, 1)?,
+    ])
+}
+
+/// Text read as `MySQL` reads a date written with any punctuation between
+/// its parts: digit groups for year, month, day and an optional hour,
+/// minute and second, a one- or two-digit year taking the century `MySQL`
+/// gives it. `'12:00:00-12.34.56'` is `2012-00-00 12:34:56`; `'1-2-3'` is
+/// `2001-02-03`. A trailing fraction is ignored. `None` unless the text is
+/// digits and punctuation with three to six groups in range.
+pub(super) fn loose_calendar(text: &str) -> Option<[u32; 6]> {
+    let text = text.trim();
+    if !text.starts_with(|character: char| character.is_ascii_digit())
+        || !text.chars().all(|character| {
+            character.is_ascii_digit() || character.is_ascii_punctuation() || character == ' '
+        })
+    {
+        return None;
+    }
+    let groups = text
+        .split(|character: char| !character.is_ascii_digit())
+        .filter(|group| !group.is_empty())
+        .collect::<Vec<_>>();
+    if !(3..=7).contains(&groups.len()) {
+        return None;
+    }
+    let mut parts = [0_u32; 6];
+    for (slot, group) in parts.iter_mut().zip(&groups) {
+        if group.len() > 4 {
+            return None;
+        }
+        *slot = group.parse().ok()?;
+    }
+    if groups[0].len() <= 2 {
+        parts[0] += if parts[0] < 70 { 2000 } else { 1900 };
+    }
+    calendar_in_range(parts)
+}
+
+/// [`loose_calendar`] for text whose first separator is a dash or a slash:
+/// a date. A colon starts a time, and a leading sign a duration.
+fn short_date(text: &str) -> Option<[u32; 6]> {
+    let text = text.trim();
+    let at = text.find(|character: char| !character.is_ascii_digit())?;
+    (at > 0 && matches!(text.as_bytes()[at], b'-' | b'/'))
+        .then(|| loose_calendar(text))
+        .flatten()
+}
+
+fn calendar_in_range(parts: [u32; 6]) -> Option<[u32; 6]> {
+    let [year, month, day, hour, minute, second] = parts;
+    (year <= 9999 && month <= 12 && day <= 31 && hour <= 23 && minute <= 59 && second <= 59)
+        .then_some(parts)
+}
+
+/// Calendar fields rendered as a `DATE` or `DATETIME` answer under the
+/// session's zero-date policy - bit 0 `NO_ZERO_DATE`, bit 1
+/// `NO_ZERO_IN_DATE`, bit 2 `ALLOW_INVALID_DATES` - or NULL where the policy
+/// refuses them, as `MySQL` answers such a conversion.
+pub(super) fn policy_calendar(parts: [u32; 6], policy: u64, datetime: bool) -> Value {
+    let [year, month, day, hour, minute, second] = parts;
+    let all_zero = year == 0 && month == 0 && day == 0;
+    let refused = (policy & 1 != 0 && all_zero)
+        || (policy & 2 != 0 && !all_zero && (month == 0 || day == 0))
+        || (policy & 4 == 0
+            && month != 0
+            && day != 0
+            && NaiveDate::from_ymd_opt(i32::try_from(year).unwrap_or(0), month, day).is_none());
+    if refused {
+        return Value::Null;
+    }
+    let date = format!("{year:04}-{month:02}-{day:02}");
+    Value::Utf8(if datetime {
+        format!("{date} {hour:02}:{minute:02}:{second:02}")
+    } else {
+        date
+    })
+}
+
 /// A date part of a value `MySQL` does not store as a date: an integer is a
 /// packed date and time, or for the time-of-day parts a packed HHMMSS time,
 /// and text that holds only a time still has an hour, minute and second.
@@ -743,7 +845,16 @@ pub(super) fn date_part_of(value: &Value, integer: bool, part: DatePart) -> Resu
                 } else {
                     match parse_mysql_datetime(&text) {
                         Ok(datetime) => return Ok(date_part(datetime, part)),
-                        Err(_) => Some(text_time(&text).ok_or(ExecError::InvalidDateTime)?),
+                        // A date whose year is one digit, or whose parts
+                        // are short, still has a clock: `'1-2-3'` is
+                        // 2001-02-03 at midnight. Only a dash or slash
+                        // separates date parts; a colon starts a time.
+                        Err(_) => match short_date(&text) {
+                            Some([_, _, _, hour, minute, second]) => {
+                                Some((u64::from(hour), u64::from(minute), u64::from(second)))
+                            }
+                            None => Some(text_time(&text).ok_or(ExecError::InvalidDateTime)?),
+                        },
                     }
                 }
             }
@@ -789,6 +900,12 @@ pub(super) fn extract_time(
                 .format("%Y-%m-%d %H:%M:%S")
                 .to_string(),
         )
+    } else if super::canonical_temporal_parts(text, true).is_none() {
+        // A date with short parts, `'1-2-3'`, is 2001-02-03 at midnight - a
+        // calendar, not a duration of one day and change.
+        short_date(text).map(|[year, month, day, hour, minute, second]| {
+            format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}")
+        })
     } else {
         None
     };

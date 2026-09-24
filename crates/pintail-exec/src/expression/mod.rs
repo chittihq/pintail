@@ -4443,6 +4443,23 @@ fn mysql_month_days(year: u32, month: u32) -> Option<u32> {
 
 /// A calendar cast validates zero components separately from invalid civil
 /// dates. Its policy was captured at binding, before execution moves threads.
+/// Calendar fields a cast to `DATE` or `DATETIME(fsp)` answers with, under
+/// the session's zero-date policy; a fraction the source did not carry is
+/// zeros.
+fn zero_calendar_cast(parts: [u32; 6], policy: u64, target: DataType) -> Value {
+    match (
+        temporal::policy_calendar(parts, policy, target != DataType::Date32),
+        target,
+    ) {
+        (Value::Utf8(mut text), DataType::DateTime64 { fsp }) if fsp > 0 => {
+            text.push('.');
+            text.extend(std::iter::repeat_n('0', usize::from(fsp)));
+            Value::Utf8(text)
+        }
+        (answer, _) => answer,
+    }
+}
+
 fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>) -> Option<Value> {
     if !matches!(target, DataType::Date32 | DataType::DateTime64 { .. }) {
         return None;
@@ -4461,7 +4478,15 @@ fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>
     } else {
         text
     };
-    let (date, clock) = canonical_temporal_parts_policy(&text, true, true)?;
+    let Some((date, clock)) = canonical_temporal_parts_policy(&text, true, true) else {
+        // Any punctuation between the parts, as MySQL reads a date:
+        // '12:00:00-12.34.56' is 2012-00-00 12:34:56.
+        // Only a zero month or day needs this reading; any other date keeps
+        // the paths that round its fraction.
+        return temporal::loose_calendar(&text)
+            .filter(|[_, month, day, ..]| *month == 0 || *day == 0)
+            .map(|parts| zero_calendar_cast(parts, *policy, target));
+    };
     let year: u32 = date[..4].parse().ok()?;
     let month: u32 = date[5..7].parse().ok()?;
     let day: u32 = date[8..].parse().ok()?;
@@ -4491,6 +4516,7 @@ fn cast_partial_calendar(value: &Value, target: DataType, policy: Option<&Value>
 /// Stored and typed temporal values already passed their producer's validity
 /// rules. A cast must preserve their zero components rather than parse them
 /// again as untyped strings under civil-calendar rules.
+#[allow(clippy::too_many_lines)]
 fn cast_temporal_carrier(
     value: &Value,
     source: Option<DataType>,
@@ -4528,6 +4554,17 @@ fn cast_temporal_carrier(
                 calendar.push_str(fraction);
             }
             return cast_datetime_precision(&Value::Utf8(calendar), target, statement_date);
+        }
+        // A zero month or day has no civil date; read the fields as MySQL does
+        // and let the session's zero-date policy decide.
+        if let Some(Value::UInt64(policy)) = statement_date
+            && let Some(parts) = whole
+                .trim()
+                .parse::<i128>()
+                .ok()
+                .and_then(temporal::numeric_calendar)
+        {
+            return Some(zero_calendar_cast(parts, *policy, target));
         }
     }
     if matches!(target, DataType::Time64 { .. })
