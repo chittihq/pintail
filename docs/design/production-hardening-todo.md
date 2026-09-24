@@ -365,14 +365,21 @@ prints.
   and unattributed: it was seen on the reference path, not on the dense
   fold under test. If it returns, the partition merge in the general
   aggregate is where two partials for one key could fail to combine.
-- [ ] **G12. The streaming two-pass aggregate fails instead of spilling
+- [x] **G12. The streaming two-pass aggregate fails instead of spilling
   over an input with no transient floor.** Its proactive relief keys off
   the scan's reported floor; an input that reports none (a join, a
   subquery, the static test provider) can fill the ceiling with buffered
   windows until the next input batch's own reservation fails. Reproduced
   in-process: a text-keyed `COUNT(*)` over 20,000 groups at a 1 MiB
   ceiling fails on a 42 KB batch with the tracker at 1,015,832 bytes. The
-  general path over the same input spills and completes.
+  general path over the same input spills and completes. Closed
+  2026-09-25: the failure was the key intern table, which held every
+  distinct text key seen and was never released, and a flush trigger that
+  counted only scattered bytes. Pending rows are now applied once the
+  query, plus what applying them may add, passes half its ceiling; a spill
+  after that clears the intern table when nothing refers to its ids; and
+  an input with no reported floor is given the largest batch it has
+  produced as one. The same query at 1 MiB spills and completes.
 - [x] **G14. Decimal `AVG` was rounded twice by enclosing rounding functions.**
   Closed 2026-09-08. The finished average used to discard its quotient
   after rendering at the declared scale. An enclosing `ROUND` could then

@@ -23,6 +23,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Under the `auto_resync` keyless policy, repairing one quarantined keyless
   table recopied the whole database and left every table not ready for the
   copy. It now recopies that one table.
+- A grouped count over a text key with many distinct values failed at a
+  tight memory ceiling instead of spilling, when its input was a join or a
+  subquery: the table of distinct keys was never released, and the rows
+  waiting to be grouped were applied too late to leave room. It now spills
+  and completes.
 
 ## [0.1.5-rc6] - 2026-09-24
 

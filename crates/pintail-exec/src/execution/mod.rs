@@ -7433,6 +7433,67 @@ mod tests {
     }
 
     #[test]
+    fn a_streaming_grouped_count_spills_over_an_input_with_no_transient_floor() {
+        // A plain text key takes the streaming two-pass path, and the static
+        // provider reports no transient floor - as a join or a subquery does.
+        // The aggregate must still leave the input room to produce its next
+        // batch and spill its groups, rather than fill the ceiling with
+        // buffered windows and fail on that batch's reservation.
+        let batches = (0..64)
+            .map(|batch| {
+                let names = (0..512)
+                    .map(|row| {
+                        let key = (batch * 512 + row) % 20_000;
+                        Value::Utf8(format!(
+                            "name-{key:05}-with-a-payload-that-outgrows-the-ceiling"
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                RecordBatch::new(
+                    names.len(),
+                    vec![ColumnVector::new(DataType::Utf8, names).expect("names")],
+                )
+                .expect("batch")
+            })
+            .collect::<Vec<_>>();
+        let execute = |memory_limit| {
+            let provider = StaticProvider {
+                batches: Mutex::new(batches.clone()),
+            };
+            let mut execution = Execution::start(
+                physical("SELECT name, COUNT(*) FROM events GROUP BY name"),
+                &provider,
+                memory_limit,
+                Collation::default(),
+            )
+            .expect("execution");
+            let mut rows = Vec::new();
+            while let Some(batch) = execution.next_batch().expect("pull") {
+                for row in batch.selection().selected_rows() {
+                    rows.push(
+                        batch
+                            .columns()
+                            .iter()
+                            .map(|column| column.value(row).cloned().expect("value"))
+                            .collect::<Vec<_>>(),
+                    );
+                }
+            }
+            rows.sort_by(|left, right| match (&left[0], &right[0]) {
+                (Value::Utf8(left), Value::Utf8(right)) => left.cmp(right),
+                _ => unreachable!("group keys are text"),
+            });
+            (rows, execution.spill_metrics())
+        };
+        let (memory, memory_spill) = execute(64 * 1024 * 1024);
+        let (spilled, spill) = execute(1024 * 1024);
+        assert_eq!(spilled.len(), 20_000);
+        assert_eq!(spilled, memory);
+        assert_eq!(memory_spill.files, 0);
+        assert!(spill.files > 0, "the tight execution must use spill files");
+    }
+
+    #[test]
     fn forced_set_operation_spill_matches_multiset_semantics() {
         let batches = (0..64)
             .map(|batch| {

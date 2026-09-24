@@ -456,6 +456,40 @@ fn two_pass_spill(
     Ok(())
 }
 
+/// Clears the key intern table once nothing refers to its ids: the groups
+/// have gone to disk, where their keys are written as text, and no window
+/// or bucket holds a translated row. The table holds every distinct key
+/// seen, so without this a high-cardinality text key fills the ceiling
+/// with keys whose groups are already on disk.
+fn clear_idle_intern(
+    intern: &mut Option<StringIntern>,
+    pending_empty: bool,
+    maps: &[GroupKeyMap],
+    dense_empty: bool,
+    memory: &MemoryTracker,
+) {
+    if pending_empty
+        && dense_empty
+        && maps.iter().all(HashMap::is_empty)
+        && let Some(intern) = intern
+    {
+        intern.clear(memory);
+    }
+}
+
+/// Whether rows waiting to be applied should be applied now: what the query
+/// holds, plus what applying them may add, passes half its ceiling. The
+/// window is otherwise due by its scattered bytes alone, but pending rows
+/// cost more than those - each new text key is interned as it arrives - so
+/// it could fill the ceiling before it was due, with the maps still empty
+/// and nothing for a spill to free.
+fn pending_under_pressure(memory: &MemoryTracker, rows: usize, per_row_growth: usize) -> bool {
+    memory
+        .used()
+        .saturating_add(rows.saturating_mul(per_row_growth))
+        > memory.limit() / 2
+}
+
 /// Whether the groups held so far should go to disk before the next flush
 /// applies its window: the query past half the ceiling with groups to
 /// spill. The maps' charge is only part of what they hold, since distinct
@@ -531,6 +565,11 @@ pub(super) fn build_streaming_two_pass_aggregate(
         .saturating_mul(scatter_row_bytes)
         .clamp(128 << 10, 64 << 20);
     let scan_floor = input.scan_transient_floor().saturating_mul(2);
+    // An input that reports no floor - a join, a subquery - still needs room
+    // to produce its next batch. The largest batch it has produced stands in
+    // for the floor it does not report, so relief runs before the buffered
+    // windows leave that batch nowhere to go.
+    let mut observed_floor = 0_usize;
     let mut buckets: Vec<TwoPassBucket> =
         (0..partitions).map(|_| TwoPassBucket::default()).collect();
     let mut maps: Vec<GroupKeyMap> = (0..partitions).map(|_| GroupKeyMap::default()).collect();
@@ -545,6 +584,7 @@ pub(super) fn build_streaming_two_pass_aggregate(
     .then(|| StringIntern {
         index: HashMap::new(),
         values: Vec::new(),
+        reserved: 0,
         collation,
     });
     // Distinct lanes stay on the classic path: dense per-worker partials
@@ -617,6 +657,8 @@ pub(super) fn build_streaming_two_pass_aggregate(
             }
             _ => Some(Vec::new()),
         };
+        observed_floor = observed_floor.max(current.estimated_bytes().saturating_mul(2));
+        let floor = scan_floor.max(observed_floor);
         if let Some(translations) = prepared {
             let rows = current.visible_row_count();
             let need = rows
@@ -680,7 +722,8 @@ pub(super) fn build_streaming_two_pass_aggregate(
             window_rows += rows;
             window.push((current, translations));
             if window_rows.saturating_mul(scatter_row_bytes) >= flush_bytes
-                || (scan_floor > 0 && memory.remaining() < scan_floor)
+                || (floor > 0 && memory.remaining() < floor)
+                || pending_under_pressure(memory, window_rows, per_row_growth)
             {
                 two_pass_relieve(
                     &mut TwoPassState {
@@ -730,6 +773,13 @@ pub(super) fn build_streaming_two_pass_aggregate(
                         collation,
                         memory,
                     )?;
+                    clear_idle_intern(
+                        &mut intern,
+                        window.is_empty() && bucket_reserved == 0,
+                        &maps,
+                        dense.is_none(),
+                        memory,
+                    );
                 }
             }
             batch = input.next_batch(memory)?;
@@ -831,7 +881,14 @@ pub(super) fn build_streaming_two_pass_aggregate(
             _ => unreachable!("intern presence follows the key source"),
         }
         drop(current);
-        if bucket_reserved >= flush_bytes || (scan_floor > 0 && memory.remaining() < scan_floor) {
+        if bucket_reserved >= flush_bytes
+            || (floor > 0 && memory.remaining() < floor)
+            || pending_under_pressure(
+                memory,
+                bucket_reserved / scatter_row_bytes.max(1),
+                per_row_growth,
+            )
+        {
             two_pass_relieve(
                 &mut TwoPassState {
                     maps: &mut maps,
@@ -876,6 +933,13 @@ pub(super) fn build_streaming_two_pass_aggregate(
                     collation,
                     memory,
                 )?;
+                clear_idle_intern(
+                    &mut intern,
+                    window.is_empty() && bucket_reserved == 0,
+                    &maps,
+                    dense.is_none(),
+                    memory,
+                );
             }
         }
         batch = input.next_batch(memory)?;
@@ -1398,6 +1462,8 @@ fn scatter_two_pass_row(
 struct StringIntern {
     index: HashMap<Vec<u8>, u64>,
     values: Vec<String>,
+    /// Bytes reserved for the entries, handed back when the table is cleared.
+    reserved: usize,
     /// The plan's collation. Held here because the table IS the equivalence
     /// relation - two spellings share an id exactly when the collation says
     /// they are equal - so it cannot be decided per call.
@@ -1405,6 +1471,13 @@ struct StringIntern {
 }
 
 impl StringIntern {
+    fn clear(&mut self, memory: &MemoryTracker) {
+        self.index = HashMap::new();
+        self.values = Vec::new();
+        memory.release(self.reserved);
+        self.reserved = 0;
+    }
+
     fn intern(&mut self, bytes: &[u8], memory: &MemoryTracker) -> Result<u64, ExecError> {
         // Group keys unify through the same sort key used by comparison,
         // hashing, DISTINCT, and joins. Keep the first-seen spelling
@@ -1416,13 +1489,13 @@ impl StringIntern {
             return Ok(*id);
         }
         let id = u64::try_from(self.values.len()).expect("intern ids fit u64");
-        memory.reserve(
-            bytes
-                .len()
-                .saturating_add(folded.len())
-                .saturating_add(HASH_ENTRY_OVERHEAD)
-                .saturating_add(size_of::<String>() + size_of::<u64>()),
-        )?;
+        let entry = bytes
+            .len()
+            .saturating_add(folded.len())
+            .saturating_add(HASH_ENTRY_OVERHEAD)
+            .saturating_add(size_of::<String>() + size_of::<u64>());
+        memory.reserve(entry)?;
+        self.reserved = self.reserved.saturating_add(entry);
         self.index.insert(folded, id);
         self.values.push(value.to_owned());
         Ok(id)
