@@ -712,26 +712,60 @@ fn open_targets(
             ambiguous.join(", ")
         );
     }
-    report
-        .tables
-        .iter()
-        .filter(|source| {
-            let name = source.name.to_ascii_lowercase();
-            tracked.contains(&name) && spellings[&name] == 1
-        })
-        .cloned()
-        .map(|source| {
-            let directory = table_directory(root, &source.name);
-            CdcTarget::open_tracked(
-                metadata_path,
-                database_id,
-                source,
-                directory,
-                StoreOptions::default(),
-            )
-            .map_err(display)
-        })
-        .collect()
+    let mut targets = Vec::new();
+    for source in report.tables.iter().filter(|source| {
+        let name = source.name.to_ascii_lowercase();
+        tracked.contains(&name) && spellings[&name] == 1
+    }) {
+        let directory = table_directory(root, &source.name);
+        match CdcTarget::open_tracked(
+            metadata_path,
+            database_id,
+            source.clone(),
+            directory,
+            StoreOptions::default(),
+        ) {
+            Ok(target) => targets.push(target),
+            // One store written for a shape the control plane no longer
+            // describes used to fail the whole cycle, and the failure was
+            // then stamped on every table of the database - one stale table
+            // stopped all of them, every cycle, with nothing to repair it.
+            // The refusal belongs to that table alone: quarantine it so the
+            // automatic resync recopies it, and stream the rest.
+            Err(error) if store_layout_refused(&error) => {
+                let reason = format!("its stored files no longer match its schema: {error}");
+                MetaStore::open(metadata_path)
+                    .and_then(|metadata| {
+                        metadata.mark_table_needs_resync(database_id, &source.name, &reason)
+                    })
+                    .map_err(display)?;
+                pintail_log::log_error!(
+                    "table quarantined db={database_id} table={}: {reason}",
+                    source.name
+                );
+            }
+            Err(error) => return Err(display(error)),
+        }
+    }
+    Ok(targets)
+}
+
+/// Whether a tracked store refused to open because its files were written
+/// for another shape of the table, which a recopy repairs, rather than
+/// because the store or the control plane itself failed.
+fn store_layout_refused(error: &pintail_cdc::CdcError) -> bool {
+    use pintail_store::StoreError;
+    match error {
+        pintail_cdc::CdcError::Store(
+            StoreError::SchemaMismatch { .. }
+            | StoreError::SchemaFingerprintMismatch { .. }
+            | StoreError::IncompatibleSchema(_),
+        ) => true,
+        pintail_cdc::CdcError::InvalidConfiguration(message) => {
+            message.contains("differs from durable schema history")
+        }
+        _ => false,
+    }
 }
 
 /// Tables the probe flagged as cascade-affected whose last reconcile is older
@@ -1013,6 +1047,140 @@ mod tests {
                 ("Orders".to_owned(), "needs_resync".to_owned()),
             ],
             "the ambiguous table is quarantined; an unrelated one is untouched"
+        );
+    }
+
+    /// A store whose files were written for another shape of its table
+    /// refuses to open. That refusal is the one table's: it used to fail
+    /// the whole cycle, and the failure was then written onto every table
+    /// of the database, so one stale store stopped all replication for
+    /// good. It must quarantine that table and leave the rest streaming.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn a_store_written_for_another_shape_quarantines_only_its_table() {
+        let directory = tempfile::tempdir().expect("data directory");
+        let metadata_path = directory.path().join("pintail-meta.db");
+        let root = directory.path().join("tables");
+        let now = "2026-09-24T00:00:00Z";
+        let metadata = MetaStore::open(&metadata_path).expect("metadata");
+        metadata
+            .upsert_database("db-1", "shop", b"secret", now)
+            .expect("database");
+        for name in ["orders", "customers"] {
+            metadata
+                .upsert_snapshot_table("db-1", name, Some("[\"id\"]"), Some("[\"id\"]"))
+                .expect("register");
+            metadata
+                .complete_snapshot_table("db-1", name)
+                .expect("copy");
+        }
+
+        let column = |id: u32, name: &str, nullable: bool| {
+            serde_json::json!({
+                "id": id,
+                "name": name,
+                "mysql_data_type": "bigint",
+                "mysql_column_type": "bigint",
+                "pintail_type": "int64",
+                "nullable": nullable,
+                "character_set": null,
+                "collation": null,
+                "generated_stored": false,
+                "generation_expression": "",
+                "extra": "",
+                "auto_increment": false,
+                "default_value": null,
+                "default_generated": false,
+                "ordinal": id - 1
+            })
+        };
+        let source = |name: &str, columns: Vec<serde_json::Value>| {
+            serde_json::json!({
+                "name": name,
+                "engine": "InnoDB",
+                "estimated_rows": 1,
+                "columns": columns,
+                "key": {"mode": "primary", "index_name": "PRIMARY", "columns": ["id"]},
+                "unique_keys": [],
+                "requires_reconciliation": false,
+                "warnings": []
+            })
+        };
+
+        // The orders store on disk holds a column the source no longer has,
+        // under the same schema version: no history row bridges the two.
+        let stale: pintail_probe::SourceTable = serde_json::from_value(source(
+            "orders",
+            vec![column(1, "id", false), column(2, "total", true)],
+        ))
+        .expect("stale shape");
+        let mut store = pintail_store::TableStore::open(
+            pintail_store::table_directory(&root, "orders"),
+            stale.table_schema().expect("stale schema"),
+            pintail_store::StoreOptions::default(),
+        )
+        .expect("stale store");
+        store
+            .ingest(vec![pintail_types::StoredRow::new(
+                pintail_types::PrimaryKey::new(vec![pintail_types::KeyPart::Int64(1)])
+                    .expect("key"),
+                vec![pintail_types::Value::Int64(1), pintail_types::Value::Null],
+                1,
+                false,
+            )])
+            .expect("ingest");
+        store.flush().expect("flush");
+        drop(store);
+
+        let report: pintail_probe::ProbeReport = serde_json::from_value(serde_json::json!({
+            "database": "shop",
+            "server": {
+                "version": "8.4.0",
+                "version_comment": "MySQL Community Server",
+                "flavor": "mysql"
+            },
+            "variables": {},
+            "grants": [],
+            "capabilities": {
+                "log_bin": true,
+                "row_binlog": true,
+                "full_row_image": true,
+                "full_row_metadata": true,
+                "replication_grants": true,
+                "global_read_lock": true,
+                "gtid_available": true,
+                "recommended_mode": "cdc",
+                "reasons": []
+            },
+            "tables": [
+                source("customers", vec![column(1, "id", false)]),
+                source("orders", vec![column(1, "id", false)]),
+            ],
+            "warnings": []
+        }))
+        .expect("probe report");
+
+        let records = metadata.tables("db-1").expect("tables");
+        let targets = open_targets(&metadata_path, "db-1", &root, &report, &records)
+            .expect("one stale store does not fail the cycle");
+        let streamed = targets
+            .iter()
+            .map(|target| target.source().name.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(streamed, vec!["customers".to_owned()]);
+        let states = metadata
+            .tables("db-1")
+            .expect("tables")
+            .into_iter()
+            .map(|table| (table.name, table.state))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            states,
+            vec![
+                ("customers".to_owned(), "pending".to_owned()),
+                ("orders".to_owned(), "needs_resync".to_owned()),
+            ],
+            "only the stale table is quarantined, so the automatic resync recopies it"
         );
     }
 
