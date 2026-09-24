@@ -143,7 +143,6 @@ fn an_all_constant_list_compares_the_integer_exactly() {
 /// answers three. The case is recorded rather than asserted: writing down
 /// today's wrong answer would make a later fix look like a regression.
 #[test]
-#[ignore = "per-item comparison typing in a mixed IN list is not implemented"]
 fn a_mixed_list_decides_each_item_separately() {
     assert_eq!(
         run("SELECT id FROM q WHERE id IN ('1234',97716021308405775) ORDER BY id"),

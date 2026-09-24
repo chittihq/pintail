@@ -2860,14 +2860,42 @@ fn projection_subquery_aliases(
 }
 
 /// Resolves HAVING names against grouping columns, then SELECT aliases.
+///
+/// A grouping column is resolved only at the expression's own level. A
+/// subquery inside it binds its names in its own scope, where an outer
+/// grouping column is reached by correlation; qualifying the name there
+/// pointed it at a relation that scope does not hold, and
+/// `HAVING (SELECT c)` over an outer `GROUP BY c` failed with an unknown
+/// column.
 fn substitute_projection_aliases(
     expr: &Expr,
     projection: &[SelectItem],
     group_by: &[BoundExpr],
 ) -> Expr {
-    let mut rewritten = expr.clone();
-    let flow: std::ops::ControlFlow<()> =
-        sqlparser::ast::visit_expressions_mut(&mut rewritten, |node| {
+    struct Substitute<'a> {
+        projection: &'a [SelectItem],
+        group_by: &'a [BoundExpr],
+        depth: usize,
+    }
+    impl sqlparser::ast::VisitorMut for Substitute<'_> {
+        type Break = ();
+        fn pre_visit_query(&mut self, _query: &mut Query) -> std::ops::ControlFlow<()> {
+            self.depth += 1;
+            std::ops::ControlFlow::Continue(())
+        }
+        fn post_visit_query(&mut self, _query: &mut Query) -> std::ops::ControlFlow<()> {
+            self.depth -= 1;
+            std::ops::ControlFlow::Continue(())
+        }
+        // After the node's children, as `visit_expressions_mut` rewrites: a
+        // replacement is never visited again, so an alias whose expression
+        // names itself (`ADDTIME(duration, ...) AS duration`) cannot expand
+        // without end.
+        fn post_visit_expr(&mut self, node: &mut Expr) -> std::ops::ControlFlow<()> {
+            let (projection, group_by) = (
+                self.projection,
+                if self.depth == 0 { self.group_by } else { &[] },
+            );
             if let Expr::Identifier(identifier) = node
                 && let Some(column) = group_by.iter().find_map(|group| match &group.kind {
                     BoundExprKind::Column(column)
@@ -2897,7 +2925,17 @@ fn substitute_projection_aliases(
                 *node = aliased.clone();
             }
             std::ops::ControlFlow::Continue(())
-        });
+        }
+    }
+    let mut rewritten = expr.clone();
+    let flow = sqlparser::ast::VisitMut::visit(
+        &mut rewritten,
+        &mut Substitute {
+            projection,
+            group_by,
+            depth: 0,
+        },
+    );
     debug_assert!(flow.is_continue());
     rewritten
 }
@@ -3488,7 +3526,10 @@ fn bind_expr_inner(
                 bind_expr_inner(pattern, tables, aggregates, windows, subqueries)?,
             ],
         ),
-        Expr::Subquery(query) => bind_scalar_subquery(query, subqueries),
+        Expr::Subquery(query) => match single_row_expression(query) {
+            Some(inner) => bind_expr_inner(inner, tables, aggregates, windows, subqueries),
+            None => bind_scalar_subquery(query, subqueries),
+        },
         Expr::Exists { subquery, negated } => {
             let resolver =
                 subqueries.ok_or_else(|| BindError::UnsupportedSubquery(subquery.to_string()))?;
@@ -6954,6 +6995,57 @@ fn exact_numeric_type(data_type: Option<DataType>) -> bool {
     )
 }
 
+/// The one value a table-free subquery of a single plain expression answers
+/// with, when it can be read in place.
+///
+/// `(SELECT c)` with no FROM, WHERE, grouping, ordering or limit returns
+/// exactly one row holding `c`, so it is `c` - bound in the scope that
+/// holds it. Bound as a subquery instead, a column two levels out was
+/// beyond its reach: `HAVING (SELECT c)` inside a projection subquery of
+/// an outer `GROUP BY c` failed with an unknown column. A function call
+/// keeps the subquery, since an aggregate there would count the one row.
+fn single_row_expression(query: &Query) -> Option<&Expr> {
+    if query.with.is_some()
+        || query.order_by.is_some()
+        || query.limit_clause.is_some()
+        || query.fetch.is_some()
+        || !query.locks.is_empty()
+    {
+        return None;
+    }
+    let SetExpr::Select(select) = query.body.as_ref() else {
+        return None;
+    };
+    let grouped = !matches!(
+        &select.group_by,
+        GroupByExpr::Expressions(expressions, modifiers) if expressions.is_empty() && modifiers.is_empty()
+    );
+    if !select.from.is_empty()
+        || select.selection.is_some()
+        || grouped
+        || select.having.is_some()
+        || select.distinct.is_some()
+        || select.into.is_some()
+    {
+        return None;
+    }
+    let [SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. }] =
+        select.projection.as_slice()
+    else {
+        return None;
+    };
+    let mut plain = true;
+    let flow: std::ops::ControlFlow<()> = sqlparser::ast::visit_expressions(expr, |node| {
+        plain &= !matches!(
+            node,
+            Expr::Function(_) | Expr::Subquery(_) | Expr::Exists { .. } | Expr::InSubquery { .. }
+        );
+        std::ops::ControlFlow::Continue(())
+    });
+    debug_assert!(flow.is_continue());
+    plain.then_some(expr)
+}
+
 /// An introducer labels literal bytes; it does not transcode connection text.
 fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindError> {
     let charset = prefix
@@ -6991,8 +7083,15 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
             ));
         }
         if encoding.minimum_width() == 1 {
-            let Some(text) = encoding.decode(bytes) else {
-                return refuse();
+            let text = match encoding.decode(bytes) {
+                Some(text) => text,
+                // Bytes that do not spell UTF-8 behind a UTF-8 introducer -
+                // a latin1 connection sending `÷` - MySQL accepts with a
+                // warning; two literals of the same bytes still compare equal.
+                None if matches!(charset.as_str(), "utf8" | "utf8mb3" | "utf8mb4") => {
+                    String::from_utf8_lossy(bytes).into_owned()
+                }
+                None => return refuse(),
             };
             return Ok(crate::text_charset::wrap(
                 BoundExpr {
@@ -7026,10 +7125,8 @@ fn bind_introducer(prefix: &str, literal: BoundExpr) -> Result<BoundExpr, BindEr
     }
     let value = match charset.as_str() {
         "binary" => Value::Binary(bytes.to_vec()),
-        "utf8mb4" | "utf8mb3" | "utf8" => match std::str::from_utf8(bytes) {
-            Ok(text) => Value::Utf8(text.to_owned()),
-            Err(_) => return refuse(),
-        },
+        // As above: bytes that do not spell UTF-8 are accepted, not refused.
+        "utf8mb4" | "utf8mb3" | "utf8" => Value::Utf8(String::from_utf8_lossy(bytes).into_owned()),
         // A wide set never spells ASCII as ASCII; every other set does.
         "ucs2" | "utf16" | "utf16le" | "utf32" => return refuse(),
         _ if bytes.is_ascii() => Value::Utf8(String::from_utf8_lossy(bytes).into_owned()),

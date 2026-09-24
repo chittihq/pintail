@@ -803,6 +803,179 @@ fn bind_timestamp_diff(
     )
 }
 
+/// An `IN` list whose items `MySQL` compares in different domains, rewritten
+/// as the list's ordinary items OR'd with each exceptional item compared in
+/// its own domain - which is what `IN` means, NULL logic included.
+///
+/// `MySQL` decides the comparison per item when the items disagree, not once
+/// for the list, and Pintail binds one comparison type for a whole list:
+///
+/// - A numeric column against a list holding both numbers and strings: each
+///   number compares exactly, each string as a double. So
+///   `id IN (1234, '97716021308405775')` matches the three ids a double cannot
+///   tell apart, while `id IN ('1234', 97716021308405775)` matches one.
+/// - A `TIME` column against a list of two or more items with a `DATETIME` or
+///   `TIMESTAMP` among them: that item compares against the column dated
+///   today, so `TIMESTAMP'2001-01-01 10:20:32'` does not match `10:20:32`,
+///   while the `TIME` and integer items still compare as times.
+///
+/// Only a plain column is split, so repeating it cannot repeat work.
+fn in_list_by_item(
+    expr: &Expr,
+    list: &[Expr],
+    negated: bool,
+    tables: &[BoundTable],
+    subqueries: Option<&SubqueryResolver<'_>>,
+) -> Option<Expr> {
+    use sqlparser::ast::{BinaryOperator, UnaryOperator};
+    if !matches!(expr, Expr::Identifier(_) | Expr::CompoundIdentifier(_)) || list.len() < 2 {
+        return None;
+    }
+    let subject = bind_expr_inner(expr, tables, &mut None, &mut None, subqueries)
+        .ok()?
+        .data_type?;
+    let domain = ItemDomain::for_list(subject, list)?;
+    let ordinary = list
+        .iter()
+        .filter(|item| !domain.claims(item))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut alternatives = list
+        .iter()
+        .filter(|item| domain.claims(item))
+        .map(|item| domain.compare(expr, item))
+        .collect::<Vec<_>>();
+    if !ordinary.is_empty() {
+        alternatives.insert(
+            0,
+            Expr::InList {
+                expr: Box::new(expr.clone()),
+                list: ordinary,
+                negated: false,
+            },
+        );
+    }
+    let either = alternatives
+        .into_iter()
+        .reduce(|left, right| Expr::BinaryOp {
+            left: Box::new(left),
+            op: BinaryOperator::Or,
+            right: Box::new(right),
+        })?;
+    Some(if negated {
+        Expr::UnaryOp {
+            op: UnaryOperator::Not,
+            expr: Box::new(Expr::Nested(Box::new(either))),
+        }
+    } else {
+        either
+    })
+}
+
+/// The items of an `IN` list that compare in a domain of their own, and how.
+#[derive(Clone, Copy)]
+enum ItemDomain {
+    /// String items against a numeric column, compared as doubles.
+    Double,
+    /// `DATETIME` or `TIMESTAMP` items against a `TIME` column. Beside a
+    /// number the whole list compares as numbers - the time as HHMMSS, the
+    /// datetime as YYYYMMDDHHMMSS - so such an item never matches; without
+    /// one, the column is dated today and compared as a datetime.
+    Datetime { numeric: bool },
+}
+
+impl ItemDomain {
+    fn for_list(subject: DataType, list: &[Expr]) -> Option<Self> {
+        let numeric = matches!(
+            subject,
+            DataType::Int8
+                | DataType::Int16
+                | DataType::Int32
+                | DataType::Int64
+                | DataType::UInt8
+                | DataType::UInt16
+                | DataType::UInt32
+                | DataType::UInt64
+                | DataType::Float32
+                | DataType::Float64
+                | DataType::Decimal { .. }
+        );
+        if numeric
+            && list.iter().any(|item| Self::Double.claims(item))
+            && list.iter().any(is_number_literal)
+        {
+            Some(Self::Double)
+        } else if matches!(subject, DataType::Time64 { .. })
+            && list
+                .iter()
+                .any(|item| Self::Datetime { numeric: false }.claims(item))
+        {
+            Some(Self::Datetime {
+                numeric: list.iter().any(is_number_literal),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn claims(self, item: &Expr) -> bool {
+        match self {
+            Self::Double => matches!(item, Expr::Value(value)
+                if matches!(value.value, SqlValue::SingleQuotedString(_) | SqlValue::DoubleQuotedString(_))),
+            Self::Datetime { .. } => matches!(item, Expr::TypedString(typed)
+                if matches!(typed.data_type, SqlDataType::Timestamp(..) | SqlDataType::Datetime(..))),
+        }
+    }
+
+    fn compare(self, subject: &Expr, item: &Expr) -> Expr {
+        use sqlparser::ast::{BinaryOperator, CastKind, ExactNumberInfo};
+        let cast = |operand: &Expr, data_type: SqlDataType| Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(operand.clone()),
+            data_type,
+            array: false,
+            format: None,
+        };
+        let (left, right) = match self {
+            Self::Double => (
+                cast(subject, SqlDataType::Float(ExactNumberInfo::Precision(53))),
+                cast(item, SqlDataType::Float(ExactNumberInfo::Precision(53))),
+            ),
+            Self::Datetime { numeric: false } => {
+                (cast(subject, SqlDataType::Datetime(None)), item.clone())
+            }
+            Self::Datetime { numeric: true } => {
+                let number = |operand: &Expr| Expr::BinaryOp {
+                    left: Box::new(operand.clone()),
+                    op: BinaryOperator::Plus,
+                    right: Box::new(Expr::Value(SqlValue::Number("0".to_owned(), false).into())),
+                };
+                (number(subject), number(item))
+            }
+        };
+        Expr::BinaryOp {
+            left: Box::new(left),
+            op: BinaryOperator::Eq,
+            right: Box::new(right),
+        }
+    }
+}
+
+fn is_number_literal(item: &Expr) -> bool {
+    use sqlparser::ast::UnaryOperator;
+    match item {
+        Expr::Value(value) => matches!(value.value, SqlValue::Number(..)),
+        Expr::UnaryOp {
+            op: UnaryOperator::Minus | UnaryOperator::Plus,
+            expr,
+        } => {
+            matches!(expr.as_ref(), Expr::Value(value) if matches!(value.value, SqlValue::Number(..)))
+        }
+        _ => false,
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 pub(super) fn bind_in_list(
     expr: &Expr,
     list: &[Expr],
@@ -814,6 +987,9 @@ pub(super) fn bind_in_list(
 ) -> Result<BoundExpr, BindError> {
     if list.is_empty() {
         return Err(BindError::UnsupportedExpression(expr.to_string()));
+    }
+    if let Some(split) = in_list_by_item(expr, list, negated, tables, subqueries) {
+        return bind_expr_inner(&split, tables, aggregates, windows, subqueries);
     }
     // A row-constructor subject - `(a, b) IN ((1, 2), (3, 4))` - is exactly
     // the OR over items of the AND of pairwise equalities, including under

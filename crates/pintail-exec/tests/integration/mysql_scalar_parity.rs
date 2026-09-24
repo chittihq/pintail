@@ -1507,7 +1507,6 @@ fn a_time_column_compares_a_single_datetime_in_the_time_domain() {
 /// because the INTEGER item has to promote too - so the shape is recorded
 /// here rather than left half-implemented.
 #[test]
-#[ignore = "a datetime in an IN list does not yet promote the TIME operands"]
 fn an_in_list_with_a_datetime_compares_a_time_column_as_a_datetime() {
     assert_answers(&[
         (
@@ -2089,7 +2088,6 @@ fn a_numeric_temporal_reads_its_parts_from_its_digit_count() {
 /// validity semantics rather than to this parse, and wants its own
 /// measurement.
 #[test]
-#[ignore = "a zero month is refused regardless of the session's zero-date policy"]
 fn a_permissive_session_reads_a_zero_month_from_a_numeric_temporal() {
     pintail_sql::with_parse_mode(pintail_sql::ParseMode::from_sql_mode(""), || {
         assert_answers(&[
