@@ -2902,10 +2902,7 @@ fn evaluate_eager_scalar_inner(
                         .ok_or(ExecError::NumericOverflow)?;
                     units = units / zero_factor * zero_factor;
                 }
-                return cast_scalar(
-                    &Value::Utf8(pintail_types::format_decimal_scaled(units, render_scale)),
-                    data_type,
-                );
+                return rendered_decimal(units, render_scale, data_type);
             }
             let value = mysql_f64(&values[0])?;
             let digits = mysql_i64(&values[1])?.clamp(-30, 30);
@@ -3409,10 +3406,7 @@ fn evaluate_eager_scalar_inner(
                     pintail_types::parse_decimal_rounded(text, render_scale)
                         .ok_or(ExecError::NumericOverflow)?
                 };
-                return cast_scalar(
-                    &Value::Utf8(pintail_types::format_decimal_scaled(units, render_scale)),
-                    data_type,
-                );
+                return rendered_decimal(units, render_scale, data_type);
             }
             let value = mysql_f64(&values[0])?;
             let decimals = values.get(1).map(mysql_decimals).transpose()?.unwrap_or(0);
@@ -5636,6 +5630,33 @@ fn decimal_add_sub_mul(
 /// `CAST(value AS DECIMAL(precision, scale))`: rounded half away from zero to
 /// the scale, and clamped to the largest magnitude the precision holds, as
 /// `MySQL` clamps an out-of-range value in a SELECT.
+/// A decimal result computed as `units` at `render_scale`, as its declared
+/// type presents it. The cast is what keeps a result whose scale differs from
+/// its declaration (a runtime digit count) exact, but when the scale already
+/// matches and the value fits the precision it can only reproduce the same
+/// text - and parsing that text back, once per row, is what a grouped
+/// `ROUND(SUM(x), 2)` over many groups spent its time on.
+fn rendered_decimal(
+    units: i128,
+    render_scale: u8,
+    data_type: Option<DataType>,
+) -> Result<Value, ExecError> {
+    if let Some(DataType::Decimal { precision, scale }) = data_type
+        && scale == render_scale
+        && 10_i128
+            .checked_pow(u32::from(precision))
+            .is_some_and(|limit| units.unsigned_abs() < limit.unsigned_abs())
+    {
+        return Ok(Value::Utf8(pintail_types::format_decimal_scaled(
+            units, scale,
+        )));
+    }
+    cast_scalar(
+        &Value::Utf8(pintail_types::format_decimal_scaled(units, render_scale)),
+        data_type,
+    )
+}
+
 fn cast_decimal(value: &Value, precision: u8, scale: u8) -> Result<Value, ExecError> {
     let text = |text: &str| {
         pintail_types::parse_decimal_rounded(text, scale)
