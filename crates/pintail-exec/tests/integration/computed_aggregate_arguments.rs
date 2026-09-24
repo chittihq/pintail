@@ -11,7 +11,7 @@
 //! `PINTAIL_DISABLE_ARGUMENT_PROJECTION=1`, and compare both the timings
 //! and the digests (which must agree):
 //! `cargo test --profile recovery -p pintail-exec --test
-//! computed_aggregate_arguments -- --ignored --nocapture`.
+//! integration computed_aggregate_arguments:: -- --ignored --nocapture`.
 
 use std::hash::{Hash, Hasher};
 

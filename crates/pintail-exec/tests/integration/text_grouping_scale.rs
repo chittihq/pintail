@@ -9,7 +9,7 @@
 //! `'A'` and the two were counted as one.
 //!
 //! The measurement is `#[ignore]`d:
-//! `cargo test --profile recovery -p pintail-exec --test text_grouping_scale
+//! `cargo test --profile recovery -p pintail-exec --test integration text_grouping_scale::
 //! -- --ignored --nocapture`.
 
 use pintail_catalog::{

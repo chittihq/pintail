@@ -3,7 +3,7 @@
 //! of changed rows lying across all of it - the shape a replicated table
 //! keeps while its source is written to. Ignored: a measurement, not a
 //! gate. Run with
-//! `cargo test --release -p pintail-exec --test range_prune_bench -- --ignored --nocapture`.
+//! `cargo test --release -p pintail-exec --test integration range_prune_bench:: -- --ignored --nocapture`.
 //! `PINTAIL_BENCH_ROWS` overrides the table size.
 use std::time::{Duration, Instant};
 

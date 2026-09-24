@@ -1,6 +1,6 @@
 //! What a burst of identical reads costs with and without one execution
 //! answering all of them. Ignored: a measurement, not a gate. Run with
-//! `cargo test --release -p pintail-wire --test shared_query_burst --
+//! `cargo test --release -p pintail-wire --test integration shared_query_burst:: --
 //! --ignored --nocapture`, and again with
 //! `PINTAIL_DISABLE_SHARED_QUERIES=1` for the arm that executes each
 //! request on its own.

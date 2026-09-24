@@ -130,7 +130,7 @@ Points to settle while implementing:
 
 ## Verifying
 
-1. `cargo test -p pintail-exec --test decimal_average_exactness` with the
+1. `cargo test -p pintail-exec --test integration decimal_average_exactness::` with the
    `#[ignore]` removed. All ten arms must pass, and the three that pin
    rendering (`a_grouped_decimal_average_is_exact_to_its_result_scale` and
    its neighbours) are the ones that catch a value widened by mistake.

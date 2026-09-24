@@ -110,7 +110,7 @@ fn the_activity_reads_never_scan_a_table_that_grows_forever() {
 /// default: the seeding dominates, and the assertion above is the one that
 /// catches a regression.
 #[test]
-#[ignore = "measurement: cargo test -p pintail-meta --test activity_scale -- --ignored --nocapture"]
+#[ignore = "measurement: cargo test -p pintail-meta --test integration activity_scale:: -- --ignored --nocapture"]
 fn activity_read_timings_over_a_large_history() {
     use std::time::Instant;
 

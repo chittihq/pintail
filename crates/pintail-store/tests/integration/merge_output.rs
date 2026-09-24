@@ -1,6 +1,6 @@
 //! A scan that has to merge, timed against the same rows with nothing to
 //! merge. Ignored: a measurement, not a gate. Run with `cargo test
-//! --release -p pintail-store --test merge_output -- --ignored
+//! --release -p pintail-store --test integration merge_output:: -- --ignored
 //! --nocapture`.
 //!
 //! Both stores are built before either is measured, and the two arms

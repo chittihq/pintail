@@ -2,7 +2,7 @@
 //!
 //! `#[ignore]`: this measures rather than asserts, and is the instrument for
 //! the typed-key work. Run it with
-//! `cargo test --profile recovery -p pintail-exec --test join_key_value_cost
+//! `cargo test --profile recovery -p pintail-exec --test integration join_key_value_cost::
 //! -- --ignored --nocapture`.
 //!
 //! The fused join-aggregate already reads integer keys straight from the

@@ -1,6 +1,6 @@
 //! What a materialized row costs in this representation. Ignored: a
 //! measurement, not a gate. Run with
-//! `cargo test --release -p pintail-types --test layout -- --ignored --nocapture`.
+//! `cargo test --release -p pintail-types --test integration layout:: -- --ignored --nocapture`.
 use std::time::Instant;
 
 use pintail_types::Value;

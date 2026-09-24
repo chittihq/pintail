@@ -2,7 +2,7 @@
 //! settled memo off so every run executes. Ignored: it is a measurement,
 //! not a gate. Run with
 //! `PINTAIL_DISABLE_SETTLED_MEMO=1 cargo test --release -p pintail-exec
-//!  --test morsel_bench -- --ignored --nocapture`.
+//!  --test integration morsel_bench:: -- --ignored --nocapture`.
 //! `PINTAIL_BENCH_ROWS` overrides the fact-table size.
 use std::time::{Duration, Instant};
 

@@ -18,7 +18,7 @@
 //! what it should - no more, which would be a wrong hit, and no less.
 //!
 //! Sizes default small so the correctness assertions run in the unit gate.
-//! `PINTAIL_RATIO_ROWS=20000 cargo test --test dependent_subquery_ratio -- --nocapture`
+//! `PINTAIL_RATIO_ROWS=20000 cargo test --test integration dependent_subquery_ratio:: -- --nocapture`
 //! prints the table at a size where the numbers mean something.
 
 use std::time::Instant;

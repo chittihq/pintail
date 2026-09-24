@@ -2,7 +2,7 @@
 //! states instead of a scan, and whether that survives continuous ingest
 //! the way the settled result memo does not. Ignored: a measurement, not a
 //! gate. Run with `PINTAIL_DISABLE_SETTLED_MEMO=1 cargo test --release
-//! -p pintail-exec --test segment_subcube -- --ignored --nocapture`.
+//! -p pintail-exec --test integration segment_subcube:: -- --ignored --nocapture`.
 use std::collections::BTreeMap;
 use std::time::Instant;
 

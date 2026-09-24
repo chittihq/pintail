@@ -2,7 +2,7 @@
 //! of the segment's keys against a search driven by the changed keys. The
 //! question is whether a table taking a steady trickle of updates pays for
 //! its size or for its changes. Ignored: a measurement, not a gate. Run
-//! with `cargo test --release -p pintail-store --test mask_cost --
+//! with `cargo test --release -p pintail-store --test integration mask_cost:: --
 //! --ignored --nocapture`.
 //!
 //! Two things the first version of this measurement left out, either of

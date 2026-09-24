@@ -1,7 +1,7 @@
 //! Whether the overlay's superseded-row mask should be recomputed by every
 //! scan or maintained as rows arrive. Ignored: a measurement, not a gate.
 //! Run with `cargo test --release -p pintail-store --test
-//! supersession_bitmap -- --ignored --nocapture`.
+//! integration supersession_bitmap:: -- --ignored --nocapture`.
 //!
 //! Both arms run over two shapes of change. Evenly scattered keys touch
 //! every part of the key column and no lookup reuses a cache line the

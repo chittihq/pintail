@@ -1,7 +1,7 @@
 //! Which projections still fall to the row path, and what that costs.
 //!
 //! `#[ignore]`: measurement, not assertion. Run with
-//! `cargo test --profile recovery -p pintail-exec --test scalar_fallback_cost
+//! `cargo test --profile recovery -p pintail-exec --test integration scalar_fallback_cost::
 //! -- --ignored --nocapture`.
 //!
 //! A projection whose expression has no batch kernel builds a `Value` per
