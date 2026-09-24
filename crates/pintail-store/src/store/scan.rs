@@ -231,6 +231,7 @@ fn values_chunk(
         });
     }
     Ok(ProjectedColumnChunk {
+        prefiltered: false,
         columns: columns.into_iter().map(DecodedColumn::Values).collect(),
         row_count,
         stats: ScanStats::default(),
@@ -727,10 +728,30 @@ pub struct ProjectedValueChunk {
 /// Chooses surviving row ranges from a chunk's decoded predicate columns:
 /// `Ok(None)` keeps every row (no restriction); ranges must be ascending and
 /// disjoint. Errors abort the scan.
-pub type PrewhereSelect<'a> = &'a (
-        dyn Fn(&[DecodedColumn], usize) -> Result<Option<Vec<std::ops::Range<usize>>>, String>
-            + Sync
-    );
+pub type PrewhereSelect<'a> =
+    &'a (dyn Fn(&[DecodedColumn], usize) -> Result<Option<PrewhereRanges>, String> + Sync);
+
+/// The rows a prewhere selector keeps from one chunk.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PrewhereRanges {
+    /// Surviving row ranges, ascending and disjoint.
+    pub ranges: Vec<std::ops::Range<usize>>,
+    /// Whether every row inside `ranges` satisfies the selector's whole
+    /// predicate. A selector that widens its ranges to decode fewer, larger
+    /// regions keeps rows that fail, and must say so here; a chunk decoded
+    /// from exact ranges alone is [`ProjectedColumnChunk::prefiltered`].
+    pub exact: bool,
+}
+
+impl From<Vec<std::ops::Range<usize>>> for PrewhereRanges {
+    /// Ranges that restrict the decode but promise nothing about the rows.
+    fn from(ranges: Vec<std::ops::Range<usize>>) -> Self {
+        Self {
+            ranges,
+            exact: false,
+        }
+    }
+}
 
 /// One projected column decoded straight into packed columnar storage.
 ///
@@ -1262,6 +1283,9 @@ pub struct ProjectedColumnChunk {
     row_count: usize,
     stats: ScanStats,
     retained_bytes: usize,
+    /// Every row satisfies the scan's prewhere predicate: the chunk holds
+    /// only rows an exact selector kept.
+    prefiltered: bool,
 }
 
 impl ProjectedValueChunk {
@@ -1335,6 +1359,13 @@ impl ProjectedColumnChunk {
     #[must_use]
     pub const fn stats(&self) -> ScanStats {
         self.stats
+    }
+
+    /// Whether every row of this chunk is known to satisfy the prewhere
+    /// predicate the scan was given, so a consumer need not test it again.
+    #[must_use]
+    pub const fn prefiltered(&self) -> bool {
+        self.prefiltered
     }
 }
 
@@ -1977,18 +2008,28 @@ impl ProjectedScanStream {
                 .iter()
                 .map(|index| &columns[*index])
                 .collect::<Vec<_>>();
-            let (excluded, positions) =
-                overlay_positions(&key_columns, row_count, kept.as_deref(), &memtable);
+            let (excluded, positions) = overlay_positions(
+                &key_columns,
+                row_count,
+                kept.as_ref().map(|kept| kept.ranges.as_slice()),
+                &memtable,
+            );
             *insert_positions
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = positions;
             if excluded.is_empty() {
                 return Ok(kept);
             }
-            Ok(Some(subtract_positions(
-                kept.unwrap_or_else(|| std::iter::once(0..row_count).collect()),
-                &excluded,
-            )))
+            // Removing superseded rows keeps an exact selection exact; the
+            // live memtable rows interleaved afterwards clear the mark.
+            let (ranges, exact) = kept.map_or_else(
+                || (std::iter::once(0..row_count).collect(), false),
+                |kept| (kept.ranges, kept.exact),
+            );
+            Ok(Some(PrewhereRanges {
+                ranges: subtract_positions(ranges, &excluded),
+                exact,
+            }))
         };
         let segment_chunk = self.decode_slice_plain(slice, decode_limit, Some((&ids, &select)))?;
         if live.is_empty() {
@@ -2071,6 +2112,7 @@ impl ProjectedScanStream {
             row_count,
             stats,
             retained_bytes: _,
+            prefiltered: _,
         } = segment_chunk;
         let columns = columns
             .into_iter()
@@ -2099,6 +2141,7 @@ impl ProjectedScanStream {
             });
         }
         Ok(ProjectedColumnChunk {
+            prefiltered: false,
             columns,
             row_count: row_count + live.len(),
             stats,
@@ -2159,7 +2202,7 @@ impl ProjectedScanStream {
         if predicate_ids == self.column_ids {
             return retain_predicate_fetch(
                 fetch,
-                ranges.as_deref(),
+                ranges.as_ref(),
                 row_count,
                 usize::from(start_row == 0),
                 &scan_budget,
@@ -2168,7 +2211,7 @@ impl ProjectedScanStream {
         let predicate_reserved = fetch.reserved_bytes;
         drop(fetch);
         scan_budget.release(predicate_reserved);
-        let Some(ranges) = ranges else {
+        let Some(PrewhereRanges { ranges, exact }) = ranges else {
             let mut chunk =
                 self.decode_column_chunk_rows(segment, start_row, end_row, memory_limit)?;
             chunk.stats.blocks_read += predicate_blocks_read;
@@ -2207,6 +2250,7 @@ impl ProjectedScanStream {
         scan_budget.release(fetch.reserved_bytes);
         scan_budget.reserve(retained_bytes)?;
         Ok(ProjectedColumnChunk {
+            prefiltered: exact,
             columns: fetch.columns,
             row_count: absolute.iter().map(std::iter::ExactSizeIterator::len).sum(),
             stats: ScanStats {
@@ -2266,18 +2310,12 @@ impl ProjectedScanStream {
             let predicate_blocks_decoded = fetch.blocks_decoded;
             let ranges = select(&fetch.columns, row_count).map_err(StoreError::FormatLimit)?;
             if predicate_ids == self.column_ids {
-                return retain_predicate_fetch(
-                    fetch,
-                    ranges.as_deref(),
-                    row_count,
-                    1,
-                    &scan_budget,
-                );
+                return retain_predicate_fetch(fetch, ranges.as_ref(), row_count, 1, &scan_budget);
             }
             let predicate_reserved = fetch.reserved_bytes;
             drop(fetch);
             scan_budget.release(predicate_reserved);
-            if let Some(ranges) = ranges {
+            if let Some(PrewhereRanges { ranges, exact }) = ranges {
                 let projection = map_projection(&self.column_ids)?;
                 let fetch = segment::read_projected_column_ranges(
                     &self.snapshot.directory,
@@ -2304,6 +2342,7 @@ impl ProjectedScanStream {
                 scan_budget.release(fetch.reserved_bytes);
                 scan_budget.reserve(retained_bytes)?;
                 return Ok(ProjectedColumnChunk {
+                    prefiltered: exact,
                     columns: fetch.columns,
                     row_count: ranges.iter().map(std::iter::ExactSizeIterator::len).sum(),
                     stats: ScanStats {
@@ -2547,6 +2586,7 @@ impl ProjectedScanStream {
             });
         }
         Ok(Some(ProjectedColumnChunk {
+            prefiltered: false,
             columns: columns.into_iter().map(DecodedColumn::Values).collect(),
             row_count,
             stats: ScanStats {
@@ -2661,6 +2701,7 @@ impl ProjectedScanStream {
         scan_budget.release(fetch.reserved_bytes);
         scan_budget.reserve(retained_bytes)?;
         Ok(ProjectedColumnChunk {
+            prefiltered: false,
             columns: fetch.columns,
             row_count,
             stats: ScanStats {
@@ -2867,6 +2908,7 @@ impl ProjectedScanStream {
         scan_budget.release(fetch.reserved_bytes);
         scan_budget.reserve(retained_bytes)?;
         Ok(ProjectedColumnChunk {
+            prefiltered: false,
             columns: fetch.columns,
             row_count,
             stats: ScanStats {
@@ -2947,6 +2989,7 @@ impl ProjectedScanStream {
             )
             .saturating_add(columns.iter().map(DecodedColumn::retained_bytes).sum());
         Ok(ProjectedColumnChunk {
+            prefiltered: false,
             columns,
             row_count,
             stats,
@@ -3075,7 +3118,7 @@ fn rows_to_columns(
 #[allow(clippy::too_many_lines)]
 fn retain_predicate_fetch(
     mut fetch: segment::ProjectedColumnFetch,
-    ranges: Option<&[std::ops::Range<usize>]>,
+    selection: Option<&PrewhereRanges>,
     rows: usize,
     segments_read: usize,
     memory: &segment::ScanMemoryBudget<'_>,
@@ -3089,6 +3132,7 @@ fn retain_predicate_fetch(
         values.truncate(written);
         values.shrink_to_fit();
     }
+    let ranges = selection.map(|selection| selection.ranges.as_slice());
     let selected = ranges.map_or(rows, |ranges| {
         ranges.iter().map(std::iter::ExactSizeIterator::len).sum()
     });
@@ -3183,6 +3227,7 @@ fn retain_predicate_fetch(
     memory.release(fetch.reserved_bytes);
     memory.reserve(retained_bytes)?;
     Ok(ProjectedColumnChunk {
+        prefiltered: selection.is_some_and(|selection| selection.exact),
         columns: fetch.columns,
         row_count: selected,
         stats: ScanStats {

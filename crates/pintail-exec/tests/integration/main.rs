@@ -42,6 +42,7 @@ mod out_of_range_diagnostics;
 mod packed_predicate_kernels;
 mod partition_rewrites;
 mod point_scan_memo;
+mod prefiltered_scan;
 mod profile;
 mod range_prune_bench;
 mod runtime_join_filter;

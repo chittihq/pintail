@@ -89,12 +89,12 @@ fn filtered_columns_keep_values_nulls_and_decode_once_in_whole_and_sliced_scans(
                 .expect("stream");
             let select = |columns: &[DecodedColumn],
                           rows: usize|
-             -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
+             -> Result<Option<pintail_store::PrewhereRanges>, String> {
                 Ok(match mode {
                     0 => None,
                     1 => Some((0..rows).filter(|row| matches!(columns[0].value_at(*row), Some(Value::UInt64(id)) if id.is_multiple_of(8))).map(|row| row..row+1).collect()),
                     _ => Some(Vec::new()),
-                })
+                }.map(Into::into))
             };
             let mut actual = Vec::new();
             let mut decoded = 0;

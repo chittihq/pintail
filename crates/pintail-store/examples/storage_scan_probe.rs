@@ -114,13 +114,15 @@ fn main() {
                 .expect("stream");
             let select = |_: &[DecodedColumn],
                           count: usize|
-             -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
-                Ok(selective.then(|| {
-                    (0..count)
-                        .step_by(4096)
-                        .map(|start| start..(start + 256).min(count))
-                        .collect()
-                }))
+             -> Result<Option<pintail_store::PrewhereRanges>, String> {
+                Ok(selective
+                    .then(|| {
+                        (0..count)
+                            .step_by(4096)
+                            .map(|start| start..(start + 256).min(count))
+                            .collect::<Vec<_>>()
+                    })
+                    .map(Into::into))
             };
             let mut count = 0;
             let mut blocks = 0;

@@ -395,6 +395,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 columns: Vec::new(),
                 column_rows: 0,
                 ready: VecDeque::new(),
+                last_prefiltered: false,
                 prefetched: VecDeque::new(),
                 stream: None,
                 prewhere: None,
@@ -536,6 +537,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
                 columns: Vec::new(),
                 column_rows: 0,
                 ready: VecDeque::new(),
+                last_prefiltered: false,
                 prefetched: VecDeque::new(),
                 stream: Some(stream),
                 prewhere: build_prewhere_spec(scan, snapshot, self.collation),
@@ -629,6 +631,7 @@ impl ScanProvider for SnapshotScanProvider<'_> {
             columns: Vec::new(),
             column_rows: 0,
             ready: VecDeque::new(),
+            last_prefiltered: false,
             prefetched: VecDeque::new(),
             stream: None,
             prewhere: None,
@@ -936,6 +939,10 @@ struct PrewhereSpec {
     /// Parallel to `enum_labels`: a SET column's declared members, whose
     /// positions are the bits of the mask `MySQL` sorts a SET by.
     set_members: Vec<Option<Arc<Vec<String>>>>,
+    /// The collation the predicates were compiled under. A Filter above the
+    /// scan trusts a prefiltered chunk only when it compares text the same
+    /// way.
+    collation: Collation,
 }
 
 struct SnapshotStream {
@@ -946,7 +953,10 @@ struct SnapshotStream {
     stats_key: (DatabaseId, TableId),
     rows: VecDeque<Vec<Value>>,
     /// Batches adopted ahead of time in the worker pool (no-LIMIT scans).
-    ready: VecDeque<RecordBatch>,
+    ready: VecDeque<(RecordBatch, bool)>,
+    /// Whether the batch last returned came from a chunk whose every row
+    /// the prewhere predicates already accepted.
+    last_prefiltered: bool,
     columns: Vec<DecodedColumn>,
     column_rows: usize,
     prewhere: Option<PrewhereSpec>,
@@ -1052,6 +1062,14 @@ fn scan_signature(instance: u64, scan: &Scan) -> String {
 }
 
 impl BatchStream for SnapshotStream {
+    fn prefilter_collation(&self) -> Option<Collation> {
+        self.prewhere.as_ref().map(|spec| spec.collation)
+    }
+
+    fn last_batch_prefiltered(&self) -> bool {
+        self.last_prefiltered
+    }
+
     fn settled_identity(&self) -> Option<(std::path::PathBuf, u64, String)> {
         self.settled.clone()
     }
@@ -1176,15 +1194,17 @@ impl BatchStream for SnapshotStream {
                     .collect::<Vec<_>>()
                     .into_par_iter()
                     .map(|chunk| {
+                        let prefiltered = chunk.prefiltered();
                         adopt_chunk(chunk, &self.types, &self.enum_labels, &self.set_members)
+                            .map(|(batches, bytes)| (batches, bytes, prefiltered))
                     })
                     .collect::<Result<Vec<_>, ExecError>>()?;
-                for (batches, chunk_bytes) in adopted {
+                for (batches, chunk_bytes, prefiltered) in adopted {
                     released = released.saturating_add(chunk_bytes);
                     for batch in batches {
                         self.retained_bytes =
                             self.retained_bytes.saturating_add(batch.estimated_bytes());
-                        self.ready.push_back(batch);
+                        self.ready.push_back((batch, prefiltered));
                     }
                 }
                 self.retained_bytes = self.retained_bytes.saturating_sub(released);
@@ -1204,10 +1224,12 @@ impl BatchStream for SnapshotStream {
             self.column_rows = chunk.row_count();
             self.columns = chunk.into_decoded_columns();
         }
-        if let Some(batch) = self.ready.pop_front() {
+        if let Some((batch, prefiltered)) = self.ready.pop_front() {
             self.retained_bytes = self.retained_bytes.saturating_sub(batch.estimated_bytes());
+            self.last_prefiltered = prefiltered;
             return Ok(Some(batch));
         }
+        self.last_prefiltered = false;
         if self.rows.is_empty() && self.column_rows == 0 {
             return Ok(None);
         }
@@ -1657,6 +1679,7 @@ fn build_prewhere_spec(
         data_types,
         enum_labels,
         set_members,
+        collation,
     })
 }
 
@@ -1766,7 +1789,7 @@ fn prewhere_ranges(
     columns: &[DecodedColumn],
     row_count: usize,
     exact_ranges: bool,
-) -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
+) -> Result<Option<pintail_store::PrewhereRanges>, String> {
     /// Runs separated by fewer than this many rows merge, so near-adjacent
     /// survivors decode as one block-friendly region.
     const COALESCE_GAP: usize = 1024;
@@ -1834,6 +1857,9 @@ fn prewhere_ranges(
     };
     let mut ranges: Vec<std::ops::Range<usize>> = Vec::new();
     let mut row = 0;
+    // Whether a merge took in rows the mask rejected: such ranges still
+    // restrict the decode, but a Filter above must test their rows.
+    let mut coalesced = false;
     while row < row_count {
         if !mask.is_selected(row) {
             row += 1;
@@ -1846,12 +1872,16 @@ fn prewhere_ranges(
         match ranges.last_mut() {
             Some(last) if !exact_ranges && start.saturating_sub(last.end) < COALESCE_GAP => {
                 last.end = row;
+                coalesced = true;
             }
             _ => ranges.push(start..row),
         }
     }
     if ranges.is_empty() {
-        return Ok(Some(Vec::new()));
+        return Ok(Some(pintail_store::PrewhereRanges {
+            ranges,
+            exact: true,
+        }));
     }
     // Two-phase decode reads the predicate columns twice, so it only pays
     // off when it skips real bytes. Scattered survivors coalesce into
@@ -1861,7 +1891,10 @@ fn prewhere_ranges(
     if selected.saturating_mul(10) >= row_count.saturating_mul(9) {
         return Ok(None);
     }
-    Ok(Some(ranges))
+    Ok(Some(pintail_store::PrewhereRanges {
+        ranges,
+        exact: !coalesced,
+    }))
 }
 
 /// Converts one decoded chunk into ready record batches: slices of
