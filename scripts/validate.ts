@@ -1107,8 +1107,8 @@ async function main() {
     // `cargo build` and every test profile then agree, and a build a stage
     // repeats is a no-op.
     if (!process.env.PINTAIL_DASHBOARD_PREBUILT) {
-      status('dashboard: bun run generate')
-      const dashboard = await run(['bun', 'run', 'generate'], {
+      status('dashboard: bun install && bun run generate')
+      const dashboard = await run(['bash', '-c', 'bun install --frozen-lockfile && bun run generate'], {
         timeoutMinutes: 10,
         label: 'dashboard',
         cwd: join(repository, 'packages', 'dashboard'),
