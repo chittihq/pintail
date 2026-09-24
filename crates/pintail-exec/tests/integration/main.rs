@@ -16,6 +16,7 @@ mod dictionary_text;
 mod enum_empty_member;
 mod enum_ordinal;
 mod filter_kernels;
+mod filter_once_cost;
 mod general_ci_parity;
 mod group_by_functional_dependency;
 mod grouped_fold;
