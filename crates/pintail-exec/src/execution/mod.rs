@@ -3565,6 +3565,9 @@ enum PullOperator {
     },
     HashAggregate {
         input: Box<Self>,
+        /// How many columns `input` produces: an aggregate whose argument is
+        /// computed has it appended after them.
+        input_width: usize,
         group_by: Vec<CompiledExpr>,
         aggregates: Vec<CompiledAggregate>,
         column_types: Vec<DataType>,
@@ -4056,6 +4059,7 @@ impl PullOperator {
             },
             Self::HashAggregate {
                 input,
+                input_width,
                 group_by,
                 aggregates,
                 column_types,
@@ -4066,6 +4070,7 @@ impl PullOperator {
                 if state.is_none() {
                     *state = Some(build_hash_aggregate(
                         input,
+                        *input_width,
                         group_by,
                         aggregates,
                         memory,
@@ -4793,6 +4798,7 @@ fn build_operator_inner(
             Ok((
                 PullOperator::HashAggregate {
                     input: Box::new(input),
+                    input_width: columns.len(),
                     group_by,
                     aggregates,
                     column_types,

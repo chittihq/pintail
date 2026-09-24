@@ -42,6 +42,7 @@ use crate::{
     spill,
 };
 
+#[derive(Clone)]
 pub(super) struct CompiledAggregate {
     pub(super) function: AggregateFunction,
     pub(super) expr: Option<CompiledExpr>,
@@ -2349,6 +2350,7 @@ fn merge_finished_value(
 #[allow(clippy::too_many_lines)]
 pub(super) fn build_hash_aggregate(
     input: &mut PullOperator,
+    input_width: usize,
     group_by: &[CompiledExpr],
     aggregates: &[CompiledAggregate],
     memory: &MemoryTracker,
@@ -2578,14 +2580,30 @@ pub(super) fn build_hash_aggregate(
             spilled: None,
         });
     }
-    let result = build_hash_aggregate_scan(
-        input,
-        group_by,
-        aggregates,
-        memory,
-        collation,
-        key_collations,
-    )?;
+    let result = match project_computed_arguments(input, input_width, aggregates) {
+        Some((mut projected, rewritten)) => {
+            let result = build_hash_aggregate_scan(
+                &mut projected,
+                group_by,
+                &rewritten,
+                memory,
+                collation,
+                key_collations,
+            );
+            if let PullOperator::Project { input: inner, .. } = projected {
+                *input = *inner;
+            }
+            result?
+        }
+        None => build_hash_aggregate_scan(
+            input,
+            group_by,
+            aggregates,
+            memory,
+            collation,
+            key_collations,
+        )?,
+    };
     if let Some(key) = memo_key
         && result.spilled.is_none()
         && result.rows.len() <= SETTLED_MEMO_MAX_ROWS
@@ -2984,6 +3002,73 @@ fn aggregate_round_batches() -> usize {
 }
 
 #[allow(clippy::too_many_lines)]
+/// Evaluates computed aggregate arguments a batch at a time, ahead of the
+/// aggregation, and points those aggregates at the columns that result.
+///
+/// The fast aggregation paths accept a bare column as an argument and
+/// nothing else, so `SUM(CASE WHEN ... END)` or `SUM(price * quantity)`
+/// took the general path: one row at a time, a `Value` per row, on one
+/// thread. Projected first, the same argument is one packed column the
+/// batch kernels compute (or the projection evaluates row by row, exactly
+/// as the aggregate would have), and the aggregate reads it like any other
+/// column. `None` when no argument is computed, leaving the plan unchanged.
+///
+/// `input` is moved into the projection; the caller puts it back.
+fn project_computed_arguments(
+    input: &mut PullOperator,
+    input_width: usize,
+    aggregates: &[CompiledAggregate],
+) -> Option<(PullOperator, Vec<CompiledAggregate>)> {
+    let computed = |aggregate: &CompiledAggregate| {
+        aggregate
+            .expr
+            .as_ref()
+            .is_some_and(|expression| expression.column_index().is_none())
+            && aggregate.order_within.is_empty()
+            && matches!(
+                aggregate.function,
+                AggregateFunction::Count
+                    | AggregateFunction::Sum
+                    | AggregateFunction::Average
+                    | AggregateFunction::Minimum
+                    | AggregateFunction::Maximum
+            )
+    };
+    if std::env::var_os("PINTAIL_DISABLE_ARGUMENT_PROJECTION").is_some()
+        || !aggregates.iter().any(computed)
+    {
+        return None;
+    }
+    let mut expressions = (0..input_width)
+        .map(|index| (CompiledExpr::Column(index), None))
+        .collect::<Vec<_>>();
+    let rewritten = aggregates
+        .iter()
+        .map(|aggregate| {
+            if !computed(aggregate) {
+                return aggregate.clone();
+            }
+            let position = expressions.len();
+            expressions.push((
+                aggregate.expr.clone().expect("computed arguments exist"),
+                aggregate.input_type,
+            ));
+            CompiledAggregate {
+                expr: Some(CompiledExpr::Column(position)),
+                ..aggregate.clone()
+            }
+        })
+        .collect();
+    let input = std::mem::replace(input, PullOperator::Empty);
+    Some((
+        PullOperator::Project {
+            input: Box::new(input),
+            expressions,
+        },
+        rewritten,
+    ))
+}
+
 fn build_hash_aggregate_scan(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
