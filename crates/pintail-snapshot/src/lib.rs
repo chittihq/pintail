@@ -141,6 +141,13 @@ async fn start_copy_transaction(
     Ok(transaction)
 }
 
+/// Whether a source error is the server giving up on a lock another
+/// session holds (`ER_LOCK_WAIT_TIMEOUT`, which `lock_wait_timeout` bounds
+/// for metadata locks and `innodb_lock_wait_timeout` for row locks).
+fn is_lock_wait_timeout(error: &mysql_async::Error) -> bool {
+    matches!(error, mysql_async::Error::Server(server) if server.code == 1205)
+}
+
 /// Seconds a snapshot waits for a lock another session holds - the global
 /// read lock, or a table it copies:
 /// `PINTAIL_SNAPSHOT_LOCK_WAIT_SECS`, clamped to [1, 3600], or 5.
@@ -298,6 +305,10 @@ pub enum SnapshotError {
     /// `MySQL` protocol or query failure.
     #[error("MySQL snapshot failed: {0}")]
     Mysql(#[from] mysql_async::Error),
+    /// Another session held a lock on the table past the copy's bounded
+    /// wait. The table is flagged and copied again later.
+    #[error("the table stayed locked past the copy's wait: {0}")]
+    TableLocked(String),
     /// Control-plane checkpoint failure.
     #[error("snapshot metadata failed: {0}")]
     Metadata(#[from] anyhow::Error),
@@ -692,6 +703,16 @@ async fn snapshot_worker(
             &progress,
         )
         .await;
+        // A lock another session holds on this table past the copy's wait
+        // is this table's condition, not the source's: the server rolls
+        // back only the statement that waited, so the transaction and the
+        // tables after it are unaffected.
+        let result = match result {
+            Err(SnapshotError::Mysql(error)) if is_lock_wait_timeout(&error) => {
+                Err(SnapshotError::TableLocked(error.to_string()))
+            }
+            other => other,
+        };
         match result {
             Ok(()) => {
                 pintail_failpoint::hit("snapshot.table.before_complete").map_err(|source| {

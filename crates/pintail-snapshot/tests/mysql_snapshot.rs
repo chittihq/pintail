@@ -1601,3 +1601,99 @@ async fn a_table_lock_held_elsewhere_does_not_stall_the_copy() {
     drop(holder);
     pool.disconnect().await.expect("disconnect source pool");
 }
+
+/// A table another session holds under LOCK TABLES ... WRITE past the copy's
+/// bounded wait costs that table alone: it is flagged for a resync, and the
+/// run completes the tables beside it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires the configured Docker host and mysql:8.4 image"]
+async fn a_table_locked_past_the_copy_wait_is_flagged_and_the_rest_complete() {
+    let mysql = MysqlContainer::start().unwrap_or_else(|error| panic!("{error}"));
+    mysql
+        .query_batch(&source_schema())
+        .unwrap_or_else(|error| panic!("{error}"));
+    let pool = Pool::new(Opts::from_url(&mysql.dsn()).expect("snapshot DSN"));
+    let report = probe(&pool, "app").await.expect("probe source");
+    let workspace = tempfile::tempdir().expect("snapshot workspace");
+    let metadata_path = workspace.path().join("pintail-meta.db");
+    MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .upsert_database(
+            DATABASE_ID,
+            "app",
+            mysql.dsn().as_bytes(),
+            "2026-09-25T00:00:00Z",
+        )
+        .expect("register database");
+    let find = |name: &str| {
+        report
+            .tables
+            .iter()
+            .find(|table| table.name == name)
+            .expect("probed table")
+            .clone()
+    };
+    let mut holder = pool.get_conn().await.expect("lock holder");
+    holder
+        .query_drop("LOCK TABLES composite_table WRITE")
+        .await
+        .expect("hold a write lock");
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        run_snapshot(
+            &pool,
+            &metadata_path,
+            DATABASE_ID,
+            &report,
+            vec![
+                target(&find("composite_table"), &workspace.path().join("composite_table")),
+                target(&find("primary_table"), &workspace.path().join("primary_table")),
+            ],
+            SnapshotOptions {
+                workers: 1,
+                chunk_rows: 1_000,
+                ..SnapshotOptions::default()
+            },
+        ),
+    )
+    .await
+    .expect("the copy waited on the write lock without bound");
+    holder.query_drop("UNLOCK TABLES").await.expect("unlock");
+    drop(holder);
+    let result = result.expect("the run completes despite the locked table");
+    assert_eq!(
+        result
+            .failed
+            .iter()
+            .map(|failure| failure.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["composite_table"]
+    );
+    assert_eq!(
+        result
+            .tables
+            .iter()
+            .map(|table| table.table.as_str())
+            .collect::<Vec<_>>(),
+        vec!["primary_table"]
+    );
+    let states = MetaStore::open(&metadata_path)
+        .expect("metadata")
+        .tables(DATABASE_ID)
+        .expect("tables")
+        .into_iter()
+        .map(|table| (table.name, table.state, table.copy_complete))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        states,
+        vec![
+            (
+                "composite_table".to_owned(),
+                "needs_resync".to_owned(),
+                false
+            ),
+            ("primary_table".to_owned(), "pending".to_owned(), true),
+        ]
+    );
+    pool.disconnect().await.expect("disconnect source pool");
+}
