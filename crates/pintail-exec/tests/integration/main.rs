@@ -20,6 +20,7 @@ mod general_ci_parity;
 mod group_by_functional_dependency;
 mod grouped_fold;
 mod grouped_fold_spans;
+mod integer_cast_saturation;
 mod join_condition_subquery;
 mod join_frees_its_build;
 mod join_group_fold_oracle_shape;
