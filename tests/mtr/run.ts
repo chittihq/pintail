@@ -100,6 +100,17 @@ const LIMIT = Number(process.env.MTR_LIMIT ?? '0')
 /// Fetch and classify only - no containers, no server. The fast check that
 /// the tokenizer still understands the suite.
 const PARSE_ONLY = process.env.MTR_PARSE_ONLY === '1'
+/// How many files replay at once against the one oracle and the one server.
+const JOBS = Math.max(1, Number(process.env.MTR_JOBS ?? '8'))
+/// Statements that change what another session sees: a global default a new
+/// session inherits, a plugin, an instance-wide lock, the accounts the
+/// harness connects as. A file holding one is a barrier - the files before it
+/// finish, it replays alone, then the files after it start - so every file
+/// sees exactly the server state a one-at-a-time run in suite order gives it.
+/// The banked baseline was recorded that way, globals leaked forward
+/// included; running these files last instead moved ten banked answers.
+const SERVER_WIDE =
+  /^\s*(set\s+(global|persist|persist_only)\b|set\s+@@(global|persist|persist_only)\.|install\b|uninstall\b|flush\s+tables\s+with\s+read\s+lock\b|lock\s+instance\b|grant\b|revoke\b|(create|drop|rename|alter)\s+user\b|set\s+password\b)/i
 /// Per-statement client-side timeout on both sides.
 const QUERY_TIMEOUT_MS = Number(process.env.MTR_QUERY_TIMEOUT_MS ?? '30000')
 
@@ -152,7 +163,8 @@ let pintailUrl = ''
 let token = ''
 
 function log(message: string) {
-  console.log(`[mtr] ${message}`)
+  // The gate replays both suites at once into one log; the tag says whose line it is.
+  console.log(`[mtr${SUITE_NAME === 'mysql' ? '' : `:${SUITE_NAME}`}] ${message}`)
 }
 
 async function command(args: string[], options: { cwd?: string; quiet?: boolean } = {}) {
@@ -1327,33 +1339,70 @@ async function main() {
   for (const name of selected) {
     for (const tail of ['', '-errors', '-stall']) rmSync(join(diffsDir, `${name}${suffix}${tail}.md`), { force: true })
   }
-  const results: FileResult[] = []
-  for (const name of selected) {
-    let text: string
-    try {
-      text = await fetchTestFile(name)
-    } catch (error) {
-      log(`${name}: could not fetch (${error instanceof Error ? error.message : String(error)})`)
-      continue
-    }
+  const root = mysqlRoot
+  const replay = async (name: string, text: string): Promise<FileResult> => {
     const started = performance.now()
-    let result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+    let result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, root, mysqlHost)
     if (baseline && lostStatements(baseline, result).length) {
       const lost = lostStatements(baseline, result).length
       log(`${name}: ${lost} banked statements not exact; replaying the file once`)
-      const replay = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+      const again = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, root, mysqlHost)
       // The replay exists to absorb a timing flake, so it may only help: a
       // replay that loses more than the first run keeps the first run.
-      if (lostStatements(baseline, replay).length <= lost) result = replay
-      else log(`${name}: replay lost ${lostStatements(baseline, replay).length}; keeping the first run (diff files are the replay's)`)
+      if (lostStatements(baseline, again).length <= lost) result = again
+      else log(`${name}: replay lost ${lostStatements(baseline, again).length}; keeping the first run (diff files are the replay's)`)
     }
-    results.push(result)
     const c = result.counts
     log(
       `${name}: ${c.exact} exact, ${c.mismatch} mismatch, ${c['name-mismatch']} names, ${c['pintail-error']} pintail-error, ${c.tainted} tainted ` +
         `(${c.setup} setup ok, ${c['setup-rejected']} rejected) in ${((performance.now() - started) / 1000).toFixed(1)}s`,
     )
+    return result
   }
+
+  // Each file owns its schema, its local database and its two connections,
+  // so files replay side by side. A file that reaches server-wide state is
+  // a barrier (SERVER_WIDE). Replica mode shares one binlog stream across
+  // files and stays serial.
+  const loaded: Array<{ name: string; text: string; shared: boolean }> = []
+  for (const name of selected) {
+    try {
+      const text = await fetchTestFile(name)
+      loaded.push({ name, text, shared: parse(text).statements.some((s) => SERVER_WIDE.test(s.sql)) })
+    } catch (error) {
+      log(`${name}: could not fetch (${error instanceof Error ? error.message : String(error)})`)
+    }
+  }
+  const jobs = MODE === 'replica' ? 1 : JOBS
+  const byName = new Map<string, FileResult>()
+  const wall = performance.now()
+  let barriers = 0
+  for (let start = 0; start < loaded.length; ) {
+    if (loaded[start].shared) {
+      const file = loaded[start++]
+      byName.set(file.name, await replay(file.name, file.text))
+      barriers += 1
+      continue
+    }
+    let end = start
+    while (end < loaded.length && !loaded[end].shared) end += 1
+    const batch = loaded.slice(start, end)
+    let next = 0
+    await Promise.all(
+      Array.from({ length: Math.min(jobs, batch.length) }, async () => {
+        while (next < batch.length) {
+          const file = batch[next++]
+          byName.set(file.name, await replay(file.name, file.text))
+        }
+      }),
+    )
+    start = end
+  }
+  const results = loaded.map((file) => byName.get(file.name)).filter((result) => result !== undefined)
+  log(
+    `${results.length} files in ${((performance.now() - wall) / 1000).toFixed(1)}s ` +
+      `(${jobs} workers, ${barriers} files alone for server-wide statements)`,
+  )
   publish(results, mysqlVersion)
   const exact = results.reduce((s, r) => s + r.counts.exact, 0)
   const compared = results.reduce((s, r) => s + r.counts.exact + r.counts.mismatch + r.counts['name-mismatch'], 0)
