@@ -995,6 +995,12 @@ fn auto_resync_repairs_keyed_tables_and_leaves_keyless_to_policy() {
     let auto = metadata.tables_needing_auto_resync("db-1").unwrap();
     assert!(auto.contains("orders"));
     assert!(!auto.contains("keyless_log"));
+    // Under the auto_resync keyless policy the keyless table is the
+    // supervisor's too, and is repaired as one table like the keyed one.
+    let under_policy = metadata
+        .tables_needing_auto_resync_under("db-1", true)
+        .unwrap();
+    assert!(under_policy.contains("orders") && under_policy.contains("keyless_log"));
 }
 
 #[test]

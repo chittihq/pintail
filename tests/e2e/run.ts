@@ -3554,7 +3554,7 @@ async function phaseControlPlane() {
     // A table with no primary or unique key replicates inserts, but a CDC
     // UPDATE cannot be targeted and must flag the table needs_resync under
     // the default quarantine policy. Switching the database to auto_resync
-    // lets the supervisor repair it with a forced snapshot.
+    // lets the supervisor recopy that one table.
     const detail = await api<{ name: string; mode: string; keyless_policy: string }>(
       `/api/databases/${databaseId}`,
     )

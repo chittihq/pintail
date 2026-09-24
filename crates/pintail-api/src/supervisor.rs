@@ -168,28 +168,6 @@ fn supervise_once(state: &ApiState) {
         }
     };
     for database in databases.into_iter().filter(eligible) {
-        // auto_resync keyless policy: flagged tables are repaired with a
-        // forced snapshot (the safe operator-resync path) instead of the
-        // regular cycle this cadence; the snapshot worker owns the job slot.
-        if database.keyless_policy == "auto_resync"
-            && let Ok(metadata) = state.metadata()
-            && let Ok(flagged) = metadata.tables_needing_resync(&database.id)
-            && !flagged.is_empty()
-        {
-            // A begin failure means the job is already active or the
-            // control plane hiccupped; the next cadence retries.
-            if let Ok(run_id) = crate::snapshot::begin_snapshot_job(state, &database.id, true) {
-                state.publish(ApiEvent::database(
-                    "resync.auto",
-                    &database.id,
-                    format!(
-                        "auto_resync policy repairing {} flagged table(s) via snapshot {run_id}",
-                        flagged.len()
-                    ),
-                ));
-            }
-            continue;
-        }
         // A polling cycle overwrites the source checkpoint with a polling
         // one, and CDC can never start from that - so a database switched
         // from polling back to cdc has no position to resume from and every

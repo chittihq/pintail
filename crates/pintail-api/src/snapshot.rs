@@ -155,7 +155,7 @@ pub(crate) async fn reset(
 
 /// Acquires the database job slot, journals a snapshot run, and detaches the
 /// worker. Used by the snapshot/resync routes and the supervisor's
-/// `auto_resync` keyless-policy repair.
+/// polling-to-CDC handoff.
 pub(crate) fn begin_snapshot_job(
     state: &ApiState,
     database_id: &str,

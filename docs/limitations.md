@@ -329,7 +329,7 @@ stays readable as a list of things to fix.
 - Keyless CDC is insert-only between snapshots. Inserts use a deterministic
   append identity and are idempotent across reconnect/replay. The first UPDATE
   or DELETE requires a whole-table generation rebuild: `quarantine` waits for
-  an operator resnapshot, `auto_resync` schedules that rebuild, and `reject`
+  an operator resnapshot, `auto_resync` recopies that one table, and `reject`
   refuses the source during probe. Rebuilding from one source snapshot restores
   exact duplicate multiplicity; Pintail deliberately does not infer candidate
   identities or use collision-prone row fingerprints.

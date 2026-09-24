@@ -1408,17 +1408,32 @@ impl MetaStore {
     ///
     /// Returns an error when the state cannot be read.
     pub fn tables_needing_auto_resync(&self, database_id: &str) -> Result<BTreeSet<String>> {
+        self.tables_needing_auto_resync_under(database_id, false)
+    }
+
+    /// [`Self::tables_needing_auto_resync`], with quarantined keyless tables
+    /// included when the database's keyless policy is `auto_resync`: the
+    /// operator chose automatic repair for them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the state cannot be read.
+    pub fn tables_needing_auto_resync_under(
+        &self,
+        database_id: &str,
+        repair_keyless: bool,
+    ) -> Result<BTreeSet<String>> {
         let mut statement = self
             .connection
             .prepare(
                 "SELECT name FROM tables \
                  WHERE db_id = ?1 AND state = 'needs_resync' AND paused = 0 \
-                   AND ((pk_json IS NOT NULL AND pk_json != '[]') OR copy_pending = 1) \
+                   AND (?2 OR (pk_json IS NOT NULL AND pk_json != '[]') OR copy_pending = 1) \
                  ORDER BY name",
             )
             .context("failed to prepare auto-resync table query")?;
         statement
-            .query_map([database_id], |row| row.get(0))
+            .query_map(rusqlite::params![database_id, repair_keyless], |row| row.get(0))
             .context("failed to query auto-resync tables")?
             .collect::<rusqlite::Result<BTreeSet<_>>>()
             .context("failed to decode auto-resync tables")

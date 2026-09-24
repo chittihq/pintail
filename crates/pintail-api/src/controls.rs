@@ -145,7 +145,9 @@ fn auto_resync_candidate(
     database: &DatabaseRecord,
 ) -> Option<(String, bool)> {
     let database_id = &database.id;
-    let mut quarantined = metadata.tables_needing_auto_resync(database_id).ok()?;
+    let mut quarantined = metadata
+        .tables_needing_auto_resync_under(database_id, database.keyless_policy == "auto_resync")
+        .ok()?;
     // A successful probe may retire an old name after RENAME/DROP. Keep
     // its visible quarantine record, but do not let it monopolize repairs.
     if let Some(report) = database

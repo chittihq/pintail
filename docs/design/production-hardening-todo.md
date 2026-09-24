@@ -348,11 +348,13 @@ prints.
   open by this: a table written far more often than it is read now
   compacts on every flush, and a read-rate-aware trigger is the answer
   if that appears.
-- [ ] **G11. The `auto_resync` repair recopies the whole database.** The
+- [x] **G11. The `auto_resync` repair recopies the whole database.** The
   supervisor starts a forced snapshot for flagged keyless tables, so one
   flagged table resets every table's store; with the not-ready guard the
   whole database answers not ready for the copy. The per-table resync is
-  the scoped path.
+  the scoped path. Closed 2026-09-25: the policy now admits a quarantined
+  keyless table to the per-table repair that keyed tables already take,
+  and the supervisor no longer starts a database snapshot for it.
 - [ ] **G13. A grouped aggregate over an expression key split one group
   across two output rows, once.** Observed during the dense-fold work
   while several test binaries ran concurrently: the general
