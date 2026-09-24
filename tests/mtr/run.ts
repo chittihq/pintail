@@ -1348,11 +1348,16 @@ async function main() {
 
   log(`starting MySQL oracle ${mysqlName}`)
   await docker(
-    'run', '--detach', '--name', mysqlName, '--publish', '0:3306', '--tmpfs', '/var/lib/mysql:rw,size=2g',
+    // 6 GB: a file that recreates its tables around large INSERT ... SELECT
+    // fixtures keeps every generation on the oracle, and at 2 GB MySQL
+    // refused the next CREATE with "disk is full" - which tainted the
+    // table and dropped its banked statements from the comparison. A tmpfs
+    // holds only what is written.
+    'run', '--detach', '--name', mysqlName, '--publish', '0:3306', '--tmpfs', '/var/lib/mysql:rw,size=6g',
     '--env', 'MYSQL_ROOT_PASSWORD=pintail-root', ORACLE_IMAGE,
     '--default-time-zone=+00:00', '--sql-mode=NO_ENGINE_SUBSTITUTION', '--max-allowed-packet=256M',
     // Local mode compares answers and never reads a binlog, but MySQL 8.4
-    // writes one by default - into the same 2 GB tmpfs as the data. A file
+    // writes one by default - into the same tmpfs as the data. A file
     // doing enough INSERT ... SELECT fills it, the binlog write fails, and
     // `binlog_error_action` is ABORT_SERVER, so the oracle deliberately
     // stops. Every connection dies with it, including the shared root one,
