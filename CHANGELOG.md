@@ -4,7 +4,11 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.5-rc6] - 2026-09-24
+
+Read parity with MySQL (character sets, temporal reading, comparison
+typing), a one-table blast radius for replication failures, faster
+aggregation and grouping, and a gate that runs in a fraction of the time.
 
 ### Fixed
 
@@ -135,12 +139,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `CAST(x AS SIGNED)` and `AS UNSIGNED` truncated a fractional number where
   MySQL rounds it (`CAST(1.5 AS SIGNED)` is 2), and refused an operand that
   did not fit where MySQL saturates it.
+- Zero-part dates read from numbers and from text with any punctuation
+  (`CAST(0 AS DATE)`, `CAST('12:00:00-12.34.56' AS DATETIME)`) answered NULL
+  even where the session allows zero parts; they now follow the session's
+  `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.
+- `EXTRACT(HOUR FROM '1-2-3')` read a short-part date as a duration.
+- An `IN` list mixing strings and numbers, or a `DATETIME` among `TIME`
+  items, is compared item by item as MySQL does, instead of in one type for
+  the whole list.
+- A table-free subquery reading a column two levels out, such as
+  `HAVING (SELECT c)` under an outer `GROUP BY c`, failed to bind.
+- A UTF-8 introducer over bytes that are not UTF-8 is read lossily rather
+  than refused.
+- An ordered `SELECT @v := ...` assigns the variable from the rows it sends.
 
 
 ### Added
 
 - `default_week_format` is honored: a one-argument `WEEK()` uses the
   session's mode, 0 to 7.
+- `lc_time_names` accepts MySQL's locales for day and month names.
 
 ### Performance
 
@@ -150,6 +168,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GROUP BY` on a text key or several keys found each new group by scanning
   every group so far, which was quadratic in the group count. A collation-
   keyed index answers it with one lookup.
+- A filtered scan whose row ranges are exact no longer evaluates its
+  predicates a second time above the scan: a selective text-range filter is
+  about 18% faster.
 
 ### Changed
 
@@ -169,6 +190,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   crate's integration tests build as one binary, MTR files replay eight at a
   time with the two suites side by side, and a second Docker host takes the
   mtr, migrations and MySQL 8.0 stages once the oracle has passed.
+- The MTR oracle keeps every table generation a file creates (6 GB of tmpfs,
+  was 2), follows a file's global `sql_mode` onto Pintail's session, and
+  restores its server state only after the files that change it.
 
 ## [0.1.5-rc5] - 2026-09-24
 
