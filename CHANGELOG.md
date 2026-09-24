@@ -28,6 +28,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   subquery: the table of distinct keys was never released, and the rows
   waiting to be grouped were applied too late to leave room. It now spills
   and completes.
+- A negative `TIME(1)` or `TIME(2)` value below -625 hours with a fractional
+  part was captured wrong through change capture: the binlog decoder read
+  the fraction unsigned. It now reads it signed, as the server writes it.
 
 ## [0.1.5-rc6] - 2026-09-24
 
