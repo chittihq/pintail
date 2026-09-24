@@ -4,7 +4,11 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.5-rc7] - 2026-09-25
+
+Correctness under memory pressure and replays, a one-table blast radius for
+locked and keyless tables, a streaming aggregate that spills over any input,
+and the top-spenders shape back to its earlier speed.
 
 ### Fixed
 
@@ -31,6 +35,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A negative `TIME(1)` or `TIME(2)` value below -625 hours with a fractional
   part was captured wrong through change capture: the binlog decoder read
   the fraction unsigned. It now reads it signed, as the server writes it.
+
+### Performance
+
+- A grouped `ROUND(SUM(x), 2)` over many groups parsed every rounded result
+  back from text to re-render the same text, since the exact decimal
+  rounding fix. That step is skipped when it cannot change the value: a
+  100,000-group top-10 aggregate measures 34 ms again, from 46.
 
 ## [0.1.5-rc6] - 2026-09-24
 
