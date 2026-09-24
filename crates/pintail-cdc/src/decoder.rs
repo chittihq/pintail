@@ -371,60 +371,6 @@ fn decode_value(
     map_mysql_value(table, column, value).map_err(|error| CdcError::Decode(error.to_string()))
 }
 
-/// The fractional-second digits a `time(n)` declaration carries.
-fn time_fraction_digits(column_type: &str) -> u32 {
-    column_type
-        .split_once('(')
-        .and_then(|(_, rest)| rest.split(')').next())
-        .and_then(|digits| digits.trim().parse().ok())
-        .unwrap_or(0)
-}
-
-/// The packed-time offset the binlog decoder adds to a negative `TIME(1)` or
-/// `TIME(2)` value with a nonzero fraction.
-///
-/// The row image stores that fraction as one byte to be read back as
-/// `byte - 256`. The decoder reads the byte unsigned and subtracts 256 in
-/// unsigned arithmetic, which wraps, so the packed value it builds is the
-/// true one plus 2^32 fraction units of ten thousand microseconds each:
-/// `-00:00:01.50` arrived as `624:63:62.16`.
-const WRAPPED_FRACTION: i64 = (1_i64 << 32) * 10_000;
-
-/// Undoes the decoder's wrapped fraction for `TIME(1)` and `TIME(2)`.
-///
-/// A correct value's microsecond field is below one second; a wrapped one
-/// always carries 14 to 16.8 million there, because the offset is a multiple
-/// of the 2^24 packing unit. That makes the damage detectable whenever the
-/// wrapped value stays positive, which is every value above -625 hours; a
-/// value below that wraps to another negative time and cannot be told apart.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn repair_short_fraction_time(value: MysqlValue) -> MysqlValue {
-    let MysqlValue::Time(negative, days, hours, minutes, seconds, micros) = value else {
-        return value;
-    };
-    if micros < 1_000_000 {
-        return value;
-    }
-    let hms = ((i64::from(days) * 24 + i64::from(hours)) << 12)
-        | (i64::from(minutes) << 6)
-        | i64::from(seconds);
-    let magnitude = (hms << 24) + i64::from(micros);
-    let wrapped = if negative { -magnitude } else { magnitude };
-    let packed = wrapped - WRAPPED_FRACTION;
-    let negative = packed < 0;
-    let packed = packed.abs();
-    let hms = packed >> 24;
-    let total_hours = (hms >> 12) as u32 % (1 << 10);
-    MysqlValue::Time(
-        negative,
-        total_hours / 24,
-        (total_hours % 24) as u8,
-        ((hms >> 6) % (1 << 6)) as u8,
-        (hms % (1 << 6)) as u8,
-        (packed % (1 << 24)) as u32,
-    )
-}
-
 #[allow(clippy::too_many_lines)]
 fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlValue, CdcError> {
     if value == MysqlValue::NULL {
@@ -498,12 +444,6 @@ fn adapt_binlog_value(column: &SourceColumn, value: MysqlValue) -> Result<MysqlV
             )));
         }
         return Ok(MysqlValue::Bytes(selected.join(",").into_bytes()));
-    }
-    if mysql_type == "time"
-        && let MysqlValue::Time(..) = value
-        && matches!(time_fraction_digits(&column.mysql_column_type), 1 | 2)
-    {
-        return Ok(repair_short_fraction_time(value));
     }
     if mysql_type == "timestamp"
         && let MysqlValue::Bytes(bytes) = &value
@@ -627,76 +567,6 @@ fn key_part(value: &Value) -> Option<KeyPart> {
     }
 }
 
-#[cfg(test)]
-mod short_fraction_time_tests {
-    use mysql_async::Value as MysqlValue;
-
-    use super::repair_short_fraction_time;
-
-    /// The decoder's packed-time to value conversion, as it runs.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    fn time_from_packed(mut packed: i64) -> MysqlValue {
-        let negative = packed < 0;
-        packed = packed.abs();
-        let hms = packed >> 24;
-        let hours = ((hms >> 12) as u32) % (1 << 10);
-        MysqlValue::Time(
-            negative,
-            hours / 24,
-            (hours % 24) as u8,
-            ((hms >> 6) as u32 % (1 << 6)) as u8,
-            (hms as u32 % (1 << 6)) as u8,
-            (packed % (1 << 24)) as u32,
-        )
-    }
-
-    /// What the decoder builds from a row image holding `packed`, a negative
-    /// TIME(2) with a nonzero fraction: the integer part stored floored, the
-    /// fraction byte read unsigned and 256 subtracted with wrapping.
-    fn decoded(packed: i64) -> MysqlValue {
-        let integer = packed >> 24;
-        let fraction = i8::try_from((packed % (1 << 24)) / 10_000).expect("fraction");
-        let fraction_byte = u32::from(fraction.to_ne_bytes()[0]);
-        let wrapped = fraction_byte.wrapping_sub(0x100);
-        time_from_packed(((integer + 1) << 24) + i64::from(wrapped) * 10_000)
-    }
-
-    #[test]
-    fn a_negative_time_with_a_short_fraction_decodes_to_its_value() {
-        for (hms, fraction, expected) in [
-            (1, 500_000, MysqlValue::Time(true, 0, 0, 0, 1, 500_000)),
-            (0, 10_000, MysqlValue::Time(true, 0, 0, 0, 0, 10_000)),
-            (
-                (12 << 12) + (30 << 6) + 59,
-                990_000,
-                MysqlValue::Time(true, 0, 12, 30, 59, 990_000),
-            ),
-            (
-                600 << 12,
-                250_000,
-                MysqlValue::Time(true, 25, 0, 0, 0, 250_000),
-            ),
-        ] {
-            let packed = -((hms << 24) + fraction);
-            assert_eq!(
-                repair_short_fraction_time(decoded(packed)),
-                expected,
-                "{hms} {fraction}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_correctly_decoded_time_is_left_alone() {
-        for value in [
-            MysqlValue::Time(true, 0, 0, 0, 1, 500_000),
-            MysqlValue::Time(false, 34, 22, 59, 59, 990_000),
-            MysqlValue::Time(true, 34, 22, 59, 59, 0),
-        ] {
-            assert_eq!(repair_short_fraction_time(value.clone()), value);
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
