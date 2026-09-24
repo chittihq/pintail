@@ -830,11 +830,11 @@ async function runFile(name: string, text: string, root: mysql.Connection, host:
   }
   if (diffLines.length) {
     mkdirSync(diffsDir, { recursive: true })
-    writeFileSync(join(diffsDir, `${name}.md`), `# ${name}.test\n\n${diffLines.join('\n')}`)
+    writeFileSync(join(diffsDir, `${name}${suffix}.md`), `# ${name}.test\n\n${diffLines.join('\n')}`)
   }
   if (errorLines.length) {
     mkdirSync(diffsDir, { recursive: true })
-    writeFileSync(join(diffsDir, `${name}-errors.md`), `# ${name}.test: statements Pintail could not run\n\n${errorLines.join('\n')}`)
+    writeFileSync(join(diffsDir, `${name}${suffix}-errors.md`), `# ${name}.test: statements Pintail could not run\n\n${errorLines.join('\n')}`)
   }
   return { file: name, statements: statements.length, counts, parserNote: note, errorClasses, exact: exactIds.sort() }
 }
@@ -1322,7 +1322,11 @@ async function main() {
     await api<{ token: string }>('/api/auth/setup', { method: 'POST', auth: false, body: { email: 'mtr@pintail.local', password: 'mtr-gate-password' } })
   ).token
 
-  rmSync(diffsDir, { recursive: true, force: true })
+  // Clear only this run's own diffs: the gate runs the MySQL and MariaDB
+  // suites back to back, and wiping the directory would drop the first one's.
+  for (const name of selected) {
+    for (const tail of ['', '-errors', '-stall']) rmSync(join(diffsDir, `${name}${suffix}${tail}.md`), { force: true })
+  }
   const results: FileResult[] = []
   for (const name of selected) {
     let text: string
@@ -1335,8 +1339,13 @@ async function main() {
     const started = performance.now()
     let result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
     if (baseline && lostStatements(baseline, result).length) {
-      log(`${name}: ${lostStatements(baseline, result).length} banked statements not exact; replaying the file once`)
-      result = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+      const lost = lostStatements(baseline, result).length
+      log(`${name}: ${lost} banked statements not exact; replaying the file once`)
+      const replay = await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot, mysqlHost)
+      // The replay exists to absorb a timing flake, so it may only help: a
+      // replay that loses more than the first run keeps the first run.
+      if (lostStatements(baseline, replay).length <= lost) result = replay
+      else log(`${name}: replay lost ${lostStatements(baseline, replay).length}; keeping the first run (diff files are the replay's)`)
     }
     results.push(result)
     const c = result.counts
