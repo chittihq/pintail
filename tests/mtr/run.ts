@@ -114,7 +114,7 @@ const JOBS = Math.max(1, Number(process.env.MTR_JOBS ?? '8'))
 /// The banked baseline was recorded that way, globals leaked forward
 /// included; running these files last instead moved ten banked answers.
 const SERVER_WIDE =
-  /^\s*(set\s+(global|persist|persist_only)\b|set\s+@@(global|persist|persist_only)\.|install\b|uninstall\b|flush\s+tables\s+with\s+read\s+lock\b|lock\s+instance\b|grant\b|revoke\b|(create|drop|rename|alter)\s+user\b|set\s+password\b)/i
+  /^\s*(set\s+(global|persist|persist_only)\b|set\s+@@(global|persist|persist_only)\.|install\b|uninstall\b|flush\s+tables\s+with\s+read\s+lock\b|lock\s+instance\b|grant\b|revoke\b|(create|drop|rename|alter)\s+user\b|set\s+password\b|flush\s+privileges\b|(insert|replace|update|delete)\s+(ignore\s+)?(into\s+|from\s+)?`?mysql`?\.)/i
 /// Per-statement client-side timeout on both sides.
 const QUERY_TIMEOUT_MS = Number(process.env.MTR_QUERY_TIMEOUT_MS ?? '30000')
 
@@ -1389,11 +1389,15 @@ async function main() {
     )
   }
   const oracleState = MODE === 'local' ? await captureOracleState(mysqlRoot) : undefined
-  const replayFile = async (name: string, text: string) => {
+  // Only a file that reaches server-wide state (SERVER_WIDE) can leave the
+  // oracle changed for the next one, and such a file replays alone, so the
+  // restore runs after it and nowhere else: files replaying side by side
+  // each restoring the grant tables collided on their rows.
+  const replayFile = async (name: string, text: string, shared: boolean) => {
     try {
       return await (MODE === 'replica' ? runFileReplica : runFile)(name, text, mysqlRoot!, mysqlHost)
     } finally {
-      await oracleState?.restore()
+      if (shared) await oracleState?.restore()
     }
   }
 
@@ -1429,13 +1433,13 @@ async function main() {
   for (const name of selected) {
     for (const tail of ['', '-errors', '-stall']) rmSync(join(diffsDir, `${name}${suffix}${tail}.md`), { force: true })
   }
-  const replay = async (name: string, text: string): Promise<FileResult> => {
+  const replay = async (name: string, text: string, shared: boolean): Promise<FileResult> => {
     const started = performance.now()
-    let result = await replayFile(name, text)
+    let result = await replayFile(name, text, shared)
     if (baseline && lostStatements(baseline, result).length) {
       const lost = lostStatements(baseline, result).length
       log(`${name}: ${lost} banked statements not exact; replaying the file once`)
-      const again = await replayFile(name, text)
+      const again = await replayFile(name, text, shared)
       // The replay exists to absorb a timing flake, so it may only help: a
       // replay that loses more than the first run keeps the first run.
       if (lostStatements(baseline, again).length <= lost) result = again
@@ -1469,7 +1473,7 @@ async function main() {
   for (let start = 0; start < loaded.length; ) {
     if (loaded[start].shared) {
       const file = loaded[start++]
-      byName.set(file.name, await replay(file.name, file.text))
+      byName.set(file.name, await replay(file.name, file.text, true))
       barriers += 1
       continue
     }
@@ -1481,7 +1485,7 @@ async function main() {
       Array.from({ length: Math.min(jobs, batch.length) }, async () => {
         while (next < batch.length) {
           const file = batch[next++]
-          byName.set(file.name, await replay(file.name, file.text))
+          byName.set(file.name, await replay(file.name, file.text, false))
         }
       }),
     )
