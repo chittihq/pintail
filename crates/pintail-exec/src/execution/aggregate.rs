@@ -3001,7 +3001,6 @@ fn aggregate_round_batches() -> usize {
     rayon::current_num_threads().clamp(8, 64)
 }
 
-#[allow(clippy::too_many_lines)]
 /// Evaluates computed aggregate arguments a batch at a time, ahead of the
 /// aggregation, and points those aggregates at the columns that result.
 ///
@@ -3069,6 +3068,7 @@ fn project_computed_arguments(
     ))
 }
 
+#[allow(clippy::too_many_lines)]
 fn build_hash_aggregate_scan(
     input: &mut PullOperator,
     group_by: &[CompiledExpr],
