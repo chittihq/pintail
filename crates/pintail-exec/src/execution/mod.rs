@@ -1324,6 +1324,23 @@ pub trait BatchStream: Send {
     /// prune (already started, non-key column, type mismatch) ignore it.
     fn restrict_key_position_range(&mut self, _position: usize, _min: &Value, _max: &Value) {}
 
+    /// The collation this stream's own predicate evaluation compared text
+    /// under, when it evaluates the scan's predicates itself. `None` when it
+    /// never marks a batch prefiltered.
+    #[must_use]
+    fn prefilter_collation(&self) -> Option<crate::collation::Collation> {
+        None
+    }
+
+    /// Whether every row of the batch last returned is known to satisfy all
+    /// of the scan's predicates, evaluated under
+    /// [`Self::prefilter_collation`], so the Filters built from those same
+    /// predicates need not evaluate them again.
+    #[must_use]
+    fn last_batch_prefiltered(&self) -> bool {
+        false
+    }
+
     /// `(table directory, manifest generation, scan signature)` over a
     /// settled snapshot — the exactness-preserving identity for the settled
     /// aggregate memo. Default: not settled.
@@ -3586,6 +3603,9 @@ enum PullOperator {
     Filter {
         input: Box<Self>,
         predicate: CompiledExpr,
+        /// Built from a predicate the scan beneath also evaluates. Such a
+        /// Filter passes a batch the scan marks prefiltered untested.
+        storage: bool,
     },
     /// Records what the operator beneath it does: wrapped around every
     /// plan node of a profiled execution, absent otherwise.
@@ -3805,6 +3825,20 @@ impl PullOperator {
             keys,
             integers,
         };
+    }
+
+    /// Whether the scan under a chain of its own Filters marked the batch it
+    /// just returned as already satisfying every scan predicate. Only the
+    /// Filters built with the scan read this; nothing between them buffers,
+    /// so the scan's last batch is the one they hold.
+    fn scan_batch_prefiltered(&self) -> bool {
+        match self {
+            Self::Scan { stream, .. } => stream.last_batch_prefiltered(),
+            Self::Filter { input, .. } | Self::Profiled { input, .. } => {
+                input.scan_batch_prefiltered()
+            }
+            _ => false,
+        }
     }
 
     /// Transient headroom the underlying scan needs to pull one more batch.
@@ -4057,10 +4091,22 @@ impl PullOperator {
                     return Ok(Some(batch));
                 }
             },
-            Self::Filter { input, predicate } => loop {
+            Self::Filter {
+                input,
+                predicate,
+                storage,
+            } => loop {
                 let Some(mut batch) = input.next_batch(memory)? else {
                     return Ok(None);
                 };
+                // Every row of a prefiltered scan batch already passed this
+                // predicate, evaluated once by the scan to choose its rows.
+                if *storage && input.scan_batch_prefiltered() {
+                    if batch.visible_row_count() > 0 {
+                        return Ok(Some(batch));
+                    }
+                    continue;
+                }
                 // Typed batch kernel: comparison predicates over packed
                 // columns resolve in one pass. Anything else the kernel tree
                 // answers - a function of a column, arithmetic, a decimal
@@ -4475,6 +4521,9 @@ fn build_operator_inner(
                 None => provider.open_scan(&scan, memory.remaining())?,
             };
             memory.reserve(stream.retained_bytes())?;
+            // The scan's own evaluation stands in for these Filters only
+            // where it compared text as they do.
+            let storage = stream.prefilter_collation() == Some(collation);
             let mut operator = PullOperator::Scan {
                 stream,
                 expected_types,
@@ -4483,6 +4532,7 @@ fn build_operator_inner(
                 operator = PullOperator::Filter {
                     input: Box::new(operator),
                     predicate,
+                    storage,
                 };
             }
             Ok((operator, columns))
@@ -4758,6 +4808,7 @@ fn build_operator_inner(
                 PullOperator::Filter {
                     input: Box::new(input),
                     predicate,
+                    storage: false,
                 },
                 columns,
             ))

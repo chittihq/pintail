@@ -26,7 +26,7 @@ pub use segment::{
 pub use store::GroupedFoldSpan;
 pub use store::{
     BackupArtifacts, BackupSegment, BulkIngestOutcome, ColumnValidity, CompactionOutcome,
-    CompactionStatus, DecodedColumn, FlushOutcome, IngestOutcome, PrewhereSelect,
+    CompactionStatus, DecodedColumn, FlushOutcome, IngestOutcome, PrewhereRanges, PrewhereSelect,
     ProjectedColumnChunk, ProjectedRow, ProjectedScan, ProjectedScanStream, ProjectedValueChunk,
     ScanStats, StorageMetrics, StoreOptions, TableSnapshot, TableStore, WalSync,
     projected_scan_width,

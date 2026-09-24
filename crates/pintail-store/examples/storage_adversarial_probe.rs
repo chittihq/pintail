@@ -99,7 +99,7 @@ fn run(directory: &Path, rows: u64, output: &Path) {
             .expect("stream");
         let select = |columns: &[DecodedColumn],
                       count: usize|
-         -> Result<Option<Vec<std::ops::Range<usize>>>, String> {
+         -> Result<Option<pintail_store::PrewhereRanges>, String> {
             let mut ranges = Vec::new();
             let mut start = None;
             for row in 0..=count {
@@ -110,7 +110,7 @@ fn run(directory: &Path, rows: u64, output: &Path) {
                     ranges.push(begin..row);
                 }
             }
-            Ok(Some(ranges))
+            Ok(Some(ranges.into()))
         };
         let (mut count, mut decoded, mut pruned) = (0, 0, 0);
         loop {
