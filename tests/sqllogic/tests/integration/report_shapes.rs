@@ -477,8 +477,7 @@ const REPORT_CHILD: &str = "PINTAIL_REPORT_SHAPES_CHILD";
 
 #[test]
 fn report_shapes_answer_the_same_under_every_ceiling_and_spill_under_the_tight_one() {
-    const NAME: &str =
-        "report_shapes::report_shapes_answer_the_same_under_every_ceiling_and_spill_under_the_tight_one";
+    const NAME: &str = "report_shapes::report_shapes_answer_the_same_under_every_ceiling_and_spill_under_the_tight_one";
     if std::env::var_os(REPORT_CHILD).is_some() {
         run_report_shapes();
         return;
