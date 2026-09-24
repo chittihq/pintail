@@ -1768,6 +1768,10 @@ pub struct MemoryTracker {
     /// a shared `&MemoryTracker` (experiments/RESULTS.md e02: thread-local
     /// partial state + merge is the adopted parallel-aggregation shape).
     used: std::sync::atomic::AtomicUsize,
+    /// The most `used` has reached. Read by measurement, which cannot
+    /// sample `used` inside a pull: a blocking operator reserves and
+    /// releases its whole state before its first batch comes back.
+    peak: std::sync::atomic::AtomicUsize,
     /// Whether this tracker charges the process-wide budget. Worker
     /// trackers are accounting-independent clones of a parent that already
     /// charged it, so they must not charge it twice.
@@ -1794,6 +1798,7 @@ impl Clone for MemoryTracker {
             deadline: self.deadline,
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(self.used()),
+            peak: std::sync::atomic::AtomicUsize::new(self.used()),
             charges_shared: self.charges_shared,
             // Zero: the clone has taken nothing from the shared budget, so it
             // owes nothing and must not repay the original's debt.
@@ -1858,6 +1863,7 @@ impl MemoryTracker {
                     .unwrap_or_default(),
             ),
             used: std::sync::atomic::AtomicUsize::new(0),
+            peak: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: true,
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: spill::QuerySpill::new(),
@@ -1873,6 +1879,7 @@ impl MemoryTracker {
             deadline: self.deadline,
             cancellation: self.cancellation.clone(),
             used: std::sync::atomic::AtomicUsize::new(0),
+            peak: std::sync::atomic::AtomicUsize::new(0),
             charges_shared: false,
             shared_charged: std::sync::atomic::AtomicUsize::new(0),
             spill: self.spill.clone(),
@@ -1884,6 +1891,12 @@ impl MemoryTracker {
     #[must_use]
     pub const fn limit(&self) -> usize {
         self.limit
+    }
+
+    /// Returns the most bytes this tracker has had reserved at once.
+    #[must_use]
+    pub fn peak(&self) -> usize {
+        self.peak.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Returns bytes currently reserved by stateful operators.
@@ -1925,7 +1938,11 @@ impl MemoryTracker {
             },
         );
         match outcome {
-            Ok(_) => {
+            Ok(previous) => {
+                self.peak.fetch_max(
+                    previous.saturating_add(bytes),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 if self.charges_shared {
                     if let Err(error) = shared_memory_budget().reserve(bytes) {
                         // The query ceiling already accepted these bytes. Give

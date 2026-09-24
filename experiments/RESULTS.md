@@ -3922,3 +3922,39 @@ size and on where the time is.
 **Verdict: not adopted.** Reach for this only if a measurement first
 shows a query whose cost is dictionary index decode, which no reading in
 this file yet does. The branch was deleted; this entry is what it left.
+
+## e97 — What the memory tracker charges, against what the allocator hands out
+
+`crates/pintail-exec/tests/memory_calibration.rs`, release, one million
+orders over 100,000 groups and 50,000 distinct names. The binary installs
+the allocator the server ships with and reads its allocated-bytes counter
+on a 1 ms sampler; the tracker side is its peak, which `MemoryTracker`
+now keeps, since a blocking operator reserves and releases its whole state
+inside its first pull, where no batch-boundary sample can see it. Both are
+whole-query peaks: the scan's buffers are in both.
+
+| shape | charged MiB | actual MiB | charged/actual |
+|---|---:|---:|---:|
+| integer key, SUM/COUNT | 80.4 | 91.4 | 0.88 |
+| text key, COUNT | 37.0 | 65.2 | 0.57 |
+| expression key (general path) | 686.8 | 637.6 | 1.08 |
+| COUNT(DISTINCT) | 6.8 | 7.7 | 0.88 |
+| full sort | 146.0 | 152.4 | 0.96 |
+| top-k | 54.9 | 61.0 | 0.90 |
+| hash join | 201.3 | 229.6 | 0.88 |
+| window (before) | 122.3 | 257.4 | 0.48 |
+| window (after) | 175.7 | 257.7 | 0.68 |
+| DISTINCT rows | 146.0 | 152.5 | 0.96 |
+
+Seven shapes sit within 12% of the truth, and the general aggregate
+over-charges by 8%: the estimates are sound where they are used most.
+Two are not. The window charged under half of what it held: the key
+rows' handle vector, allocated up front for every input row, and the
+computed column were never charged, and the key batch was charged before
+reading it row by row materialized its values. Charging all three moved
+it to 0.68. What remains is transient inside ordering and computing the
+column (a phase trace put the rest there); the text-keyed two-pass
+aggregate's 0.57 is the other open gap.
+
+**Adopted:** the tracker peak and the window charges. The measurement
+stays as an ignored test to rerun when an operator's state changes.

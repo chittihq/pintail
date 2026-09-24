@@ -30,5 +30,11 @@ unicode-normalization.workspace = true
 unicode-casefold.workspace = true
 rayon.workspace = true
 
+[dev-dependencies]
+# The calibration measurement reads real allocation from the allocator the
+# server ships with (tests/memory_calibration.rs).
+tikv-jemallocator.workspace = true
+tikv-jemalloc-ctl.workspace = true
+
 [lints]
 workspace = true
