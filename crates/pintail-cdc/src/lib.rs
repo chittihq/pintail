@@ -268,6 +268,39 @@ pub enum CdcError {
     /// anonymous spill file.
     #[error("CDC transaction spill failed: {0}")]
     TransactionSpill(String),
+    /// A failure confined to one table's own storage or copy: the stream
+    /// itself is sound, and the supervisor quarantines that table instead
+    /// of failing every table the database mirrors.
+    #[error("{source} (table {table})")]
+    Table {
+        /// The source table whose storage or copy failed.
+        table: String,
+        /// What failed.
+        source: Box<CdcError>,
+    },
+}
+
+impl CdcError {
+    /// Scopes this error to `table`.
+    #[must_use]
+    pub fn for_table(self, table: &str) -> Self {
+        match self {
+            scoped @ Self::Table { .. } => scoped,
+            other => Self::Table {
+                table: table.to_owned(),
+                source: Box::new(other),
+            },
+        }
+    }
+
+    /// The one table this failure is confined to, when it is.
+    #[must_use]
+    pub fn failing_table(&self) -> Option<&str> {
+        match self {
+            Self::Table { table, .. } => Some(table),
+            _ => None,
+        }
+    }
 }
 
 type ProgressListener = Arc<dyn Fn(CdcProgress) + Send + Sync>;
@@ -1538,7 +1571,7 @@ async fn apply_ddl_actions(
                     Err(error) => return Err(error.into()),
                 };
                 let snapshot_target = SnapshotTarget::new(source.clone(), store)?;
-                let snapshot = run_snapshot(
+                let snapshot = match run_snapshot(
                     pool,
                     metadata_path,
                     database_id,
@@ -1546,7 +1579,41 @@ async fn apply_ddl_actions(
                     vec![snapshot_target],
                     options.resnapshot_options.clone(),
                 )
-                .await?;
+                .await
+                {
+                    Ok(snapshot) => snapshot,
+                    // A lock the copy could not take, or a source busy enough
+                    // to refuse it, belongs to this table alone. Returning it
+                    // left the checkpoint before the CREATE, so every cycle
+                    // re-ran the copy and failed every table with it. The
+                    // table is recorded as awaiting its copy instead, and the
+                    // stream moves past the CREATE: its row events are
+                    // skipped until the repair copies it.
+                    Err(error) => {
+                        let reason = format!("its first copy failed: {error}");
+                        let key_json = serde_json::to_string(&source.key.columns)
+                            .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                        metadata.upsert_snapshot_table(
+                            database_id,
+                            &source.name,
+                            Some(&key_json),
+                            Some(&key_json),
+                        )?;
+                        metadata.fail_table_copy(database_id, &source.name, &reason, true)?;
+                        let probe_json = serde_json::to_string(&refreshed)
+                            .map_err(|error| CdcError::Ddl(error.to_string()))?;
+                        metadata.refresh_database_probe_json(
+                            database_id,
+                            &probe_json,
+                            &Utc::now().to_rfc3339(),
+                        )?;
+                        pintail_log::log_error!(
+                            "table quarantined db={database_id} table={}: {reason}",
+                            source.name
+                        );
+                        continue;
+                    }
+                };
                 let target = snapshot.targets.into_iter().next().ok_or_else(|| {
                     CdcError::Ddl("new-table snapshot returned no target".to_owned())
                 })?;
@@ -1829,9 +1896,9 @@ fn truncate_target(
         &target.source.columns,
         schema,
         Some(statement),
-    )??;
-    target.store.reset_for_resnapshot()?;
-    Ok(())
+    )?
+    .and_then(|()| target.store.reset_for_resnapshot())
+    .map_err(|error| CdcError::from(error).for_table(&target.source.name))
 }
 
 fn record_target_schema(
@@ -2578,12 +2645,20 @@ fn commit_pending(
     let mutation_count = grouped.values().map(Vec::len).sum();
     let mut touched = Vec::with_capacity(grouped.len());
     for (target_index, rows) in grouped {
-        targets[target_index].store.ingest_cdc(rows)?;
+        let target = &mut targets[target_index];
+        target
+            .store
+            .ingest_cdc(rows)
+            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
         touched.push(target_index);
     }
     recovery_point("cdc.after_ingest")?;
     for (index, target_index) in touched.iter().enumerate() {
-        targets[*target_index].store.checkpoint()?;
+        let target = &mut targets[*target_index];
+        target
+            .store
+            .checkpoint()
+            .map_err(|error| CdcError::from(error).for_table(&target.source.name))?;
         if index == 0 && touched.len() > 1 {
             recovery_point("cdc.after_first_table_sync")?;
         }

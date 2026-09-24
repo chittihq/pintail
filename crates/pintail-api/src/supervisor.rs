@@ -432,10 +432,30 @@ async fn run_cycle(state: &ApiState, database: &DatabaseRecord) -> Result<u64, S
                     ..CdcOptions::default()
                 },
             )
-            .await
-            .map(|outcome| u64::try_from(outcome.mutations).unwrap_or(u64::MAX))
-            .map_err(display);
-            let result = streamed;
+            .await;
+            let result = match streamed {
+                Ok(outcome) => Ok(u64::try_from(outcome.mutations).unwrap_or(u64::MAX)),
+                // One table's storage refused its rows, or its first copy
+                // failed: quarantine that table and let the rest stream.
+                // Failing the cycle instead wrote the one error onto every
+                // table and replayed the same failure every cycle.
+                Err(error) => match error.failing_table().map(str::to_owned) {
+                    Some(table) => {
+                        let reason = error.to_string();
+                        MetaStore::open(&metadata_path)
+                            .and_then(|metadata| {
+                                metadata.mark_table_needs_resync(&database.id, &table, &reason)
+                            })
+                            .map_err(display)?;
+                        pintail_log::log_error!(
+                            "table quarantined db={} table={table}: {reason}",
+                            database.id
+                        );
+                        Ok(0)
+                    }
+                    None => Err(display(error)),
+                },
+            };
 
             // MySQL executes `ON DELETE/UPDATE CASCADE` inside InnoDB without
             // writing row events, so those child rows are invisible to any CDC

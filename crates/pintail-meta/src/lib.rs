@@ -1079,13 +1079,20 @@ impl MetaStore {
         table_name: &str,
         error: &str,
     ) -> Result<()> {
-        self.connection
+        // Case-insensitive like every other per-table write: callers pass
+        // the source's spelling, and a quarantine that matched no row
+        // left the table skipped every cycle and never repaired.
+        let changed = self
+            .connection
             .execute(
                 "UPDATE tables SET state = 'needs_resync', last_error = ?3, copy_complete = 0 \
-                 WHERE db_id = ?1 AND name = ?2",
+                 WHERE db_id = ?1 AND name = ?2 COLLATE NOCASE",
                 (database_id, table_name, error),
             )
             .with_context(|| format!("failed to mark {database_id}.{table_name} for resnapshot"))?;
+        if changed == 0 {
+            bail!("cannot mark {database_id}.{table_name} for resnapshot: it is not tracked");
+        }
         Ok(())
     }
 
