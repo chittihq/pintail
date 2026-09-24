@@ -24,6 +24,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   keys that differ only in letter case.
 - `SELECT 1, @@version` - a connection variable beside any other item -
   returned the variable's column alone.
+- `CAST(x AS SIGNED)` and `AS UNSIGNED` truncated a fractional number where
+  MySQL rounds it (`CAST(1.5 AS SIGNED)` is 2), and refused an operand that
+  did not fit where MySQL saturates it.
 
 ### Added
 
@@ -47,6 +50,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   no gate ran before.
 - The rc gate generates the dashboard once and builds under one setting, so
   stages no longer rebuild and relink the binary between them.
+- The rc gate runs in about 13 minutes instead of about 43: the unit stage
+  runs in parallel (timing-sensitive tests one at a time, with retries), each
+  crate's integration tests build as one binary, MTR files replay eight at a
+  time with the two suites side by side, and a second Docker host takes the
+  mtr, migrations and MySQL 8.0 stages once the oracle has passed.
 
 ## [0.1.5-rc5] - 2026-09-24
 
