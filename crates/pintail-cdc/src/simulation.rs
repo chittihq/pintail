@@ -540,6 +540,19 @@ impl Simulation {
                 }
             }
             Change::AddColumn(table) => {
+                // The columns the live source has and the tracked table does not.
+                let added = self.sources[*table]
+                    .columns
+                    .iter()
+                    .filter(|column| {
+                        !self.targets[*table]
+                            .source
+                            .columns
+                            .iter()
+                            .any(|known| known.name.eq_ignore_ascii_case(&column.name))
+                    })
+                    .map(|column| column.name.clone())
+                    .collect::<Vec<_>>();
                 apply_column_change(
                     &mut self.metadata,
                     DATABASE,
@@ -549,6 +562,7 @@ impl Simulation {
                     &statement,
                     // The live source, as the refreshed probe would read it.
                     self.sources[*table].clone(),
+                    (added.as_slice(), &[]),
                 )?;
             }
             Change::Truncate(table) => {

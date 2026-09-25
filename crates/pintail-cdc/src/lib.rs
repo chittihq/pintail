@@ -1205,7 +1205,7 @@ async fn apply_ddl_actions(
         match action {
             DdlAction::Alter {
                 table,
-                kind: AlterKind::AddOrDropColumns,
+                kind: AlterKind::AddOrDropColumns { added, dropped },
             } => {
                 let Some(&index) = target_indexes.get(&table.to_ascii_lowercase()) else {
                     continue;
@@ -1230,6 +1230,7 @@ async fn apply_ddl_actions(
                     blocked_targets,
                     statement,
                     source,
+                    (added.as_slice(), dropped.as_slice()),
                 )?;
             }
             DdlAction::Alter {
@@ -1917,6 +1918,7 @@ pub fn evolve_tracked_schema(
 /// Adopts a column-level schema change for one tracked table, given the
 /// table as the source now declares it. A shape the tracked table cannot
 /// take without a copy quarantines the table instead.
+#[allow(clippy::too_many_arguments)]
 fn apply_column_change(
     metadata: &mut MetaStore,
     database_id: &str,
@@ -1925,7 +1927,36 @@ fn apply_column_change(
     blocked_targets: &mut BTreeSet<usize>,
     statement: &str,
     source: SourceTable,
+    (added, dropped): (&[String], &[String]),
 ) -> Result<(), CdcError> {
+    // The probe reads the source as it is NOW, which can be past this
+    // statement: a column dropped and then added back under its name reads
+    // as never having left, and the in-place change would keep the dropped
+    // column's values for the new one. Evolve in place only when the source
+    // still shows exactly what this statement did.
+    let named = |columns: &[pintail_probe::SourceColumn], name: &str| {
+        columns
+            .iter()
+            .any(|column| column.name.eq_ignore_ascii_case(name))
+    };
+    if dropped.iter().any(|name| named(&source.columns, name))
+        || added.iter().any(|name| {
+            !named(&source.columns, name) || named(&targets[index].source.columns, name)
+        })
+    {
+        return quarantine_schema_change(
+            metadata,
+            database_id,
+            &targets[index],
+            index,
+            blocked_targets,
+            &format!(
+                "{statement}; the source's schema has already moved past this statement, \
+                 so the table is recopied instead of evolved in place"
+            ),
+            None,
+        );
+    }
     let source = match pintail_probe::stabilize_source_table(&targets[index].source, source) {
         Ok(source) => source,
         Err(reason) => {
@@ -1940,7 +1971,8 @@ fn apply_column_change(
             );
         }
     };
-    if let Some(reason) = virtual_column_joined(&targets[index].source, &source) {
+    let source = renumber_readded_columns(metadata, database_id, &targets[index].source, source)?;
+    if let Some(reason) = added_column_needs_values(&targets[index].source, &source) {
         return quarantine_schema_change(
             metadata,
             database_id,
@@ -2387,12 +2419,59 @@ async fn heal_schema_drift(
 /// A `VIRTUAL` generated column joining a schema cannot evolve in place: the
 /// rows already copied would read NULL where the source computes a value
 /// for every one of them. Returns the reason the table has to be recopied.
-fn virtual_column_joined(previous: &SourceTable, refreshed: &SourceTable) -> Option<String> {
+/// Gives every column new to `previous` an ID no generation of the table has
+/// used. Stable IDs continue from the highest of the columns the table has
+/// now, so a column dropped and then added again under its old name got the
+/// dropped one's ID back - and older segments still hold the dropped values
+/// under it, which the new column then read. The schema history records every
+/// generation's columns, so its highest ID is the floor.
+fn renumber_readded_columns(
+    metadata: &MetaStore,
+    database_id: &str,
+    previous: &SourceTable,
+    mut source: SourceTable,
+) -> Result<SourceTable, CdcError> {
+    let floor = metadata
+        .schema_history(database_id, &previous.name)?
+        .iter()
+        .filter_map(|record| {
+            serde_json::from_str::<Vec<pintail_probe::SourceColumn>>(&record.columns_json).ok()
+        })
+        .flatten()
+        .map(|column| column.id)
+        .chain(previous.columns.iter().map(|column| column.id))
+        .max()
+        .unwrap_or(0);
+    let mut next_id = floor;
+    for column in &mut source.columns {
+        let known = previous
+            .columns
+            .iter()
+            .any(|existing| existing.name.eq_ignore_ascii_case(&column.name));
+        if !known && column.id <= floor {
+            next_id = next_id
+                .checked_add(1)
+                .ok_or_else(|| CdcError::Ddl("stable column ID space is exhausted".to_owned()))?;
+            column.id = next_id;
+        }
+    }
+    Ok(source)
+}
+
+/// A column that joins the schema with values the stream cannot supply for
+/// the rows already copied: a VIRTUAL generated column, or one with a
+/// default. The source filled its default into every existing row - a literal
+/// or an expression evaluated when the ALTER ran - but an ALTER carries no row
+/// events, so evolved in place those rows would read NULL. The table is
+/// recopied instead. A nullable column with no default needs nothing.
+fn added_column_needs_values(previous: &SourceTable, refreshed: &SourceTable) -> Option<String> {
     refreshed
         .columns
         .iter()
         .find(|column| {
-            column.virtual_generated()
+            (column.virtual_generated()
+                || column.default_value.is_some()
+                || column.default_generated)
                 && !previous
                     .columns
                     .iter()
@@ -2400,8 +2479,8 @@ fn virtual_column_joined(previous: &SourceTable, refreshed: &SourceTable) -> Opt
         })
         .map(|added| {
             format!(
-                "virtual generated column {} joined the schema; the rows already copied need \
-                 its computed values, so the table is recopied instead of evolved in place",
+                "column {} joined the schema with values the rows already copied need; the \
+                 table is recopied instead of evolved in place",
                 added.name
             )
         })
@@ -2422,9 +2501,11 @@ async fn adopt_drifted_schema(
         .cloned()
         .ok_or_else(|| "table is absent from the refreshed probe".to_owned())?;
     let source = pintail_probe::stabilize_source_table(&target.source, source)?;
+    let source = renumber_readded_columns(metadata, database_id, &target.source, source)
+        .map_err(|error| error.to_string())?;
     // Declining leaves the event to the quarantine path, and the resync
     // that follows copies the column's values with the refreshed schema.
-    if let Some(reason) = virtual_column_joined(&target.source, &source) {
+    if let Some(reason) = added_column_needs_values(&target.source, &source) {
         return Err(reason);
     }
     // Only adopt a schema that actually explains the row in hand. A probe the

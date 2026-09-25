@@ -8,7 +8,13 @@ use crate::CdcError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AlterKind {
-    AddOrDropColumns,
+    /// Columns added and dropped by name. The handler checks them against the
+    /// refreshed source: the probe reads the schema as it is now, and a later
+    /// DDL can already have undone what this statement did.
+    AddOrDropColumns {
+        added: Vec<String>,
+        dropped: Vec<String>,
+    },
     /// Pure column renames as `(old name, new name)` pairs: the stable
     /// column IDs carry across, so no resnapshot is needed.
     RenameColumns(Vec<(String, String)>),
@@ -270,79 +276,93 @@ pub(crate) fn parse_ddl(statement: &str, database: &str) -> Result<ParsedDdl, Cd
                 let Some(table) = table_in_schema(&alter.name, database, &mut parsed)? else {
                     continue;
                 };
-                let kind =
-                    if alter.operations.iter().all(|operation| {
-                        matches!(
+                let kind = if alter.operations.iter().all(|operation| {
+                    matches!(
+                        operation,
+                        AlterTableOperation::AddColumn { .. }
+                            | AlterTableOperation::DropColumn { .. }
+                    )
+                }) {
+                    let mut added = Vec::new();
+                    let mut dropped = Vec::new();
+                    for operation in &alter.operations {
+                        match operation {
+                            AlterTableOperation::AddColumn { column_def, .. } => {
+                                added.push(column_def.name.value.clone());
+                            }
+                            AlterTableOperation::DropColumn { column_names, .. } => {
+                                dropped.extend(column_names.iter().map(|name| name.value.clone()));
+                            }
+                            _ => {}
+                        }
+                    }
+                    AlterKind::AddOrDropColumns { added, dropped }
+                } else if alter
+                    .operations
+                    .iter()
+                    .all(|operation| matches!(operation, AlterTableOperation::RenameColumn { .. }))
+                {
+                    AlterKind::RenameColumns(
+                        alter
+                            .operations
+                            .iter()
+                            .map(|operation| {
+                                let AlterTableOperation::RenameColumn {
+                                    old_column_name,
+                                    new_column_name,
+                                } = operation
+                                else {
+                                    unreachable!("all operations matched RenameColumn");
+                                };
+                                (old_column_name.value.clone(), new_column_name.value.clone())
+                            })
+                            .collect(),
+                    )
+                } else if alter.operations.iter().all(|operation| {
+                    matches!(operation, AlterTableOperation::ModifyColumn { .. })
+                        || matches!(
                             operation,
-                            AlterTableOperation::AddColumn { .. }
-                                | AlterTableOperation::DropColumn { .. }
-                        )
-                    }) {
-                        AlterKind::AddOrDropColumns
-                    } else if alter.operations.iter().all(|operation| {
-                        matches!(operation, AlterTableOperation::RenameColumn { .. })
-                    }) {
-                        AlterKind::RenameColumns(
-                            alter
-                                .operations
-                                .iter()
-                                .map(|operation| {
-                                    let AlterTableOperation::RenameColumn {
-                                        old_column_name,
-                                        new_column_name,
-                                    } = operation
-                                    else {
-                                        unreachable!("all operations matched RenameColumn");
-                                    };
-                                    (old_column_name.value.clone(), new_column_name.value.clone())
-                                })
-                                .collect(),
-                        )
-                    } else if alter.operations.iter().all(|operation| {
-                        matches!(operation, AlterTableOperation::ModifyColumn { .. })
-                            || matches!(
-                                operation,
-                                AlterTableOperation::ChangeColumn {
-                                    old_name,
-                                    new_name,
-                                    ..
-                                } if old_name.value.eq_ignore_ascii_case(&new_name.value)
-                            )
-                    }) {
-                        AlterKind::ModifyColumns(
-                            alter
-                                .operations
-                                .iter()
-                                .map(|operation| match operation {
-                                    AlterTableOperation::ModifyColumn { col_name, .. } => {
-                                        col_name.value.clone()
-                                    }
-                                    AlterTableOperation::ChangeColumn { old_name, .. } => {
-                                        old_name.value.clone()
-                                    }
-                                    _ => unreachable!("all operations matched modify/change"),
-                                })
-                                .collect(),
-                        )
-                    } else if alter.operations.iter().all(|operation| {
-                        matches!(
-                            operation,
-                            AlterTableOperation::AddConstraint {
-                                constraint: TableConstraint::Unique(_)
-                                    | TableConstraint::ForeignKey(_)
-                                    | TableConstraint::Check(_)
-                                    | TableConstraint::Index(_)
-                                    | TableConstraint::FulltextOrSpatial(_),
+                            AlterTableOperation::ChangeColumn {
+                                old_name,
+                                new_name,
                                 ..
-                            } | AlterTableOperation::DropIndex { .. }
-                                | AlterTableOperation::DropConstraint { .. }
-                                | AlterTableOperation::DropForeignKey { .. }
+                            } if old_name.value.eq_ignore_ascii_case(&new_name.value)
                         )
-                    }) {
-                        AlterKind::IndexOnly
-                    } else {
-                        AlterKind::RequiresResnapshot
-                    };
+                }) {
+                    AlterKind::ModifyColumns(
+                        alter
+                            .operations
+                            .iter()
+                            .map(|operation| match operation {
+                                AlterTableOperation::ModifyColumn { col_name, .. } => {
+                                    col_name.value.clone()
+                                }
+                                AlterTableOperation::ChangeColumn { old_name, .. } => {
+                                    old_name.value.clone()
+                                }
+                                _ => unreachable!("all operations matched modify/change"),
+                            })
+                            .collect(),
+                    )
+                } else if alter.operations.iter().all(|operation| {
+                    matches!(
+                        operation,
+                        AlterTableOperation::AddConstraint {
+                            constraint: TableConstraint::Unique(_)
+                                | TableConstraint::ForeignKey(_)
+                                | TableConstraint::Check(_)
+                                | TableConstraint::Index(_)
+                                | TableConstraint::FulltextOrSpatial(_),
+                            ..
+                        } | AlterTableOperation::DropIndex { .. }
+                            | AlterTableOperation::DropConstraint { .. }
+                            | AlterTableOperation::DropForeignKey { .. }
+                    )
+                }) {
+                    AlterKind::IndexOnly
+                } else {
+                    AlterKind::RequiresResnapshot
+                };
                 parsed.actions.push(DdlAction::Alter { table, kind });
             }
             Statement::Truncate(truncate) => {
@@ -561,7 +581,10 @@ mod tests {
             .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
-                kind: AlterKind::AddOrDropColumns,
+                kind: AlterKind::AddOrDropColumns {
+                    added: vec!["note".to_owned()],
+                    dropped: Vec::new(),
+                },
             }]
         );
         assert_eq!(
@@ -570,7 +593,10 @@ mod tests {
                 .actions,
             vec![DdlAction::Alter {
                 table: "events".to_owned(),
-                kind: AlterKind::AddOrDropColumns,
+                kind: AlterKind::AddOrDropColumns {
+                    added: Vec::new(),
+                    dropped: vec!["note".to_owned()],
+                },
             }]
         );
         assert_eq!(
