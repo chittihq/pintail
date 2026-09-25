@@ -132,11 +132,16 @@ pub(crate) async fn resync(
     ))
 }
 
-/// One auto-resync attempt per table per five minutes: a source that keeps
-/// re-quarantining the same table (invisible DDL arriving continuously)
-/// must not turn the repair into a resnapshot storm.
-fn auto_resync_cooldown() -> &'static Mutex<HashMap<(String, String), Instant>> {
-    static COOLDOWN: OnceLock<Mutex<HashMap<(String, String), Instant>>> = OnceLock::new();
+/// One auto-resync attempt per table per five minutes for the same cause: a
+/// source that keeps re-quarantining a table the same way (invisible DDL
+/// arriving continuously) must not turn the repair into a resnapshot storm.
+/// Each entry keeps the quarantine reason the attempt answered; a table
+/// quarantined again for a different reason - the next DDL of a migration -
+/// is new work, and waiting five minutes left it unreadable meanwhile.
+type Cooldown = HashMap<(String, String), (Instant, Option<String>)>;
+
+fn auto_resync_cooldown() -> &'static Mutex<Cooldown> {
+    static COOLDOWN: OnceLock<Mutex<Cooldown>> = OnceLock::new();
     COOLDOWN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -189,6 +194,20 @@ fn auto_resync_candidate(
     Some((table_name, copy_pending, known))
 }
 
+/// Why the control plane last flagged `table_name`, if it recorded a reason.
+fn table_last_error(
+    metadata: &pintail_meta::MetaStore,
+    database_id: &str,
+    table_name: &str,
+) -> Option<String> {
+    metadata
+        .tables(database_id)
+        .ok()?
+        .into_iter()
+        .find(|table| table.name.eq_ignore_ascii_case(table_name))?
+        .last_error
+}
+
 /// Whether the control plane records `table_name` with no source key.
 fn table_is_keyless(
     metadata: &pintail_meta::MetaStore,
@@ -232,6 +251,7 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     // Only while the source still has it: a keyless name the last probe no
     // longer knows would otherwise be retried every cycle.
     let keyless = known && table_is_keyless(&metadata, database_id, &table_name);
+    let reason = table_last_error(&metadata, database_id, &table_name);
     if database.mode == "paused" {
         return;
     }
@@ -242,14 +262,17 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
         // Expired entries leave on every pass, including entries for
         // dropped tables and deleted databases - the map is
         // process-lifetime and must not grow monotonically.
-        cooldown.retain(|_, stamped| stamped.elapsed() < Duration::from_secs(300));
+        cooldown.retain(|_, (stamped, _)| stamped.elapsed() < Duration::from_secs(300));
         let key = (database_id.to_owned(), table_name.clone());
         // A failed copy is unfinished work, not repeated source drift.
         // Resume it at supervisor cadence, including under keyless quarantine.
         // A keyless table reaches here only under the auto_resync policy, and
         // each quarantine is a new source change the operator chose to have
         // repaired, not drift recurring - so it is repaired at cadence too.
-        if !copy_pending && !keyless && cooldown.contains_key(&key) {
+        let same_cause = cooldown
+            .get(&key)
+            .is_some_and(|(_, answered)| *answered == reason);
+        if !copy_pending && !keyless && same_cause {
             return;
         }
     }
@@ -283,7 +306,10 @@ pub(crate) fn auto_resync_quarantined(state: &ApiState, database_id: &str) {
     auto_resync_cooldown()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert((database_id.to_owned(), table_name.clone()), Instant::now());
+        .insert(
+            (database_id.to_owned(), table_name.clone()),
+            (Instant::now(), reason),
+        );
     pintail_log::log_info!(
         "auto resync db={database_id} table={table_name}: quarantined table is being recopied"
     );
