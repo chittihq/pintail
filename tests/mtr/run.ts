@@ -87,6 +87,8 @@ if (MODE !== 'local' && MODE !== 'replica') throw new Error('MTR_MODE must be lo
 /// How long a query waits for the mirror to reach the source before it is
 /// reported as replica-lag rather than compared.
 const SYNC_TIMEOUT_MS = Number(process.env.MTR_SYNC_TIMEOUT_MS ?? '60000')
+/// How long a sync waits for a quarantined table's automatic recopy.
+const REPAIR_WAIT_MS = Number(process.env.MTR_REPAIR_WAIT_MS ?? '15000')
 const DEBUG = process.env.MTR_DEBUG === '1'
 const oracleSuffix = ORACLE_IMAGE === 'mysql:8.4' ? '' : `-${ORACLE_IMAGE.replace(/[^a-z0-9]+/gi, '')}`
 const suffix = `${SUITE_NAME === 'mysql' ? '' : `-${SUITE_NAME}`}${MODE === 'replica' ? '-replica' : ''}${oracleSuffix}`
@@ -1052,6 +1054,7 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
       sinceSync = []
     }
     unsettled = new Set()
+    const repairDeadline = Date.now() + REPAIR_WAIT_MS
     for (;;) {
       const s = await status().catch(() => undefined)
       const tables = (s?.tables ?? []).filter((t) => t.name !== '__mtr_sync')
@@ -1059,7 +1062,12 @@ async function runFileReplica(name: string, text: string, root: mysql.Connection
       // progress is worth waiting for.
       unsettled = new Set(tables.filter((t) => t.state !== 'streaming' && t.state !== 'excluded').map((t) => t.name.toLowerCase()))
       const transitional = tables.some((t) => t.state === 'pending' || t.state === 'snapshotting')
-      if (!transitional || Date.now() > deadline) {
+      // A quarantined table is recopied at the supervisor's next cycle under
+      // the auto_resync policy this harness runs. Give that repair a short
+      // budget of its own: a table that never repairs must not hold every
+      // later sync for the whole timeout.
+      const repairing = tables.some((t) => t.state === 'needs_resync') && Date.now() < repairDeadline
+      if ((!transitional && !repairing) || Date.now() > deadline) {
         if (DEBUG && unsettled.size) {
           log(`${name}: unsettled ${tables.filter((t) => unsettled.has(t.name.toLowerCase())).map((t) => `${t.name}=${t.state} (${t.last_error ?? ''})`).join('; ')}`)
         }
