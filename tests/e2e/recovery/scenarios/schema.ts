@@ -28,9 +28,9 @@ export const schemaScenarios: Scenario[] = [
     `TRUNCATE TABLE big; INSERT INTO big VALUES ${Array.from({length:100},(_,i)=>`(${400001+i},'replacement')`).join(',')}`) },
   { slug: 'repair-drop-recreate', area: 'schema', seed: seedBig, promise: 'docs/limitations.md: DROP and recreated table identity', run: ctx => interruptedRepair(ctx,
     "DROP TABLE big; CREATE TABLE big(id BIGINT PRIMARY KEY,value VARCHAR(32),new_flag BIGINT DEFAULT NULL); INSERT INTO big VALUES(400001,'replacement',7),(400002,'delete-later',8)") },
-  { slug: 'repair-rename', area: 'schema', seed: seedBig, promise: 'docs/limitations.md: rename during interrupted forced resnapshot leaves stale progress', run: async ctx => {
+  { slug: 'repair-rename', area: 'schema', seed: seedBig, promise: 'docs/limitations.md: a name renamed away mid-copy is retained as a dropped table', run: async ctx => {
     await interruptedRepair(ctx, 'RENAME TABLE big TO big2')
-    ctx.gap = {table:'big',pattern:/^snapshotting$/,promise:'docs/limitations.md: stale old-name progress after interrupted resnapshot rename'}
+    ctx.gap = {table:'big',pattern:/^excluded$/,promise:'docs/limitations.md: the old name of a table renamed mid-copy is retained as a dropped table, never streamed or served'}
   } },
   { slug: 'reconcile-alter', area: 'schema', mode: 'polling', seed: seedBig, promise: 'docs/limitations.md: polling re-probe after DDL', run: async ctx => {
     const previous = ctx.pollStates().find(t => t.table_name === 'big')?.last_reconcile_at

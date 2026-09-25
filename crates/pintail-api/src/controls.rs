@@ -587,10 +587,26 @@ fn finish_table_resnapshot(
                             .iter()
                             .any(|table| table.name.eq_ignore_ascii_case(table_name))
                     });
-                // A worker can fail after publishing its last chunk but
-                // before its source transaction/fence completes. Re-arm
-                // intent even if complete_snapshot_table cleared it.
-                let _ = metadata.fail_table_copy(database_id, table_name, &error, retry);
+                if retry {
+                    // A worker can fail after publishing its last chunk but
+                    // before its source transaction/fence completes. Re-arm
+                    // intent even if complete_snapshot_table cleared it.
+                    let _ = metadata.fail_table_copy(database_id, table_name, &error, true);
+                } else {
+                    // The probe this copy just refreshed has no such table:
+                    // it was dropped, or renamed while its copy was cut
+                    // short. Quarantining it for another copy would retry a
+                    // table nobody can copy on every cooldown and leave the
+                    // database looking unrepaired, so it is retained as a
+                    // dropped table is - readable as it stands, never
+                    // streamed, and removable by an operator.
+                    let _ = metadata.mark_table_orphaned(
+                        database_id,
+                        table_name,
+                        "the source no longer has this table",
+                        &Utc::now().to_rfc3339(),
+                    );
+                }
             }
             state.publish(ApiEvent {
                 kind: "resnapshot.error".to_owned(),

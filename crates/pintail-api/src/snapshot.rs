@@ -328,6 +328,37 @@ pub(crate) async fn status(
     }))
 }
 
+/// Retains every tracked table a fresh probe no longer finds, the way a
+/// DROP the stream reads retains it: kept, never streamed, removable by an
+/// operator. A table renamed while the process was down - or while its copy
+/// was cut short - has no DROP for the stream to read, and its old name
+/// otherwise sat in `snapshotting` for good, since the snapshot copies only
+/// what the probe lists.
+fn retire_tables_the_source_dropped(
+    metadata: &pintail_meta::MetaStore,
+    database_id: &str,
+    report: &ProbeReport,
+) -> Result<(), String> {
+    let now = Utc::now().to_rfc3339();
+    for table in metadata.tables(database_id).map_err(display)? {
+        let listed = report
+            .tables
+            .iter()
+            .any(|source| source.name.eq_ignore_ascii_case(&table.name));
+        if table.orphaned_at.is_none() && !listed {
+            metadata
+                .mark_table_orphaned(
+                    database_id,
+                    &table.name,
+                    "the source no longer has this table",
+                    &now,
+                )
+                .map_err(display)?;
+        }
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 async fn run_snapshot_job(
     state: &ApiState,
@@ -360,6 +391,7 @@ async fn run_snapshot_job(
         metadata
             .refresh_database_probe_json(database_id, &encoded, &Utc::now().to_rfc3339())
             .map_err(display)?;
+        retire_tables_the_source_dropped(&metadata, database_id, &refreshed)?;
         refreshed
     } else {
         serde_json::from_str(

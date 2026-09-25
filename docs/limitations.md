@@ -471,8 +471,9 @@ stays readable as a list of things to fix.
   layouts from SQL text. A table resnapshot is then required.
 - Auto-inclusion uses case-insensitive exact allow/deny names and requires a
   writable target root; glob patterns and dashboard rule editing are not
-  implemented. DROP TABLE retains the replica as an orphan with no operator
-  purge action. In polling mode, a dropped table can also interrupt a cycle
+  implemented. DROP TABLE retains the replica as an orphan, and so does a
+  table renamed while its copy was cut short; an operator removes either
+  with Remove on the database page. In polling mode, a dropped table can also interrupt a cycle
   before surviving tables advance. The E2E gate observed no progress on a
   surviving table within 90 seconds; an explicit re-probe restored replication.
 - A dropped source DATABASE is surfaced, not modelled: replication fails
