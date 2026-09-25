@@ -4,6 +4,35 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.1.5] - 2026-09-26
+
+Everything in 0.1.5-rc1 through rc9, gated with the full stable chain: fmt,
+typecheck, unit, parser corpus, oracle, MTR, E2E on MySQL 8.4 and 8.0,
+recovery, browser, compose, BI clients, the 20M-row benchmark, TPC-H,
+freshness and acceptance on the banked tree.
+
+Measured against 0.1.4 on TPC-H SF1, every answer byte-exact against MySQL:
+Q05 31.7 s to 0.32 s with no spill, Q03 3.5 s to 0.27 s, Q10 2.5 s to
+0.33 s, Q01 5.2 s to 3.6 s. Q05 holds a one-second p95 (347 ms) at the default
+spill limits.
+
+### Fixed
+
+- A table renamed while its copy was cut short no longer sits in
+  `snapshotting` forever, or in `needs_resync` on every repair cooldown after
+  the next restart. A forced copy retires every tracked table its fresh probe
+  no longer lists, and a per-table repair that finds its table gone does the
+  same: the table is retained as a dropped table is, never streamed or
+  served, and removable from the dashboard.
+
+### Known regressions
+
+- On the 20M-row analytical benchmark with the result memo off, Q3 (group by
+  status) and Q4 (region by status) are slower than in 0.1.4: 129 to 173 ms and
+  155 to 194 ms by median, with minimums up as well. Answers are unaffected.
+  0.1.4 measured an improvement that the rc6 build no longer had; the cause is
+  being bisected for 0.1.6.
+
 ## [0.1.5-rc9] - 2026-09-25
 
 What production error reports asked for: the SQL shapes a deployed rc4 refused
