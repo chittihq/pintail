@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-25T07:45:04.102Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-25T14:33:12.326Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: 8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c; source dirty: false. Binary SHA-256: 5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169.
+Replay mode: local. Source commit: e6f086ac62a099edab2271cd9a5ba1c0a44115f8; source dirty: false. Binary SHA-256: 5150e806e409504c1e3398ee4eb25380a74e467c539d47cb857fa134d576d682.
 
-**8,725 of 8,840 compared SELECTs match MySQL byte-for-byte** (98.7%), **out of 23,119 SELECTs replayed** - 14,279 never reached a comparison, so this is a share of what could be compared and not of the suite. 115 differ in rows, 0 in column names only. 5,684 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**8,741 of 8,856 compared SELECTs match MySQL byte-for-byte** (98.7%), **out of 23,119 SELECTs replayed** - 14,263 never reached a comparison, so this is a share of what could be compared and not of the suite. 115 differ in rows, 0 in column names only. 5,668 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -200,7 +200,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_digest | 566 | 473 | 0 | 0 | 9 | 0 | 0 | 16 | 1 | 12 | 24 | 8 |
 | func_digest_small_buffer | 12 | 0 | 0 | 0 | 1 | 0 | 0 | 1 | 0 | 7 | 2 | 1 |
 | func_equal | 29 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 1 | 0 | 3 |
-| func_gconcat | 261 | 63 | 0 | 0 | 19 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
+| func_gconcat | 261 | 65 | 0 | 0 | 17 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
 | func_group | 725 | 181 | 0 | 0 | 10 | 56 | 0 | 267 | 10 | 45 | 47 | 100 |
 | func_if | 99 | 32 | 0 | 0 | 6 | 0 | 0 | 45 | 0 | 1 | 4 | 10 |
 | func_in_all | 297 | 72 | 6 | 0 | 11 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
@@ -220,11 +220,11 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_rand | 22 | 2 | 0 | 0 | 0 | 4 | 0 | 6 | 0 | 2 | 0 | 6 |
 | func_regexp | 110 | 18 | 0 | 0 | 17 | 1 | 0 | 18 | 0 | 19 | 22 | 15 |
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
-| func_sapdb | 88 | 50 | 0 | 0 | 27 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
+| func_sapdb | 88 | 55 | 0 | 0 | 22 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
 | func_set | 77 | 23 | 0 | 0 | 15 | 0 | 2 | 25 | 0 | 1 | 2 | 5 |
 | func_str | 834 | 367 | 0 | 0 | 164 | 12 | 0 | 147 | 2 | 16 | 18 | 94 |
 | func_test | 221 | 109 | 0 | 0 | 19 | 3 | 0 | 43 | 3 | 8 | 11 | 25 |
-| func_time | 599 | 301 | 0 | 0 | 61 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
+| func_time | 599 | 305 | 0 | 0 | 57 | 12 | 1 | 97 | 3 | 22 | 38 | 42 |
 | func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
 | func_unixtime | 96 | 50 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 10 | 23 | 4 |
 | func_uuid | 99 | 0 | 0 | 0 | 29 | 9 | 0 | 12 | 3 | 8 | 9 | 29 |
@@ -560,7 +560,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | test_security_context | 16 | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 2 |
 | time_truncate_fractional | 288 | 31 | 0 | 0 | 5 | 21 | 0 | 190 | 4 | 30 | 5 | 2 |
 | time_truncate_fractional_strict | 288 | 31 | 0 | 0 | 5 | 21 | 0 | 186 | 4 | 30 | 5 | 6 |
-| time_zone | 264 | 54 | 0 | 0 | 6 | 39 | 0 | 44 | 19 | 29 | 34 | 39 |
+| time_zone | 264 | 58 | 0 | 0 | 2 | 39 | 0 | 44 | 19 | 29 | 34 | 39 |
 | time_zone2 | 137 | 33 | 1 | 0 | 2 | 9 | 0 | 28 | 4 | 20 | 19 | 13 |
 | time_zone3 | 15 | 1 | 0 | 0 | 0 | 2 | 0 | 5 | 2 | 5 | 0 | 0 |
 | time_zone4 | 2 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
@@ -588,7 +588,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_set | 44 | 4 | 1 | 0 | 0 | 2 | 0 | 23 | 2 | 4 | 3 | 5 |
 | type_string | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 |
 | type_temporal_fractional | 1195 | 154 | 0 | 0 | 4 | 91 | 0 | 627 | 10 | 184 | 34 | 77 |
-| type_time | 134 | 52 | 0 | 0 | 2 | 7 | 0 | 57 | 4 | 4 | 6 | 2 |
+| type_time | 134 | 53 | 0 | 0 | 1 | 7 | 0 | 57 | 4 | 4 | 6 | 2 |
 | type_timestamp | 6 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 1 | 0 | 3 | 0 |
 | type_timestamp_explicit | 71 | 0 | 0 | 0 | 0 | 4 | 0 | 15 | 4 | 22 | 6 | 20 |
 | type_uint | 8 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 2 | 1 | 0 |
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 53 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mugnm39n-1249851/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muh24caf-1579746/diffs/` (not committed).

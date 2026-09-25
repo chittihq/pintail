@@ -1,10 +1,10 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-09-25T07:53:33.744Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-09-25T14:44:12.271Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: 8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c; source dirty: false. Binary SHA-256: 5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169.
+Replay mode: local. Source commit: e6f086ac62a099edab2271cd9a5ba1c0a44115f8; source dirty: false. Binary SHA-256: 5150e806e409504c1e3398ee4eb25380a74e467c539d47cb857fa134d576d682.
 
-**8,118 of 8,541 compared SELECTs match MySQL byte-for-byte** (95.0%), **out of 30,174 SELECTs replayed** - 21,633 never reached a comparison, so this is a share of what could be compared and not of the suite. 417 differ in rows, 6 in column names only. 4,953 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
+**8,146 of 8,578 compared SELECTs match MySQL byte-for-byte** (95.0%), **out of 30,174 SELECTs replayed** - 21,596 never reached a comparison, so this is a share of what could be compared and not of the suite. 426 differ in rows, 6 in column names only. 4,916 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -250,11 +250,11 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_default | 88 | 0 | 0 | 0 | 2 | 21 | 0 | 22 | 9 | 21 | 1 | 9 |
 | func_digest | 485 | 468 | 0 | 0 | 0 | 4 | 0 | 3 | 1 | 2 | 6 | 1 |
 | func_equal | 25 | 13 | 0 | 0 | 0 | 0 | 0 | 12 | 0 | 0 | 0 | 0 |
-| func_extract | 149 | 51 | 32 | 0 | 10 | 0 | 4 | 18 | 0 | 4 | 4 | 26 |
+| func_extract | 149 | 55 | 32 | 0 | 6 | 0 | 4 | 18 | 0 | 4 | 4 | 26 |
 | func_format | 53 | 0 | 0 | 0 | 45 | 0 | 0 | 7 | 0 | 0 | 1 | 0 |
-| func_gconcat | 255 | 59 | 0 | 0 | 20 | 27 | 0 | 107 | 8 | 10 | 10 | 12 |
+| func_gconcat | 255 | 61 | 0 | 0 | 18 | 27 | 0 | 107 | 8 | 10 | 10 | 12 |
 | func_group | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
-| func_hybrid_type | 628 | 68 | 11 | 0 | 3 | 15 | 1 | 260 | 1 | 75 | 53 | 131 |
+| func_hybrid_type | 628 | 68 | 12 | 0 | 2 | 15 | 1 | 260 | 1 | 75 | 53 | 131 |
 | func_if | 66 | 21 | 1 | 0 | 6 | 0 | 0 | 33 | 0 | 0 | 2 | 2 |
 | func_in | 427 | 93 | 9 | 0 | 12 | 11 | 3 | 134 | 2 | 26 | 34 | 103 |
 | func_int | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 61 |
@@ -270,14 +270,14 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_regexp_pcre | 253 | 107 | 4 | 0 | 43 | 0 | 44 | 21 | 0 | 2 | 23 | 8 |
 | func_replace | 37 | 0 | 0 | 0 | 0 | 12 | 0 | 11 | 6 | 4 | 0 | 4 |
 | func_rollback | 150 | 0 | 0 | 0 | 0 | 4 | 66 | 5 | 0 | 5 | 6 | 64 |
-| func_sapdb | 88 | 50 | 0 | 0 | 27 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
+| func_sapdb | 88 | 55 | 0 | 0 | 22 | 3 | 0 | 4 | 0 | 1 | 2 | 1 |
 | func_set | 66 | 22 | 0 | 0 | 14 | 0 | 0 | 20 | 0 | 1 | 0 | 5 |
 | func_sformat | 161 | 0 | 0 | 0 | 0 | 9 | 82 | 24 | 4 | 10 | 15 | 17 |
 | func_str | 955 | 367 | 0 | 0 | 156 | 19 | 64 | 185 | 3 | 27 | 18 | 101 |
 | func_test | 128 | 57 | 0 | 0 | 20 | 4 | 0 | 16 | 2 | 10 | 1 | 18 |
-| func_time | 1047 | 415 | 32 | 0 | 92 | 38 | 17 | 217 | 7 | 42 | 79 | 74 |
+| func_time | 1047 | 422 | 37 | 0 | 80 | 38 | 17 | 217 | 7 | 42 | 79 | 74 |
 | func_time_hires | 55 | 16 | 1 | 0 | 2 | 8 | 0 | 8 | 2 | 5 | 6 | 6 |
-| func_time_round | 139 | 11 | 50 | 0 | 5 | 0 | 2 | 63 | 0 | 0 | 8 | 0 |
+| func_time_round | 139 | 11 | 51 | 0 | 4 | 0 | 2 | 63 | 0 | 0 | 8 | 0 |
 | func_timestamp | 7 | 1 | 0 | 0 | 0 | 0 | 0 | 4 | 0 | 0 | 2 | 0 |
 | func_weight_string | 58 | 1 | 0 | 0 | 13 | 7 | 4 | 8 | 1 | 8 | 2 | 14 |
 | function_defaults | 41 | 3 | 0 | 0 | 0 | 5 | 0 | 16 | 2 | 10 | 4 | 1 |
@@ -445,7 +445,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | null_key | 164 | 15 | 0 | 0 | 0 | 20 | 0 | 42 | 0 | 33 | 2 | 42 |
 | odbc | 17 | 0 | 0 | 0 | 1 | 2 | 0 | 5 | 1 | 2 | 2 | 1 |
 | olap | 222 | 7 | 0 | 0 | 72 | 4 | 1 | 101 | 0 | 8 | 3 | 19 |
-| old-mode | 115 | 4 | 5 | 0 | 2 | 19 | 0 | 24 | 7 | 23 | 18 | 10 |
+| old-mode | 115 | 5 | 5 | 0 | 1 | 19 | 0 | 24 | 7 | 23 | 18 | 10 |
 | openssl_1 | 36 | 3 | 0 | 0 | 0 | 0 | 0 | 9 | 0 | 1 | 1 | 19 |
 | openssl_6975 | 7 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 6 |
 | opt_trace | 580 | 14 | 0 | 0 | 5 | 7 | 4 | 194 | 5 | 73 | 103 | 89 |
@@ -614,7 +614,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | temp_table | 362 | 2 | 0 | 0 | 1 | 42 | 4 | 68 | 1 | 152 | 10 | 82 |
 | temp_table_frm | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 7 | 0 |
 | temp_table_symlink | 18 | 1 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 11 | 0 | 3 |
-| temporal_literal | 202 | 45 | 9 | 0 | 4 | 4 | 3 | 30 | 4 | 15 | 47 | 41 |
+| temporal_literal | 202 | 46 | 11 | 0 | 1 | 4 | 3 | 30 | 4 | 15 | 47 | 41 |
 | temporal_scale_4283 | 8 | 0 | 0 | 0 | 2 | 0 | 0 | 6 | 0 | 0 | 0 | 0 |
 | timeout | 32 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 7 | 0 | 23 |
 | timezone | 33 | 7 | 0 | 0 | 0 | 1 | 0 | 5 | 1 | 15 | 1 | 3 |
@@ -637,7 +637,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_blob | 417 | 18 | 3 | 0 | 1 | 102 | 0 | 144 | 8 | 48 | 16 | 76 |
 | type_bool | 4 | 0 | 0 | 0 | 0 | 0 | 1 | 3 | 0 | 0 | 0 | 0 |
 | type_char | 7 | 3 | 0 | 0 | 1 | 0 | 0 | 3 | 0 | 0 | 0 | 0 |
-| type_date | 431 | 55 | 10 | 0 | 6 | 22 | 2 | 181 | 10 | 34 | 49 | 54 |
+| type_date | 431 | 57 | 10 | 0 | 4 | 22 | 2 | 181 | 10 | 34 | 49 | 54 |
 | type_date_round | 71 | 4 | 4 | 0 | 0 | 10 | 0 | 41 | 1 | 7 | 2 | 2 |
 | type_datetime | 86 | 6 | 0 | 0 | 1 | 15 | 0 | 20 | 8 | 21 | 8 | 7 |
 | type_datetime_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
@@ -658,7 +658,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_set | 172 | 16 | 0 | 0 | 4 | 18 | 0 | 70 | 4 | 23 | 8 | 29 |
 | type_temporal_mariadb53 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 6 |
 | type_temporal_mysql56 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 3 |
-| type_time | 950 | 101 | 23 | 0 | 8 | 62 | 3 | 236 | 3 | 349 | 56 | 102 |
+| type_time | 950 | 106 | 23 | 0 | 3 | 62 | 3 | 236 | 3 | 349 | 56 | 102 |
 | type_time_6065 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 |
 | type_time_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
 | type_time_round | 128 | 16 | 0 | 0 | 0 | 12 | 1 | 74 | 1 | 14 | 6 | 4 |
@@ -682,7 +682,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | user_limits | 78 | 5 | 0 | 0 | 0 | 8 | 0 | 3 | 0 | 6 | 1 | 47 |
 | user_var | 267 | 51 | 3 | 0 | 13 | 12 | 8 | 88 | 1 | 20 | 41 | 18 |
 | varbinary | 69 | 16 | 4 | 0 | 3 | 7 | 0 | 21 | 1 | 5 | 0 | 12 |
-| view | 2978 | 71 | 24 | 0 | 6 | 322 | 4 | 913 | 14 | 676 | 165 | 763 |
+| view | 2978 | 72 | 24 | 0 | 5 | 322 | 4 | 913 | 14 | 676 | 165 | 763 |
 | view_alias | 52 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 9 | 0 | 34 |
 | wait_timeout | 4 | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 2 | 0 |
 | warnings | 50 | 0 | 0 | 0 | 0 | 0 | 0 | 15 | 0 | 13 | 6 | 14 |
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 50 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
 | 46 | INSERT: Error: Column _ cannot be null |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mugnm39h-1249852/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muh24ca9-1579747/diffs/` (not committed).

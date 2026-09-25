@@ -5,18 +5,18 @@
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c",
+    "sourceCommit": "e6f086ac62a099edab2271cd9a5ba1c0a44115f8",
     "sourceDirty": false,
-    "binarySha256": "5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169"
+    "binarySha256": "5150e806e409504c1e3398ee4eb25380a74e467c539d47cb857fa134d576d682"
   },
-  "artifacts": "validate-out/mtr/runs/mugnm39h-1249852",
-  "measuredAt": "2026-09-25T07:53:33.745Z",
+  "artifacts": "validate-out/mtr/runs/muh24ca9-1579747",
+  "measuredAt": "2026-09-25T14:44:12.273Z",
   "totals": {
-    "exact": 8118,
-    "compared": 8541,
+    "exact": 8146,
+    "compared": 8578,
     "queries": 24004,
     "replayed": 30174,
-    "notCompared": 21633
+    "notCompared": 21596
   },
   "results": [
     {
@@ -6025,10 +6025,10 @@
       "file": "func_extract",
       "statements": 149,
       "counts": {
-        "exact": 51,
+        "exact": 55,
         "mismatch": 32,
         "name-mismatch": 0,
-        "pintail-error": 10,
+        "pintail-error": 6,
         "mysql-error": 4,
         "tainted": 0,
         "setup": 18,
@@ -6044,8 +6044,7 @@
         "Error: unsupported expression: EXTRACT(MICROSECOND FROM a)": 1,
         "Error: unsupported expression: EXTRACT(DAY_MICROSECOND FROM a)": 1,
         "Error: query engine failed: invalid MySQL date/time value": 3,
-        "Error: unsupported expression: EXTRACT(HOUR_MICROSECOND FROM _)": 1,
-        "Error: unsupported expression: TIMESTAMP(-_)": 4
+        "Error: unsupported expression: EXTRACT(HOUR_MICROSECOND FROM _)": 1
       }
     },
     {
@@ -6093,10 +6092,10 @@
       "file": "func_gconcat",
       "statements": 255,
       "counts": {
-        "exact": 59,
+        "exact": 61,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 20,
+        "pintail-error": 18,
         "mysql-error": 0,
         "tainted": 27,
         "setup": 107,
@@ -6117,7 +6116,6 @@
         "Error: unsupported aggregate: group_concat(a SEPARATOR _)": 3,
         "Error: invalid ORDER BY expression s2": 1,
         "Error: unsupported expression: mid(group_concat(c ORDER BY a), _, _)": 4,
-        "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 2,
         "INSERT: Error: only literal values are supported in INSERT, got _": 4,
         "DDL: Error: character set cp1250 is not supported on a local table": 1,
         "DDL: Error: character set cp850 is not supported on a local table": 1,
@@ -6154,9 +6152,9 @@
       "statements": 628,
       "counts": {
         "exact": 68,
-        "mismatch": 11,
+        "mismatch": 12,
         "name-mismatch": 0,
-        "pintail-error": 3,
+        "pintail-error": 2,
         "mysql-error": 1,
         "tainted": 15,
         "setup": 260,
@@ -6169,7 +6167,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: CURRENT_TIME": 1,
         "PREPARED: Error: CREATE TABLE ... AS SELECT is not supported on a local table": 1,
         "Error: operator - does not accept Some(DateTime64 { fsp: _ })": 1,
         "Error: operator - does not accept Some(Date32)": 1,
@@ -6675,10 +6672,10 @@
       "file": "func_sapdb",
       "statements": 88,
       "counts": {
-        "exact": 50,
+        "exact": 55,
         "mismatch": 0,
         "name-mismatch": 0,
-        "pintail-error": 27,
+        "pintail-error": 22,
         "mysql-error": 0,
         "tainted": 3,
         "setup": 4,
@@ -6701,8 +6698,6 @@
         "Error: unsupported expression: date_sub(_, INTERVAL _ MICROSECOND)": 1,
         "Error: unsupported expression: adddate(_, _)": 1,
         "Error: unsupported expression: subdate(_, _)": 1,
-        "Error: unsupported expression: timestamp(_, _)": 3,
-        "Error: unsupported expression: timestamp(_)": 2,
         "Error: unsupported expression: microsecond(_)": 2,
         "Error: unsupported expression: microsecond(_._)": 1,
         "Error: sql parser error: Expected: an identifier after AS, found: _ at Line: _, Column: _": 1
@@ -6908,10 +6903,10 @@
       "file": "func_time",
       "statements": 1047,
       "counts": {
-        "exact": 415,
-        "mismatch": 32,
+        "exact": 422,
+        "mismatch": 37,
         "name-mismatch": 0,
-        "pintail-error": 92,
+        "pintail-error": 80,
         "mysql-error": 17,
         "tainted": 38,
         "setup": 217,
@@ -6946,7 +6941,6 @@
         "Error: unsupported expression: timestampdiff(SQL_TSI_MINUTE, _, _)": 1,
         "Error: unsupported expression: timestampdiff(SQL_TSI_SECOND, _, _)": 1,
         "Error: unsupported expression: TIMESTAMPDIFF(week, _, _)": 6,
-        "Error: unsupported expression: timestamp(f3)": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 2,
         "Error: unsupported expression: TIME_FORMAT(SEC_TO_TIME(a), _)": 1,
         "Error: sql parser error: INTERVAL requires a unit after the literal value at Line: _, Colu": 2,
@@ -6954,10 +6948,8 @@
         "Error: unsupported expression: INTERVAL _ HOUR": 2,
         "Error: unsupported expression: INTERVAL _ MICROSECOND": 4,
         "Error: unsupported expression: timestampadd(week, _, date(_))": 1,
-        "Error: unsupported expression: timestamp(greatest(_, _))": 1,
         "Error: unsupported expression: microsecond(_)": 1,
         "Error: sql parser error: Expected: ), found: MOD at Line: _, Column: _": 2,
-        "Error: unsupported expression: TIMESTAMP(_)": 10,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1,
         "Error: unsupported expression: ADDDATE(IFNULL(a, b), _)": 4,
         "Error: unsupported expression: ADDDATE(COALESCE(a, b), _)": 2,
@@ -7000,9 +6992,9 @@
       "statements": 139,
       "counts": {
         "exact": 11,
-        "mismatch": 50,
+        "mismatch": 51,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 4,
         "mysql-error": 2,
         "tainted": 0,
         "setup": 63,
@@ -7017,7 +7009,6 @@
       "errorClasses": {
         "Error: unsupported expression: TO_SECONDS(a)": 2,
         "Error: numeric expression overflow": 1,
-        "Error: unsupported expression: TIMESTAMP(t1__5.a, t2__1.a)": 1,
         "Error: unsupported expression: TIMESTAMPDIFF(MICROSECOND, t1__7.a, t2__3.a)": 1
       }
     },
@@ -10785,10 +10776,10 @@
       "file": "old-mode",
       "statements": 115,
       "counts": {
-        "exact": 4,
+        "exact": 5,
         "mismatch": 5,
         "name-mismatch": 0,
-        "pintail-error": 2,
+        "pintail-error": 1,
         "mysql-error": 0,
         "tainted": 19,
         "setup": 24,
@@ -10803,8 +10794,7 @@
       "errorClasses": {
         "INSERT: Error: only literal values are supported in INSERT, got _": 5,
         "Error: unsupported expression: ADDDATE(IFNULL(a, b), _)": 1,
-        "DDL: Error: column option DEFAULT now() is not supported on a local table": 2,
-        "Error: unsupported expression: CURRENT_TIMESTAMP": 1
+        "DDL: Error: column option DEFAULT now() is not supported on a local table": 2
       }
     },
     {
@@ -14677,10 +14667,10 @@
       "file": "temporal_literal",
       "statements": 202,
       "counts": {
-        "exact": 45,
-        "mismatch": 9,
+        "exact": 46,
+        "mismatch": 11,
         "name-mismatch": 0,
-        "pintail-error": 4,
+        "pintail-error": 1,
         "mysql-error": 3,
         "tainted": 4,
         "setup": 30,
@@ -14695,7 +14685,6 @@
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected a datetime": 3,
         "Error: unsupported expression: TO_SECONDS(TIME _)": 1,
-        "Error: unsupported expression: TIMESTAMP(_)": 3,
         "INSERT: Error: only literal values are supported in INSERT, got _": 1,
         "PREPARED: Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1,
         "PREPARED: Error: Unknown prepared statement handler (stmt)": 2,
@@ -15204,10 +15193,10 @@
       "file": "type_date",
       "statements": 431,
       "counts": {
-        "exact": 55,
+        "exact": 57,
         "mismatch": 10,
         "name-mismatch": 0,
-        "pintail-error": 6,
+        "pintail-error": 4,
         "mysql-error": 2,
         "tainted": 22,
         "setup": 181,
@@ -15222,7 +15211,6 @@
       "errorClasses": {
         "INSERT: Error: Incorrect value _ for column _: expected a date": 6,
         "INSERT: Error: only literal values are supported in INSERT, got _": 3,
-        "Error: unsupported expression: CURRENT_DATE": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 2,
         "Error: unsupported expression: d >= ALL(SELECT * FROM t1__45)": 1,
@@ -15729,10 +15717,10 @@
       "file": "type_time",
       "statements": 950,
       "counts": {
-        "exact": 101,
+        "exact": 106,
         "mismatch": 23,
         "name-mismatch": 0,
-        "pintail-error": 8,
+        "pintail-error": 3,
         "mysql-error": 3,
         "tainted": 62,
         "setup": 236,
@@ -15745,16 +15733,12 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: TIMESTAMP(f1, _)": 1,
-        "Error: unsupported expression: TIMESTAMP(c, _)": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a time": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1,
         "Error: unsupported expression: f1()": 1,
         "Error: unsupported expression: d >= ALL(SELECT * FROM t1__53)": 1,
         "Error: unsupported expression: d <= ALL(SELECT * FROM t1__53)": 1,
-        "PREPARED: Error: unexpected tokens after prepared statement command": 10,
-        "Error: unsupported expression: TIMESTAMP(_)": 2,
-        "Error: unsupported expression: CURRENT_TIMESTAMP": 1
+        "PREPARED: Error: unexpected tokens after prepared statement command": 10
       }
     },
     {
@@ -16317,10 +16301,10 @@
       "file": "view",
       "statements": 2978,
       "counts": {
-        "exact": 71,
+        "exact": 72,
         "mismatch": 24,
         "name-mismatch": 0,
-        "pintail-error": 6,
+        "pintail-error": 5,
         "mysql-error": 4,
         "tainted": 322,
         "setup": 913,
@@ -16357,8 +16341,7 @@
         "DDL: Error: character set cp1251 is not supported on a local table": 2,
         "PREPARED: Error: unknown table mtr_view.procViewSimple__1": 2,
         "PREPARED: Error: sql parser error: Unterminated string literal at Line: _, Column: _": 1,
-        "Error: unknown column x": 1,
-        "Error: query engine failed: invalid physical plan: unresolved subquery reached expression ": 1
+        "Error: unknown column x": 1
       }
     },
     {
