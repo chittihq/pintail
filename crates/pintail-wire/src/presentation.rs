@@ -440,6 +440,7 @@ fn expression(
             let right_column = expression(right, query, catalog, facts);
             let left_precision = expression_precision(left, &left_column);
             let right_precision = expression_precision(right, &right_column);
+            let (left_expression, right_expression) = (left, right);
             let left = left_column;
             let right = right_column;
             if integer(&column)
@@ -458,6 +459,19 @@ fn expression(
             }
             if column.coltype == ColumnType::MysqlTypeDouble {
                 column.column_length = left.column_length.max(right.column_length).max(23);
+                // A DOUBLE sum, difference or product keeps the larger fixed
+                // decimal count of its operands when both have one, and prints
+                // at it: 1.0 * BIT_AND(bytes) is 0.0, not 0 (measured against
+                // MySQL 8.4). An operand without one - a string, a DOUBLE
+                // column - leaves the result unfixed.
+                if matches!(op, BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply)
+                    && let (Some(left_scale), Some(right_scale)) = (
+                        fixed_scale(left_expression, &left, query),
+                        fixed_scale(right_expression, &right, query),
+                    )
+                {
+                    column.decimals = left_scale.max(right_scale);
+                }
             }
             if column.coltype == ColumnType::MysqlTypeNewdecimal {
                 let lp = left_precision;
@@ -785,6 +799,32 @@ fn date_format_width(format: &str) -> u32 {
         });
     }
     width
+}
+
+/// The fixed decimal count an arithmetic operand brings to a DOUBLE result.
+/// A number with a declared scale brings its scale, as does a bit aggregate
+/// (0, even over bytes); a string brings none - a CHAR column reports 0
+/// decimals, yet `a + 0` over it is an unfixed DOUBLE.
+fn fixed_scale(expr: &BoundExpr, column: &Column, query: &BoundQuery) -> Option<u8> {
+    if let BoundExprKind::Aggregate(slot) = &expr.kind
+        && let Some(aggregate) = slot
+            .checked_sub(query.group_by.len())
+            .and_then(|index| query.aggregates.get(index))
+        && matches!(
+            aggregate.function,
+            AggregateFunction::BitAnd | AggregateFunction::BitOr | AggregateFunction::BitXor
+        )
+    {
+        return Some(0);
+    }
+    let numeric = integer(column)
+        || matches!(
+            column.coltype,
+            ColumnType::MysqlTypeFloat
+                | ColumnType::MysqlTypeDouble
+                | ColumnType::MysqlTypeNewdecimal
+        );
+    (numeric && column.decimals < 31).then_some(column.decimals)
 }
 
 fn grouped_scalar(expr: &BoundExpr) -> bool {
