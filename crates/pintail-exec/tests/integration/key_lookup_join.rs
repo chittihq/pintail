@@ -292,12 +292,29 @@ fn a_limit_in_the_driving_key_order_answers_as_the_full_sort_does() {
         );
         assert!(!fast.rows.is_empty(), "{template}");
         assert_eq!(fast.rows, reference.rows, "{template}");
-        // Never much slower than the full join and sort it replaces.
+        // Never much slower than the full join and sort it replaces. One
+        // wall-clock sample is at the mercy of whatever else the host runs -
+        // a gate building beside this test read 160ms against 66ms, and the
+        // same test passed alone - so a miss is measured again and the best
+        // of three decides: load slows a sample, not every sample, while a
+        // plan that is slow stays slow in all of them.
+        let within =
+            |fast: Duration, reference: Duration| fast < reference * 2 + Duration::from_millis(20);
+        let (mut fast_best, mut reference_best) = (fast.elapsed, reference.elapsed);
+        for _ in 0..2 {
+            if within(fast_best, reference_best) {
+                break;
+            }
+            fast_best = fast_best.min(fixture.run(&template.replace("{key}", "e.id")).elapsed);
+            reference_best = reference_best.min(
+                fixture
+                    .run(&template.replace("{key}", "-e.id DESC"))
+                    .elapsed,
+            );
+        }
         assert!(
-            fast.elapsed < reference.elapsed * 2 + Duration::from_millis(20),
-            "{template}: {:?} against {:?}",
-            fast.elapsed,
-            reference.elapsed
+            within(fast_best, reference_best),
+            "{template}: best {fast_best:?} against {reference_best:?}"
         );
     }
 }
