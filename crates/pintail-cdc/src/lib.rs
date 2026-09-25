@@ -793,11 +793,16 @@ async fn run_cdc_inner(
                                 "cdc unreadable ddl db={database_id} \
                                  quarantining the tables it names: {error}"
                             );
+                            // Only tables the stream still follows: one a DROP took
+                            // out stays in `targets`, and quarantining it as live
+                            // hid that a CREATE of the same name makes a new table.
                             let named = targets
                                 .iter()
                                 .enumerate()
-                                .filter(|(_, target)| {
-                                    statement_names_table(&statement, &target.source.name)
+                                .filter(|(index, target)| {
+                                    target_indexes.get(&target.source.name.to_ascii_lowercase())
+                                        == Some(index)
+                                        && statement_names_table(&statement, &target.source.name)
                                 })
                                 .map(|(index, _)| index)
                                 .collect::<Vec<_>>();
@@ -823,6 +828,22 @@ async fn run_cdc_inner(
                                 && let Some(table) =
                                     created_table_name(&statement, &report.database)
                             {
+                                // A dropped table of the same name gives it up, as
+                                // it does to a readable CREATE: left in place, the
+                                // copy became readable but was never followed.
+                                if let Some(root) = targets.iter().find_map(|target| {
+                                    target.store.directory().parent().map(Path::to_path_buf)
+                                }) {
+                                    supersede_generation(
+                                        &metadata,
+                                        database_id,
+                                        &root,
+                                        &mut targets,
+                                        &target_indexes,
+                                        &table,
+                                        true,
+                                    )?;
+                                }
                                 metadata.upsert_snapshot_table(database_id, &table, None, None)?;
                                 metadata.fail_table_copy(
                                     database_id,
