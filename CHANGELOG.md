@@ -8,6 +8,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- `TIMESTAMP(expr)` and `TIMESTAMP(expr, time)`, which combines a date and a time
+  into one DATETIME.
+- `UTC_TIMESTAMP()`, `UTC_DATE()` and `UTC_TIME()`, and the standard spellings
+  `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `LOCALTIME` and `LOCALTIMESTAMP` (with
+  or without parentheses) and `SYSDATE()`.
+- `@@transaction_read_only` and `@@tx_read_only`, which drivers read to tell
+  a read-only connection apart.
 - A table the source has dropped can be removed from the dashboard (Remove,
   on the database page) or with `DELETE /api/databases/{id}/tables/{name}`.
   Its mirrored rows, schema history and replication state are deleted. The
@@ -15,6 +22,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A correlated subquery inside an aggregate's argument, such as
+  `SUM(x AND EXISTS (SELECT ... WHERE t.k = outer.k))`, failed the statement
+  as an invalid physical plan. It is now evaluated
+  per row ahead of the aggregate.
 - Two `GROUP_CONCAT`s of one column over an unchanging table that differed
   only in their own ORDER BY or separator were answered from one cached
   result, so the second came back in the first one's order or separator.
