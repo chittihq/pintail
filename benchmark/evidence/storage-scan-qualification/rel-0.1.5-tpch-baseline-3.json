@@ -1,0 +1,55 @@
+{
+  "workload": "tpch-v1",
+  "profile": "sf1",
+  "scale": 1,
+  "startedAt": "2026-09-25T18:49:45.290Z",
+  "finishedAt": "2026-09-25T18:53:48.383Z",
+  "counts": {
+    "region": 5,
+    "nation": 25,
+    "supplier": 10000,
+    "part": 200000,
+    "partsupp": 800000,
+    "customer": 150000,
+    "orders": 1500000,
+    "lineitem": 6000749
+  },
+  "queries": [
+    {
+      "id": "q01-pricing-summary",
+      "class": "scan-aggregate",
+      "status": "ok",
+      "mysqlMs": 8396,
+      "pintailMs": 5170,
+      "rows": 6
+    },
+    {
+      "id": "q03-shipping-priority",
+      "class": "join-topn",
+      "status": "ok",
+      "mysqlMs": 952,
+      "pintailMs": 3464,
+      "rows": 10
+    },
+    {
+      "id": "q05-local-supplier-volume",
+      "class": "join-wide",
+      "status": "ok",
+      "mysqlMs": 798,
+      "pintailMs": 31731,
+      "rows": 5
+    },
+    {
+      "id": "q10-returned-item-reporting",
+      "class": "join-high-cardinality",
+      "status": "ok",
+      "mysqlMs": 407,
+      "pintailMs": 2532,
+      "rows": 20
+    }
+  ],
+  "gate": {
+    "exactResults": true,
+    "passed": true
+  }
+}

@@ -1,6 +1,12 @@
 {
-  "baseline": "b019dae22463783c574352e472d4abc3c75f1e30",
-  "candidate": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+  "baseline": "477ef1cb24f410075418101fab29a1ec90e86f3d",
+  "candidate": "7ce8559c87a4d1eed81cea70d0d6faedacde13d6",
+  "requalification": {
+    "kind": "release requalification: previous stable release (baseline) against the 0.1.5 release tree (candidate)",
+    "baseline_tag": "v0.1.4",
+    "candidate_release": "0.1.5",
+    "note": "v0.1.4 predates both the Q05 join change and the storage-scan change this evidence originally qualified; the pair therefore spans both changes and every other engine change between the two releases."
+  },
   "fixture": {
     "rows": 20000000,
     "batch_rows": 524288,
@@ -9,11 +15,17 @@
     "opaque_payload_bytes_per_nonnull_row": 64,
     "generator": "Deterministic xorshift/multiply sequence, eight words per row.",
     "segments": 39,
-    "segment_bytes": 1509148456
+    "segment_bytes": 1509167019,
+    "note": "Same generator and parameters as the original study. segment_bytes is this run's whole fixture directory total (segments, manifest and WAL); the original study recorded 1,509,148,456."
+  },
+  "probe_sources": {
+    "baseline": "storage_adversarial_probe, storage_scan_probe and storage_query_probe as of 26f4c9f2 (the original probe revision), copied into the v0.1.4 checkout; the store API at v0.1.4 predates the range type the current examples use.",
+    "candidate": "The same three examples as they exist in the candidate tree. The only source difference is the predicate-range return type (Vec<Range> versus the newer range wrapper); fixtures, predicates, projections and checks are identical."
   },
   "comparison": {
     "all_answer_files_byte_identical": true,
     "both_arms_checked_against_independent_expected_rows": true,
+    "digests_match_original_study": true,
     "cases": [
       {
         "name": "clustered-text-only",
@@ -89,45 +101,33 @@
       }
     ],
     "binary_sha256": {
-      "baseline": "b5f6b427046ab6be96b4e4ec40be26d8eec7d7476034d78d3656fb2099191756",
-      "candidate": "875c9e86bdda714637bc1af210acebe809a471aa1bb029f9af0e0fea0769a60e"
+      "baseline": "5f5ba545b52399166478c1d1b163c298bbb25faada3fe9c7dbb8bc72c9014e82",
+      "candidate": "654ad8eefb19356a35f935b9256714641b185b571ee118f0b3202a447c1898dc"
     }
   },
   "rc": {
     "status": "PASS",
-    "profile": "rc",
-    "run": "2026-09-09T18-23-08-345Z-rc",
-    "head": "26f4c9f2cca79d137b20a3e54072a3550be46234",
-    "oracle_queries": 1231,
-    "unit_passed": 1034,
-    "unit_skipped": 43,
+    "profile": "stable (heavy stages)",
+    "run": "2026-09-25T17-35-18-368Z-stable",
+    "head": "a6d5810257493274c5eb2549a9b16da42188a8ab",
+    "engine_identical_to_candidate": true,
+    "oracle_queries": 1908,
     "e2e_84": {
-      "passed": 5754,
+      "passed": 7015,
+      "failed": 0,
       "skipped": 44,
-      "warned": 30,
-      "failed": 0
+      "warned": 29
     },
     "e2e_80": {
-      "passed": 5754,
+      "passed": 7015,
+      "failed": 0,
       "skipped": 44,
-      "warned": 30,
-      "failed": 0
+      "warned": 29
     },
-    "new_warning_categories": [],
-    "first_attempt": "Failed: generated Prisma client absent from fresh sync; generated it, then reran the full profile."
+    "note": "Banked by the release chain, not re-run here. Commits between that HEAD and the candidate only bank evidence."
   },
   "eight_query_benchmark": {
-    "status": "PASS",
-    "discarded_runs": [
-      {
-        "reason": "A separate native benchmark started on the measurement machine during timed queries. The run was stopped and excluded; the harness containers and temporary volumes were removed before restarting."
-      }
-    ],
     "host_fingerprint": "2c89ea593c54a6dc3dcd61e20ea00deee006c814ec7ff47e3e2712dd3edf2913",
-    "baseline_source_fingerprint": "4e1911dbfc0a05c3a34d7686d25d6f0172547399b039b26a0840ed3f726f4ba0",
-    "candidate_source_fingerprint": "7a2e3dcb927e8640add82822ef9f309174c919423092cb2f8c831f6416c847f0",
-    "resource_limits": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse), 4 GiB per-query memory ceiling",
-    "iterations": "warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-09-09T13:34:50.971Z",
     "baseline_gate": {
       "scope": "memo-dashboard latency, not raw engine speed",
       "requiredSpeedup": 50,
@@ -143,172 +143,235 @@
       "resultMismatches": []
     },
     "comparisons": {
-      "queries": [
-        {
-          "query": "Q1: Full table count",
-          "baseline_median_ms": 4.1,
-          "candidate_median_ms": 4.33,
-          "baseline_min_ms": 4.03,
-          "candidate_min_ms": 4.15,
-          "median_speedup": 0.9469,
-          "minimum_speedup": 0.9711,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q2: Filtered count",
-          "baseline_median_ms": 4.25,
-          "candidate_median_ms": 4.4,
-          "baseline_min_ms": 4.17,
-          "candidate_min_ms": 4.19,
-          "median_speedup": 0.9659,
-          "minimum_speedup": 0.9952,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q3: Group by status",
-          "baseline_median_ms": 4.37,
-          "candidate_median_ms": 4.41,
-          "baseline_min_ms": 4.29,
-          "candidate_min_ms": 4.33,
-          "median_speedup": 0.9909,
-          "minimum_speedup": 0.9908,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q4: Region \u00d7 status breakdown",
-          "baseline_median_ms": 4.47,
-          "candidate_median_ms": 4.56,
-          "baseline_min_ms": 4.35,
-          "candidate_min_ms": 4.32,
-          "median_speedup": 0.9803,
-          "minimum_speedup": 1.0069,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q5: Monthly revenue (2023)",
-          "baseline_median_ms": 4.59,
-          "candidate_median_ms": 4.47,
-          "baseline_min_ms": 4.47,
-          "candidate_min_ms": 4.3,
-          "median_speedup": 1.0268,
-          "minimum_speedup": 1.0395,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q6: Top 10 spenders",
-          "baseline_median_ms": 67.19,
-          "candidate_median_ms": 66.23,
-          "baseline_min_ms": 65.89,
-          "candidate_min_ms": 64.77,
-          "median_speedup": 1.0145,
-          "minimum_speedup": 1.0173,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q7: Regional analytics",
-          "baseline_median_ms": 4.7,
-          "candidate_median_ms": 4.74,
-          "baseline_min_ms": 4.37,
-          "candidate_min_ms": 4.6,
-          "median_speedup": 0.9916,
-          "minimum_speedup": 0.95,
-          "candidate_matches_mysql": true
-        },
-        {
-          "query": "Q8: Join users + orders",
-          "baseline_median_ms": 4.61,
-          "candidate_median_ms": 4.44,
-          "baseline_min_ms": 4.41,
-          "candidate_min_ms": 4.34,
-          "median_speedup": 1.0383,
-          "minimum_speedup": 1.0161,
-          "candidate_matches_mysql": true
-        }
-      ],
       "engineQueries": [
         {
           "query": "Q1: Full table count",
-          "baseline_median_ms": 4.38,
-          "candidate_median_ms": 4.45,
-          "baseline_min_ms": 4.23,
-          "candidate_min_ms": 4.24,
-          "median_speedup": 0.9843,
-          "minimum_speedup": 0.9976,
+          "baseline_median_ms": 4.59,
+          "candidate_median_ms": 2.37,
+          "baseline_min_ms": 4.41,
+          "candidate_min_ms": 2.34,
+          "median_speedup": 1.9367,
+          "minimum_speedup": 1.8846,
+          "median_change_pct": -48.37,
+          "minimum_change_pct": -46.94,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q2: Filtered count",
-          "baseline_median_ms": 51.04,
-          "candidate_median_ms": 47.35,
-          "baseline_min_ms": 48.76,
-          "candidate_min_ms": 46.63,
-          "median_speedup": 1.0779,
-          "minimum_speedup": 1.0457,
+          "baseline_median_ms": 51.32,
+          "candidate_median_ms": 42.19,
+          "baseline_min_ms": 50.36,
+          "candidate_min_ms": 39.78,
+          "median_speedup": 1.2164,
+          "minimum_speedup": 1.266,
+          "median_change_pct": -17.79,
+          "minimum_change_pct": -21.01,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q3: Group by status",
-          "baseline_median_ms": 131.7,
-          "candidate_median_ms": 126.09,
-          "baseline_min_ms": 125.78,
-          "candidate_min_ms": 120.29,
-          "median_speedup": 1.0445,
-          "minimum_speedup": 1.0456,
+          "baseline_median_ms": 132.28,
+          "candidate_median_ms": 182.99,
+          "baseline_min_ms": 127.29,
+          "candidate_min_ms": 164.43,
+          "median_speedup": 0.7229,
+          "minimum_speedup": 0.7741,
+          "median_change_pct": 38.34,
+          "minimum_change_pct": 29.18,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q4: Region \u00d7 status breakdown",
-          "baseline_median_ms": 148.43,
-          "candidate_median_ms": 157.06,
-          "baseline_min_ms": 145.41,
-          "candidate_min_ms": 143.88,
-          "median_speedup": 0.9451,
-          "minimum_speedup": 1.0106,
+          "baseline_median_ms": 160.28,
+          "candidate_median_ms": 188.55,
+          "baseline_min_ms": 145.99,
+          "candidate_min_ms": 168.01,
+          "median_speedup": 0.8501,
+          "minimum_speedup": 0.8689,
+          "median_change_pct": 17.64,
+          "minimum_change_pct": 15.08,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q5: Monthly revenue (2023)",
-          "baseline_median_ms": 101.86,
-          "candidate_median_ms": 100.72,
-          "baseline_min_ms": 98.03,
-          "candidate_min_ms": 94.81,
-          "median_speedup": 1.0113,
-          "minimum_speedup": 1.034,
+          "baseline_median_ms": 98.39,
+          "candidate_median_ms": 102.37,
+          "baseline_min_ms": 92.89,
+          "candidate_min_ms": 94.27,
+          "median_speedup": 0.9611,
+          "minimum_speedup": 0.9854,
+          "median_change_pct": 4.05,
+          "minimum_change_pct": 1.49,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q6: Top 10 spenders",
-          "baseline_median_ms": 444.53,
-          "candidate_median_ms": 439.91,
-          "baseline_min_ms": 436.73,
-          "candidate_min_ms": 433.75,
-          "median_speedup": 1.0105,
-          "minimum_speedup": 1.0069,
+          "baseline_median_ms": 448.47,
+          "candidate_median_ms": 477.44,
+          "baseline_min_ms": 438.88,
+          "candidate_min_ms": 457.46,
+          "median_speedup": 0.9393,
+          "minimum_speedup": 0.9594,
+          "median_change_pct": 6.46,
+          "minimum_change_pct": 4.23,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q7: Regional analytics",
-          "baseline_median_ms": 395.92,
-          "candidate_median_ms": 409.74,
-          "baseline_min_ms": 373.07,
-          "candidate_min_ms": 383.46,
-          "median_speedup": 0.9663,
-          "minimum_speedup": 0.9729,
+          "baseline_median_ms": 410.91,
+          "candidate_median_ms": 432.56,
+          "baseline_min_ms": 395.11,
+          "candidate_min_ms": 392.69,
+          "median_speedup": 0.9499,
+          "minimum_speedup": 1.0062,
+          "median_change_pct": 5.27,
+          "minimum_change_pct": -0.61,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         },
         {
           "query": "Q8: Join users + orders",
-          "baseline_median_ms": 377.29,
-          "candidate_median_ms": 363.32,
-          "baseline_min_ms": 333.68,
-          "candidate_min_ms": 333.75,
-          "median_speedup": 1.0385,
-          "minimum_speedup": 0.9998,
+          "baseline_median_ms": 376.18,
+          "candidate_median_ms": 309.63,
+          "baseline_min_ms": 353.08,
+          "candidate_min_ms": 259.99,
+          "median_speedup": 1.2149,
+          "minimum_speedup": 1.3581,
+          "median_change_pct": -17.69,
+          "minimum_change_pct": -26.37,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        }
+      ],
+      "queries": [
+        {
+          "query": "Q1: Full table count",
+          "baseline_median_ms": 4.75,
+          "candidate_median_ms": 2.45,
+          "baseline_min_ms": 4.26,
+          "candidate_min_ms": 2.36,
+          "median_speedup": 1.9388,
+          "minimum_speedup": 1.8051,
+          "median_change_pct": -48.42,
+          "minimum_change_pct": -44.6,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q2: Filtered count",
+          "baseline_median_ms": 4.78,
+          "candidate_median_ms": 2.27,
+          "baseline_min_ms": 4.6,
+          "candidate_min_ms": 2.2,
+          "median_speedup": 2.1057,
+          "minimum_speedup": 2.0909,
+          "median_change_pct": -52.51,
+          "minimum_change_pct": -52.17,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q3: Group by status",
+          "baseline_median_ms": 4.85,
+          "candidate_median_ms": 2.76,
+          "baseline_min_ms": 4.79,
+          "candidate_min_ms": 2.52,
+          "median_speedup": 1.7572,
+          "minimum_speedup": 1.9008,
+          "median_change_pct": -43.09,
+          "minimum_change_pct": -47.39,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q4: Region \u00d7 status breakdown",
+          "baseline_median_ms": 5.2,
+          "candidate_median_ms": 2.88,
+          "baseline_min_ms": 4.96,
+          "candidate_min_ms": 2.7,
+          "median_speedup": 1.8056,
+          "minimum_speedup": 1.837,
+          "median_change_pct": -44.62,
+          "minimum_change_pct": -45.56,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q5: Monthly revenue (2023)",
+          "baseline_median_ms": 4.95,
+          "candidate_median_ms": 2.97,
+          "baseline_min_ms": 4.68,
+          "candidate_min_ms": 2.89,
+          "median_speedup": 1.6667,
+          "minimum_speedup": 1.6194,
+          "median_change_pct": -40.0,
+          "minimum_change_pct": -38.25,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q6: Top 10 spenders",
+          "baseline_median_ms": 67.87,
+          "candidate_median_ms": 66.45,
+          "baseline_min_ms": 66.74,
+          "candidate_min_ms": 64.31,
+          "median_speedup": 1.0214,
+          "minimum_speedup": 1.0378,
+          "median_change_pct": -2.09,
+          "minimum_change_pct": -3.64,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q7: Regional analytics",
+          "baseline_median_ms": 4.71,
+          "candidate_median_ms": 2.88,
+          "baseline_min_ms": 4.54,
+          "candidate_min_ms": 2.78,
+          "median_speedup": 1.6354,
+          "minimum_speedup": 1.6331,
+          "median_change_pct": -38.85,
+          "minimum_change_pct": -38.77,
+          "baseline_matches_mysql": true,
+          "candidate_matches_mysql": true
+        },
+        {
+          "query": "Q8: Join users + orders",
+          "baseline_median_ms": 5.07,
+          "candidate_median_ms": 2.78,
+          "baseline_min_ms": 4.9,
+          "candidate_min_ms": 2.64,
+          "median_speedup": 1.8237,
+          "minimum_speedup": 1.8561,
+          "median_change_pct": -45.17,
+          "minimum_change_pct": -46.12,
+          "baseline_matches_mysql": true,
           "candidate_matches_mysql": true
         }
       ]
     },
-    "interpretation": "The largest engine-track median slowdown is 5.8%; its minimum improves. The largest minimum slowdown is 2.8%. These do not establish a substantial regression beyond the documented shared-hardware noise allowance. No general benchmark speedup is claimed. The harness automatic previous-run check requires identical source fingerprints and therefore does not compare these code revisions; this comparison uses their raw samples explicitly."
+    "baseline_report": "q05-join-qualification/rel-0.1.5-eight-query-baseline.json",
+    "candidate_report": "q05-join-qualification/rel-0.1.5-eight-query-candidate.json",
+    "discarded_runs": [
+      {
+        "reason": "The first candidate attempt stopped when the docker host ran out of disk during the Pintail snapshot (No space left on device); it produced no timings. Its harness containers and volumes were removed; the gate's own preflight reclamation (build cache, dangling images) and removal of one abandoned per-run volume from an earlier harness run freed space, and the candidate was rerun."
+      }
+    ],
+    "background": "Ten unrelated long-running containers were up on the docker host throughout both runs.",
+    "all_answers_exact": true,
+    "concurrency_errors_both_engines_both_arms": 0,
+    "status": "PASS",
+    "resource_limits": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse), 4 GiB per-query memory ceiling",
+    "iterations": "warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants",
+    "baseline_engine_fingerprint": "524cd7da2899f132cc9e47aeaab36a9563333f9405ba604197a6efdb7c9180c5",
+    "candidate_engine_fingerprint": "6d644e2b0e8655d5bda113c05c809e7929218d68b021243ba2a502bc6b92e4c3",
+    "interpretation": "Engine track: Q3 median +38.3% (min +29.2%) and Q4 median +17.6% (min +15.1%) are regressions; the release chain's independent benchmark of the same tree measured the same direction. Q6 and Q7 medians are +6.5% and +5.3%. Q1, Q2 and Q8 improved."
   },
   "tpch": {
     "status": "PASS",
@@ -318,7 +381,6 @@
     "query_spill_limit_bytes": 17179869184,
     "global_spill_limit_bytes": 34359738368,
     "settled_memo_disabled": true,
-    "initial_baseline_failure": "Q05 exceeded the default 1 GiB query spill quota. The failed result is retained separately; both arms use the same larger spill limits for the comparison.",
     "runs_per_arm": 3,
     "byte_exact_comparisons": 24,
     "counts": {
@@ -332,82 +394,91 @@
       "lineitem": 6000749
     },
     "binary_sha256": {
-      "baseline": "e637a5d4dc6cb22d192e9da63528a9590e1e957c5b0f115c55de7825a6bb436d",
-      "candidate": "b28de37230ae96c3bcda8d45e878cea563a79799e047fe16c50230ebe2bcf9bc"
+      "baseline": "2377a9deba31f623e40b2a639839f6b0716730df2d26062f6e9f88ee13ced4a2",
+      "candidate": "3a0b42c7955e6b366e892bddf91145f415aa801e402737941717e2e7c429c5cd"
     },
     "queries": [
       {
         "query": "q01-pricing-summary",
         "samples_ms": {
           "baseline": [
-            9252,
-            9372,
-            9136
+            5213,
+            5245,
+            5170
           ],
           "candidate": [
-            9219,
-            9301,
-            9139
+            3541,
+            3597,
+            3563
           ]
         },
-        "baseline_median_ms": 9252,
-        "candidate_median_ms": 9219,
-        "median_speedup": 1.0036
+        "baseline_median_ms": 5213,
+        "candidate_median_ms": 3563,
+        "median_speedup": 1.4631
       },
       {
         "query": "q03-shipping-priority",
         "samples_ms": {
           "baseline": [
-            5374,
-            5395,
-            5452
+            3462,
+            3449,
+            3464
           ],
           "candidate": [
-            5421,
-            5422,
-            5418
+            281,
+            263,
+            266
           ]
         },
-        "baseline_median_ms": 5395,
-        "candidate_median_ms": 5421,
-        "median_speedup": 0.9952
+        "baseline_median_ms": 3462,
+        "candidate_median_ms": 266,
+        "median_speedup": 13.015
       },
       {
         "query": "q05-local-supplier-volume",
         "samples_ms": {
           "baseline": [
-            48060,
-            47791,
-            47737
+            31691,
+            31950,
+            31731
           ],
           "candidate": [
-            47666,
-            47793,
-            47892
+            327,
+            320,
+            322
           ]
         },
-        "baseline_median_ms": 47791,
-        "candidate_median_ms": 47793,
-        "median_speedup": 1.0
+        "baseline_median_ms": 31731,
+        "candidate_median_ms": 322,
+        "median_speedup": 98.5435
       },
       {
         "query": "q10-returned-item-reporting",
         "samples_ms": {
           "baseline": [
-            3985,
-            4009,
-            3951
+            2515,
+            2595,
+            2532
           ],
           "candidate": [
-            4162,
-            4014,
-            3952
+            331,
+            338,
+            325
           ]
         },
-        "baseline_median_ms": 3985,
-        "candidate_median_ms": 4014,
-        "median_speedup": 0.9928
+        "baseline_median_ms": 2532,
+        "candidate_median_ms": 331,
+        "median_speedup": 7.6495
       }
+    ],
+    "placement": "native process on the build host; the MySQL source ran in a container on a separate 16-logical-CPU, 60 GiB docker host",
+    "raw_reports": [
+      "storage-scan-qualification/rel-0.1.5-tpch-baseline-1.json",
+      "storage-scan-qualification/rel-0.1.5-tpch-candidate-1.json",
+      "storage-scan-qualification/rel-0.1.5-tpch-baseline-2.json",
+      "storage-scan-qualification/rel-0.1.5-tpch-candidate-2.json",
+      "storage-scan-qualification/rel-0.1.5-tpch-baseline-3.json",
+      "storage-scan-qualification/rel-0.1.5-tpch-candidate-3.json"
     ]
   },
   "uniform_probe": {
@@ -416,156 +487,745 @@
     "warmups": 2,
     "measured_iterations": 7,
     "settled_memo_disabled": true,
+    "fixture_segments": 20,
     "cases": [
       {
         "probe": "scan",
         "case": "narrow-last",
         "baseline": {
-          "median_ms": 115.488,
-          "min_ms": 115.173,
+          "median_ms": 70.893,
+          "min_ms": 67.793,
           "result_or_decoded": 1221
         },
         "candidate": {
-          "median_ms": 58.428,
-          "min_ms": 58.381,
+          "median_ms": 36.092,
+          "min_ms": 35.107,
           "result_or_decoded": 1221
         },
-        "median_speedup": 1.9766
+        "median_speedup": 1.9642
       },
       {
         "probe": "scan",
         "case": "wide",
         "baseline": {
-          "median_ms": 2226.787,
-          "min_ms": 2220.343,
+          "median_ms": 1429.146,
+          "min_ms": 1416.543,
           "result_or_decoded": 29304
         },
         "candidate": {
-          "median_ms": 2128.41,
-          "min_ms": 2127.429,
+          "median_ms": 1425.426,
+          "min_ms": 1407.89,
           "result_or_decoded": 29304
         },
-        "median_speedup": 1.0462
+        "median_speedup": 1.0026
       },
       {
         "probe": "scan",
         "case": "text-all",
         "baseline": {
-          "median_ms": 172.152,
-          "min_ms": 171.479,
+          "median_ms": 108.359,
+          "min_ms": 103.674,
           "result_or_decoded": 2442
         },
         "candidate": {
-          "median_ms": 35.543,
-          "min_ms": 35.325,
+          "median_ms": 18.496,
+          "min_ms": 18.334,
           "result_or_decoded": 1221
         },
-        "median_speedup": 4.8435
+        "median_speedup": 5.8585
       },
       {
         "probe": "scan",
         "case": "text-selective",
         "baseline": {
-          "median_ms": 202.583,
-          "min_ms": 202.508,
+          "median_ms": 129.164,
+          "min_ms": 123.655,
           "result_or_decoded": 2442
         },
         "candidate": {
-          "median_ms": 35.751,
-          "min_ms": 35.527,
+          "median_ms": 17.7,
+          "min_ms": 17.557,
           "result_or_decoded": 1221
         },
-        "median_speedup": 5.6665
+        "median_speedup": 7.2974
       },
       {
         "probe": "scan",
         "case": "mixed-selective",
         "baseline": {
-          "median_ms": 325.317,
-          "min_ms": 324.763,
+          "median_ms": 201.972,
+          "min_ms": 195.178,
           "result_or_decoded": 3663
         },
         "candidate": {
-          "median_ms": 221.423,
-          "min_ms": 221.237,
+          "median_ms": 129.725,
+          "min_ms": 128.241,
           "result_or_decoded": 3663
         },
-        "median_speedup": 1.4692
+        "median_speedup": 1.5569
       },
       {
         "probe": "query",
         "case": "numeric-filter",
         "baseline": {
-          "median_ms": 45.555,
-          "min_ms": 44.028,
+          "median_ms": 31.901,
+          "min_ms": 28.805,
           "result_or_decoded": 19956522
         },
         "candidate": {
-          "median_ms": 30.184,
-          "min_ms": 29.692,
+          "median_ms": 25.003,
+          "min_ms": 24.548,
           "result_or_decoded": 19956522
         },
-        "median_speedup": 1.5092
+        "median_speedup": 1.2759
       },
       {
         "probe": "query",
         "case": "text-filter",
         "baseline": {
-          "median_ms": 49.859,
-          "min_ms": 48.369,
+          "median_ms": 29.588,
+          "min_ms": 26.245,
           "result_or_decoded": 2500000
         },
         "candidate": {
-          "median_ms": 38.709,
-          "min_ms": 38.447,
+          "median_ms": 24.239,
+          "min_ms": 23.797,
           "result_or_decoded": 2500000
         },
-        "median_speedup": 1.288
+        "median_speedup": 1.2207
       },
       {
         "probe": "query",
         "case": "text-all",
         "baseline": {
-          "median_ms": 56.485,
-          "min_ms": 55.134,
+          "median_ms": 39.076,
+          "min_ms": 37.531,
           "result_or_decoded": 20000000
         },
         "candidate": {
-          "median_ms": 44.747,
-          "min_ms": 44.325,
+          "median_ms": 34.191,
+          "min_ms": 32.202,
           "result_or_decoded": 20000000
         },
-        "median_speedup": 1.2623
+        "median_speedup": 1.1429
       },
       {
         "probe": "query",
         "case": "wide-expression",
         "baseline": {
-          "median_ms": 27818.334,
-          "min_ms": 27731.611,
+          "median_ms": 18388.322,
+          "min_ms": 18328.869,
           "result_or_decoded": 55200000460000000
         },
         "candidate": {
-          "median_ms": 27331.02,
-          "min_ms": 27264.118,
+          "median_ms": 14969.474,
+          "min_ms": 14854.891,
           "result_or_decoded": 55200000460000000
         },
-        "median_speedup": 1.0178
+        "median_speedup": 1.2284
       }
     ],
-    "interpretation": "Scan-bound SQL improves 1.26\u20131.51x. Wide arithmetic is 1.018x: no material gain. Wide projected scan is 1.046x. The earlier 0.99x and 1.03x observations do not establish a regression."
+    "interpretation": "Dense text-only scans decode half the blocks and run 5.9-7.3x faster; narrow 1.96x; mixed-selective 1.56x; the wide projected scan is unchanged (1.00x). Scan-bound SQL improves 1.14-1.28x and wide arithmetic 1.23x. The build host also carried an unrelated process near one logical CPU.",
+    "binary_sha256": {
+      "scan_baseline": "78992ee422fceaff5b1ba9d771089ddefaf5bffd13f789da3e8a157512a63939",
+      "scan_candidate": "8ff6a7ff9e970d72ff916435d20f5480e198f281a4faf52eb26cf9a5c2ab1115",
+      "query_baseline": "d4b7610f95fff179de4eeb86122cd38cc71a970edde2e48a7707f9536363985c",
+      "query_candidate": "451e74d57c6bee104367ffadcc272df316605934d6994365cfaf157569f066ba"
+    }
   },
   "host_observation": {
-    "start": "2026-09-09T18:54:10Z",
-    "end": "2026-09-09T20:12:48Z",
+    "start": "2026-09-25T18:28:25Z",
+    "end": "2026-09-25T20:03:07Z",
     "interval_seconds": 15,
-    "samples": 315,
-    "unexpected_high_cpu_processes": [],
-    "scope": "From the replacement baseline Pintail startup through the final candidate TPC-H query, including intervening setup.",
-    "setup_exception": "A short unrelated native process appeared at 18:53:25 UTC and was absent by 18:53:40, before the replacement baseline Pintail container started. The earlier discarded run overlapped a different invocation during timed queries."
+    "samples": 369,
+    "build_host": {
+      "logical_cpus": 32,
+      "ram_gib": 30
+    },
+    "docker_host": {
+      "logical_cpus": 16,
+      "ram_gib": 60
+    },
+    "unexpected_high_cpu_processes": [
+      "A server process left behind by an earlier, unrelated validation run stayed alive on the build host throughout, near one logical CPU. It was not created by this study and was not stopped."
+    ],
+    "docker_host_unrelated_containers": 10,
+    "scope": "Includes this study's own builds, seeding, snapshots and harness containers; load averages are whole-host figures, not background-only.",
+    "raw_report": "q05-join-qualification/rel-0.1.5-host-load.json"
   },
   "artifacts": {
     "raw_directory": "storage-scan-qualification/",
-    "rc_report": "storage-scan-rc.md"
+    "raw_prefix": "rel-0.1.5-"
+  },
+  "historical": {
+    "baseline": "b019dae22463783c574352e472d4abc3c75f1e30",
+    "candidate": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+    "fixture": {
+      "rows": 20000000,
+      "batch_rows": 524288,
+      "predicate": "One clustered matching block per 32 blocks, plus sparse scan-boundary matches; one all-null block per 32 and scattered nulls every 97 rows.",
+      "projected_nulls": "Binary every 13 rows; variable-width text every 17 rows.",
+      "opaque_payload_bytes_per_nonnull_row": 64,
+      "generator": "Deterministic xorshift/multiply sequence, eight words per row.",
+      "segments": 39,
+      "segment_bytes": 1509148456
+    },
+    "comparison": {
+      "all_answer_files_byte_identical": true,
+      "both_arms_checked_against_independent_expected_rows": true,
+      "cases": [
+        {
+          "name": "clustered-text-only",
+          "baseline": {
+            "case": 0,
+            "fixture_rows": 20000000,
+            "selected": 632501,
+            "decoded": 1298,
+            "pruned": 8440
+          },
+          "candidate": {
+            "case": 0,
+            "fixture_rows": 20000000,
+            "selected": 632501,
+            "decoded": 1221,
+            "pruned": 3648
+          },
+          "sha256": "fdb2ecca57e49172840d2cfc4edf7d4ede0bff411aaa0c2a4b44b55b0a0f83b2"
+        },
+        {
+          "name": "clustered-reordered-projection",
+          "baseline": {
+            "case": 1,
+            "fixture_rows": 20000000,
+            "selected": 632501,
+            "decoded": 1529,
+            "pruned": 22816
+          },
+          "candidate": {
+            "case": 1,
+            "fixture_rows": 20000000,
+            "selected": 632501,
+            "decoded": 1529,
+            "pruned": 22816
+          },
+          "sha256": "fca0f18f251aa29b5d6ba76b877023467e2fb636f251f49e9aaf48aa00df1bb9"
+        },
+        {
+          "name": "null-predicate",
+          "baseline": {
+            "case": 2,
+            "fixture_rows": 20000000,
+            "selected": 822359,
+            "decoded": 6105,
+            "pruned": 18240
+          },
+          "candidate": {
+            "case": 2,
+            "fixture_rows": 20000000,
+            "selected": 822359,
+            "decoded": 6105,
+            "pruned": 18240
+          },
+          "sha256": "f5ded31acc293ad4276119716ef059425bdcf5adc8517be105d1ee6d7f681740"
+        },
+        {
+          "name": "no-match",
+          "baseline": {
+            "case": 3,
+            "fixture_rows": 20000000,
+            "selected": 0,
+            "decoded": 1221,
+            "pruned": 23124
+          },
+          "candidate": {
+            "case": 3,
+            "fixture_rows": 20000000,
+            "selected": 0,
+            "decoded": 1221,
+            "pruned": 23124
+          },
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "binary_sha256": {
+        "baseline": "b5f6b427046ab6be96b4e4ec40be26d8eec7d7476034d78d3656fb2099191756",
+        "candidate": "875c9e86bdda714637bc1af210acebe809a471aa1bb029f9af0e0fea0769a60e"
+      }
+    },
+    "rc": {
+      "status": "PASS",
+      "profile": "rc",
+      "run": "2026-09-09T18-23-08-345Z-rc",
+      "head": "26f4c9f2cca79d137b20a3e54072a3550be46234",
+      "oracle_queries": 1231,
+      "unit_passed": 1034,
+      "unit_skipped": 43,
+      "e2e_84": {
+        "passed": 5754,
+        "skipped": 44,
+        "warned": 30,
+        "failed": 0
+      },
+      "e2e_80": {
+        "passed": 5754,
+        "skipped": 44,
+        "warned": 30,
+        "failed": 0
+      },
+      "new_warning_categories": [],
+      "first_attempt": "Failed: generated Prisma client absent from fresh sync; generated it, then reran the full profile."
+    },
+    "eight_query_benchmark": {
+      "status": "PASS",
+      "discarded_runs": [
+        {
+          "reason": "A separate native benchmark started on the measurement machine during timed queries. The run was stopped and excluded; the harness containers and temporary volumes were removed before restarting."
+        }
+      ],
+      "host_fingerprint": "2c89ea593c54a6dc3dcd61e20ea00deee006c814ec7ff47e3e2712dd3edf2913",
+      "baseline_source_fingerprint": "4e1911dbfc0a05c3a34d7686d25d6f0172547399b039b26a0840ed3f726f4ba0",
+      "candidate_source_fingerprint": "7a2e3dcb927e8640add82822ef9f309174c919423092cb2f8c831f6416c847f0",
+      "resource_limits": "container on the docker host, --cpus=8 --memory=8g (same as MySQL/ClickHouse), 4 GiB per-query memory ceiling",
+      "iterations": "warm: 2 warmup + 15 measured; cold: 5 distinct memo-cold variants; MySQL baseline reused from 2026-09-09T13:34:50.971Z",
+      "baseline_gate": {
+        "scope": "memo-dashboard latency, not raw engine speed",
+        "requiredSpeedup": 50,
+        "enforced": true,
+        "passed": true,
+        "resultMismatches": []
+      },
+      "candidate_gate": {
+        "scope": "memo-dashboard latency, not raw engine speed",
+        "requiredSpeedup": 50,
+        "enforced": true,
+        "passed": true,
+        "resultMismatches": []
+      },
+      "comparisons": {
+        "queries": [
+          {
+            "query": "Q1: Full table count",
+            "baseline_median_ms": 4.1,
+            "candidate_median_ms": 4.33,
+            "baseline_min_ms": 4.03,
+            "candidate_min_ms": 4.15,
+            "median_speedup": 0.9469,
+            "minimum_speedup": 0.9711,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q2: Filtered count",
+            "baseline_median_ms": 4.25,
+            "candidate_median_ms": 4.4,
+            "baseline_min_ms": 4.17,
+            "candidate_min_ms": 4.19,
+            "median_speedup": 0.9659,
+            "minimum_speedup": 0.9952,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q3: Group by status",
+            "baseline_median_ms": 4.37,
+            "candidate_median_ms": 4.41,
+            "baseline_min_ms": 4.29,
+            "candidate_min_ms": 4.33,
+            "median_speedup": 0.9909,
+            "minimum_speedup": 0.9908,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q4: Region \u00d7 status breakdown",
+            "baseline_median_ms": 4.47,
+            "candidate_median_ms": 4.56,
+            "baseline_min_ms": 4.35,
+            "candidate_min_ms": 4.32,
+            "median_speedup": 0.9803,
+            "minimum_speedup": 1.0069,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q5: Monthly revenue (2023)",
+            "baseline_median_ms": 4.59,
+            "candidate_median_ms": 4.47,
+            "baseline_min_ms": 4.47,
+            "candidate_min_ms": 4.3,
+            "median_speedup": 1.0268,
+            "minimum_speedup": 1.0395,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q6: Top 10 spenders",
+            "baseline_median_ms": 67.19,
+            "candidate_median_ms": 66.23,
+            "baseline_min_ms": 65.89,
+            "candidate_min_ms": 64.77,
+            "median_speedup": 1.0145,
+            "minimum_speedup": 1.0173,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q7: Regional analytics",
+            "baseline_median_ms": 4.7,
+            "candidate_median_ms": 4.74,
+            "baseline_min_ms": 4.37,
+            "candidate_min_ms": 4.6,
+            "median_speedup": 0.9916,
+            "minimum_speedup": 0.95,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q8: Join users + orders",
+            "baseline_median_ms": 4.61,
+            "candidate_median_ms": 4.44,
+            "baseline_min_ms": 4.41,
+            "candidate_min_ms": 4.34,
+            "median_speedup": 1.0383,
+            "minimum_speedup": 1.0161,
+            "candidate_matches_mysql": true
+          }
+        ],
+        "engineQueries": [
+          {
+            "query": "Q1: Full table count",
+            "baseline_median_ms": 4.38,
+            "candidate_median_ms": 4.45,
+            "baseline_min_ms": 4.23,
+            "candidate_min_ms": 4.24,
+            "median_speedup": 0.9843,
+            "minimum_speedup": 0.9976,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q2: Filtered count",
+            "baseline_median_ms": 51.04,
+            "candidate_median_ms": 47.35,
+            "baseline_min_ms": 48.76,
+            "candidate_min_ms": 46.63,
+            "median_speedup": 1.0779,
+            "minimum_speedup": 1.0457,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q3: Group by status",
+            "baseline_median_ms": 131.7,
+            "candidate_median_ms": 126.09,
+            "baseline_min_ms": 125.78,
+            "candidate_min_ms": 120.29,
+            "median_speedup": 1.0445,
+            "minimum_speedup": 1.0456,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q4: Region \u00d7 status breakdown",
+            "baseline_median_ms": 148.43,
+            "candidate_median_ms": 157.06,
+            "baseline_min_ms": 145.41,
+            "candidate_min_ms": 143.88,
+            "median_speedup": 0.9451,
+            "minimum_speedup": 1.0106,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q5: Monthly revenue (2023)",
+            "baseline_median_ms": 101.86,
+            "candidate_median_ms": 100.72,
+            "baseline_min_ms": 98.03,
+            "candidate_min_ms": 94.81,
+            "median_speedup": 1.0113,
+            "minimum_speedup": 1.034,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q6: Top 10 spenders",
+            "baseline_median_ms": 444.53,
+            "candidate_median_ms": 439.91,
+            "baseline_min_ms": 436.73,
+            "candidate_min_ms": 433.75,
+            "median_speedup": 1.0105,
+            "minimum_speedup": 1.0069,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q7: Regional analytics",
+            "baseline_median_ms": 395.92,
+            "candidate_median_ms": 409.74,
+            "baseline_min_ms": 373.07,
+            "candidate_min_ms": 383.46,
+            "median_speedup": 0.9663,
+            "minimum_speedup": 0.9729,
+            "candidate_matches_mysql": true
+          },
+          {
+            "query": "Q8: Join users + orders",
+            "baseline_median_ms": 377.29,
+            "candidate_median_ms": 363.32,
+            "baseline_min_ms": 333.68,
+            "candidate_min_ms": 333.75,
+            "median_speedup": 1.0385,
+            "minimum_speedup": 0.9998,
+            "candidate_matches_mysql": true
+          }
+        ]
+      },
+      "interpretation": "The largest engine-track median slowdown is 5.8%; its minimum improves. The largest minimum slowdown is 2.8%. These do not establish a substantial regression beyond the documented shared-hardware noise allowance. No general benchmark speedup is claimed. The harness automatic previous-run check requires identical source fingerprints and therefore does not compare these code revisions; this comparison uses their raw samples explicitly."
+    },
+    "tpch": {
+      "status": "PASS",
+      "profile": "sf1",
+      "mysql_buffer_pool_bytes": 4294967296,
+      "pintail_query_memory_bytes": 4294967296,
+      "query_spill_limit_bytes": 17179869184,
+      "global_spill_limit_bytes": 34359738368,
+      "settled_memo_disabled": true,
+      "initial_baseline_failure": "Q05 exceeded the default 1 GiB query spill quota. The failed result is retained separately; both arms use the same larger spill limits for the comparison.",
+      "runs_per_arm": 3,
+      "byte_exact_comparisons": 24,
+      "counts": {
+        "region": 5,
+        "nation": 25,
+        "supplier": 10000,
+        "part": 200000,
+        "partsupp": 800000,
+        "customer": 150000,
+        "orders": 1500000,
+        "lineitem": 6000749
+      },
+      "binary_sha256": {
+        "baseline": "e637a5d4dc6cb22d192e9da63528a9590e1e957c5b0f115c55de7825a6bb436d",
+        "candidate": "b28de37230ae96c3bcda8d45e878cea563a79799e047fe16c50230ebe2bcf9bc"
+      },
+      "queries": [
+        {
+          "query": "q01-pricing-summary",
+          "samples_ms": {
+            "baseline": [
+              9252,
+              9372,
+              9136
+            ],
+            "candidate": [
+              9219,
+              9301,
+              9139
+            ]
+          },
+          "baseline_median_ms": 9252,
+          "candidate_median_ms": 9219,
+          "median_speedup": 1.0036
+        },
+        {
+          "query": "q03-shipping-priority",
+          "samples_ms": {
+            "baseline": [
+              5374,
+              5395,
+              5452
+            ],
+            "candidate": [
+              5421,
+              5422,
+              5418
+            ]
+          },
+          "baseline_median_ms": 5395,
+          "candidate_median_ms": 5421,
+          "median_speedup": 0.9952
+        },
+        {
+          "query": "q05-local-supplier-volume",
+          "samples_ms": {
+            "baseline": [
+              48060,
+              47791,
+              47737
+            ],
+            "candidate": [
+              47666,
+              47793,
+              47892
+            ]
+          },
+          "baseline_median_ms": 47791,
+          "candidate_median_ms": 47793,
+          "median_speedup": 1.0
+        },
+        {
+          "query": "q10-returned-item-reporting",
+          "samples_ms": {
+            "baseline": [
+              3985,
+              4009,
+              3951
+            ],
+            "candidate": [
+              4162,
+              4014,
+              3952
+            ]
+          },
+          "baseline_median_ms": 3985,
+          "candidate_median_ms": 4014,
+          "median_speedup": 0.9928
+        }
+      ]
+    },
+    "uniform_probe": {
+      "status": "PASS",
+      "rows": 20000000,
+      "warmups": 2,
+      "measured_iterations": 7,
+      "settled_memo_disabled": true,
+      "cases": [
+        {
+          "probe": "scan",
+          "case": "narrow-last",
+          "baseline": {
+            "median_ms": 115.488,
+            "min_ms": 115.173,
+            "result_or_decoded": 1221
+          },
+          "candidate": {
+            "median_ms": 58.428,
+            "min_ms": 58.381,
+            "result_or_decoded": 1221
+          },
+          "median_speedup": 1.9766
+        },
+        {
+          "probe": "scan",
+          "case": "wide",
+          "baseline": {
+            "median_ms": 2226.787,
+            "min_ms": 2220.343,
+            "result_or_decoded": 29304
+          },
+          "candidate": {
+            "median_ms": 2128.41,
+            "min_ms": 2127.429,
+            "result_or_decoded": 29304
+          },
+          "median_speedup": 1.0462
+        },
+        {
+          "probe": "scan",
+          "case": "text-all",
+          "baseline": {
+            "median_ms": 172.152,
+            "min_ms": 171.479,
+            "result_or_decoded": 2442
+          },
+          "candidate": {
+            "median_ms": 35.543,
+            "min_ms": 35.325,
+            "result_or_decoded": 1221
+          },
+          "median_speedup": 4.8435
+        },
+        {
+          "probe": "scan",
+          "case": "text-selective",
+          "baseline": {
+            "median_ms": 202.583,
+            "min_ms": 202.508,
+            "result_or_decoded": 2442
+          },
+          "candidate": {
+            "median_ms": 35.751,
+            "min_ms": 35.527,
+            "result_or_decoded": 1221
+          },
+          "median_speedup": 5.6665
+        },
+        {
+          "probe": "scan",
+          "case": "mixed-selective",
+          "baseline": {
+            "median_ms": 325.317,
+            "min_ms": 324.763,
+            "result_or_decoded": 3663
+          },
+          "candidate": {
+            "median_ms": 221.423,
+            "min_ms": 221.237,
+            "result_or_decoded": 3663
+          },
+          "median_speedup": 1.4692
+        },
+        {
+          "probe": "query",
+          "case": "numeric-filter",
+          "baseline": {
+            "median_ms": 45.555,
+            "min_ms": 44.028,
+            "result_or_decoded": 19956522
+          },
+          "candidate": {
+            "median_ms": 30.184,
+            "min_ms": 29.692,
+            "result_or_decoded": 19956522
+          },
+          "median_speedup": 1.5092
+        },
+        {
+          "probe": "query",
+          "case": "text-filter",
+          "baseline": {
+            "median_ms": 49.859,
+            "min_ms": 48.369,
+            "result_or_decoded": 2500000
+          },
+          "candidate": {
+            "median_ms": 38.709,
+            "min_ms": 38.447,
+            "result_or_decoded": 2500000
+          },
+          "median_speedup": 1.288
+        },
+        {
+          "probe": "query",
+          "case": "text-all",
+          "baseline": {
+            "median_ms": 56.485,
+            "min_ms": 55.134,
+            "result_or_decoded": 20000000
+          },
+          "candidate": {
+            "median_ms": 44.747,
+            "min_ms": 44.325,
+            "result_or_decoded": 20000000
+          },
+          "median_speedup": 1.2623
+        },
+        {
+          "probe": "query",
+          "case": "wide-expression",
+          "baseline": {
+            "median_ms": 27818.334,
+            "min_ms": 27731.611,
+            "result_or_decoded": 55200000460000000
+          },
+          "candidate": {
+            "median_ms": 27331.02,
+            "min_ms": 27264.118,
+            "result_or_decoded": 55200000460000000
+          },
+          "median_speedup": 1.0178
+        }
+      ],
+      "interpretation": "Scan-bound SQL improves 1.26\u20131.51x. Wide arithmetic is 1.018x: no material gain. Wide projected scan is 1.046x. The earlier 0.99x and 1.03x observations do not establish a regression."
+    },
+    "host_observation": {
+      "start": "2026-09-09T18:54:10Z",
+      "end": "2026-09-09T20:12:48Z",
+      "interval_seconds": 15,
+      "samples": 315,
+      "unexpected_high_cpu_processes": [],
+      "scope": "From the replacement baseline Pintail startup through the final candidate TPC-H query, including intervening setup.",
+      "setup_exception": "A short unrelated native process appeared at 18:53:25 UTC and was absent by 18:53:40, before the replacement baseline Pintail container started. The earlier discarded run overlapped a different invocation during timed queries."
+    },
+    "artifacts": {
+      "raw_directory": "storage-scan-qualification/",
+      "rc_report": "storage-scan-rc.md"
+    }
   }
 }

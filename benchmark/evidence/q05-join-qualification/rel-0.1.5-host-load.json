@@ -1,0 +1,2605 @@
+{
+  "interval_seconds": 15,
+  "samples": 369,
+  "start": "2026-09-25T18:28:25Z",
+  "end": "2026-09-25T20:03:07Z",
+  "docker_host_containers_min_max": [
+    10,
+    13
+  ],
+  "docker_host_unrelated_containers": 10,
+  "docker_host_load1_mean": 2.35,
+  "docker_host_load1_max": 14.7,
+  "build_host_load1_mean": 1.36,
+  "build_host_load1_max": 12.0,
+  "build_host_unrelated_process": "A server process left behind by an earlier, unrelated validation run stayed alive on the build host throughout, near one logical CPU. It was not created by this study and was not stopped.",
+  "build_host_unrelated_process_cpu_pct_mean": 82.8,
+  "build_host_unrelated_process_seen_in_samples": 315,
+  "scope": "Includes this study's own builds, seeding, snapshots and harness containers; load averages are whole-host figures, not background-only.",
+  "unit": "load1 is the one-minute load average; cpu_pct is top(1) percent of one logical CPU.",
+  "samples_detail": [
+    {
+      "at": "2026-09-25T18:28:25Z",
+      "build_host_load1": 7.04,
+      "docker_host_load1": 0.28,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:28:41Z",
+      "build_host_load1": 6.05,
+      "docker_host_load1": 0.45,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T18:28:56Z",
+      "build_host_load1": 5.08,
+      "docker_host_load1": 0.35,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:29:12Z",
+      "build_host_load1": 7.25,
+      "docker_host_load1": 0.27,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:29:27Z",
+      "build_host_load1": 8.72,
+      "docker_host_load1": 0.28,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:29:42Z",
+      "build_host_load1": 12.0,
+      "docker_host_load1": 0.21,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 120.0
+    },
+    {
+      "at": "2026-09-25T18:29:58Z",
+      "build_host_load1": 10.65,
+      "docker_host_load1": 0.17,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:30:13Z",
+      "build_host_load1": 9.4,
+      "docker_host_load1": 0.2,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T18:30:29Z",
+      "build_host_load1": 7.84,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:30:44Z",
+      "build_host_load1": 9.56,
+      "docker_host_load1": 0.31,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T18:31:00Z",
+      "build_host_load1": 8.38,
+      "docker_host_load1": 0.24,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:31:15Z",
+      "build_host_load1": 6.97,
+      "docker_host_load1": 0.19,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:31:30Z",
+      "build_host_load1": 6.35,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 108.3
+    },
+    {
+      "at": "2026-09-25T18:31:46Z",
+      "build_host_load1": 5.9,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:32:01Z",
+      "build_host_load1": 5.26,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T18:32:17Z",
+      "build_host_load1": 4.91,
+      "docker_host_load1": 0.07,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:32:32Z",
+      "build_host_load1": 4.32,
+      "docker_host_load1": 0.29,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:32:48Z",
+      "build_host_load1": 3.5,
+      "docker_host_load1": 0.23,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:33:03Z",
+      "build_host_load1": 2.85,
+      "docker_host_load1": 0.99,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T18:33:19Z",
+      "build_host_load1": 2.75,
+      "docker_host_load1": 0.77,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 72.7
+    },
+    {
+      "at": "2026-09-25T18:33:34Z",
+      "build_host_load1": 2.89,
+      "docker_host_load1": 0.6,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 60.0
+    },
+    {
+      "at": "2026-09-25T18:33:49Z",
+      "build_host_load1": 3.08,
+      "docker_host_load1": 0.43,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:34:05Z",
+      "build_host_load1": 2.75,
+      "docker_host_load1": 0.33,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:34:20Z",
+      "build_host_load1": 2.3,
+      "docker_host_load1": 0.26,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:34:36Z",
+      "build_host_load1": 1.94,
+      "docker_host_load1": 0.56,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:34:51Z",
+      "build_host_load1": 1.66,
+      "docker_host_load1": 0.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:35:06Z",
+      "build_host_load1": 1.52,
+      "docker_host_load1": 0.69,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T18:35:22Z",
+      "build_host_load1": 1.41,
+      "docker_host_load1": 0.9,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T18:35:37Z",
+      "build_host_load1": 1.25,
+      "docker_host_load1": 0.78,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:35:53Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 0.97,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T18:36:08Z",
+      "build_host_load1": 0.95,
+      "docker_host_load1": 0.91,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:36:24Z",
+      "build_host_load1": 0.88,
+      "docker_host_load1": 0.92,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:36:39Z",
+      "build_host_load1": 0.83,
+      "docker_host_load1": 1.1,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T18:36:54Z",
+      "build_host_load1": 0.8,
+      "docker_host_load1": 1.08,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T18:37:10Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 1.11,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T18:37:25Z",
+      "build_host_load1": 1.25,
+      "docker_host_load1": 0.86,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:37:41Z",
+      "build_host_load1": 1.18,
+      "docker_host_load1": 0.83,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:37:56Z",
+      "build_host_load1": 1.38,
+      "docker_host_load1": 0.64,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:38:12Z",
+      "build_host_load1": 1.52,
+      "docker_host_load1": 0.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:38:27Z",
+      "build_host_load1": 1.62,
+      "docker_host_load1": 0.39,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:38:42Z",
+      "build_host_load1": 1.41,
+      "docker_host_load1": 0.98,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T18:38:58Z",
+      "build_host_load1": 1.29,
+      "docker_host_load1": 1.17,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 60.0
+    },
+    {
+      "at": "2026-09-25T18:39:13Z",
+      "build_host_load1": 1.23,
+      "docker_host_load1": 1.35,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:39:29Z",
+      "build_host_load1": 1.11,
+      "docker_host_load1": 1.65,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:39:44Z",
+      "build_host_load1": 1.15,
+      "docker_host_load1": 1.63,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:40:00Z",
+      "build_host_load1": 1.05,
+      "docker_host_load1": 1.86,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:40:15Z",
+      "build_host_load1": 1.11,
+      "docker_host_load1": 1.82,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:40:30Z",
+      "build_host_load1": 1.02,
+      "docker_host_load1": 2.01,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T18:40:46Z",
+      "build_host_load1": 0.95,
+      "docker_host_load1": 1.93,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 80.0
+    },
+    {
+      "at": "2026-09-25T18:41:01Z",
+      "build_host_load1": 0.89,
+      "docker_host_load1": 1.87,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:41:17Z",
+      "build_host_load1": 0.85,
+      "docker_host_load1": 1.68,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T18:41:32Z",
+      "build_host_load1": 1.04,
+      "docker_host_load1": 1.45,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T18:41:48Z",
+      "build_host_load1": 1.18,
+      "docker_host_load1": 1.21,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:42:03Z",
+      "build_host_load1": 1.12,
+      "docker_host_load1": 1.01,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:42:18Z",
+      "build_host_load1": 1.01,
+      "docker_host_load1": 1.14,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:42:34Z",
+      "build_host_load1": 1.0,
+      "docker_host_load1": 1.49,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:42:49Z",
+      "build_host_load1": 1.0,
+      "docker_host_load1": 1.28,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 109.1
+    },
+    {
+      "at": "2026-09-25T18:43:05Z",
+      "build_host_load1": 0.99,
+      "docker_host_load1": 1.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 70.0
+    },
+    {
+      "at": "2026-09-25T18:43:20Z",
+      "build_host_load1": 0.91,
+      "docker_host_load1": 1.4,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 30.0
+    },
+    {
+      "at": "2026-09-25T18:43:36Z",
+      "build_host_load1": 0.85,
+      "docker_host_load1": 1.31,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:43:51Z",
+      "build_host_load1": 0.81,
+      "docker_host_load1": 1.31,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:44:06Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 1.18,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:44:22Z",
+      "build_host_load1": 0.74,
+      "docker_host_load1": 1.28,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:44:37Z",
+      "build_host_load1": 0.86,
+      "docker_host_load1": 1.22,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:44:53Z",
+      "build_host_load1": 0.89,
+      "docker_host_load1": 1.09,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T18:45:08Z",
+      "build_host_load1": 1.08,
+      "docker_host_load1": 0.85,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T18:45:24Z",
+      "build_host_load1": 1.21,
+      "docker_host_load1": 0.9,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:45:39Z",
+      "build_host_load1": 1.32,
+      "docker_host_load1": 0.7,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:45:54Z",
+      "build_host_load1": 1.47,
+      "docker_host_load1": 0.7,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:46:10Z",
+      "build_host_load1": 2.15,
+      "docker_host_load1": 0.7,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:46:25Z",
+      "build_host_load1": 1.82,
+      "docker_host_load1": 0.78,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:46:41Z",
+      "build_host_load1": 1.56,
+      "docker_host_load1": 0.9,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:46:56Z",
+      "build_host_load1": 1.36,
+      "docker_host_load1": 0.93,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T18:47:12Z",
+      "build_host_load1": 1.35,
+      "docker_host_load1": 0.94,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T18:47:27Z",
+      "build_host_load1": 1.28,
+      "docker_host_load1": 0.95,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:47:42Z",
+      "build_host_load1": 1.29,
+      "docker_host_load1": 1.03,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:47:58Z",
+      "build_host_load1": 1.3,
+      "docker_host_load1": 1.24,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:48:13Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 1.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:48:29Z",
+      "build_host_load1": 1.18,
+      "docker_host_load1": 1.62,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:48:44Z",
+      "build_host_load1": 1.07,
+      "docker_host_load1": 1.48,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T18:48:59Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 1.19,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:49:15Z",
+      "build_host_load1": 1.26,
+      "docker_host_load1": 0.93,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:49:30Z",
+      "build_host_load1": 1.41,
+      "docker_host_load1": 1.02,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:49:46Z",
+      "build_host_load1": 1.32,
+      "docker_host_load1": 0.94,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:50:01Z",
+      "build_host_load1": 1.18,
+      "docker_host_load1": 1.1,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:50:17Z",
+      "build_host_load1": 1.21,
+      "docker_host_load1": 1.02,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:50:32Z",
+      "build_host_load1": 1.16,
+      "docker_host_load1": 0.87,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T18:50:47Z",
+      "build_host_load1": 1.06,
+      "docker_host_load1": 0.75,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T18:51:03Z",
+      "build_host_load1": 1.19,
+      "docker_host_load1": 0.88,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T18:51:18Z",
+      "build_host_load1": 1.21,
+      "docker_host_load1": 1.06,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T18:51:34Z",
+      "build_host_load1": 1.16,
+      "docker_host_load1": 1.12,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:51:49Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 1.32,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:52:05Z",
+      "build_host_load1": 0.94,
+      "docker_host_load1": 1.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 120.0
+    },
+    {
+      "at": "2026-09-25T18:52:20Z",
+      "build_host_load1": 0.96,
+      "docker_host_load1": 1.62,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:52:35Z",
+      "build_host_load1": 1.04,
+      "docker_host_load1": 1.26,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:52:51Z",
+      "build_host_load1": 1.24,
+      "docker_host_load1": 1.3,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T18:53:06Z",
+      "build_host_load1": 1.34,
+      "docker_host_load1": 1.22,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:53:22Z",
+      "build_host_load1": 1.34,
+      "docker_host_load1": 1.02,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:53:37Z",
+      "build_host_load1": 1.49,
+      "docker_host_load1": 0.8,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:53:53Z",
+      "build_host_load1": 1.45,
+      "docker_host_load1": 0.62,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:54:08Z",
+      "build_host_load1": 1.35,
+      "docker_host_load1": 0.56,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:54:23Z",
+      "build_host_load1": 1.31,
+      "docker_host_load1": 0.65,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:54:39Z",
+      "build_host_load1": 1.25,
+      "docker_host_load1": 0.73,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:54:54Z",
+      "build_host_load1": 1.12,
+      "docker_host_load1": 0.96,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:55:10Z",
+      "build_host_load1": 1.09,
+      "docker_host_load1": 0.99,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:55:25Z",
+      "build_host_load1": 1.22,
+      "docker_host_load1": 0.91,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:55:41Z",
+      "build_host_load1": 1.1,
+      "docker_host_load1": 1.21,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:55:56Z",
+      "build_host_load1": 1.6,
+      "docker_host_load1": 1.31,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:56:11Z",
+      "build_host_load1": 1.55,
+      "docker_host_load1": 1.39,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:56:27Z",
+      "build_host_load1": 1.28,
+      "docker_host_load1": 1.23,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:56:42Z",
+      "build_host_load1": 1.57,
+      "docker_host_load1": 1.1,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:56:58Z",
+      "build_host_load1": 1.6,
+      "docker_host_load1": 1.07,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:57:13Z",
+      "build_host_load1": 1.49,
+      "docker_host_load1": 1.14,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T18:57:29Z",
+      "build_host_load1": 1.45,
+      "docker_host_load1": 0.95,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:57:44Z",
+      "build_host_load1": 1.49,
+      "docker_host_load1": 1.1,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:57:59Z",
+      "build_host_load1": 1.53,
+      "docker_host_load1": 1.14,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:58:15Z",
+      "build_host_load1": 1.41,
+      "docker_host_load1": 1.26,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:58:30Z",
+      "build_host_load1": 1.39,
+      "docker_host_load1": 1.21,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T18:58:46Z",
+      "build_host_load1": 1.23,
+      "docker_host_load1": 1.46,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T18:59:01Z",
+      "build_host_load1": 1.11,
+      "docker_host_load1": 1.65,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 45.5
+    },
+    {
+      "at": "2026-09-25T18:59:17Z",
+      "build_host_load1": 1.0,
+      "docker_host_load1": 1.59,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T18:59:32Z",
+      "build_host_load1": 1.16,
+      "docker_host_load1": 1.46,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T18:59:47Z",
+      "build_host_load1": 1.2,
+      "docker_host_load1": 1.44,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:00:03Z",
+      "build_host_load1": 1.09,
+      "docker_host_load1": 1.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:00:18Z",
+      "build_host_load1": 1.07,
+      "docker_host_load1": 1.23,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:00:34Z",
+      "build_host_load1": 1.2,
+      "docker_host_load1": 0.96,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T19:00:49Z",
+      "build_host_load1": 1.14,
+      "docker_host_load1": 0.81,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:01:04Z",
+      "build_host_load1": 1.39,
+      "docker_host_load1": 0.8,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:01:20Z",
+      "build_host_load1": 1.3,
+      "docker_host_load1": 0.78,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T19:01:35Z",
+      "build_host_load1": 1.91,
+      "docker_host_load1": 0.68,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:01:51Z",
+      "build_host_load1": 1.78,
+      "docker_host_load1": 0.68,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:02:06Z",
+      "build_host_load1": 1.69,
+      "docker_host_load1": 0.53,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:02:22Z",
+      "build_host_load1": 1.68,
+      "docker_host_load1": 0.41,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:02:37Z",
+      "build_host_load1": 1.76,
+      "docker_host_load1": 0.39,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:02:52Z",
+      "build_host_load1": 1.74,
+      "docker_host_load1": 0.31,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:03:08Z",
+      "build_host_load1": 1.73,
+      "docker_host_load1": 0.24,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 80.0
+    },
+    {
+      "at": "2026-09-25T19:03:23Z",
+      "build_host_load1": 1.74,
+      "docker_host_load1": 0.18,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 9.1
+    },
+    {
+      "at": "2026-09-25T19:03:39Z",
+      "build_host_load1": 1.8,
+      "docker_host_load1": 0.37,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:03:54Z",
+      "build_host_load1": 1.84,
+      "docker_host_load1": 0.35,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:04:10Z",
+      "build_host_load1": 1.81,
+      "docker_host_load1": 0.25,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:04:25Z",
+      "build_host_load1": 1.85,
+      "docker_host_load1": 0.34,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:04:40Z",
+      "build_host_load1": 1.81,
+      "docker_host_load1": 0.34,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 45.5
+    },
+    {
+      "at": "2026-09-25T19:04:56Z",
+      "build_host_load1": 1.77,
+      "docker_host_load1": 0.27,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 70.0
+    },
+    {
+      "at": "2026-09-25T19:05:11Z",
+      "build_host_load1": 1.66,
+      "docker_host_load1": 0.35,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:05:27Z",
+      "build_host_load1": 1.51,
+      "docker_host_load1": 0.42,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:05:42Z",
+      "build_host_load1": 1.31,
+      "docker_host_load1": 0.48,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:05:58Z",
+      "build_host_load1": 1.23,
+      "docker_host_load1": 0.45,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:06:13Z",
+      "build_host_load1": 1.17,
+      "docker_host_load1": 0.5,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:06:28Z",
+      "build_host_load1": 1.26,
+      "docker_host_load1": 0.46,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:06:44Z",
+      "build_host_load1": 1.13,
+      "docker_host_load1": 0.64,
+      "docker_host_containers": 11,
+      "build_host_unrelated_pintail_process_cpu_pct": 72.7
+    },
+    {
+      "at": "2026-09-25T19:06:59Z",
+      "build_host_load1": 1.02,
+      "docker_host_load1": 0.58,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:07:15Z",
+      "build_host_load1": 0.94,
+      "docker_host_load1": 0.72,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:07:30Z",
+      "build_host_load1": 0.88,
+      "docker_host_load1": 0.78,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:07:46Z",
+      "build_host_load1": 0.84,
+      "docker_host_load1": 0.91,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:08:01Z",
+      "build_host_load1": 0.8,
+      "docker_host_load1": 1.08,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:08:16Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 1.15,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T19:08:32Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 1.5,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 80.0
+    },
+    {
+      "at": "2026-09-25T19:08:47Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 4.77,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:09:03Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 3.79,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:09:18Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 4.3,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T19:09:34Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 7.32,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:09:49Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 10.07,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:10:05Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 10.41,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:10:20Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 9.33,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:10:36Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 7.88,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:10:51Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 7.16,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:11:07Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 6.07,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:11:22Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 4.95,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:11:38Z",
+      "build_host_load1": 0.83,
+      "docker_host_load1": 7.67,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:11:53Z",
+      "build_host_load1": 0.88,
+      "docker_host_load1": 7.83,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:12:09Z",
+      "build_host_load1": 0.9,
+      "docker_host_load1": 6.38,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:12:24Z",
+      "build_host_load1": 0.93,
+      "docker_host_load1": 5.19,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:12:40Z",
+      "build_host_load1": 0.94,
+      "docker_host_load1": 4.14,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:12:55Z",
+      "build_host_load1": 0.96,
+      "docker_host_load1": 3.51,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:13:10Z",
+      "build_host_load1": 0.97,
+      "docker_host_load1": 2.96,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:13:26Z",
+      "build_host_load1": 0.9,
+      "docker_host_load1": 2.52,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:13:41Z",
+      "build_host_load1": 0.92,
+      "docker_host_load1": 2.18,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:13:57Z",
+      "build_host_load1": 0.87,
+      "docker_host_load1": 1.92,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:14:12Z",
+      "build_host_load1": 0.82,
+      "docker_host_load1": 1.72,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:14:28Z",
+      "build_host_load1": 0.79,
+      "docker_host_load1": 1.56,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:14:43Z",
+      "build_host_load1": 0.84,
+      "docker_host_load1": 2.36,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:14:58Z",
+      "build_host_load1": 0.81,
+      "docker_host_load1": 2.9,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:15:14Z",
+      "build_host_load1": 0.79,
+      "docker_host_load1": 3.73,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 30.0
+    },
+    {
+      "at": "2026-09-25T19:15:29Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 4.46,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 109.1
+    },
+    {
+      "at": "2026-09-25T19:15:45Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 5.54,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:16:00Z",
+      "build_host_load1": 0.74,
+      "docker_host_load1": 5.7,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:16:16Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 5.58,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:16:31Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 5.58,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:16:47Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 5.12,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:17:02Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 5.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 54.5
+    },
+    {
+      "at": "2026-09-25T19:17:18Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 5.7,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:17:33Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 4.98,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 9.1
+    },
+    {
+      "at": "2026-09-25T19:17:49Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 4.74,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T19:18:04Z",
+      "build_host_load1": 0.79,
+      "docker_host_load1": 3.84,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:18:20Z",
+      "build_host_load1": 0.76,
+      "docker_host_load1": 11.21,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:18:35Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 9.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:18:51Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 8.19,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:19:06Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 9.82,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:19:22Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 11.95,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:19:37Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 12.62,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:19:53Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 12.09,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:20:08Z",
+      "build_host_load1": 0.66,
+      "docker_host_load1": 9.7,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:20:23Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 7.92,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:20:39Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 6.68,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:20:54Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 5.5,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:21:10Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.3,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:21:25Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.39,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:21:41Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.27,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:21:56Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.36,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:22:11Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.28,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:22:27Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 3.99,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:22:42Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 5.63,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T19:22:58Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 7.13,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:23:13Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 6.41,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:23:29Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 5.21,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:23:44Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 4.59,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:24:00Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 3.65,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:24:15Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 2.98,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:24:31Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 2.54,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:24:46Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 2.34,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:25:01Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 2.04,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T19:25:17Z",
+      "build_host_load1": 0.74,
+      "docker_host_load1": 1.65,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 80.0
+    },
+    {
+      "at": "2026-09-25T19:25:32Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 1.29,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:25:48Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 1.07,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:26:03Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 0.83,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:26:19Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.86,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:26:34Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.67,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:26:49Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.6,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 9.1
+    },
+    {
+      "at": "2026-09-25T19:27:05Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.56,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:27:20Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.44,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:27:36Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.34,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T19:27:51Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.26,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T19:28:07Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 0.2,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:28:22Z",
+      "build_host_load1": 0.78,
+      "docker_host_load1": 0.16,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:28:37Z",
+      "build_host_load1": 0.83,
+      "docker_host_load1": 0.49,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:28:53Z",
+      "build_host_load1": 0.87,
+      "docker_host_load1": 0.46,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:29:08Z",
+      "build_host_load1": 0.9,
+      "docker_host_load1": 0.36,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:29:24Z",
+      "build_host_load1": 0.93,
+      "docker_host_load1": 0.28,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 60.0
+    },
+    {
+      "at": "2026-09-25T19:29:39Z",
+      "build_host_load1": 0.95,
+      "docker_host_load1": 0.28,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 45.5
+    },
+    {
+      "at": "2026-09-25T19:29:55Z",
+      "build_host_load1": 0.89,
+      "docker_host_load1": 0.22,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:30:10Z",
+      "build_host_load1": 0.98,
+      "docker_host_load1": 0.23,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:30:25Z",
+      "build_host_load1": 0.92,
+      "docker_host_load1": 0.18,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:30:41Z",
+      "build_host_load1": 0.87,
+      "docker_host_load1": 0.14,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:30:56Z",
+      "build_host_load1": 0.83,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 109.1
+    },
+    {
+      "at": "2026-09-25T19:31:12Z",
+      "build_host_load1": 0.8,
+      "docker_host_load1": 0.08,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:31:27Z",
+      "build_host_load1": 0.78,
+      "docker_host_load1": 0.06,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:31:43Z",
+      "build_host_load1": 0.76,
+      "docker_host_load1": 0.19,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:31:58Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:32:13Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:32:29Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:32:44Z",
+      "build_host_load1": 0.66,
+      "docker_host_load1": 0.07,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:33:00Z",
+      "build_host_load1": 0.66,
+      "docker_host_load1": 0.05,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T19:33:15Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.04,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 72.7
+    },
+    {
+      "at": "2026-09-25T19:33:30Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.1,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:33:46Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.08,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T19:34:01Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 0.13,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T19:34:17Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.1,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:34:32Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.16,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:34:48Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.2,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:35:03Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.16,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:35:18Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.12,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:35:34Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:35:49Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 45.5
+    },
+    {
+      "at": "2026-09-25T19:36:05Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 0.12,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:36:20Z",
+      "build_host_load1": 0.8,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:36:36Z",
+      "build_host_load1": 0.77,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:36:51Z",
+      "build_host_load1": 0.75,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:37:06Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 0.15,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:37:22Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T19:37:37Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:37:53Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.07,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:38:08Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 0.05,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:38:24Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 0.04,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:38:39Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 0.03,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:38:54Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.1,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:39:10Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.22,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T19:39:25Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.24,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:39:41Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.18,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:39:56Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.14,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T19:40:12Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T19:40:27Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.08,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:40:42Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.07,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:40:58Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.05,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:41:13Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 0.11,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:41:29Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.08,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:41:44Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.06,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 45.5
+    },
+    {
+      "at": "2026-09-25T19:42:00Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.05,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:42:15Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.23,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:42:30Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.18,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:42:46Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.29,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:43:01Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.38,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:43:17Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 0.66,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:43:32Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 1.03,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T19:43:47Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 1.16,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 70.0
+    },
+    {
+      "at": "2026-09-25T19:44:03Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 1.26,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:44:18Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 2.18,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:44:34Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 4.68,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:44:49Z",
+      "build_host_load1": 0.82,
+      "docker_host_load1": 4.73,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:45:05Z",
+      "build_host_load1": 0.86,
+      "docker_host_load1": 3.68,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:45:20Z",
+      "build_host_load1": 0.82,
+      "docker_host_load1": 6.52,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:45:36Z",
+      "build_host_load1": 0.86,
+      "docker_host_load1": 8.7,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 18.2
+    },
+    {
+      "at": "2026-09-25T19:45:51Z",
+      "build_host_load1": 0.89,
+      "docker_host_load1": 10.1,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:46:07Z",
+      "build_host_load1": 0.92,
+      "docker_host_load1": 9.36,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:46:22Z",
+      "build_host_load1": 0.87,
+      "docker_host_load1": 8.21,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T19:46:38Z",
+      "build_host_load1": 0.83,
+      "docker_host_load1": 7.1,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:46:53Z",
+      "build_host_load1": 0.8,
+      "docker_host_load1": 6.57,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:47:09Z",
+      "build_host_load1": 0.78,
+      "docker_host_load1": 6.08,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:47:24Z",
+      "build_host_load1": 0.7,
+      "docker_host_load1": 5.02,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 10.0
+    },
+    {
+      "at": "2026-09-25T19:47:40Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 6.5,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:47:55Z",
+      "build_host_load1": 0.76,
+      "docker_host_load1": 8.15,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:48:11Z",
+      "build_host_load1": 0.73,
+      "docker_host_load1": 6.7,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:48:26Z",
+      "build_host_load1": 0.71,
+      "docker_host_load1": 5.44,
+      "docker_host_containers": 12,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:48:42Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 4.9,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T19:48:57Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 4.04,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 72.7
+    },
+    {
+      "at": "2026-09-25T19:49:12Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 3.45,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:49:28Z",
+      "build_host_load1": 0.67,
+      "docker_host_load1": 2.97,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T19:49:43Z",
+      "build_host_load1": 0.66,
+      "docker_host_load1": 2.67,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 9.1
+    },
+    {
+      "at": "2026-09-25T19:49:59Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 2.44,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:50:14Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 2.12,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:50:30Z",
+      "build_host_load1": 0.68,
+      "docker_host_load1": 1.95,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:50:45Z",
+      "build_host_load1": 0.59,
+      "docker_host_load1": 1.74,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:51:00Z",
+      "build_host_load1": 0.61,
+      "docker_host_load1": 2.8,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.0
+    },
+    {
+      "at": "2026-09-25T19:51:16Z",
+      "build_host_load1": 0.62,
+      "docker_host_load1": 3.41,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:51:32Z",
+      "build_host_load1": 0.63,
+      "docker_host_load1": 4.58,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T19:51:47Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 4.41,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T19:52:03Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 4.67,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:52:18Z",
+      "build_host_load1": 0.65,
+      "docker_host_load1": 5.15,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:52:34Z",
+      "build_host_load1": 0.66,
+      "docker_host_load1": 5.09,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:52:49Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 5.14,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:53:05Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 5.64,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:53:20Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 6.59,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:53:35Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 6.62,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:53:51Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 8.78,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:54:06Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 9.12,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:54:22Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 11.7,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:54:38Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 14.7,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:54:53Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 13.5,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 36.4
+    },
+    {
+      "at": "2026-09-25T19:55:08Z",
+      "build_host_load1": 0.69,
+      "docker_host_load1": 11.18,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 72.7
+    },
+    {
+      "at": "2026-09-25T19:55:24Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 10.95,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 110.0
+    },
+    {
+      "at": "2026-09-25T19:55:39Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 10.56,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:55:55Z",
+      "build_host_load1": 0.64,
+      "docker_host_load1": 10.4,
+      "docker_host_containers": 13,
+      "build_host_unrelated_pintail_process_cpu_pct": 27.3
+    },
+    {
+      "at": "2026-09-25T19:56:10Z",
+      "build_host_load1": 0.72,
+      "docker_host_load1": 11.6,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:56:26Z",
+      "build_host_load1": 0.92,
+      "docker_host_load1": 9.03,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:56:41Z",
+      "build_host_load1": 1.08,
+      "docker_host_load1": 7.03,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 120.0
+    },
+    {
+      "at": "2026-09-25T19:56:57Z",
+      "build_host_load1": 1.21,
+      "docker_host_load1": 5.47,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 40.0
+    },
+    {
+      "at": "2026-09-25T19:57:12Z",
+      "build_host_load1": 1.3,
+      "docker_host_load1": 4.26,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T19:57:28Z",
+      "build_host_load1": 1.38,
+      "docker_host_load1": 3.31,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:57:43Z",
+      "build_host_load1": 1.43,
+      "docker_host_load1": 2.66,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:57:58Z",
+      "build_host_load1": 1.48,
+      "docker_host_load1": 2.14,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T19:58:14Z",
+      "build_host_load1": 2.07,
+      "docker_host_load1": 1.67,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:58:29Z",
+      "build_host_load1": 3.1,
+      "docker_host_load1": 1.3,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T19:58:45Z",
+      "build_host_load1": 2.78,
+      "docker_host_load1": 1.01,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 30.0
+    },
+    {
+      "at": "2026-09-25T19:59:00Z",
+      "build_host_load1": 2.53,
+      "docker_host_load1": 0.72,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 63.6
+    },
+    {
+      "at": "2026-09-25T19:59:16Z",
+      "build_host_load1": 2.34,
+      "docker_host_load1": 0.56,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:59:31Z",
+      "build_host_load1": 2.27,
+      "docker_host_load1": 0.44,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T19:59:46Z",
+      "build_host_load1": 2.14,
+      "docker_host_load1": 0.48,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": null
+    },
+    {
+      "at": "2026-09-25T20:00:02Z",
+      "build_host_load1": 2.03,
+      "docker_host_load1": 0.37,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T20:00:17Z",
+      "build_host_load1": 1.95,
+      "docker_host_load1": 0.29,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T20:00:33Z",
+      "build_host_load1": 1.89,
+      "docker_host_load1": 0.23,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:00:48Z",
+      "build_host_load1": 1.85,
+      "docker_host_load1": 0.17,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 50.0
+    },
+    {
+      "at": "2026-09-25T20:01:04Z",
+      "build_host_load1": 1.81,
+      "docker_host_load1": 0.14,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 90.9
+    },
+    {
+      "at": "2026-09-25T20:01:19Z",
+      "build_host_load1": 1.79,
+      "docker_host_load1": 0.1,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:01:34Z",
+      "build_host_load1": 1.76,
+      "docker_host_load1": 0.16,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:01:50Z",
+      "build_host_load1": 2.69,
+      "docker_host_load1": 0.12,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:02:05Z",
+      "build_host_load1": 2.78,
+      "docker_host_load1": 0.09,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 20.0
+    },
+    {
+      "at": "2026-09-25T20:02:21Z",
+      "build_host_load1": 2.88,
+      "docker_host_load1": 0.07,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    },
+    {
+      "at": "2026-09-25T20:02:36Z",
+      "build_host_load1": 2.76,
+      "docker_host_load1": 0.05,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:02:52Z",
+      "build_host_load1": 2.67,
+      "docker_host_load1": 0.04,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 100.0
+    },
+    {
+      "at": "2026-09-25T20:03:07Z",
+      "build_host_load1": 2.44,
+      "docker_host_load1": 0.03,
+      "docker_host_containers": 10,
+      "build_host_unrelated_pintail_process_cpu_pct": 81.8
+    }
+  ]
+}
