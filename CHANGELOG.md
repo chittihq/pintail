@@ -4,7 +4,13 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.5-rc9] - 2026-09-25
+
+What production error reports asked for: the SQL shapes a deployed rc4 refused
+or failed on - a correlated subquery inside an aggregate, the two-argument
+TIMESTAMP, the UTC clock functions and a driver's read-only probe - plus a
+way to let go of a table the source has dropped, and a cached-answer fault
+that served one GROUP_CONCAT spelling for another.
 
 ### Added
 
