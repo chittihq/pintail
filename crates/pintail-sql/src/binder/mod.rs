@@ -3001,12 +3001,15 @@ fn bind_group_by(
             let Expr::Identifier(identifier) = expr else {
                 return bind_expr(expr, tables, subqueries);
             };
-            // GROUP BY resolves a source column before a SELECT alias.
-            match bind_expr(expr, tables, subqueries) {
+            // GROUP BY resolves a source column before a SELECT alias. A name
+            // the sources hold more than once is not a column at all there, and
+            // MySQL takes the one alias of that name instead of refusing.
+            let ambiguous = match bind_expr(expr, tables, subqueries) {
                 Ok(column) => return Ok(column),
-                Err(BindError::UnknownColumn(_)) => {}
+                Err(BindError::UnknownColumn(_)) => None,
+                Err(error @ BindError::AmbiguousColumn(_)) => Some(error),
                 Err(error) => return Err(error),
-            }
+            };
             let aliases = projection
                 .iter()
                 .filter_map(|item| match item {
@@ -3020,7 +3023,10 @@ fn bind_group_by(
                 .collect::<Vec<_>>();
             match aliases.as_slice() {
                 [alias_expression] => bind_expr(alias_expression, tables, subqueries),
-                [] => bind_expr(expr, tables, subqueries),
+                [] => match ambiguous {
+                    Some(error) => Err(error),
+                    None => bind_expr(expr, tables, subqueries),
+                },
                 _ => Err(BindError::InvalidGrouping(format!(
                     "GROUP BY alias {} is ambiguous",
                     identifier.value
