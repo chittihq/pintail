@@ -163,7 +163,9 @@ impl Float64 {
     pub fn mysql_float_text(self) -> String {
         let value = self.get();
         if value == 0.0 {
-            return "0".to_owned();
+            // Both zeros compare equal; MySQL still prints a negative zero
+            // FLOAT as `-0`, as it does a DOUBLE.
+            return if value.is_sign_negative() { "-0" } else { "0" }.to_owned();
         }
         let rounded = format!("{value:.5e}").parse::<f64>().unwrap_or(value);
         Self::new(rounded).mysql_text()
@@ -406,6 +408,12 @@ impl std::hash::Hash for Value {
 mod tests {
     use super::{DecimalQuotient, Value};
     use std::hash::{Hash, Hasher};
+
+    #[test]
+    fn a_negative_zero_float_prints_its_sign() {
+        assert_eq!(super::Float64::new(-0.0).mysql_float_text(), "-0");
+        assert_eq!(super::Float64::new(0.0).mysql_float_text(), "0");
+    }
 
     #[test]
     fn a_double_prints_as_mysql_prints_it() {
