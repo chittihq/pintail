@@ -40,7 +40,9 @@ const rustfsName = `pintail-browser-rustfs-${process.pid}-${nonce}`
 // Pinned rather than :latest - RustFS is pre-1.0 and the gate should not
 // change behaviour because an upstream tag moved.
 const RUSTFS_IMAGE = 'rustfs/rustfs:1.0.0-beta.12'
-const AWS_CLI_IMAGE = 'public.ecr.aws/aws-cli/aws-cli:latest'
+// Pinned: `latest` re-resolves on every run, and a registry that answers
+// `toomanyrequests` to a moving tag fails the gate for nothing.
+const AWS_CLI_IMAGE = 'public.ecr.aws/aws-cli/aws-cli:2.27.0'
 const RUSTFS = { user: 'rustfsadmin', password: 'rustfs-secret', bucket: 'pintail-browser' }
 const DATABASE = 'smoke_db'
 // A schema the probe user can reach but holds no table privilege on.
@@ -107,6 +109,24 @@ async function command(args: string[], options: { quiet?: boolean } = {}) {
 
 async function docker(...args: string[]) {
   return command(['docker', ...args], { quiet: true })
+}
+
+/// Pulls `image` unless the host has it, retrying with backoff: a public
+/// registry rate-limits pulls (`toomanyrequests`), most often when several
+/// CI jobs start at once, and that is no reason to fail the gate.
+async function pullImage(image: string) {
+  if (await docker('image', 'inspect', image).then(() => true, () => false)) return
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await docker('pull', image)
+      return
+    } catch (error) {
+      if (attempt >= 5) throw error
+      const wait = 5_000 * 2 ** (attempt - 1)
+      log(`pull ${image} failed (attempt ${attempt}); retrying in ${wait / 1000}s: ${String(error).split('\n').slice(-3).join(' ')}`)
+      await Bun.sleep(wait)
+    }
+  }
 }
 
 /// A host as it goes into a DSN: an IPv6 literal needs its brackets there.
@@ -282,6 +302,8 @@ async function main() {
   // against a fake: "Backup now" stays disabled until the server confirms a
   // destination it could actually reach, and restore has to read back objects
   // this same server wrote.
+  await pullImage(RUSTFS_IMAGE)
+  await pullImage(AWS_CLI_IMAGE)
   log(`starting RustFS ${rustfsName}`)
   await docker(
     'run',
