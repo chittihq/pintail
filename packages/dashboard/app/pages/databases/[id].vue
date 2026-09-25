@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AlertTriangle, Check, ChevronRight, Eye, HardDrive, LoaderCircle, Pause, Play, Radio, RefreshCw, Table2, X } from '@lucide/vue'
+import { AlertTriangle, Check, ChevronRight, Eye, HardDrive, LoaderCircle, Pause, Play, Radio, RefreshCw, Table2, Trash2, X } from '@lucide/vue'
 import { useIntervalFn } from '@vueuse/core'
 import { displayValue, formatDate, formatNumber, messageOf, modeOf, snapshotPercent, stateTone } from '@/lib/format'
 import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/types/pintail'
@@ -7,7 +7,7 @@ import type { DlqRecord, QueryResponse, SnapshotStatus, TableSummary } from '@/t
 const route = useRoute()
 const router = useRouter()
 const { request } = usePintailApi()
-const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, resetDatabase, runTableAction, discardDlq, retryDlq, tableProgress, seedTableProgress, sessionEpoch } = useControlPlane()
+const { databases, statuses, deadLetters, error, loading, setMode, setReconcileInterval, forceSnapshot, resetDatabase, runTableAction, removeTable, discardDlq, retryDlq, tableProgress, seedTableProgress, sessionEpoch } = useControlPlane()
 
 const databaseId = computed(() => String(route.params.id))
 const database = computed(() => databases.value.find((item) => item.id === databaseId.value) ?? null)
@@ -205,6 +205,22 @@ async function confirmDiscard() {
   }
 }
 
+const removeCandidate = ref<TableSummary | null>(null)
+const removing = ref(false)
+
+async function confirmRemove() {
+  if (!removeCandidate.value || removing.value) return
+  removing.value = true
+  try {
+    if (await removeTable(databaseId.value, removeCandidate.value)) {
+      removeCandidate.value = null
+      await loadDatabaseDetail()
+    }
+  } finally {
+    removing.value = false
+  }
+}
+
 async function onTableAction(table: TableSummary, action: 'resync' | 'reconcile' | 'pause' | 'resume') {
   tableAction.value = `${table.name}:${action}`
   try {
@@ -365,6 +381,9 @@ function describeTable(table: TableSummary) {
                     </Button>
                     <Button v-else variant="link" size="sm" :disabled="Boolean(tableAction)" title="Holds only this table still: its changes on the source are skipped, not kept, while the other tables keep replicating" @click="onTableAction(table, 'pause')">
                       <LoaderCircle v-if="tableAction === `${table.name}:pause`" class="animate-spin" /><Pause v-else /> Pause table
+                    </Button>
+                    <Button variant="link" size="sm" :disabled="Boolean(tableAction)" title="Forgets a table the source has dropped: its mirrored rows and replication state. Refused while the source still has the table." @click="removeCandidate = table">
+                      <Trash2 /> Remove
                     </Button>
                   </div>
                 </TableCell>
@@ -547,6 +566,16 @@ function describeTable(table: TableSummary) {
     :working="resetting"
     @confirm="confirmReset"
     @update:open="(open) => { resetOpen = open }"
+  />
+
+  <ConfirmActionDialog
+    :open="Boolean(removeCandidate)"
+    :title="`Remove ${removeCandidate?.name} from Pintail?`"
+    description="Only a table the source has dropped can be removed. Its mirrored rows, schema history and replication state are deleted permanently; if the source creates the table again, it is copied afresh."
+    confirm-label="Remove table"
+    :working="removing"
+    @confirm="confirmRemove"
+    @update:open="(open) => { if (!open) removeCandidate = null }"
   />
 
   <ConfirmActionDialog

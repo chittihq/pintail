@@ -4,6 +4,21 @@ All notable changes to Pintail are documented in this file.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- A table the source has dropped can be removed from the dashboard (Remove,
+  on the database page) or with `DELETE /api/databases/{id}/tables/{name}`.
+  Its mirrored rows, schema history and replication state are deleted. The
+  source is re-probed first, and a table it still has is refused.
+
+### Fixed
+
+- Two `GROUP_CONCAT`s of one column over an unchanging table that differed
+  only in their own ORDER BY or separator were answered from one cached
+  result, so the second came back in the first one's order or separator.
+
 ## [0.1.5-rc8] - 2026-09-25
 
 Change capture that follows every table a DDL touches: rc7 replaced the

@@ -914,6 +914,91 @@ pub(crate) async fn resume(
     }))
 }
 
+/// Forgets a table the source no longer has: its files and every
+/// control-plane row keyed by it. A table the source still has is refused -
+/// replication would only bring it back, and excluding it is the way to stop
+/// mirroring one. The source is re-probed first, so the refusal and the
+/// removal both rest on what the source says now.
+pub(crate) async fn remove(
+    Extension(principal): Extension<AuthPrincipal>,
+    State(state): State<ApiState>,
+    Path((database_id, table_name)): Path<(String, String)>,
+) -> Result<StatusCode, ApiError> {
+    let table = table_for_pause(&principal, &state, &database_id, &table_name)?;
+    // Holding the job slot keeps a replication cycle, which holds the
+    // table's store open, from running while its files go.
+    state.acquire_job_as(&database_id, "a table removal")?;
+    let removed = remove_absent_table(&state, &database_id, &table).await;
+    state.release_job(&database_id);
+    removed?;
+    audit::record(
+        &state,
+        &principal,
+        "table.remove",
+        Some(("database", &database_id)),
+        Some(serde_json::json!({"table": table.clone()})),
+    );
+    state.publish(ApiEvent::database(
+        "table.remove",
+        &database_id,
+        format!("{table} is removed: the source no longer has it"),
+    ));
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn remove_absent_table(
+    state: &ApiState,
+    database_id: &str,
+    table: &str,
+) -> Result<(), ApiError> {
+    let database = state
+        .metadata()?
+        .database(database_id)
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::not_found("database does not exist"))?;
+    let dsn = state.decrypt_dsn(&database.encrypted_dsn)?;
+    let pool = Pool::new(crate::dsn::source_opts(&dsn).map_err(ApiError::bad_request)?);
+    let report = refreshed_probe(state, database_id, &pool, &database.name).await;
+    let _ = pool.disconnect().await;
+    let report = report.map_err(|error| {
+        ApiError::unavailable(format!(
+            "could not confirm the source no longer has {table}: {error}"
+        ))
+    })?;
+    if report
+        .tables
+        .iter()
+        .any(|source| source.name.eq_ignore_ascii_case(table))
+    {
+        return Err(ApiError::conflict(format!(
+            "{table} still exists on the source; exclude it from replication instead"
+        )));
+    }
+    // Files first: a row whose files are gone can be removed again, while
+    // files whose row is gone are invisible and never reclaimed.
+    let root = state
+        .data_dir()?
+        .join("databases")
+        .join(database_id)
+        .join("tables");
+    let directory = snapshot::table_directory(&root, table);
+    if directory.exists() {
+        let retired = root.join(format!(
+            ".removed-{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::rename(&directory, &retired).map_err(ApiError::internal)?;
+        pintail_store::publish_changes_under(&directory);
+        std::fs::remove_dir_all(&retired).map_err(ApiError::internal)?;
+        pintail_store::sync_directory(&root).map_err(ApiError::internal)?;
+    }
+    state
+        .metadata()?
+        .remove_table(database_id, table)
+        .map_err(ApiError::internal)?;
+    Ok(())
+}
+
 /// The tracked table a pause or resume names, spelled as metadata has it.
 fn table_for_pause(
     principal: &AuthPrincipal,

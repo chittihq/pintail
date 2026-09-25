@@ -587,6 +587,15 @@ export function useControlPlane() {
     return true
   }
 
+  /// Forgets a table the source dropped. The server re-probes the source and
+  /// refuses a table that is still there, so the button cannot remove a live one.
+  async function removeTable(databaseId: string, table: TableSummary) {
+    const done = await mutate(`Removing ${table.name}`, () =>
+      request(`/databases/${encodeURIComponent(databaseId)}/tables/${encodeURIComponent(table.name)}`, { method: 'DELETE' }))
+    if (done) toast(`${table.name} removed from Pintail`)
+    return done
+  }
+
   async function discardDlq(record: DlqRecord) {
     const done = await mutate('Discarding the dead letter', () =>
       request(`/dlq/${record.id}`, { method: 'DELETE' }))
@@ -645,6 +654,7 @@ export function useControlPlane() {
     setReconcileInterval,
     forceSnapshot,
     runTableAction,
+    removeTable,
     tableProgress,
     seedTableProgress,
     sessionEpoch,

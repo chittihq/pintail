@@ -48,7 +48,7 @@ use axum::{
     http::{StatusCode, header},
     middleware,
     response::Response,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use rust_embed::RustEmbed;
 use serde::Serialize;
@@ -63,7 +63,7 @@ use crate::backup::{
     get_config as get_backup_config, list as list_backups, put_config as put_backup_config,
     restore as restore_backup, start as start_backup,
 };
-use crate::controls::{pause, reconcile, resume, resync};
+use crate::controls::{pause, reconcile, remove as remove_table, resume, resync};
 use crate::databases::{
     create as create_database, create_local as create_local_database, delete as delete_database,
     get as get_database, list as list_databases, probe_database, set_mode,
@@ -323,6 +323,7 @@ pub fn router_with_state(state: ApiState) -> Router {
         .route("/databases/{id}/snapshot", post(start_snapshot))
         .route("/databases/{id}/reset", post(snapshot::reset))
         .route("/databases/{id}/snapshot/status", get(snapshot_status))
+        .route("/databases/{id}/tables/{name}", delete(remove_table))
         .route("/databases/{id}/tables/{name}/resync", post(resync))
         .route("/databases/{id}/tables/{name}/reconcile", post(reconcile))
         .route("/databases/{id}/tables/{name}/pause", post(pause))

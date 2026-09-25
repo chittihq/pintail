@@ -523,6 +523,47 @@ impl MetaStore {
         Ok(())
     }
 
+    /// Forgets a replicated table the source no longer has: its row, and with
+    /// it (by cascade) its schema history, copy chunks and polling state, plus
+    /// its dead letters and snapshot fence. Sync-run history is kept. Returns
+    /// the row's stored name, or `None` when no row matched.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the control-plane transaction cannot commit.
+    pub fn remove_table(&self, database_id: &str, table_name: &str) -> Result<Option<String>> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("failed to begin removing a table")?;
+        let Some(name) = Self::superseded_name(&transaction, database_id, table_name, false)?
+        else {
+            return Ok(None);
+        };
+        transaction
+            .execute(
+                "DELETE FROM dlq WHERE db_id = ?1 AND table_name = ?2 COLLATE NOCASE",
+                (database_id, &name),
+            )
+            .with_context(|| format!("failed to clear dead letters of {database_id}.{name}"))?;
+        transaction
+            .execute(
+                "DELETE FROM settings WHERE key = ?1 COLLATE NOCASE",
+                [format!("cdc_snapshot_fence:{database_id}:{name}")],
+            )
+            .context("failed to clear the snapshot fence of a removed table")?;
+        transaction
+            .execute(
+                "DELETE FROM tables WHERE db_id = ?1 AND name = ?2",
+                (database_id, &name),
+            )
+            .with_context(|| format!("failed to remove {database_id}.{name}"))?;
+        transaction
+            .commit()
+            .context("failed to commit removing a table")?;
+        Ok(Some(name))
+    }
+
     /// Assigns a database to a workspace. Set once, immediately after
     /// [`MetaStore::upsert_database`] creates the row via the HTTP API; a
     /// database never moves workspaces afterward.

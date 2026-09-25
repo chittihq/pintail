@@ -10,6 +10,7 @@ mod interrupted_snapshots;
 mod migrations;
 mod poll;
 mod recovery_failpoints;
+mod remove_table;
 mod rename_table;
 mod replica_signature;
 mod schema_history;
