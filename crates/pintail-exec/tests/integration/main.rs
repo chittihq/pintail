@@ -55,6 +55,7 @@ mod session_timestamp_prune;
 mod set_ordinal;
 mod settled_delta_memo;
 mod settled_memo_identity;
+mod settled_memo_group_concat;
 mod settled_memo_scale;
 mod sort_determinism;
 mod subquery_scaling;

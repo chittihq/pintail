@@ -1791,17 +1791,25 @@ fn settled_signature(
         write!(signature, "g:{};", expr.deterministic_signature()?).ok()?;
     }
     for aggregate in aggregates {
+        // GROUP_CONCAT's answer also depends on its separator, its own ORDER
+        // BY and the session's `group_concat_max_len`, and truncating to that
+        // length raises a warning a replayed answer would not repeat. Two
+        // spellings that differ only in those were served one cached answer.
+        if aggregate.function == AggregateFunction::GroupConcat {
+            return None;
+        }
         let expr = match &aggregate.expr {
             Some(expr) => expr.deterministic_signature()?,
             None => "*".to_owned(),
         };
         write!(
             signature,
-            "a:{:?}:{}:{:?}:{:?}:{};",
+            "a:{:?}:{}:{:?}:{:?}:{:?}:{};",
             aggregate.function,
             aggregate.distinct,
             aggregate.data_type,
             aggregate.binary_width,
+            aggregate.collation,
             expr
         )
         .ok()?;
