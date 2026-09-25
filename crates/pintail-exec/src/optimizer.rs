@@ -606,6 +606,7 @@ fn statement_now() -> StatementNow {
     };
     StatementNow {
         local,
+        utc: utc.naive_utc(),
         unix: utc.timestamp(),
     }
 }
@@ -689,6 +690,7 @@ pub fn set_session_time_zone(zone: Option<&str>) -> bool {
 #[derive(Clone, Copy)]
 struct StatementNow {
     local: chrono::NaiveDateTime,
+    utc: chrono::NaiveDateTime,
     unix: i64,
 }
 
@@ -706,6 +708,11 @@ fn statement_time_literal(function: ScalarFunction, now: StatementNow) -> Option
         )),
         ScalarFunction::CurrentDate => Some(Value::Utf8(now.local.format("%Y-%m-%d").to_string())),
         ScalarFunction::Curtime => Some(Value::Utf8(now.local.format("%H:%M:%S").to_string())),
+        ScalarFunction::UtcTimestamp => {
+            Some(Value::Utf8(now.utc.format("%Y-%m-%d %H:%M:%S").to_string()))
+        }
+        ScalarFunction::UtcDate => Some(Value::Utf8(now.utc.format("%Y-%m-%d").to_string())),
+        ScalarFunction::UtcTime => Some(Value::Utf8(now.utc.format("%H:%M:%S").to_string())),
         ScalarFunction::UnixTimestamp => Some(Value::UInt64(u64::try_from(now.unix).unwrap_or(0))),
         _ => None,
     }

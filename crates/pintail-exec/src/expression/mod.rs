@@ -1137,6 +1137,9 @@ impl CompiledExpr {
                     ScalarFunction::Now
                         | ScalarFunction::UnixTimestamp
                         | ScalarFunction::Curtime
+                        | ScalarFunction::UtcTimestamp
+                        | ScalarFunction::UtcDate
+                        | ScalarFunction::UtcTime
                         | ScalarFunction::Rand
                         | ScalarFunction::Pi
                         | ScalarFunction::RandSeeded
@@ -1608,6 +1611,9 @@ impl CompiledExpr {
                     | ScalarFunction::TimeDiff
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
+                    | ScalarFunction::UtcTimestamp
+                    | ScalarFunction::UtcDate
+                    | ScalarFunction::UtcTime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::SessionTimestamp
@@ -1830,6 +1836,9 @@ impl CompiledExpr {
                     | ScalarFunction::TimeDiff
                     | ScalarFunction::MakeDate
                     | ScalarFunction::Curtime
+                    | ScalarFunction::UtcTimestamp
+                    | ScalarFunction::UtcDate
+                    | ScalarFunction::UtcTime
                     | ScalarFunction::StrToDate
                     | ScalarFunction::ConvertTz
                     | ScalarFunction::SessionTimestamp
@@ -3840,6 +3849,18 @@ fn evaluate_eager_scalar_inner(
         }
         ScalarFunction::Curtime => Ok(Value::Utf8(
             Local::now().naive_local().format("%H:%M:%S").to_string(),
+        )),
+        ScalarFunction::UtcTimestamp => Ok(Value::Utf8(
+            chrono::Utc::now()
+                .naive_utc()
+                .format("%Y-%m-%d %H:%M:%S")
+                .to_string(),
+        )),
+        ScalarFunction::UtcDate => Ok(Value::Utf8(
+            chrono::Utc::now().naive_utc().format("%Y-%m-%d").to_string(),
+        )),
+        ScalarFunction::UtcTime => Ok(Value::Utf8(
+            chrono::Utc::now().naive_utc().format("%H:%M:%S").to_string(),
         )),
         ScalarFunction::StrToDate => {
             let text = scalar_string(&values[0])?;

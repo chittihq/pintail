@@ -416,10 +416,34 @@ pub(super) fn bind_scalar_function(
     let [name] = name.as_slice() else {
         return Err(BindError::UnsupportedExpression(function.to_string()));
     };
-    let FunctionArguments::List(arguments) = &function.args else {
-        return Err(BindError::UnsupportedExpression(function.to_string()));
-    };
     let function_name = name.to_ascii_uppercase();
+    // The SQL-standard clock names are written without parentheses as
+    // often as with them; bare, they are the same zero-argument call.
+    let no_arguments;
+    let arguments = match &function.args {
+        FunctionArguments::List(arguments) => arguments,
+        FunctionArguments::None
+            if matches!(
+                function_name.as_str(),
+                "CURRENT_TIMESTAMP"
+                    | "CURRENT_DATE"
+                    | "CURRENT_TIME"
+                    | "LOCALTIME"
+                    | "LOCALTIMESTAMP"
+                    | "UTC_TIMESTAMP"
+                    | "UTC_DATE"
+                    | "UTC_TIME"
+            ) =>
+        {
+            no_arguments = sqlparser::ast::FunctionArgumentList {
+                duplicate_treatment: None,
+                args: Vec::new(),
+                clauses: Vec::new(),
+            };
+            &no_arguments
+        }
+        _ => return Err(BindError::UnsupportedExpression(function.to_string())),
+    };
     // JSON_VALUE owns a RETURNING clause; it lowers to a CAST around the
     // extraction below, so the function itself stays a plain extractor.
     let mut json_value_returning = None;
@@ -622,8 +646,15 @@ pub(super) fn bind_scalar_function(
         },
         // MOD(a, b) is the % operator spelled as a function.
         "MOD" if args.len() == 2 => return Ok(bind_modulo(args)),
-        "NOW" if args.is_empty() => ScalarFunction::Now,
-        "CURDATE" if args.is_empty() => ScalarFunction::CurrentDate,
+        "NOW" | "CURRENT_TIMESTAMP" | "SYSDATE" if args.is_empty() => ScalarFunction::Now,
+        // A second arm rather than a longer first one: each spelling stays on a
+        // line that dispatches, which is where the parity count reads it.
+        #[allow(clippy::match_same_arms)]
+        "LOCALTIME" | "LOCALTIMESTAMP" if args.is_empty() => ScalarFunction::Now,
+        "CURDATE" | "CURRENT_DATE" if args.is_empty() => ScalarFunction::CurrentDate,
+        "UTC_TIMESTAMP" if args.is_empty() => ScalarFunction::UtcTimestamp,
+        "UTC_DATE" if args.is_empty() => ScalarFunction::UtcDate,
+        "UTC_TIME" if args.is_empty() => ScalarFunction::UtcTime,
         // TIMESTAMP(expr) is its argument as a DATETIME; TIMESTAMP(expr, time)
         // adds the time to that DATETIME, so a DATE and a TIME column
         // combine into the instant they name.
@@ -2028,9 +2059,13 @@ pub(super) fn bind_scalar(
             args.iter().any(|argument| argument.nullable),
         ),
         ScalarFunction::Cast(target) | ScalarFunction::DeclaredCast { target, .. } => (Some(target), args[0].nullable),
-        ScalarFunction::Now => (Some(DataType::DateTime64 { fsp: 0 }), false),
-        ScalarFunction::CurrentDate => (Some(DataType::Date32), false),
-        ScalarFunction::Curtime => (Some(DataType::Time64 { fsp: 0 }), false),
+        ScalarFunction::Now | ScalarFunction::UtcTimestamp => {
+            (Some(DataType::DateTime64 { fsp: 0 }), false)
+        }
+        ScalarFunction::CurrentDate | ScalarFunction::UtcDate => (Some(DataType::Date32), false),
+        ScalarFunction::Curtime | ScalarFunction::UtcTime => {
+            (Some(DataType::Time64 { fsp: 0 }), false)
+        }
         ScalarFunction::Date => (
             Some(DataType::Date32),
             args.iter().any(|argument| argument.nullable),

@@ -1278,6 +1278,12 @@ pub enum ScalarFunction {
     MakeDate,
     /// `CURTIME()`.
     Curtime,
+    /// `UTC_TIMESTAMP()`: the statement time in UTC, whatever the session zone.
+    UtcTimestamp,
+    /// `UTC_DATE()`.
+    UtcDate,
+    /// `UTC_TIME()`.
+    UtcTime,
     /// `STR_TO_DATE(text, format)`: NULL when the text does not match.
     StrToDate,
     /// `CONVERT_TZ(datetime, from_tz, to_tz)` with IANA names or numeric

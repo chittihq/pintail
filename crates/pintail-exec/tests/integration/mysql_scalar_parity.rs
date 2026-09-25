@@ -2117,3 +2117,23 @@ fn a_permissive_session_reads_a_zero_month_from_a_numeric_temporal() {
         ]);
     });
 }
+
+#[test]
+fn the_clock_functions_answer_under_every_spelling() {
+    // One statement reads one pinned instant, so the spellings compare
+    // equal rather than merely close.
+    assert_answers(&[
+        ("CURRENT_TIMESTAMP() = NOW()", "Boolean(true)"),
+        ("CURRENT_TIMESTAMP = NOW()", "Boolean(true)"),
+        ("LOCALTIME() = NOW()", "Boolean(true)"),
+        ("LOCALTIMESTAMP = NOW()", "Boolean(true)"),
+        ("CURRENT_DATE() = CURDATE()", "Boolean(true)"),
+        ("CURRENT_DATE = CURDATE()", "Boolean(true)"),
+        ("DATE(UTC_TIMESTAMP()) = UTC_DATE()", "Boolean(true)"),
+        ("TIME(UTC_TIMESTAMP()) = UTC_TIME()", "Boolean(true)"),
+        (
+            "UNIX_TIMESTAMP(UTC_TIMESTAMP()) IS NOT NULL",
+            "Boolean(true)",
+        ),
+    ]);
+}
