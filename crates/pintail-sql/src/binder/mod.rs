@@ -7193,6 +7193,16 @@ struct TemporalLiteral {
     fraction: String,
 }
 
+/// Whether `text` is exactly a `+HH:MM` or `-HH:MM` offset.
+fn time_zone_offset(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() == 6
+        && matches!(bytes[0], b'+' | b'-')
+        && bytes[1..3].iter().all(u8::is_ascii_digit)
+        && bytes[3] == b':'
+        && bytes[4..6].iter().all(u8::is_ascii_digit)
+}
+
 impl TemporalLiteral {
     /// Comparisons consume a calendar prefix even when trailing text remains.
     /// Once a numeric field begins, an invalid field must not fall back to a
@@ -7260,6 +7270,17 @@ impl TemporalLiteral {
             let count = fraction.bytes().take_while(u8::is_ascii_digit).count();
             &fraction[..count]
         });
+        // A trailing time-zone offset (`+03:30`, `-14:00`) is part of the value,
+        // not trailing text: the instant it names depends on it. Consuming the
+        // prefix alone compared the clock as if written in the session zone,
+        // so the literal goes to the comparison that applies the offset.
+        let after_fraction = remaining
+            .strip_prefix('.')
+            .map_or(remaining, |rest| &rest[fraction.len()..])
+            .trim();
+        if time_zone_offset(after_fraction) {
+            return Ok(None);
+        }
         let literal = Self {
             year,
             month,
