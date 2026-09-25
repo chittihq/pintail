@@ -1,8 +1,8 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-09-25T14:44:12.271Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-09-25T17:49:22.043Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: e6f086ac62a099edab2271cd9a5ba1c0a44115f8; source dirty: false. Binary SHA-256: 5150e806e409504c1e3398ee4eb25380a74e467c539d47cb857fa134d576d682.
+Replay mode: local. Source commit: a6d5810257493274c5eb2549a9b16da42188a8ab; source dirty: false. Binary SHA-256: 2e323a6118a33432ab1522f0aa46d5cfd58b7bdfe4a3195d4f11de8dd7a2cb85.
 
 **8,146 of 8,578 compared SELECTs match MySQL byte-for-byte** (95.0%), **out of 30,174 SELECTs replayed** - 21,596 never reached a comparison, so this is a share of what could be compared and not of the suite. 426 differ in rows, 6 in column names only. 4,916 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 50 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
 | 46 | INSERT: Error: Column _ cannot be null |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/muh24ca9-1579747/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/muh8wc7a-1751371/diffs/` (not committed).
