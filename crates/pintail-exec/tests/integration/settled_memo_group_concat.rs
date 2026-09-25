@@ -85,9 +85,15 @@ fn group_concat_spellings_over_a_settled_table_are_answered_separately() {
     let text = |value: &str| Value::Utf8(value.to_owned());
     for (sql, expected) in [
         ("SELECT GROUP_CONCAT(n) FROM readings", "3,1,2"),
-        ("SELECT GROUP_CONCAT(n ORDER BY n DESC) FROM readings", "3,2,1"),
+        (
+            "SELECT GROUP_CONCAT(n ORDER BY n DESC) FROM readings",
+            "3,2,1",
+        ),
         ("SELECT GROUP_CONCAT(n ORDER BY n) FROM readings", "1,2,3"),
-        ("SELECT GROUP_CONCAT(n SEPARATOR ';') FROM readings", "3;1;2"),
+        (
+            "SELECT GROUP_CONCAT(n SEPARATOR ';') FROM readings",
+            "3;1;2",
+        ),
     ] {
         assert_eq!(answer(&table, &catalog, sql), text(expected), "{sql}");
     }
