@@ -1,10 +1,10 @@
 # MariaDB's regression suite against Pintail
 
-Measured 2026-09-24T21:05:09.142Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
+Measured 2026-09-25T07:53:33.744Z: `mysql-test/main` from MariaDB/server at `170b1d70737b`, oracle MySQL 8.4.11, 704 files.
 
-Replay mode: local. Source commit: ea3cab7980d300742b360f0f15eae7b1fe30d206; source dirty: false. Binary SHA-256: 6e87ca5ad22f85c644659b22ef2faf556b0fd37269b7a2a7448e8a63943fa9d6.
+Replay mode: local. Source commit: 8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c; source dirty: false. Binary SHA-256: 5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169.
 
-**8,117 of 8,521 compared SELECTs match MySQL byte-for-byte** (95.3%), **out of 30,174 SELECTs replayed** - 21,653 never reached a comparison, so this is a share of what could be compared and not of the suite. 398 differ in rows, 6 in column names only. 4,973 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
+**8,118 of 8,541 compared SELECTs match MySQL byte-for-byte** (95.0%), **out of 30,174 SELECTs replayed** - 21,633 never reached a comparison, so this is a share of what could be compared and not of the suite. 417 differ in rows, 6 in column names only. 4,953 SELECTs Pintail could not run, 10,510 were not compared because their tables were changed by statements a local database cannot follow, 2,496 failed on MySQL itself, 3,674 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 25,848 accepted, 1,075 rejected by Pintail, 25,244 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -51,7 +51,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
 | cache_temporal_4265 | 18 | 3 | 0 | 0 | 0 | 1 | 0 | 12 | 0 | 1 | 1 | 0 |
 | case | 171 | 59 | 2 | 0 | 4 | 6 | 0 | 47 | 2 | 11 | 12 | 28 |
-| cast | 366 | 138 | 2 | 0 | 19 | 16 | 9 | 61 | 3 | 35 | 24 | 58 |
+| cast | 366 | 138 | 6 | 0 | 15 | 16 | 9 | 61 | 3 | 35 | 24 | 58 |
 | change_user | 39 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 2 | 12 |
 | change_user_notembedded | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 |
 | check | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
@@ -165,11 +165,11 @@ Column names are compared with rows. Row order is compared when the outer query 
 | ctype_utf32_def | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | ctype_utf32_not_embedded | 29 | 0 | 0 | 0 | 0 | 10 | 0 | 2 | 0 | 5 | 1 | 11 |
 | ctype_utf32_uca | 959 | 22 | 0 | 0 | 101 | 142 | 9 | 173 | 8 | 371 | 83 | 37 |
-| ctype_utf8 | 1845 | 296 | 0 | 0 | 67 | 120 | 24 | 562 | 26 | 363 | 71 | 298 |
+| ctype_utf8 | 1845 | 296 | 2 | 0 | 65 | 120 | 24 | 562 | 26 | 363 | 71 | 298 |
 | ctype_utf8_uca | 162 | 0 | 0 | 0 | 0 | 52 | 0 | 27 | 0 | 56 | 16 | 11 |
 | ctype_utf8mb3_turkish_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
 | ctype_utf8mb3_unicode_520_ci_casefold | 5 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 2 | 1 |
-| ctype_utf8mb4 | 1460 | 169 | 0 | 0 | 149 | 161 | 31 | 430 | 14 | 231 | 106 | 143 |
+| ctype_utf8mb4 | 1460 | 169 | 2 | 0 | 147 | 161 | 31 | 430 | 14 | 231 | 106 | 143 |
 | ctype_utf8mb4_0900 | 49 | 0 | 0 | 0 | 1 | 0 | 0 | 14 | 1 | 13 | 2 | 15 |
 | ctype_utf8mb4_0900_ai_ci_casefold | 9 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 3 | 2 |
 | ctype_utf8mb4_0900_mem | 31 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 1 | 27 |
@@ -243,7 +243,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | fulltext2 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 1 |
 | fulltext3 | 16 | 0 | 0 | 0 | 0 | 1 | 1 | 5 | 2 | 3 | 2 | 2 |
 | func_analyse | 146 | 0 | 0 | 0 | 0 | 14 | 12 | 64 | 3 | 28 | 4 | 19 |
-| func_bit | 45 | 19 | 9 | 0 | 1 | 0 | 5 | 0 | 0 | 1 | 0 | 10 |
+| func_bit | 45 | 19 | 10 | 0 | 0 | 0 | 5 | 0 | 0 | 1 | 0 | 10 |
 | func_concat | 115 | 10 | 1 | 0 | 3 | 28 | 1 | 31 | 10 | 12 | 5 | 9 |
 | func_crypt | 84 | 0 | 0 | 0 | 0 | 11 | 24 | 17 | 3 | 10 | 10 | 9 |
 | func_date_add | 76 | 5 | 0 | 0 | 7 | 7 | 0 | 11 | 2 | 31 | 2 | 9 |
@@ -256,7 +256,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_group | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | func_hybrid_type | 628 | 68 | 11 | 0 | 3 | 15 | 1 | 260 | 1 | 75 | 53 | 131 |
 | func_if | 66 | 21 | 1 | 0 | 6 | 0 | 0 | 33 | 0 | 0 | 2 | 2 |
-| func_in | 427 | 93 | 4 | 0 | 17 | 11 | 3 | 134 | 2 | 26 | 34 | 103 |
+| func_in | 427 | 93 | 9 | 0 | 12 | 11 | 3 | 134 | 2 | 26 | 34 | 103 |
 | func_int | 61 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 61 |
 | func_isnull | 47 | 0 | 0 | 0 | 0 | 12 | 0 | 14 | 4 | 2 | 4 | 9 |
 | func_json | 1422 | 297 | 16 | 0 | 313 | 62 | 191 | 97 | 4 | 50 | 318 | 67 |
@@ -645,8 +645,8 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_decimal | 443 | 40 | 0 | 0 | 5 | 21 | 0 | 268 | 12 | 51 | 21 | 24 |
 | type_enum | 337 | 30 | 3 | 0 | 4 | 29 | 0 | 160 | 9 | 37 | 16 | 49 |
 | type_float | 409 | 58 | 10 | 0 | 5 | 30 | 6 | 171 | 3 | 58 | 16 | 51 |
-| type_hex_hybrid | 18 | 0 | 0 | 0 | 3 | 2 | 0 | 5 | 0 | 2 | 1 | 4 |
-| type_int | 329 | 32 | 2 | 0 | 5 | 32 | 7 | 88 | 10 | 57 | 9 | 85 |
+| type_hex_hybrid | 18 | 0 | 1 | 0 | 2 | 2 | 0 | 5 | 0 | 2 | 1 | 4 |
+| type_int | 329 | 32 | 6 | 0 | 1 | 32 | 7 | 88 | 10 | 57 | 9 | 85 |
 | type_interval | 8 | 0 | 0 | 0 | 0 | 0 | 2 | 6 | 0 | 0 | 0 | 0 |
 | type_json | 64 | 4 | 0 | 0 | 0 | 7 | 1 | 14 | 2 | 15 | 2 | 19 |
 | type_nchar | 22 | 0 | 0 | 0 | 0 | 0 | 0 | 10 | 5 | 0 | 0 | 7 |
@@ -658,7 +658,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | type_set | 172 | 16 | 0 | 0 | 4 | 18 | 0 | 70 | 4 | 23 | 8 | 29 |
 | type_temporal_mariadb53 | 15 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 3 | 0 | 6 |
 | type_temporal_mysql56 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 1 | 3 |
-| type_time | 950 | 100 | 23 | 0 | 9 | 62 | 3 | 236 | 3 | 349 | 56 | 102 |
+| type_time | 950 | 101 | 23 | 0 | 8 | 62 | 3 | 236 | 3 | 349 | 56 | 102 |
 | type_time_6065 | 5 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 1 | 1 | 0 |
 | type_time_hires | 12 | 0 | 0 | 0 | 0 | 3 | 0 | 2 | 0 | 5 | 1 | 1 |
 | type_time_round | 128 | 16 | 0 | 0 | 0 | 12 | 1 | 74 | 1 | 14 | 6 | 4 |
@@ -747,4 +747,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 50 | Error: unsupported expression: weight_string(CAST(X_ AS CHAR)) |
 | 46 | INSERT: Error: Column _ cannot be null |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mug0b7nb-929596/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mugnm39h-1249852/diffs/` (not committed).

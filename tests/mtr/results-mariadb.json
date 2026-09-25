@@ -5,18 +5,18 @@
   "ref": "170b1d70737be6f134448f51713cdc1ae215b420",
   "mysqlVersion": "8.4.11",
   "provenance": {
-    "sourceCommit": "ea3cab7980d300742b360f0f15eae7b1fe30d206",
+    "sourceCommit": "8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c",
     "sourceDirty": false,
-    "binarySha256": "6e87ca5ad22f85c644659b22ef2faf556b0fd37269b7a2a7448e8a63943fa9d6"
+    "binarySha256": "5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169"
   },
-  "artifacts": "validate-out/mtr/runs/mug0b7nb-929596",
-  "measuredAt": "2026-09-24T21:05:09.144Z",
+  "artifacts": "validate-out/mtr/runs/mugnm39h-1249852",
+  "measuredAt": "2026-09-25T07:53:33.745Z",
   "totals": {
-    "exact": 8117,
-    "compared": 8521,
+    "exact": 8118,
+    "compared": 8541,
     "queries": 24004,
     "replayed": 30174,
-    "notCompared": 21653
+    "notCompared": 21633
   },
   "results": [
     {
@@ -943,9 +943,9 @@
       "statements": 366,
       "counts": {
         "exact": 138,
-        "mismatch": 2,
+        "mismatch": 6,
         "name-mismatch": 0,
-        "pintail-error": 19,
+        "pintail-error": 15,
         "mysql-error": 9,
         "tainted": 16,
         "setup": 61,
@@ -958,7 +958,6 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
         "Error: numeric expression overflow": 3,
         "Error: sql parser error: Expected: ), found: character at Line: _, Column: _": 1,
         "Error: statement is not valid UTF-_": 2,
@@ -3938,9 +3937,9 @@
       "statements": 1845,
       "counts": {
         "exact": 296,
-        "mismatch": 0,
+        "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 67,
+        "pintail-error": 65,
         "mysql-error": 24,
         "tainted": 120,
         "setup": 562,
@@ -3969,7 +3968,6 @@
         "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 2,
         "Error: unsupported expression: BINARY(name)": 1,
         "Error: numeric expression overflow": 2,
         "Error: unsupported expression: COLLATE utf8_sinhala_ci is unsupported; supported: utf8mb4_": 1,
@@ -4077,9 +4075,9 @@
       "statements": 1460,
       "counts": {
         "exact": 169,
-        "mismatch": 0,
+        "mismatch": 2,
         "name-mismatch": 0,
-        "pintail-error": 149,
+        "pintail-error": 147,
         "mysql-error": 31,
         "tainted": 161,
         "setup": 430,
@@ -4108,7 +4106,6 @@
         "INSERT: Error: value _ is not supported in INSERT": 1,
         "Error: sql parser error: Expected: ), found: USING at Line: _, Column: _": 2,
         "Error: sql parser error: Expected: ), found: using at Line: _, Column: _": 12,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 2,
         "Error: unsupported expression: COLLATE utf8mb4_sinhala_ci is unsupported; supported: utf8m": 1,
         "Error: unsupported expression: CHARSET(CONCAT(_utf8mb4 _, _utf8 _))": 1,
         "Error: unsupported expression: comparing text across collations utf8mb3_general_ci, utf8mb": 4,
@@ -5855,9 +5852,9 @@
       "statements": 45,
       "counts": {
         "exact": 19,
-        "mismatch": 9,
+        "mismatch": 10,
         "name-mismatch": 0,
-        "pintail-error": 1,
+        "pintail-error": 0,
         "mysql-error": 5,
         "tainted": 0,
         "setup": 0,
@@ -5869,9 +5866,7 @@
         "replica-lag": 0,
         "replica-unsettled": 0
       },
-      "errorClasses": {
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 1
-      }
+      "errorClasses": {}
     },
     {
       "file": "func_concat",
@@ -6210,9 +6205,9 @@
       "statements": 427,
       "counts": {
         "exact": 93,
-        "mismatch": 4,
+        "mismatch": 9,
         "name-mismatch": 0,
-        "pintail-error": 17,
+        "pintail-error": 12,
         "mysql-error": 3,
         "tainted": 11,
         "setup": 134,
@@ -6231,7 +6226,6 @@
         "PREPARED: Error: Pintail's query surfaces are read-only": 1,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN * FROM t3__1 JOIN t1__15 ON t3__1.a ": 1,
         "Error: unsupported query clause: SELECT STRAIGHT_JOIN (SELECT SUM(t4__1.a) FROM t4__1 WHER": 1,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 5,
         "INSERT: Error: Column count doesn't match value count: _ columns, _ values": 1,
         "Error: numeric expression overflow": 1,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 2,
@@ -15426,9 +15420,9 @@
       "statements": 18,
       "counts": {
         "exact": 0,
-        "mismatch": 0,
+        "mismatch": 1,
         "name-mismatch": 0,
-        "pintail-error": 3,
+        "pintail-error": 2,
         "mysql-error": 0,
         "tainted": 2,
         "setup": 5,
@@ -15441,8 +15435,7 @@
         "replica-unsettled": 0
       },
       "errorClasses": {
-        "Error: unsupported expression: CHARSET(_)": 2,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 1
+        "Error: unsupported expression: CHARSET(_)": 2
       }
     },
     {
@@ -15450,9 +15443,9 @@
       "statements": 329,
       "counts": {
         "exact": 32,
-        "mismatch": 2,
+        "mismatch": 6,
         "name-mismatch": 0,
-        "pintail-error": 5,
+        "pintail-error": 1,
         "mysql-error": 7,
         "tainted": 32,
         "setup": 88,
@@ -15468,7 +15461,6 @@
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 2,
         "INSERT: Error: Incorrect value _ for column _: expected an integer": 1,
         "INSERT: Error: only literal values are supported in INSERT, got _": 7,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 4,
         "PREPARED: Error: unexpected tokens after prepared statement command": 3,
         "Error: sql parser error: Expected: end of statement, found: WITH at Line: _, Column: _": 1
       }
@@ -15737,10 +15729,10 @@
       "file": "type_time",
       "statements": 950,
       "counts": {
-        "exact": 100,
+        "exact": 101,
         "mismatch": 23,
         "name-mismatch": 0,
-        "pintail-error": 9,
+        "pintail-error": 8,
         "mysql-error": 3,
         "tainted": 62,
         "setup": 236,
@@ -15754,7 +15746,6 @@
       },
       "errorClasses": {
         "Error: unsupported expression: TIMESTAMP(f1, _)": 1,
-        "Error: query engine failed: binary value is not valid UTF-_ for numeric coercion": 1,
         "Error: unsupported expression: TIMESTAMP(c, _)": 1,
         "INSERT: Error: Incorrect value _ for column _: expected a time": 2,
         "DDL: Error: sql parser error: Expected: _ or _ after column definition, found: ZEROFILL at Line": 1,

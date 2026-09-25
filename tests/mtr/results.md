@@ -1,10 +1,10 @@
 # MySQL's regression suite against Pintail
 
-Measured 2026-09-24T20:56:12.285Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
+Measured 2026-09-25T07:45:04.102Z: `mysql-test/t` from mysql/mysql-server at `99960bf74fa9`, oracle MySQL 8.4.11, 633 files.
 
-Replay mode: local. Source commit: ea3cab7980d300742b360f0f15eae7b1fe30d206; source dirty: false. Binary SHA-256: 6e87ca5ad22f85c644659b22ef2faf556b0fd37269b7a2a7448e8a63943fa9d6.
+Replay mode: local. Source commit: 8aaa33afa78eb10c1e97fdef32b9bf8c18f2596c; source dirty: false. Binary SHA-256: 5cb880e00ab190c1d1384d5ab4920819af319b8d33783e511c587d6a5fef6169.
 
-**8,724 of 8,825 compared SELECTs match MySQL byte-for-byte** (98.9%), **out of 23,119 SELECTs replayed** - 14,294 never reached a comparison, so this is a share of what could be compared and not of the suite. 101 differ in rows, 0 in column names only. 5,699 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
+**8,725 of 8,840 compared SELECTs match MySQL byte-for-byte** (98.7%), **out of 23,119 SELECTs replayed** - 14,279 never reached a comparison, so this is a share of what could be compared and not of the suite. 115 differ in rows, 0 in column names only. 5,684 SELECTs Pintail could not run, 6,093 were not compared because their tables were changed by statements a local database cannot follow, 525 failed on MySQL itself, 1,977 depend on the clock, session or server and were not compared. 0 waited past the replication deadline, 0 read unsettled replica tables. Fixtures: 20,224 accepted, 1,173 rejected by Pintail, 18,050 outside the replayed subset.
 
 Column names are compared with rows. Row order is compared when the outer query has ORDER BY and the test did not ask for sorted results; otherwise rows are compared as multisets.
 
@@ -36,7 +36,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | bool | 30 | 20 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 0 | 3 | 0 |
 | bulk_replace | 6 | 0 | 0 | 0 | 0 | 1 | 0 | 3 | 0 | 1 | 0 | 1 |
 | case | 140 | 36 | 0 | 0 | 1 | 11 | 0 | 49 | 3 | 11 | 7 | 22 |
-| cast | 564 | 176 | 0 | 0 | 20 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
+| cast | 564 | 176 | 4 | 0 | 16 | 15 | 0 | 85 | 4 | 40 | 33 | 190 |
 | change_user | 37 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 4 | 7 |
 | character_set_deprecation | 100 | 10 | 0 | 0 | 24 | 0 | 0 | 13 | 21 | 13 | 3 | 13 |
 | charset | 77 | 1 | 0 | 0 | 2 | 4 | 0 | 15 | 1 | 6 | 15 | 32 |
@@ -121,8 +121,8 @@ Column names are compared with rows. Row order is compared when the outer query 
 | ctype_utf16le | 566 | 48 | 0 | 0 | 107 | 80 | 0 | 67 | 32 | 152 | 45 | 24 |
 | ctype_utf32 | 551 | 67 | 0 | 0 | 109 | 68 | 0 | 52 | 34 | 122 | 59 | 32 |
 | ctype_utf32_uca | 455 | 21 | 0 | 0 | 98 | 46 | 0 | 28 | 6 | 213 | 29 | 8 |
-| ctype_utf8 | 1816 | 281 | 0 | 0 | 77 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
-| ctype_utf8mb4 | 1034 | 141 | 0 | 0 | 92 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
+| ctype_utf8 | 1816 | 281 | 2 | 0 | 75 | 119 | 0 | 567 | 27 | 345 | 74 | 314 |
+| ctype_utf8mb4 | 1034 | 141 | 2 | 0 | 90 | 97 | 0 | 314 | 13 | 176 | 90 | 100 |
 | ctype_utf8mb4_uca | 217 | 0 | 0 | 0 | 2 | 32 | 0 | 33 | 2 | 140 | 6 | 0 |
 | datadir_permission | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
 | date_formats | 120 | 35 | 0 | 0 | 27 | 6 | 0 | 19 | 0 | 7 | 19 | 7 |
@@ -203,7 +203,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | func_gconcat | 261 | 63 | 0 | 0 | 19 | 27 | 0 | 108 | 8 | 10 | 10 | 14 |
 | func_group | 725 | 181 | 0 | 0 | 10 | 56 | 0 | 267 | 10 | 45 | 47 | 100 |
 | func_if | 99 | 32 | 0 | 0 | 6 | 0 | 0 | 45 | 0 | 1 | 4 | 10 |
-| func_in_all | 297 | 72 | 1 | 0 | 16 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
+| func_in_all | 297 | 72 | 6 | 0 | 11 | 11 | 0 | 103 | 2 | 19 | 13 | 59 |
 | func_in_icp | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_icp_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 | func_in_mrr | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
@@ -466,7 +466,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | schema_read_only_ci | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
 | schema_read_only_cs | 68 | 0 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 25 | 0 | 37 |
 | sdi_utf8 | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | 1 | 0 | 0 |
-| select_all | 2201 | 95 | 0 | 0 | 22 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 |
+| select_all | 2201 | 95 | 1 | 0 | 21 | 196 | 0 | 382 | 14 | 1281 | 18 | 169 |
 | select_all_bka | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | select_all_bka_nobnl | 2 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
 | select_count | 74 | 8 | 0 | 0 | 1 | 0 | 0 | 15 | 0 | 6 | 3 | 40 |
@@ -574,7 +574,7 @@ Column names are compared with rows. Row order is compared when the outer query 
 | truncate | 102 | 1 | 0 | 0 | 0 | 15 | 0 | 20 | 1 | 25 | 0 | 40 |
 | truncate_coverage | 26 | 0 | 0 | 0 | 0 | 0 | 0 | 7 | 0 | 1 | 7 | 11 |
 | truth_value_transform | 18 | 7 | 0 | 0 | 0 | 0 | 0 | 3 | 0 | 0 | 0 | 8 |
-| type_binary | 109 | 32 | 1 | 0 | 2 | 12 | 1 | 41 | 1 | 9 | 2 | 8 |
+| type_binary | 109 | 33 | 1 | 0 | 1 | 12 | 1 | 41 | 1 | 9 | 2 | 8 |
 | type_blob | 410 | 18 | 2 | 0 | 6 | 94 | 0 | 111 | 8 | 26 | 16 | 128 |
 | type_date | 88 | 19 | 0 | 0 | 0 | 5 | 0 | 54 | 1 | 7 | 2 | 0 |
 | type_datetime | 76 | 7 | 0 | 0 | 1 | 11 | 0 | 17 | 5 | 19 | 10 | 6 |
@@ -676,4 +676,4 @@ Column names are compared with rows. Row order is compared when the outer query 
 | 53 | DDL: Error: sql parser error: Expected: _ or _ after column definition, found: zerofill at Line |
 | 48 | PREPARED: Error: Unknown prepared statement handler (p_n_eq) |
 
-Per-file diffs for mismatches are written to `validate-out/mtr/runs/mug0b7ne-929595/diffs/` (not committed).
+Per-file diffs for mismatches are written to `validate-out/mtr/runs/mugnm39n-1249851/diffs/` (not committed).
